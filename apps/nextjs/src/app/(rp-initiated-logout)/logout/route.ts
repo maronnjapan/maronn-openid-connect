@@ -48,15 +48,21 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Answer an end-session request sent as GET /logout with the response of
- * endSession() for the query parameters: an immediate logout, or the logout
- * confirmation page.
+ * クエリを `endSession()` に渡し、その応答を返す。
+ *
+ * `GET /logout` で送られたログアウトの要求を処理する。
+ * 応答は、すぐにログアウトした結果（リダイレクトか完了画面）か、ログアウトの確認画面である。
  */
 export async function GET(request: NextRequest): Promise<Response> {
   return endSession(request, request.nextUrl.searchParams);
 }
 
-/** §2: POST carries the same parameters in an application/x-www-form-urlencoded body. */
+/**
+ * ボディを `endSession()` に渡し、その応答を返す。
+ *
+ * `POST /logout` では、GET のクエリと同じパラメータが `application/x-www-form-urlencoded` のボディで届く（RP-Initiated Logout 1.0 §2）。
+ * ボディの値のうち文字列だけを `URLSearchParams` に移して渡す。
+ */
 export async function POST(request: Request): Promise<Response> {
   const params = new URLSearchParams();
   for (const [name, value] of await readFormFields(request)) {
@@ -66,31 +72,30 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /**
- * Log the End-User out at once when the id_token_hint verifies (matching
- * client_id when one is sent) and names the End-User of the current OP
- * session; otherwise render the logout confirmation page with a fresh
- * confirmation cookie and delete nothing.
+ * `id_token_hint` を検証し、ログアウトか確認画面を返す。
  *
- * An immediate logout deletes the OP session, clears its cookie and redirects
- * (302) to the requested post_logout_redirect_uri, with state, when it exactly
- * matches one registered for the hint's client, or renders the logged-out
- * page. The confirmation cookie carries the secret the page's csrf_token must
- * match and the same redirect target, which /logout/approve honors. A failure
- * to load the keys that verify the hint is not turned into a confirmation: it
- * propagates.
+ * `id_token_hint` が OP の鍵で検証でき（`client_id` が送られたときは、その値がヒントの `aud` に含まれ）、現在の OP のセッションのエンドユーザーを示すときは、すぐにログアウトする。
+ * OP のセッションを削除してその Cookie を消し、リダイレクト先があればそこへ 302 でリダイレクトし、なければログアウトの完了画面を返す。
+ * リダイレクト先は、要求された `post_logout_redirect_uri` が、ヒントのクライアントの登録した値と完全に一致するときだけ決まり、`state` を付ける。
  *
- * @spec RP-Initiated Logout 1.0 §2 / §3
+ * それ以外の要求には、何も削除せずに、新しい確認の Cookie を付けたログアウトの確認画面を返す。
+ * 確認の Cookie には、確認画面の `csrf_token` と一致する必要のあるシークレットと、同じリダイレクト先を入れる。
+ * `POST /logout/approve` は承認のあとにこのリダイレクト先を使う。
+ *
+ * ヒントを検証する鍵を読み込めなかったときは、確認画面に回さずにエラーをそのまま投げる。
+ *
+ * @spec RP-Initiated Logout 1.0 §2
+ * @spec RP-Initiated Logout 1.0 §3
  */
 async function endSession(request: Request, params: URLSearchParams): Promise<Response> {
   const endSessionRequest = parseEndSessionRequest(params);
-  // logout_hint and ui_locales are accepted but unused (OPTIONAL, §2). The hint
-  // is never logged — it can identify the End-User — and neither is the
-  // id_token_hint value itself.
+  // `logout_hint` と `ui_locales` は受け付けるが使わない（どちらも任意のパラメータ。RP-Initiated Logout 1.0 §2）。
+  // `logout_hint` はエンドユーザーを特定しうるので、解析したあとは読まず、ログにも出さない。
+  // `id_token_hint` の値そのものもログに出さない。
 
-  // §2: verify the hint (signature / iss / aud / exp) against the keys
-  // id_token_hint is verified with elsewhere. The expected audience is the
-  // client_id parameter when present, otherwise it is read — unverified — from
-  // the hint payload; trust comes from validateIdTokenHint afterwards.
+  // ヒントの署名、`iss`、`aud`、`exp` などを、ほかの場所で `id_token_hint` を検証するのと同じ鍵（OP が ID トークンの署名に使う鍵）で検証する（RP-Initiated Logout 1.0 §2）。
+  // 期待するオーディエンスは、`client_id` パラメータがあればその値、なければヒントのペイロードから検証せずに取り出した値である。
+  // 取り出した値を信頼できるのは、そのあとの `validateIdTokenHint()` を通ってからである。
   let verifiedHint: { sub: string; [key: string]: unknown } | null = null;
   let expectedAudience: string | null = null;
   if (endSessionRequest.idTokenHint !== undefined) {
@@ -104,11 +109,10 @@ async function endSession(request: Request, params: URLSearchParams): Promise<Re
           jwks: await idTokenHintJwks(await loadSigningKeys()),
         });
       } catch (error) {
-        // An expired, tampered or foreign hint just fails to prove logout
-        // authority, so the request falls to the confirmation path (§2 MUST)
-        // with no reason disclosed. Anything else (the keys failing to load)
-        // is rethrown: masking an outage as "invalid hint" would silently turn
-        // every logout into a confirmation.
+        // 期限切れ、改ざん、ほかの発行者のヒントは、エラーとして報告しない。
+        // ログアウトの権限を示せなかっただけなので、理由を明かさずに確認画面の経路に回す（RP-Initiated Logout 1.0 §2 の MUST）。
+        // ヒントの検証の失敗（`IdTokenHintError`）以外のエラー（鍵の読み込みの失敗など）は投げ直す。
+        // 障害を「無効なヒント」として隠すと、すべてのログアウトが気付かれないまま確認画面に変わってしまうためである。
         if (!(error instanceof IdTokenHintError)) throw error;
         verifiedHint = null;
       }
@@ -125,9 +129,9 @@ async function endSession(request: Request, params: URLSearchParams): Promise<Re
     sessionSubject: session ? session.subject : null,
   });
 
-  // §3: redirect only to the verified client's exactly-matching registered URI,
-  // with state appended. Resolved before the branch because the confirmation
-  // flow honors the same result after approval.
+  // 検証できたクライアントが登録した URI と完全に一致するときだけ、`state` を付けてリダイレクト先にする（RP-Initiated Logout 1.0 §3）。
+  // 確認画面の経路でも承認のあとに同じ結果を使うので、分岐より前に決める。
+  // リダイレクトするかどうかはヒントと完全一致だけで決まり、どちらの経路でログアウトしたかには左右されない。
   const redirectTo = resolvePostLogoutRedirect({
     postLogoutRedirectUri: endSessionRequest.postLogoutRedirectUri,
     state: endSessionRequest.state,
@@ -139,15 +143,15 @@ async function endSession(request: Request, params: URLSearchParams): Promise<Re
   });
 
   if (decision.requiresConfirmation) {
-    // §2 MUST: ask first. Nothing is deleted yet. The minted secret pairs the
-    // HttpOnly cookie with the form's hidden csrf_token; the redirect target
-    // rides inside the cookie.
+    // 先にエンドユーザーに確認する（RP-Initiated Logout 1.0 §2 の MUST）。
+    // ここでは何も削除せず、画面の文言もセッションの状態によって変えない。
+    // 新しく作ったシークレットを `HttpOnly` の Cookie とフォームの隠しフィールドの `csrf_token` の両方に入れ、リダイレクト先は Cookie に入れる。
     const csrfSecret = generateRandomString(32);
     return confirmationScreen(csrfSecret, [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })]);
   }
 
-  // Immediate logout: a valid hint for the current session's End-User (§2).
-  // Delete the store entry and expire the cookie together.
+  // 現在のセッションのエンドユーザーを示す有効なヒントがあるので、すぐにログアウトする（RP-Initiated Logout 1.0 §2）。
+  // ストアのセッションを削除し、同時に Cookie も期限切れにする。
   if (sessionId) {
     await stores.browserSessionStore.delete(sessionId);
   }

@@ -39,37 +39,39 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Answer a pushed authorization request (POST /par) with the response of
- * pushAuthorizationRequest() — 201 with a request_uri, or an OAuth error —
- * plus the clientCors headers.
+ * PAR の応答に CORS のヘッダーを付けて返す。
+ *
+ * `POST /par` のリクエストを `pushAuthorizationRequest()` で処理し、その応答（成功すれば `request_uri` を含む 201、失敗すれば OAuth のエラー）に `clientCors` のヘッダーを付けて返す。
  */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await pushAuthorizationRequest(request));
 }
 
 /**
- * Answer the CORS preflight of /par: 204 with no body and the clientCors
- * headers (allowed origin, methods, headers, max age).
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/par` で、応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
 /**
- * Authenticate the client, validate the pushed authorization parameters as
- * /authorize would and store them, answering 201 with the request_uri to send
- * to /authorize and its expires_in, never cached.
+ * 認可のパラメータを検証して保存し、201 で応答する。
  *
- * Errors are uncacheable OAuth error JSON: 400 invalid_request for a body that
- * is not form-urlencoded, a repeated parameter, or a pushed request_uri or
- * request; 401 invalid_client (with WWW-Authenticate) when client
- * authentication fails; 400 with the error /authorize would answer for invalid
- * parameters (redirect_uri, scope, PKCE, ...); 500 server_error otherwise.
+ * クライアントを認証し、プッシュされたパラメータを `/authorize` と同じ規則で検証して保存する。
+ * 201 のボディには、`/authorize` に渡す `request_uri` とその有効期間（`expires_in`）を入れ、キャッシュを禁止して返す。
+ *
+ * 失敗したときは、キャッシュを禁止した OAuth のエラーの JSON で次のように応答する。
+ * - ボディがフォームの形式でないとき、パラメータが繰り返されたとき、`request_uri` か `request` が含まれるときは、400 の `invalid_request`
+ * - クライアントの認証に失敗したときは、`WWW-Authenticate` ヘッダーを付けた 401 の `invalid_client`
+ * - パラメータが正しくないとき（`redirect_uri`、`scope`、PKCE など）は、`/authorize` と同じエラーの 400
+ * - それ以外の失敗は、500 の `server_error`
  *
  * @spec RFC 9126 §2
  */
 async function pushAuthorizationRequest(request: Request): Promise<Response> {
-  // RFC 9126 §2.1: the body MUST be application/x-www-form-urlencoded.
+  // ボディが `application/x-www-form-urlencoded` でなければ、400 の `invalid_request` で応答する（RFC 9126 §2.1）。
   if (!isFormUrlEncoded(request)) {
     return parJson(
       { error: 'invalid_request', error_description: 'Pushed authorization requests must use application/x-www-form-urlencoded' },
@@ -77,7 +79,7 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
     );
   }
 
-  // RFC 6749 §3.1: request parameters MUST NOT be repeated.
+  // 同じ名前のパラメータが繰り返されていれば、400 の `invalid_request` で応答する（RFC 6749 §3.1）。
   const { params, duplicateKey } = uniqueParams(new URLSearchParams(await request.text()));
   if (duplicateKey !== undefined) {
     return parJson(
@@ -87,36 +89,33 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
   }
 
   try {
-    // --- Pushed authorization request pipeline ------------------------------
-    // Each step below is an independent function from
-    // @maronn-openid-connect/experimental/par, called in RFC 9126 §2.1 order. Delete a call
-    // to drop that validation, or insert your own logic between steps.
+    // 以下は、プッシュされた認可リクエストを処理するパイプラインである。
+    // 各ステップは `@maronn-openid-connect/experimental/par` の独立した関数で、RFC 9126 §2.1 の順に呼ぶ。
+    // 呼び出しを消せばその検証を外せ、ステップの間に独自の処理を挟むこともできる。
 
-    // RFC 9126 §2.1: request_uri MUST NOT be pushed. The request parameter
-    // (PAR + JAR, §3) is not supported by this generated provider.
+    // `request_uri` か `request` を含むリクエストを、`invalid_request` で拒否する。
+    // `request_uri` はプッシュしてはならず（RFC 9126 §2.1 の MUST NOT）、`request` パラメータ（リクエストオブジェクトとの併用、RFC 9126 §3）にはこの生成された OP が対応していない。
     rejectForbiddenParParams(params);
 
-    // RFC 9126 §2.1: authenticate exactly like the token endpoint does. Public
-    // clients present only client_id (no credentials).
+    // トークンエンドポイントとまったく同じ規則で、クライアントを認証する（RFC 9126 §2.1）。
+    // パブリッククライアントは認証情報を送らず、`client_id` だけを送る。
     const clientId = await authenticateParClient({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
       clientResolver,
     });
 
-    // client_id is a required authorization request parameter (RFC 9126 §2.1),
-    // so it is pinned to the authenticated client before validation and storage.
+    // `client_id` は認可リクエストの必須のパラメータなので（RFC 9126 §2.1）、検証と保存の前に、認証したクライアントの ID に置き換える。
     const pushedParams = { ...params, client_id: clientId };
 
-    // RFC 9126 §2.1: "validate the request the same way the authorization
-    // endpoint would" — an unregistered redirect_uri or a bad scope fails here,
-    // before the End-User ever sees a screen.
+    // パラメータを、認可エンドポイントと同じ規則で検証する（RFC 9126 §2.1）。
+    // 登録されていない `redirect_uri` や不正な `scope` は、エンドユーザーが画面を見る前にここで拒否する。
     await validatePushedAuthorizationParams(pushedParams, clientResolver, {
       allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
     });
 
-    // RFC 9126 §2.2 / §7.1: mint a random reference and store the request under
-    // it. Client credentials are never persisted.
+    // 暗号論的な乱数で参照値を作り、その参照値でリクエストを保存する（RFC 9126 §2.2、§7.1）。
+    // クライアントの認証情報は保存しない。
     const record = await createPushedAuthorizationRecord({
       clientId,
       params: pushedParams,
@@ -125,14 +124,14 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
     });
     const response = buildPushedAuthorizationResponse(record);
 
-    // Never log the pushed parameters: they can carry PII such as login_hint,
-    // and the Authorization header carries the client_secret.
+    // プッシュされたパラメータそのものは、ログに出さない。
+    // `login_hint` などの個人情報を含むことがあり、`Authorization` ヘッダーには `client_secret` が含まれる。
 
-    // RFC 9126 §2.2: 201 Created with a non-cacheable JSON body.
+    // `request_uri` と `expires_in` を、キャッシュを禁止した JSON の 201 で返す（RFC 9126 §2.2）。
     return parJson({ request_uri: response.requestUri, expires_in: response.expiresIn }, 201);
   } catch (error) {
     if (error instanceof ParError) {
-      // RFC 9126 §2.3: token-endpoint style JSON errors; this endpoint never redirects.
+      // `ParError` はトークンエンドポイントと同じ形の JSON のエラーで返し、リダイレクトはしない（RFC 9126 §2.3）。
       return parJson(
         { error: error.code, error_description: error.errorDescription },
         error.statusCode,
@@ -143,7 +142,15 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
   }
 }
 
-/** RFC 9126 §2.2 / §2.3: every PAR response is JSON that must not be cached. */
+/**
+ * キャッシュを禁止した JSON のレスポンスを返す。
+ *
+ * PAR のレスポンスはどれも、キャッシュさせてはならない JSON である（RFC 9126 §2.2、§2.3）。
+ * `Cache-Control: no-cache, no-store` と `Pragma: no-cache` を付け、`wwwAuthenticate` を渡したときは `WWW-Authenticate` ヘッダーにも設定する。
+ *
+ * @spec RFC 9126 §2.2
+ * @spec RFC 9126 §2.3
+ */
 function parJson(body: unknown, status: number, wwwAuthenticate?: string): Response {
   const headers = new Headers({ 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' });
   if (wwwAuthenticate) headers.set('WWW-Authenticate', wwwAuthenticate);

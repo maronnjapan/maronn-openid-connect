@@ -24,17 +24,27 @@ export interface ClientAuthContext {
 }
 
 /**
- * RFC 6749 Section 2.3.1: credentials are application/x-www-form-urlencoded encoded.
- * '+' represents space; '%XX' sequences are percent-decoded.
+ * `+` を空白に戻し、パーセント符号化を復号して返す。
+ *
+ * `Basic` 認証で送るクライアント ID とシークレットは、`application/x-www-form-urlencoded` の形式で符号化されている（RFC 6749 §2.3.1）。
+ * この形式では、`+` が空白を表し、`%XX` の並びがパーセント符号化された文字を表す。
+ * 不正な `%` の並び（`%ZZ` など）があると、`decodeURIComponent()` が投げる `URIError` をそのまま投げる。
+ *
+ * @spec RFC 6749 §2.3.1
  */
 function formUrlDecode(value: string): string {
   return decodeURIComponent(value.replace(/\+/g, '%20'));
 }
 
 /**
- * RFC 7235 Section 2.1: HTTP authentication scheme は case-insensitive。
- * スキーム名のみを ASCII 小文字化して指定スキームと比較する。
- * 認証情報本体（base64 や bearer token 値）は変換しない。
+ * スキームが一致すれば、ヘッダー値の認証情報部分を返す。
+ *
+ * `Authorization` ヘッダーの値を最初の半角空白で分け、前半（スキーム名）と `scheme` をどちらも小文字にしてから比べる。
+ * HTTP の認証スキームは大文字と小文字を区別しないためである。
+ * 後半の認証情報（base64 の値やトークンの値）は変換せずに返す。
+ * 空白を含まない値と、スキームが一致しない値には `null` を返す。
+ *
+ * @spec RFC 7235 §2.1
  */
 function matchAuthScheme(
   authHeader: string,
@@ -52,10 +62,11 @@ function matchAuthScheme(
 }
 
 /**
- * Authorization ヘッダー値の認証スキーム（最初の空白より前）が、scheme と大文字小文字を区別せずに一致するかを返す。
+ * 認証スキームが `scheme` と一致すれば true を返す。
  *
- * 空白を含まない値（`Basic` だけや空文字）は false を返す。スキームより後ろの認証情報は
- * 検査しない（`Basic ` のように空でも true）。
+ * 認証スキームは `Authorization` ヘッダーの値の最初の半角空白より前の部分で、大文字と小文字を区別せずに比べる。
+ * 空白を含まない値（`Basic` だけの値や空文字列）には false を返す。
+ * スキームより後ろの認証情報は確かめないので、`Basic ` のように認証情報が空でも true を返す。
  *
  * @spec RFC 7235 §2.1
  */
@@ -64,8 +75,13 @@ function hasAuthScheme(authHeader: string, scheme: string): boolean {
 }
 
 /**
- * Authorization: Basic ヘッダーから clientId/clientSecret を抽出する。
- * Basic 形式でない、または base64 / フォーマットが不正な場合は null。
+ * `Basic` 認証のクライアント ID とシークレットを返す。
+ *
+ * `Authorization` ヘッダーの値のスキームが `Basic` なら、残りを base64 として復号し、UTF-8 の文字列として読む。
+ * その文字列を最初の `:` で分け、前をクライアント ID、後ろをシークレットとして、それぞれを `application/x-www-form-urlencoded` の形式として復号する（RFC 6749 §2.3.1）。
+ * スキームが `Basic` でない値、base64 として復号できない値、`:` を含まない値、不正な `%` の並びを含む値には `null` を返す。
+ *
+ * @spec RFC 6749 §2.3.1
  */
 export function parseBasicClientCredentials(
   authHeader: string,
@@ -88,7 +104,8 @@ export function parseBasicClientCredentials(
     return null;
   }
 
-  // RFC 6749 Section 2.3.1: decode form-urlencoded credentials after splitting
+  // `:` で分けてから、クライアント ID とシークレットをそれぞれ復号する（RFC 6749 §2.3.1）。
+  // 先に復号すると、符号化された `:`（`%3A`）と区切りの `:` を区別できなくなる。
   try {
     return {
       clientId: formUrlDecode(decoded.slice(0, separatorIndex)),
@@ -115,27 +132,33 @@ export interface PresentedClientCredentials {
 }
 
 /**
- * リクエストからクライアント資格情報を抽出する
+ * リクエストから認証情報と認証方式を取り出して返す。
  *
- * - `Authorization: Basic` → client_secret_basic
- * - ボディの client_id + client_secret → client_secret_post
- * - ボディの client_id のみ → none（public client の識別）
+ * 返す認証方式は実際に使われた方式で、次のように決める。
+ * - `Authorization: Basic` ヘッダーがあれば `client_secret_basic`
+ * - ボディに `client_id` と `client_secret` があれば `client_secret_post`
+ * - ボディに `client_id` だけがあれば `none`（パブリッククライアントが自分を示す場合）
  *
- * OAuth 2.1 §2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
- * RFC 6749 §4.1.3: 未認証クライアントも client_id を送らなければならない。
+ * 1 つのリクエストで使える認証方式は 1 つだけなので、`Basic` ヘッダーとボディの `client_secret` を両方送ったリクエストは拒否する（OAuth 2.1 §2.3）。
+ * ボディの `client_id` はクライアントを示す識別子で認証方式ではないので、`Basic` ヘッダーと一緒に送られても受け付ける。
+ * その場合は、`Basic` ヘッダーのクライアント ID と一致することを確かめる。
+ *
+ * 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
+ * クライアント ID は、認証しないクライアントも送らなければならない（RFC 6749 §4.1.3）。
  *
  * @spec OAuth 2.1 §2.3
  * @spec OIDC Core 1.0 §9
- * @throws {TokenError} invalid_request（複数方式）/ invalid_client（形式不正・client_id 欠落）
+ * @throws {TokenError} `invalid_request`: `Basic` ヘッダーとボディの `client_secret` を両方送ったとき、またはボディの `client_id` が `Basic` ヘッダーのクライアント ID と違うとき
+ * @throws {TokenError} `invalid_client`: `Basic` ヘッダーの値を読み取れないとき、またはクライアント ID がないとき
  */
 export function extractClientCredentials(
   context: ClientAuthContext,
 ): PresentedClientCredentials {
   const { params, authorizationHeader } = context;
 
-  // RFC 6749 §3.2: "Parameters sent without a value MUST be treated as if they
-  // were omitted from the request." 空文字列の client_secret はここで「未提示」に
-  // 正規化し、多重方式判定・method 判定・後段検証の意味論を一箇所で揃える。
+  // 空文字列の `client_secret` を、送られなかったもの（`undefined`）に置き換える。
+  // 値のないパラメータは、リクエストから省かれたものとして扱わなければならない（RFC 6749 §3.2 の MUST）。
+  // ここで一度置き換えるので、複数方式の判定、認証方式の判定、後の検証で空文字列の扱いが食い違わない。
   const postSecret =
     params.client_secret === '' ? undefined : params.client_secret;
 
@@ -143,11 +166,11 @@ export function extractClientCredentials(
   const hasPostCredential =
     params.client_id !== undefined || postSecret !== undefined;
 
-  // RFC 6749 §2.3 / OAuth 2.1 §2.3: 1リクエストで複数の「認証方式」を併用してはいけない。
-  // ただし §3.2.1 の client_id 単独送信は自身を識別するための「識別子」であって認証方式ではない。
-  // よって多重認証方式の判定はボディの client_secret（client_secret_post の資格情報）の有無のみで行い、
-  // Basic ヘッダ + ボディ client_id（secret なし）という多くのクライアントライブラリの実装を拒否しない。
-  // 空値の client_secret は資格情報を運ばないため「もう一つの認証方式」に数えない（RFC 6749 §2.3）。
+  // `Basic` ヘッダーとボディの `client_secret` を両方送っていれば `invalid_request` を投げる（RFC 6749 §2.3、OAuth 2.1 §2.3）。
+  // 1 つのリクエストで複数の認証方式を使ってはならない。
+  // ボディの `client_id` だけはクライアントを示す識別子で、認証方式ではない（RFC 6749 §3.2.1）。
+  // そのため判定にはボディの `client_secret`（`client_secret_post` の認証情報）の有無だけを使い、多くのクライアントライブラリが送る「`Basic` ヘッダーとボディの `client_id`」の組み合わせは拒否しない。
+  // 空の `client_secret` は認証情報を含まないので、もう一つの認証方式には数えない。
   validateSingleClientAuthMethod(hasBasicHeader, postSecret);
 
   let clientId: string | undefined;
@@ -161,8 +184,8 @@ export function extractClientCredentials(
         'Invalid Authorization header format',
       );
     }
-    // RFC 6749 §3.2.1: Basic と併送された client_id は識別子として許容するが、
-    // Basic 側の client_id と食い違う場合は矛盾（クライアント設定ミス／混同）として拒否する。
+    // ボディの `client_id` が `Basic` ヘッダーのクライアント ID と違えば `invalid_request` を投げる（RFC 6749 §3.2.1）。
+    // `Basic` ヘッダーと一緒に送られた `client_id` は識別子として受け付けるが、食い違いはクライアントの設定の誤りや取り違えとして拒否する。
     validateClientIdConsistency(params.client_id, basic.clientId);
     clientId = basic.clientId;
     clientSecret = basic.clientSecret;
@@ -171,8 +194,8 @@ export function extractClientCredentials(
     clientSecret = postSecret;
   }
 
-  // client_id は public / confidential を問わず必須。
-  // RFC 6749 §4.1.3: 未認証クライアントは client_id を送らなければならない。
+  // クライアント ID がなければ `invalid_client` を投げる。
+  // パブリッククライアントもコンフィデンシャルクライアントもクライアント ID は必須で、認証しないクライアントも `client_id` を送らなければならない（RFC 6749 §4.1.3）。
   const requiredClientId = requireClientId(clientId);
 
   const method = selectPresentedClientAuthMethod({
@@ -184,18 +207,20 @@ export function extractClientCredentials(
 }
 
 /**
- * 使用された認証方式が、クライアントに登録された方式のどれかであることを検証する
+ * 使われた認証方式を、クライアントの登録と照合する。
  *
- * 登録方式の既定は client_secret_basic。
- * - 登録が `none`（public client）: 資格情報を一切提示していないことを要求する。
- *   提示していれば confidential への昇格混同を防ぐため拒否する。
- * - 登録が confidential 方式: client_secret 必須。実際に使われた方式が登録方式のどれでも
- *   なければ認証方式ダウングレードを防ぐため拒否する。
+ * 登録された方式（`tokenEndpointAuthMethods`）がなければ、既定の `client_secret_basic` だけが登録されているものとして扱う。
+ *
+ * 登録が `none`（パブリッククライアント）なら、使われた方式も `none` であること、つまり認証情報を何も提示していないことを求める。
+ * 認証情報を提示していれば拒否し、パブリッククライアントをコンフィデンシャルクライアントと取り違えるのを防ぐ。
+ *
+ * 登録がコンフィデンシャルクライアントの方式なら、`client_secret` の提示を求めたうえで、使われた方式が登録された方式のどれかであることを確かめる。
+ * 登録されていない方式を拒否するのは、認証方式のダウングレードを防ぐためである。
  *
  * @spec OIDC Core 1.0 §9
  * @spec RFC 7591 §2
- * @throws {TokenError} invalid_client
- * @throws {Error} `none` をほかの方式と並べた登録（{@link selectRegisteredClientAuthMethods}）
+ * @throws {TokenError} `invalid_client`: 使われた方式が登録されていないとき、またはコンフィデンシャルクライアントが `client_secret` を提示していないとき
+ * @throws {Error} 登録で `none` をほかの方式と並べているとき（{@link selectRegisteredClientAuthMethods}）
  */
 export function validateClientAuthMethod(
   client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>,
@@ -203,31 +228,32 @@ export function validateClientAuthMethod(
 ): void {
   const registeredMethods = selectRegisteredClientAuthMethods(client);
 
-  // RFC 6749 §2.1 / §3.2.1 / OAuth 2.1 §2.4: public client（auth_method = none）は
-  // client_id のみで識別し、クライアント認証を行わない。
-  // ただし credentials を提示した場合は登録方式（none）と一致しないため拒否し、
-  // confidential への昇格／ダウングレードの混同を防ぐ。
+  // パブリッククライアント（登録した方式が `none`）は、使われた方式が `none` であることだけを確かめて返る（RFC 6749 §2.1、§3.2.1、OAuth 2.1 §2.4）。
+  // パブリッククライアントは `client_id` だけで自分を示し、クライアント認証をしない。
+  // 認証情報を提示していれば、使われた方式が `none` と一致しないので拒否し、コンフィデンシャルクライアントとの取り違え（昇格やダウングレード）を防ぐ。
   if (registeredMethods.includes('none')) {
     validateClientAuthMethodAllowed(presented.method, registeredMethods);
     return;
   }
 
-  // confidential client は client_secret 必須。
+  // コンフィデンシャルクライアントが `client_secret` を提示していなければ `invalid_client` を投げる。
   requireClientSecret(presented.clientSecret);
 
-  // 実際に使われた認証方式が登録方式のどれでもなければ認証失敗とし、認証方式ダウングレードを防ぐ。
+  // 使われた認証方式が登録された方式のどれでもなければ `invalid_client` を投げ、認証方式のダウングレードを防ぐ。
   validateClientAuthMethodAllowed(presented.method, registeredMethods);
 }
 
 /**
- * client_secret を定数時間比較で検証する
+ * `client_secret` を登録値と定数時間で照合する。
  *
- * public client（登録方式 = none）は検証対象が無いためスキップする。
- * clientSecretHash が登録されていれば、提示値のハッシュをそれと比べ、clientSecret は使わない。
+ * パブリッククライアント（登録した方式が `none`）には照合するシークレットがないので、何も確かめずに返る。
+ * `clientSecretHash` が登録されていれば、提示値のハッシュをその値と比べ、`clientSecret` は使わない（{@link verifyClientSecretHash}）。
+ * 登録されていなければ、提示値を `clientSecret` と比べる（{@link verifyClientSecretValue}）。
  *
  * @spec OAuth 2.1 §7.4.1
  * @spec RFC 6749 §10.10
- * @throws {TokenError} invalid_client
+ * @throws {TokenError} `invalid_client`: 提示値が登録値と一致しないとき（`clientSecretHash` と照合する場合は、提示値がないときも）
+ * @throws {Error} 登録で `none` をほかの方式と並べているとき（{@link selectRegisteredClientAuthMethods}）
  */
 export async function verifyClientSecret(
   client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods' | 'clientSecret' | 'clientSecretHash'>,
@@ -243,16 +269,23 @@ export async function verifyClientSecret(
 }
 
 /**
- * 登録用に client_secret のハッシュを作る。{@link TokenClientInfo.clientSecretHash} に保存する値で、
- * SHA-256 の base64url（パディング無し）。
+ * シークレットの SHA-256 ハッシュを base64url で返す。
+ *
+ * 返す値は、クライアントを登録するときに {@link TokenClientInfo.clientSecretHash} に保存する値である。
+ * base64url の末尾にパディング（`=`）は付けない。
  */
 export async function hashClientSecret(clientSecret: string): Promise<string> {
   return sha256(clientSecret);
 }
 
 /**
- * OAuth 2.1 §2.3: Basic ヘッダーとボディの client_secret を併用していないことを検証する。
- * 空の client_secret は未提示として扱う（RFC 6749 §3.2）。
+ * `Basic` ヘッダーと `client_secret` の併用を拒否する。
+ *
+ * 1 つのリクエストで使える認証方式は 1 つだけなので、`Basic` ヘッダーとボディの `client_secret` の両方があれば拒否する。
+ * 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
+ *
+ * @spec OAuth 2.1 §2.3
+ * @throws {TokenError} `invalid_request`: `Basic` ヘッダーがあり、ボディに空でない `client_secret` もあるとき
  */
 export function validateSingleClientAuthMethod(
   hasBasicHeader: boolean,
@@ -267,8 +300,13 @@ export function validateSingleClientAuthMethod(
 }
 
 /**
- * RFC 6749 §3.2.1: Basic と併送されたボディの client_id が Basic 側と一致することを検証する。
- * ボディの client_id が省略されていれば検査しない。
+ * ボディと `Basic` の `client_id` の一致を検証する。
+ *
+ * `Basic` ヘッダーと一緒にボディで送られた `client_id` は識別子として受け付けるが、`Basic` ヘッダーのクライアント ID と違えば拒否する。
+ * ボディの `client_id` が省略されていれば、何も確かめない。
+ *
+ * @spec RFC 6749 §3.2.1
+ * @throws {TokenError} `invalid_request`: ボディの `client_id` が `Basic` ヘッダーのクライアント ID と違うとき
  */
 export function validateClientIdConsistency(
   bodyClientId: string | undefined,
@@ -286,7 +324,12 @@ export function validateClientIdConsistency(
 }
 
 /**
- * RFC 6749 §4.1.3: client_id があることを確かめる。public client も client_id を送る。
+ * クライアント ID があればそのまま返す。
+ *
+ * 認証しないパブリッククライアントも `client_id` を送らなければならないので、どの認証方式でも必須として確かめる。
+ *
+ * @spec RFC 6749 §4.1.3
+ * @throws {TokenError} `invalid_client`: クライアント ID が `undefined` か空文字列のとき
  */
 export function requireClientId(clientId: string | undefined): string {
   if (!clientId) {
@@ -299,9 +342,14 @@ export function requireClientId(clientId: string | undefined): string {
 }
 
 /**
- * リクエストが実際に使ったクライアント認証方式を選ぶ。
- * Basic ヘッダーがあれば client_secret_basic、ボディに secret があれば client_secret_post、
- * どちらも無ければ none とする。登録方式との照合は行わない。
+ * リクエストが実際に使った認証方式を返す。
+ *
+ * 次の順に判定する。
+ * - `Basic` ヘッダーがあれば `client_secret_basic`
+ * - シークレットがあれば `client_secret_post`
+ * - どちらもなければ `none`
+ *
+ * 登録された方式との照合はしない（{@link validateClientAuthMethod} が行う）。
  */
 export function selectPresentedClientAuthMethod(presented: {
   hasBasicHeader: boolean;
@@ -312,10 +360,14 @@ export function selectPresentedClientAuthMethod(presented: {
 }
 
 /**
- * クライアントが使ってよい認証方式の一覧（`tokenEndpointAuthMethods`）を返す。
- * OIDC Core 1.0 §9 / RFC 7591 §2: 登録が無ければ既定の client_secret_basic だけ。
+ * クライアントが使ってよい認証方式の一覧を返す。
  *
- * @throws {Error} `none` をほかの方式と並べた登録。public client かどうかが決まらない
+ * `tokenEndpointAuthMethods` が登録されていれば、その複製を返す。
+ * 登録されていなければ、既定の `client_secret_basic` だけの一覧を返す。
+ *
+ * @spec OIDC Core 1.0 §9
+ * @spec RFC 7591 §2
+ * @throws {Error} 登録で `none` をほかの方式と並べているとき（パブリッククライアントかどうかが決まらないため）
  */
 export function selectRegisteredClientAuthMethods(
   client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>,
@@ -329,17 +381,25 @@ export function selectRegisteredClientAuthMethods(
 }
 
 /**
- * public client（登録した方式が `none`）かどうか。public client はクライアント認証をせず、
- * client_id だけで自分を示す（OAuth 2.1 §2.4 / RFC 7591 §2）。
+ * パブリッククライアントなら true を返す。
  *
- * @throws {Error} `none` をほかの方式と並べた登録（{@link selectRegisteredClientAuthMethods}）
+ * パブリッククライアントは登録した方式が `none` のクライアントで、クライアント認証をせず、`client_id` だけで自分を示す。
+ * 方式が登録されていなければ、既定の `client_secret_basic` として扱うので false を返す。
+ *
+ * @spec OAuth 2.1 §2.4
+ * @spec RFC 7591 §2
+ * @throws {Error} 登録で `none` をほかの方式と並べているとき（{@link selectRegisteredClientAuthMethods}）
  */
 export function isPublicTokenClient(client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>): boolean {
   return selectRegisteredClientAuthMethods(client).includes('none');
 }
 
 /**
- * confidential client が client_secret を提示していることを確かめる。
+ * `client_secret` が提示されていればそのまま返す。
+ *
+ * コンフィデンシャルクライアントが `client_secret` を提示したことを確かめるために使う。
+ *
+ * @throws {TokenError} `invalid_client`: `client_secret` が `undefined` か空文字列のとき
  */
 export function requireClientSecret(clientSecret: string | undefined): string {
   if (!clientSecret) {
@@ -352,8 +412,12 @@ export function requireClientSecret(clientSecret: string | undefined): string {
 }
 
 /**
- * 実際に使われた認証方式が、クライアントに登録された方式のどれかであることを検証する。
- * 認証方式のダウングレードや public / confidential の混同を防ぐ（OIDC Core 1.0 §9）。
+ * 使われた認証方式が登録の一覧にあるかを検証する。
+ *
+ * 一覧にない方式を拒否するのは、認証方式のダウングレードや、パブリッククライアントとコンフィデンシャルクライアントの取り違えを防ぐためである。
+ *
+ * @spec OIDC Core 1.0 §9
+ * @throws {TokenError} `invalid_client`: 使われた方式が `registeredMethods` にないとき
  */
 export function validateClientAuthMethodAllowed(
   presentedMethod: ClientAuthMethod,
@@ -368,8 +432,14 @@ export function validateClientAuthMethodAllowed(
 }
 
 /**
- * OAuth 2.1 §7.4.1 / RFC 6749 §10.10: 提示された client_secret を登録値と定数時間で比較する。
- * どちらかが未指定なら空文字として比較し、一致しなければ invalid_client。
+ * 提示されたシークレットを登録値と定数時間で比べる。
+ *
+ * どちらかが `undefined` なら空文字列として比べるので、両方とも `undefined` なら一致したものとして扱う。
+ * 提示の有無はこの関数では確かめない（コンフィデンシャルクライアントでは {@link validateClientAuthMethod} が確かめる）。
+ *
+ * @spec OAuth 2.1 §7.4.1
+ * @spec RFC 6749 §10.10
+ * @throws {TokenError} `invalid_client`: 提示値と登録値が一致しないとき
  */
 export async function verifyClientSecretValue(
   presentedSecret: string | undefined,
@@ -388,9 +458,14 @@ export async function verifyClientSecretValue(
 }
 
 /**
- * OAuth 2.1 §7.4.1 / RFC 6749 §10.10: 提示された client_secret のハッシュを、登録された
- * ハッシュと定数時間で比較する。提示が無い、または一致しなければ invalid_client。
- * 空文字のハッシュが登録されていても、未提示の client_secret は通さない。
+ * シークレットのハッシュを登録値と定数時間で比べる。
+ *
+ * 提示されたシークレットを {@link hashClientSecret} でハッシュにしてから、登録されたハッシュと比べる。
+ * シークレットが `undefined` か空文字列なら比べずに拒否するので、空文字列のハッシュが登録されていても、シークレットを提示しないリクエストは通らない。
+ *
+ * @spec OAuth 2.1 §7.4.1
+ * @spec RFC 6749 §10.10
+ * @throws {TokenError} `invalid_client`: シークレットがないとき、またはハッシュが一致しないとき
  */
 export async function verifyClientSecretHash(
   presentedSecret: string | undefined,

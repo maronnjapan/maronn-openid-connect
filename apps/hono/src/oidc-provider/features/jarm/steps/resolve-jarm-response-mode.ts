@@ -15,7 +15,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'jarm',
   kind: 'resolve',
-  label: 'Interpret response_mode=query.jwt',
+  label: 'response_mode=query.jwt を解釈する',
   spec: 'JARM §2.3 / §3',
   function: 'resolveJarmResponseContext',
   consumes: ['params', 'effectiveParams', 'client', 'redirectUri', 'state', 'issuer'],
@@ -24,17 +24,27 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — JARM §2.3: interpret response_mode now that redirect_uri is
- * verified, so an unsupported JWT mode can be reported as a redirectable
- * error. Values outside the `.jwt` family stay ignored exactly as before, and
- * the result is undefined: the plain query response.
+ * `response_mode=query.jwt` ならそのモードを返す。
  *
- * Only a response type without tokens is JWT-secured here. JARM §2.3.1
- * forbids query.jwt for a response type that contains token or id_token
- * unless the JWT is encrypted, and §2.3.4 answers `jwt` for them with
- * fragment.jwt, which this OP does not implement. Such a request (the
- * Implicit Flow) is left to the feature that answers its response type,
- * which refuses the JWT mode in its own default response mode.
+ * 省略形の `jwt` も `query.jwt` と同じに扱う（JARM §2.3.4）。
+ * 返すモードは、`selectJarmSigningKey()` がリクエストコンテキストの汎用の署名鍵から選んだ RS256 の鍵で署名する。
+ * `.jwt` で終わるほかの値（`fragment.jwt`、`form_post.jwt` など）には `invalid_request` を投げる。
+ * `.jwt` で終わらない値のときと指定がないときは、JARM としては何もせずに `undefined` を返す。
+ * そのときのレスポンスモードは、ほかの機能が決めるか、パラメータをクエリに付ける通常のレスポンスになる。
+ *
+ * `redirect_uri` を検証したあとで呼ぶのは、対応していない JWT のモードを、リダイレクトで返せるエラーとして報告するためである（JARM §2.3）。
+ * ただし、このエラーはレスポンスモードが決まる前に投げるので、JWT にしない通常のクエリのエラーレスポンスで返る。
+ *
+ * JWT にするのは、トークンを返さないレスポンスタイプの認可レスポンスだけである。
+ * `response_type` が `token` か `id_token` を含むときは、何もせずに `undefined` を返す。
+ * JARM §2.3.1 は、JWT を暗号化しない限りそのようなレスポンスタイプに `query.jwt` を使うことを禁じ、§2.3.4 はそれらの `jwt` を `fragment.jwt` で返すとしているが、この OP は `fragment.jwt` を実装していないためである。
+ * そのようなリクエスト（インプリシットフローとハイブリッドフロー）はレスポンスタイプを扱う機能に任せ、その機能が JWT のモードを拒否するエラーを既定のレスポンスモードで返す。
+ *
+ * JARM は実験的な機能で、`@maronn-openid-connect/experimental` の関数を使う。
+ *
+ * @throws {AuthorizationError} `invalid_request`: `response_mode` が対応していない `.jwt` の値のとき。
+ * @throws {Error} RS256 の署名鍵が登録されていないとき（`selectJarmSigningKey()`）。
+ * @spec JARM §2.3
  */
 export function resolveJarmResponseContext(
   c: any,
@@ -49,9 +59,8 @@ export function resolveJarmResponseContext(
   }
   const jarmResolution = resolveJarmResponseMode(params);
   if (jarmResolution.kind === 'unsupported-jwt-mode') {
-    // JARM §2.3.2 / §2.3.3 (fragment.jwt / form_post.jwt) are not implemented
-    // here. The rejection itself goes back as a PLAIN query error: the OP
-    // cannot answer in a response mode it does not implement.
+    // `fragment.jwt` と `form_post.jwt`（JARM §2.3.2、§2.3.3）など、実装していない JWT のモードには `invalid_request` を投げる。
+    // OP は実装していないレスポンスモードでは応答できないので、このエラー自体は JWT にしない通常のクエリのエラーレスポンスで返る。
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
       'response_mode ' + jarmResolution.requested + ' is not supported',

@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 9126 §2.3',
   function: 'respondParError',
   consumes: [],
@@ -17,7 +17,14 @@ export const meta = step({
 });
 
 /**
- * RFC 9126 §2.3: token-endpoint style JSON errors. This endpoint never redirects.
+ * ステップのエラーを、JSON のエラーレスポンスで返す。
+ *
+ * `ParEndpointError` には、前のステップが決めたレスポンス（400）をそのまま返す。
+ * `ParError` には、そのステータスコード（`invalid_client` なら 401、それ以外は 400）で `error` と `error_description` を返し、`invalid_client` には `WWW-Authenticate` ヘッダーも付ける。
+ * それ以外のエラーには、500 の `server_error` を返す。
+ * エラーの形はトークンエンドポイントと同じで（RFC 9126 §2.3）、このエンドポイントはリダイレクトしない。
+ *
+ * @spec RFC 9126 §2.3
  */
 export function respondParError(c: any, error: unknown): Response {
   if (error instanceof ParEndpointError) {

@@ -253,25 +253,25 @@ maronn-oidc graph --flow op-flow.json --detail steps --endpoint token
 
 ```mermaid
 flowchart LR
-  subgraph metadata["Metadata"]
-    discovery["GET /.well-known/openid-configuration<br/>Discovery"]
+  subgraph metadata["メタデータ"]
+    discovery["GET /.well-known/openid-configuration<br/>ディスカバリー"]
     jwks["GET /.well-known/jwks.json<br/>JWKS"]
   end
-  subgraph authorization_code["Authorization Code Flow"]
-    authorize["GET|POST /authorize<br/>Authorization endpoint"]
-    login["GET|POST /login<br/>Login screen"]
-    consent["GET|POST /consent<br/>Consent screen"]
-    token["POST /token<br/>Token endpoint"]
-    userinfo["GET|POST /userinfo<br/>UserInfo endpoint"]
+  subgraph authorization_code["認可コードフロー"]
+    authorize["GET|POST /authorize<br/>認可エンドポイント"]
+    login["GET|POST /login<br/>ログイン画面"]
+    consent["GET|POST /consent<br/>同意画面"]
+    token["POST /token<br/>トークンエンドポイント"]
+    userinfo["GET|POST /userinfo<br/>UserInfo エンドポイント"]
   end
-  subgraph token_management["Token management"]
-    introspection["POST /introspect<br/>Token introspection endpoint"]
-    revocation["POST /revoke<br/>Token revocation endpoint"]
+  subgraph token_management["トークンの管理"]
+    introspection["POST /introspect<br/>トークンイントロスペクションエンドポイント"]
+    revocation["POST /revoke<br/>トークン失効エンドポイント"]
   end
-  authorize -->|"login required"| login
-  authorize -->|"SSO: consent required"| consent
-  authorize -->|"code (prompt=none / SSO)"| token
-  login -->|"authenticated"| consent
+  authorize -->|"ログインが必要"| login
+  authorize -->|"SSO: 同意が必要"| consent
+  authorize -->|"code（prompt=none / SSO）"| token
+  login -->|"認証済み"| consent
   consent -->|"code"| token
   token -->|"access_token"| userinfo
   token -->|"token"| introspection
@@ -285,18 +285,18 @@ flowchart LR
 ```typescript
 tokenApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the token request — RFC 6749 §4.1.3 / §3.2
+    // [parse-request] トークンリクエストを解析する — RFC 6749 §4.1.3 / §3.2
     const { params, authorization } = await parseTokenRequest(c);
 
-    // [authenticate-client] Authenticate the client — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
+    // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
 
     // ...（grant の検証、鍵の選択、subject の解決、トークンの発行と保存）
 
-    // [build-token-response] Build the token response body — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
+    // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
     const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
 
-    // [respond] Respond (no-store) — RFC 6749 §5.1
+    // [respond] 応答する（no-store） — RFC 6749 §5.1
     return respondToken(c, tokenResponse);
   } catch (error) {
     return respondTokenError(c, error);

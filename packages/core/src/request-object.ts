@@ -67,13 +67,14 @@ export interface ParseRequestObjectOptions {
 }
 
 /**
- * JWT の base64url セグメントをデコードし、UTF-8 の JSON として解析した値を返す。
+ * JWT のセグメントを復号し、JSON として解析して返す。
  *
- * 解析結果の型は検査せず、オブジェクト以外の JSON 値もそのまま返す。標準 base64 の `+` `/` や
- * パディングを含む値も復号する（厳格な base64url 検査はしない）。
+ * セグメントを base64url として復号し、UTF-8 の文字列として読んでから `JSON.parse()` に渡す。
+ * 解析した値の型は確かめないので、オブジェクト以外の JSON の値もそのまま返す。
+ * 標準の base64 の `+` と `/` や、パディングの `=` を含む値も復号する（base64url の厳密な検査はしない）。
  *
- * @throws {DOMException} InvalidCharacterError（base64 として復号できないとき）
- * @throws {SyntaxError} 復号した内容が JSON として解析できないとき
+ * @throws {DOMException} `InvalidCharacterError`: base64 として復号できないとき
+ * @throws {SyntaxError} 復号した文字列を JSON として解析できないとき
  */
 function decodeJwtSegment(segment: string): unknown {
   const json = new TextDecoder().decode(base64UrlToArrayBuffer(segment));
@@ -81,23 +82,37 @@ function decodeJwtSegment(segment: string): unknown {
 }
 
 /**
- * compact JWS としてシリアライズされた Request Object をパース・検証し、
- * payload（Authorization Request パラメータの JSON オブジェクト）を返す。
+ * リクエストオブジェクトを検証し、ペイロードを返す。
  *
- * 次の順で判定する。
+ * `request` は JWS のコンパクト形式（`.` で区切った三つのセグメント）でなければならない。
+ * 返すペイロードは、認可リクエストのパラメータを持つ JSON オブジェクトである。
  *
- * 1. 構造（JWE（5 セグメント）や、3 セグメントでない壊れた compact 表現は拒否する）、
- *    ヘッダー、ペイロード、`alg` の有無を検査する
- * 2. `requiredSigningAlg` があり、ヘッダーの `alg` と違えば、`none` も含めて拒否する（OIDC Core 1.0 §6.3.2）
- * 3. `alg: "none"` は `allowUnsigned` が true のときだけ受理し、署名部が空であることを要求する
- * 4. `supportedSigningAlgs` に無い `alg` を拒否する（RFC 8725 §3.2）
- * 5. `loadJwks` で鍵を読む（無ければ署名付き Request Object を拒否する）
- * 6. `kid` があれば一致する鍵に絞り、その中から `use` が無いか `sig` で、使える alg
- *    （{@link resolveJwkSigningAlg}）がヘッダーの `alg` と同じ鍵だけを候補にする（RFC 8725 §3.1）
- * 7. 候補を `alg` のとおりに import して（{@link importJwkForJwsVerification}。2048 ビット未満の
- *    RSA 鍵は使わない。RFC 7518 §3.3）、署名を検証する
+ * 鍵を読む前に、ヘッダーの `alg` を次の順で確かめる。
+ * `requiredSigningAlg` があれば、それと一致しない `alg` を `none` も含めて最初に拒否する（OIDC Core 1.0 §6.3.2）。
+ * 続いて、`none` を `allowUnsigned` が `true` のときだけ受け付け、`supportedSigningAlgs` にない `alg` を拒否する（RFC 8725 §3.2）。
+ * 鍵は、これらの確認を通った後でだけ、`loadJwks` にヘッダーの `alg` と（あれば）`kid` を渡して読む。
+ * そのため、受け付けないリクエストオブジェクトが `jwks_uri` への通信を起こすことはない。
  *
- * @throws {RequestObjectError} 構造不正・未対応 alg・鍵不一致・署名不一致など
+ * 署名の検証には、ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ読んだすべての鍵を候補にする。
+ * 候補のうち、`use` がないか `sig` で、使える `alg`（{@link resolveJwkSigningAlg}）がヘッダーの `alg` と同じ鍵だけを順に試す（RFC 8725 §3.1）。
+ * 鍵はヘッダーの `alg` のとおりにインポートし（{@link importJwkForJwsVerification}）、2048 ビット未満の RSA 鍵（RFC 7518 §3.3）やインポートできない鍵は飛ばす。
+ * どれか一つの鍵で署名を検証できれば、ペイロードを返す。
+ *
+ * 次のときは `RequestObjectError` を投げる:
+ * - `request` が文字列でないか空のとき、または `.` で区切ったセグメントが三つでないとき（五つのセグメントからなる JWE も拒否する）。
+ * - ヘッダーかペイロードを JSON オブジェクトとして復号できないとき、またはヘッダーに `alg` がないとき。
+ * - `requiredSigningAlg` があり、ヘッダーの `alg` と一致しないとき。
+ * - `alg` が `none` で、`allowUnsigned` が `false` のとき、または署名のセグメントが空でないとき。
+ * - `alg` が `supportedSigningAlgs` にないとき、または `loadJwks` がないか、空の JWK Set を返したとき。
+ * - `loadJwks` が `jwks_uri` の取得の失敗（`ClientJwksUriError`）を投げたとき。理由を含まない固定の文言にする。
+ * - ヘッダーの `kid` と一致する鍵がないとき、ヘッダーの `alg` で使える鍵がないとき、またはどの鍵でも署名を検証できないとき。
+ *
+ * `loadJwks` が `ClientJwksUriError` 以外のエラーを投げたときは、そのまま投げる。
+ *
+ * @spec OIDC Core 1.0 §6.1 / §6.3.2
+ * @spec RFC 8725 §3.1 / §3.2
+ * @spec RFC 7518 §3.3
+ * @throws {RequestObjectError} 形式が不正なとき、`alg` が登録した alg や受け付ける alg と合わないとき、鍵を読めないか見つからないとき、署名を検証できないとき
  */
 export async function parseRequestObject(
   request: string,
@@ -108,8 +123,8 @@ export async function parseRequestObject(
   }
 
   const parts = request.split('.');
-  // OIDC Core §6.1: the Request Object is a JWT. We only accept JWS Compact
-  // Serialization (3 segments). A JWE (5 segments) or any other shape is rejected.
+  // リクエストオブジェクトは JWT であり、そのうち三つのセグメントからなる JWS のコンパクト形式だけを受け付ける（OIDC Core 1.0 §6.1）。
+  // 五つのセグメントからなる JWE など、ほかの形は拒否する。
   if (parts.length !== 3) {
     throw new RequestObjectError(
       'request object is not a JWS compact serialization',
@@ -143,9 +158,8 @@ export async function parseRequestObject(
     throw new RequestObjectError('request object header is missing alg');
   }
 
-  // OIDC Core 1.0 §6.3.2 / OIDC Dynamic Client Registration 1.0 §2: every Request
-  // Object of a client that registered request_object_signing_alg MUST be signed
-  // with it, so this check comes before alg=none is even considered.
+  // request_object_signing_alg を登録したクライアントのリクエストオブジェクトは、すべてその alg で署名されていなければならない
+  // （OIDC Core 1.0 §6.3.2 / OIDC Dynamic Client Registration 1.0 §2）。そのため、`none` を見るより先に確かめる。
   if (options.requiredSigningAlg !== undefined && alg !== options.requiredSigningAlg) {
     throw new RequestObjectError(
       'request object alg does not match the registered request_object_signing_alg',
@@ -156,7 +170,7 @@ export async function parseRequestObject(
     if (!options.allowUnsigned) {
       throw new RequestObjectError('unsigned request object (alg=none) is not supported');
     }
-    // RFC 7515 §6: the "none" algorithm uses an empty signature.
+    // `none` のアルゴリズムでは署名のセグメントが空になるので、空でなければ拒否する（RFC 7519 §6）。
     if (signatureB64 !== '') {
       throw new RequestObjectError('unsigned request object must not carry a signature');
     }
@@ -174,15 +188,14 @@ export async function parseRequestObject(
     throw new RequestObjectError('no JWKS registered to verify the request object signature');
   }
 
-  // kid wins (unique key selection); otherwise try every registered key.
+  // ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ読んだすべての鍵を候補にする。
   const keysOfKid: Jwk[] = kid === undefined ? jwks.keys.slice() : jwks.keys.filter((k) => k.kid === kid);
   if (keysOfKid.length === 0) {
     throw new RequestObjectError('no JWK matched the request object header (kid)');
   }
 
-  // RFC 8725 §3.1: the alg of the header MUST be the algorithm the key is used
-  // with, and each key is used with exactly one algorithm (resolveJwkSigningAlg).
-  // RFC 7517 §4.2: a key published for another use than sig does not verify.
+  // ヘッダーの `alg` は鍵を使うアルゴリズムと一致しなければならず、鍵は使える alg を一つに決めて使う（RFC 8725 §3.1、resolveJwkSigningAlg）。
+  // `use` が `sig` 以外の鍵は、署名の検証に使わない（RFC 7517 §4.2）。
   const candidates = keysOfKid.filter(
     (jwk) => (jwk.use === undefined || jwk.use === 'sig') && resolveJwkSigningAlg(jwk) === alg,
   );
@@ -196,7 +209,7 @@ export async function parseRequestObject(
     try {
       publicKey = await importJwkForJwsVerification(jwk, alg);
     } catch {
-      // An RSA key under 2048 bits (RFC 7518 §3.3) or a key WebCrypto refuses.
+      // 2048 ビット未満の RSA 鍵（RFC 7518 §3.3）や、WebCrypto がインポートできない鍵は飛ばす。
       continue;
     }
     try {
@@ -204,7 +217,7 @@ export async function parseRequestObject(
         return payload as Record<string, unknown>;
       }
     } catch {
-      // try next candidate key
+      // 次の候補の鍵を試す。
     }
   }
 
@@ -212,9 +225,13 @@ export async function parseRequestObject(
 }
 
 /**
- * loadJwks で鍵を読む。jwks_uri の取得の失敗（ClientJwksUriError）は理由を応答に出さない
- * 固定文言の RequestObjectError に変え（失敗の理由は内部ネットワークを探る手がかりになる）、
+ * `loadJwks` にヘッダーの `alg` と（あれば）`kid` を渡して、署名の検証に使う鍵を読んで返す。
+ *
+ * `jwks_uri` の取得の失敗（`ClientJwksUriError`）は、理由を含まない固定の文言の `RequestObjectError` に変えて投げる。
+ * 失敗の理由は OP の内側のネットワークを探る手がかりになるので、応答に出さない。
  * ほかのエラーはそのまま投げる。
+ *
+ * @throws {RequestObjectError} `loadJwks` が `ClientJwksUriError` を投げたとき
  */
 async function loadVerificationKeys(
   loadJwks: NonNullable<ParseRequestObjectOptions['loadJwks']>,
@@ -224,8 +241,7 @@ async function loadVerificationKeys(
   try {
     return await loadJwks(kid === undefined ? { alg } : { alg, kid });
   } catch (e) {
-    // Told apart by shape, not by class: a cache shared by the process may come
-    // from another copy of core (isClientJwksUriError).
+    // クラスではなく形で見分ける。プロセスで共有するキャッシュは、別に読み込まれた core の複製が作ったものかもしれない（isClientJwksUriError）。
     if (isClientJwksUriError(e)) {
       throw new RequestObjectError('the client jwks_uri could not be retrieved');
     }

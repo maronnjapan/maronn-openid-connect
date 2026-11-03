@@ -28,19 +28,19 @@ export const parApp = new Hono<{ Variables: Record<string, any> }>();
 
 parApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the pushed authorization request — RFC 9126 §2.1 / RFC 6749 §3.1
+    // [parse-request] プッシュされた認可リクエストを解析する — RFC 9126 §2.1 / RFC 6749 §3.1
     const { params, authorization } = await parsePushedAuthorizationRequest(c);
 
-    // [authenticate-client] Authenticate the pushing client — RFC 9126 §2.1
+    // [authenticate-client] プッシュしたクライアントを認証する — RFC 9126 §2.1
     const { clientId, pushedParams } = await authenticatePushingClient(c, params, authorization);
 
-    // [validate-request] Validate the request as /authorize would — RFC 9126 §2.1
+    // [validate-request] /authorize と同じ規則でリクエストを検証する — RFC 9126 §2.1
     await validatePushedRequest(c, pushedParams);
 
-    // [store-request] Store the request under a fresh request_uri — RFC 9126 §2.2 / §7.1
+    // [store-request] 新しい request_uri でリクエストを保存する — RFC 9126 §2.2 / §7.1
     const parResponse = await storePushedRequest(c, clientId, pushedParams);
 
-    // [respond] Respond 201 (no-store) — RFC 9126 §2.2
+    // [respond] 201 で応答する（no-store） — RFC 9126 §2.2
     return respondPar(c, parResponse);
   } catch (error) {
     return respondParError(c, error);

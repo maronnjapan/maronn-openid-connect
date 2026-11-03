@@ -50,10 +50,11 @@ export function visibleEndpoints(
     .map((endpoint) => {
       const steps = endpoint.steps.filter((step) => on(step.feature));
       const keys = [...new Set(steps.flatMap((step) => (step.feature === undefined ? [] : [step.feature])))].sort();
+      const controlFlow = endpoint.controlFlows?.[keys.join(',')];
       const edges = edgeSets[endpoint.id]?.[keys.join(',')];
-      if (edges !== undefined) return { ...endpoint, steps, edges };
+      if (edges !== undefined) return { ...endpoint, steps, edges, controlFlow };
       const kept = new Set(steps.map((step) => step.id));
-      return { ...endpoint, steps, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
+      return { ...endpoint, steps, controlFlow, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
     });
 }
 
@@ -159,10 +160,14 @@ export function endpointsUsing(data: MapData, flow: OpFlow, id: string, maxDepth
  * function of the pipeline.ts of a Hono endpoint. Their steps are blocks of
  * that file, so no step calls the function by name.
  */
-export function endpointsInModule(flow: OpFlow, card: FunctionCard): FlowEndpoint[] {
+export function endpointsInModule(flow: OpFlow, card: Pick<FunctionCard, 'package' | 'module'>): FlowEndpoint[] {
+  return flow.endpoints.filter((endpoint) => holdsFunction(endpoint, card));
+}
+
+/** Whether the own file of an endpoint (the route.ts of Next.js, the pipeline.ts of Hono) holds a function. */
+export function holdsFunction(endpoint: Pick<FlowEndpoint, 'module'>, card: Pick<FunctionCard, 'package' | 'module'>): boolean {
   const root = card.package === 'nextjs' ? 'app/' : card.package === 'hono' ? 'oidc-provider/' : undefined;
-  if (root === undefined) return [];
-  return flow.endpoints.filter((endpoint) => endpoint.module !== undefined && `${root}${endpoint.module}` === card.module);
+  return root !== undefined && endpoint.module !== undefined && `${root}${endpoint.module}` === card.module;
 }
 
 /** The functions whose body calls a function, by name. */

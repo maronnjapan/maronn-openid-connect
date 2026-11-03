@@ -10,20 +10,30 @@
  */
 
 /**
- * リダイレクト先 URL を確定する。条件を満たさなければ null（呼び出し側は
- * 完了画面を表示する。fail-closed）。
+ * ログアウト後のリダイレクト先の URL か `null` を返す。
  *
- * 完全一致は文字列比較で行い、正規化・前方一致・クエリ無視をしない
- * （authorize の redirect_uri 検証と同じ判断。RFC 6749 §10.15 のオープン
- * リダイレクタ回避）。`state` は URL API のクエリ付加でのみ出力するため、
- * URL エンコードを通らずに応答へ出る経路はない。
+ * 次のどれかに当てはまるときは `null` を返し、呼び出し側はリダイレクトせずに完了画面を表示する。
+ * - `verifiedClientId` が `null`（ヒントがないか無効）のとき。
+ * - `postLogoutRedirectUri` が指定されていないとき。
+ * - `postLogoutRedirectUri` が `registeredUris` のどれとも一致しないとき。
+ * - 一致した登録値が相対 URI などで、`URL` として解析できないとき。
  *
- * @param options.postLogoutRedirectUri リクエストのパラメータ値
- * @param options.state リクエストの `state`。リダイレクトしない場合はどこにも出力されない
- * @param options.verifiedClientId `decideLogoutFlow` が返した検証済みクライアント
- *   （null はヒント無効 = §3 によりリダイレクト禁止）
- * @param options.registeredUris verifiedClientId に登録された
- *   `post_logout_redirect_uris`（生成コードの設定から引く）
+ * RP-Initiated Logout 1.0 §3 は、`id_token_hint` を伴わない要求でのリダイレクトと、登録された値と一致しない URI へのリダイレクトを禁じている（MUST NOT）。
+ * 一致は文字列の完全一致で判定し、正規化、前方一致、クエリを無視した比較はしない。
+ * これは認可エンドポイントの `redirect_uri` の検証と同じ判定で、オープンリダイレクトを防ぐ（RFC 6749 §10.15）。
+ *
+ * `state` が指定されていれば、`URL` の `searchParams` でクエリに付けてから URL を返す。
+ * `state` はこの方法でだけ出力するので、URL エンコードされずにレスポンスに出ることはない。
+ *
+ * @param options.postLogoutRedirectUri リクエストの `post_logout_redirect_uri` パラメータの値
+ * @param options.state リクエストの `state`。
+ *   リダイレクトしないときは、どこにも出力しない。
+ * @param options.verifiedClientId `decideLogoutFlow()` が返した検証済みのクライアント。
+ *   `null` はヒントが無効であることを示し、このときはリダイレクトしない。
+ * @param options.registeredUris `verifiedClientId` のクライアントに登録された `post_logout_redirect_uris`。
+ *   生成されたコードは、設定から取り出して渡す。
+ * @spec RP-Initiated Logout 1.0 §3
+ * @spec RFC 6749 §10.15
  */
 export function resolvePostLogoutRedirect(options: {
   postLogoutRedirectUri: string | undefined;
@@ -44,8 +54,7 @@ export function resolvePostLogoutRedirect(options: {
   try {
     url = new URL(postLogoutRedirectUri);
   } catch {
-    // 登録簿に相対 URI などの不正値が紛れていた場合。組み立てられない値へは
-    // リダイレクトしない。
+    // 登録された値が相対 URI などで `URL` を組み立てられないときは、リダイレクトしない。
     return null;
   }
   if (state !== undefined) {

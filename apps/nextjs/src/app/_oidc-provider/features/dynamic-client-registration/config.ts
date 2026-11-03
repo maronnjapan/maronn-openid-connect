@@ -138,16 +138,16 @@ declare module '../../config' {
 }
 
 /**
- * Extend the settings of this process where the app starts (instrumentation.ts).
+ * このプロセスの設定に `additions` を反映する。
  *
- * The additions add to the lists and the table instead of replacing them, so a
- * deployment extends what the generated code allows without repeating it:
- * tokenEndpointAuthMethods, grantTypes and jwksPurposes gain the given values
- * (each once), and customClientMetadata gains the given validators (one with
- * the name of a generated validator replaces it). The scalar settings and the
- * verifier functions replace the defaults; a field left out or undefined keeps
- * them. To take a value out of a generated list, or to drop a verifier set
- * above, edit it above.
+ * アプリの起動時（instrumentation.ts）に呼ぶ。
+ * `dynamicClientRegistrationConfig` のオブジェクトをその場で書き換え、何も返さない。
+ * このオブジェクトはプロセスで 1 つ（`shared()`）なので、書き換えた値はルートハンドラにも反映される。
+ *
+ * 一覧と表は置き換えずに追加するので、デプロイごとの設定は、生成されたコードが許す値を繰り返し書かずに広げられる。
+ * `tokenEndpointAuthMethods`、`grantTypes`、`jwksPurposes` には指定した値を重複なく加え、`customClientMetadata` には指定した検証関数を加える（生成された検証関数と同じ名前なら、生成されたほうを置き換える）。
+ * それ以外の項目（数値の設定と検証関数）は指定した値で置き換え、省いた項目と `undefined` の項目はいまの値のまま残す。
+ * 生成された一覧から値を除くときや、上で設定した検証関数を外すときは、このファイルの `dynamicClientRegistrationConfig` を直接編集する。
  */
 export function extendDynamicClientRegistrationConfig(additions: Partial<DynamicClientRegistrationConfig>): void {
   const { tokenEndpointAuthMethods, grantTypes, jwksPurposes, customClientMetadata: customMetadata, ...replaced } = additions;

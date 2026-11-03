@@ -28,28 +28,41 @@ export interface LogoutConfirmation {
   redirectTo: string | null;
 }
 
-/** Build the Set-Cookie value of the logout confirmation: the CSRF secret of the form and the resolved redirect URL (base64url), HttpOnly and short-lived. */
+/**
+ * ログアウトの確認の `Set-Cookie` の値を組み立てて返す。
+ *
+ * Cookie の値は、フォームの CSRF 用のシークレットと、確認画面を出すときに決めたリダイレクト先の URL を base64url にしたものを、`.` でつないだものである。
+ * リダイレクト先がなければ、`.` のあとを空にする。
+ * 属性には `HttpOnly`、`Secure`、`SameSite=Lax`、`Path=/`、`Max-Age=600` を付ける。
+ */
 export function buildLogoutConfirmationCookie(confirmation: LogoutConfirmation): string {
   const bytes = new TextEncoder().encode(confirmation.redirectTo ?? '');
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
   const encodedRedirect = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return (
     LOGOUT_CONFIRMATION_COOKIE + '=' + confirmation.csrfSecret + '.' + encodedRedirect +
-    // 10 minutes: enough to read the screen and click, short enough that an
-    // abandoned confirmation does not leave a long-lived pre-auth cookie.
+    // 有効期間は 10 分にする。
+    // 画面を読んでボタンを押すには十分で、確認が放置されても承認待ちの Cookie が長く残らない長さである。
     '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600'
   );
 }
 
-/** Clear the confirmation cookie once the approve POST consumed it. */
+/**
+ * 確認の Cookie を消す `Set-Cookie` の値を返す。
+ *
+ * `POST /logout/approve` で確認を使い終えたときに付ける。
+ * 値を空にし、`Max-Age=0` で期限切れにする。
+ */
 export function buildClearedLogoutConfirmationCookie(): string {
   return LOGOUT_CONFIRMATION_COOKIE + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
 }
 
 /**
- * Parse the confirmation cookie back. Returns null when the cookie is absent
- * or malformed in any way, which the approve POST answers with 400 and,
- * crucially, without deleting anything.
+ * 確認の Cookie からシークレットとリダイレクト先を返す。
+ *
+ * Cookie がないとき、または形式が少しでも崩れているときは `null` を返す。
+ * `POST /logout/approve` は `null` を受け取ると、何も削除せずに 400 で応答する。
+ * Cookie のリダイレクト先の部分が空なら、`redirectTo` を `null` にして返す。
  */
 export function parseLogoutConfirmation(cookieHeader: string | null): LogoutConfirmation | null {
   if (!cookieHeader) return null;

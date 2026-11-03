@@ -1,22 +1,23 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Accept the parameters of an authorization request pushed by an authenticated
- * client, validate them as the authorization endpoint would and answer 201
- * with the request_uri to send to /authorize.
+ * 認証したクライアントが送った認可リクエストのパラメータを、認可エンドポイントと同じ規則で検証して保存する。
+ * 201 で、`/authorize` に渡す `request_uri` とその有効期間（`expires_in`）を返す。
  *
- * EXPERIMENTAL: generated with --enable par.
+ * 失敗したときはトークンエンドポイントと同じ形の JSON のエラーで応答し（クライアントの認証の失敗は 401、それ以外は 400）、リダイレクトはしない。
+ *
+ * 実験的な機能で、`--enable par` を指定したときに生成される。
  *
  * @spec RFC 9126 §2
  */
 export const endpoint = defineEndpoint({
   id: 'par',
   order: 110,
-  label: 'Pushed authorization request endpoint',
+  label: 'PAR エンドポイント',
   path: '/par',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'pushed-authorization', label: 'Pushed Authorization Requests (RFC 9126)' },
+  group: { id: 'pushed-authorization', label: 'PAR（RFC 9126）' },
   spec: 'RFC 9126 §2',
   feature: 'par',
   rearrangeable: true,

@@ -55,7 +55,14 @@ export interface AccessTokenIssuer {
   issue(ctx: AccessTokenIssuanceContext): Promise<string>;
 }
 
-/** JWT 形式のアクセストークンを発行する Issuer */
+/**
+ * JWT のアクセストークンを発行するオブジェクトを作る。
+ *
+ * 作ったオブジェクトの `issue()` は、`ctx.payload` を `ctx.privateKey` で署名した JWT を返す。
+ * `ctx.privateKey` がなければ `Error` を投げる。
+ * `ctx.payload` に `nbf` がなければ、`iat` と同じ値を入れてから署名する。
+ * クレームの検証とヘッダーの組み立ては `generateAccessToken()` が行い、必須のクレームが欠けているときや、`exp` が 60 秒を超えて過ぎているときは、そこで `Error` を投げる。
+ */
 export function createJwtAccessTokenIssuer(): AccessTokenIssuer {
   return {
     format: 'jwt',
@@ -63,9 +70,10 @@ export function createJwtAccessTokenIssuer(): AccessTokenIssuer {
       if (!ctx.privateKey) {
         throw new Error('JWT access token issuer requires a privateKey');
       }
-      // RFC 9068 §2.2 lists nbf as OPTIONAL; RFC 7519 §4.1.5 defines it as "not
-      // before". We set nbf = iat for clock-skew tolerance and interop with RPs
-      // that expect it. An explicitly provided nbf is preserved.
+      // `nbf` がなければ `iat` と同じ値を入れ、明示された `nbf` はそのまま使う。
+      // 時計のずれを許容するためと、`nbf` を期待する RP と相互運用するためである。
+      // `nbf` は、その時刻より前にはトークンを受け付けないことを示すクレームである（RFC 7519 §4.1.5）。
+      // JWT のアクセストークンでは、`nbf` は省略してもよい（RFC 9068 §2.2）。
       const payload: AccessTokenPayload =
         ctx.payload.nbf === undefined
           ? { ...ctx.payload, nbf: ctx.payload.iat }
@@ -80,16 +88,20 @@ export function createJwtAccessTokenIssuer(): AccessTokenIssuer {
 }
 
 /**
- * Opaque (不透明) 形式のアクセストークンを発行する Issuer。
+ * 不透明なアクセストークンを発行するオブジェクトを作る。
  *
- * 有効期限の契約: opaque トークンは自己記述的な `exp` を持たないため、
- * 失効はストアレコードの `expiresAt` が唯一の真実の情報源となる。呼び出し側は
- * レスポンスの `expires_in` から導かれる失効時刻と、ストアに保存する `expiresAt` を
- * 必ず一致させること（両者を別々の `Date.now()` から計算してドリフトさせない）。
- * RFC 6749 §5.1 / OAuth 2.1 §3.2.3: `expires_in` は実際の有効期間を反映する。
+ * 作ったオブジェクトの `issue()` は、`byteLength` バイトの乱数を base64url で符号化した文字列を返す。
+ * 渡された `payload` は使わないので、トークンの文字列にはクレームが含まれない。
+ * `byteLength` が正の整数でなければ、オブジェクトを作る前に `Error` を投げる。
  *
- * @param byteLength 乱数バイト長。デフォルト 32 byte (= 256bit) で、
- *                   base64url エンコード後 43 文字になる。
+ * 不透明なトークンの文字列には `exp` が含まれないため、有効期限はストアのレコードの `expiresAt` だけで決まる。
+ * そのため呼び出し側は、ストアに保存する `expiresAt` を、レスポンスの `expires_in` から求まる有効期限と同じ値にする必要がある。
+ * 両者を別々の `Date.now()` から計算すると、値がずれる。
+ * `expires_in` は実際の有効期間を表す値でなければならない（RFC 6749 §5.1、OAuth 2.1 §3.2.3）。
+ *
+ * @param byteLength 乱数のバイト数。既定値は 32 バイト（256 ビット）で、base64url で符号化すると 43 文字になる。
+ * @spec RFC 6749 §5.1
+ * @spec OAuth 2.1 §3.2.3
  */
 export function createOpaqueAccessTokenIssuer(byteLength = 32): AccessTokenIssuer {
   if (!Number.isInteger(byteLength) || byteLength <= 0) {

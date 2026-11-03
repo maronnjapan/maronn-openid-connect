@@ -40,7 +40,7 @@ export interface ProviderConfig {
    *
    * - `true`（既定）: `grant_types` に `refresh_token` を登録したクライアントには、
    *   `offline_access` が無くても Refresh Token を発行する。ただし発行元のログイン
-   *   セッションへ束縛され、セッションが終われば `invalid_grant` になる。ブラウザ
+   *   セッションに結び付けられ、セッションが終われば `invalid_grant` になる。ブラウザ
    *   セッションを持たない経路（device authorization grant）では発行しない。
    * - `false`: Refresh Token は `offline_access` が付与された grant にだけ発行する。
    *   ログアウトしても使い続けられる offline refresh token だけになる。
@@ -137,7 +137,7 @@ const baseProviderConfig = {
   // OAuth 2.1 §6.1: refresh token は initial issuance から 90 日（7776000 秒）で必ず失効する。
   refreshTokenAbsoluteLifetime: 7776000,
   // OIDC Core 1.0 §11: offline_access 無しの Refresh Token（online refresh token）も
-  // 発行する。ログインセッションに束縛されるため、ログアウトすると使えなくなる。
+  // 発行する。ログインセッションに結び付けられるため、ログアウトすると使えなくなる。
   onlineRefreshTokenEnabled: true,
   accessTokenFormat: 'jwt',
   // OIDC Core 1.0 §3.1.3.1: authorization code は short-lived であるべき（5 分 = 300 秒）。
@@ -159,16 +159,16 @@ const baseProviderConfig = {
 } satisfies Partial<ProviderConfig>;
 
 /**
- * The settings of the provider: the defaults of this file, those of the
- * enabled features, and the overrides of the app, in that order.
- * Production code should take the overrides from environment variables, KV,
- * D1, or another project-owned configuration source.
+ * 既定値に上書きを重ねた OP の設定を返す。
+ *
+ * このファイルの既定値、有効な機能の既定値、アプリが渡す `overrides` の順に重ね、後のものが前のものを上書きする。
+ * 本番の環境では、`overrides` の値を環境変数、KV、D1 など、プロジェクトが管理する設定から読むようにする。
  */
 export function createProviderConfig(
   overrides: Partial<ProviderConfig> = {},
 ): ProviderConfig {
-  // Every field a feature declares gets its default from the config entry of
-  // that feature's feature.ts, so the merged object is a whole ProviderConfig.
+  // 三つを重ねた設定を `ProviderConfig` として返す。
+  // 機能が宣言した項目の既定値は、その機能の `feature.ts` の `config` にあるので、重ねた結果はすべての項目がそろった `ProviderConfig` になる。
   return {
     ...baseProviderConfig,
     ...configOf(features),

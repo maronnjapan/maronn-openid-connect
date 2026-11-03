@@ -5,7 +5,7 @@ export const meta = step({
   id: 'respond',
   endpoint: 'userinfo',
   kind: 'respond',
-  label: 'Respond (no-store)',
+  label: '応答する（no-store）',
   spec: 'RFC 6750 §5.2',
   function: 'respondUserInfo',
   consumes: ['userInfoResponse'],
@@ -14,9 +14,15 @@ export const meta = step({
 });
 
 /**
- * Send a UserInfo answer.
- * RFC 6750 Section 5.2 / OIDC Core 1.0 Section 16.4: UserInfo responses
- * (success and error) expose PII and must not be cached by intermediaries.
+ * キャッシュを禁じて UserInfo のレスポンスを返す。
+ *
+ * `Cache-Control: no-store` と `Pragma: no-cache` に加えて、レスポンスのヘッダーを付ける。
+ * `text` があればそのままボディにし、なければ `body` を JSON で返す。
+ *
+ * UserInfo のレスポンスは成功でもエラーでも個人情報にかかわるので、プロキシなどの中継者にもキャッシュさせてはならない（RFC 6750 §5.2、OIDC Core 1.0 §16.4）。
+ *
+ * @spec RFC 6750 §5.2
+ * @spec OIDC Core 1.0 §16.4
  */
 export function respondUserInfo(c: any, response: UserInfoEndpointResponse): Response {
   c.header('Cache-Control', 'no-store');

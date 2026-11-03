@@ -1,13 +1,19 @@
 import type { FlowEndpoint, FlowStep, MapData } from '../types';
+import { changesOfStep, type ChangeIndex } from '../lib/changes';
 import { generatedWhen, locationOf, memberOfCall } from '../lib/model';
+import { ChangeDetail, ReachedList } from './ChangeParts';
 import { Chips, Description, Facts } from './Parts';
+import { DetailDrawer } from './DetailDrawer';
 
 export interface StepPanelProps {
   data: MapData;
+  /** The changes of the pull request, in the map of one. */
+  changes: ChangeIndex | undefined;
   endpoint: FlowEndpoint;
   step: FlowStep;
   onClose: () => void;
   onOpenFunction: (id: string) => void;
+  onOpenCode: (id: string) => void;
 }
 
 interface CallRow {
@@ -47,23 +53,37 @@ function callsOf(data: MapData, step: FlowStep): CallRow[] {
   return rows;
 }
 
-/** What one step of an endpoint does: its function's behavior, what it reads and passes on, how it fails, and what it calls. */
-export function StepPanel({ data, endpoint, step, onClose, onOpenFunction }: StepPanelProps) {
+/**
+ * What one step of an endpoint does: its function's behavior, what it reads
+ * and passes on, how it fails, and what it calls. In the map of a pull
+ * request, what the pull request did to the step's function and the changed
+ * functions the step calls come first.
+ */
+export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFunction, onOpenCode }: StepPanelProps) {
   const card = step.functionId === undefined ? undefined : data.functions[step.functionId];
   const calls = callsOf(data, step);
+  const own = card === undefined ? undefined : changes?.byId.get(card.id);
+  const below = changesOfStep(changes, data, step);
   return (
-    <aside className="side-panel" aria-label="ステップの詳細">
-      <div className="panel-head">
-        <h3>{step.label}</h3>
-        <button type="button" className="icon" onClick={onClose} aria-label="ステップの詳細を閉じる">
-          ×
+    <DetailDrawer title={`${step.label} — ステップの詳細`} onClose={onClose}>
+      {card ? <p className="mono">{card.name}()</p> : null}
+      {card?.source !== undefined || endpoint.source !== undefined ? (
+        <button type="button" className="code-button" onClick={() => onOpenCode(card?.source !== undefined ? card.id : endpoint.source as string)}>
+          {card?.source !== undefined ? `${card.name}() のコードを見る` : 'このステップを含むコードを見る'}
         </button>
-      </div>
+      ) : null}
       {card ? (
         <Description summary={card.summary} description={card.description} />
       ) : (
         <p className="note">Next.js ではこのステップは {step.module ?? 'route.ts'} の 1 ブロックです。下はそのブロックが呼ぶ関数です。</p>
       )}
+      {own !== undefined ? <ChangeDetail change={own} /> : null}
+      {below.length > 0 ? (
+        <section>
+          <h4>このステップから呼ぶ、このPRで変えた関数</h4>
+          <ReachedList reached={below} onOpenFunction={onOpenFunction} />
+        </section>
+      ) : null}
       <Facts
         rows={[
           ['受け取る値', <Chips items={step.consumes} mono />],
@@ -93,6 +113,9 @@ export function StepPanel({ data, endpoint, step, onClose, onOpenFunction }: Ste
                   <span className="mono">{row.name}</span>
                 )}
                 {row.text ? <span className="call-text">{row.text}</span> : null}
+                {row.fn !== undefined && data.functions[row.fn]?.source !== undefined ? (
+                  <button type="button" className="link call-source" aria-label={`${row.name} のコードを見る`} onClick={() => onOpenCode(row.fn as string)}>コードを見る</button>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -110,6 +133,6 @@ export function StepPanel({ data, endpoint, step, onClose, onOpenFunction }: Ste
         <br />
         <span className="mono">{card ? locationOf(card) : (step.module ?? '')}</span>
       </p>
-    </aside>
+    </DetailDrawer>
   );
 }

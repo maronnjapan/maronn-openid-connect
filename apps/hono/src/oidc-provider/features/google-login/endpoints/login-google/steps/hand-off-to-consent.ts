@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'login-google',
   feature: 'google-login',
   kind: 'persist',
-  label: 'Store the authenticated subject for the consent step',
+  label: '認証したサブジェクトを同意のために保存する',
   function: 'handOffToConsent',
   consumes: ['transactionId', 'subject', 'sessionId', 'authTime'],
   produces: ['outcome'],

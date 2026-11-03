@@ -19,29 +19,34 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Answer GET /.well-known/jwks.json with the JWK Set of jwks() and the
- * publicCors headers, which let any origin read it.
+ * JWK Set に CORS のヘッダーを付けて応答する。
+ *
+ * GET `/.well-known/jwks.json` に、`jwks()` のレスポンスで応答する。
+ * 付けるのは `publicCors` のヘッダーなので、どのオリジンからも読める。
  */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, publicCors, await jwks());
 }
 
 /**
- * Answer the CORS preflight of /.well-known/jwks.json: 204 with no body and
- * the publicCors headers, which let any origin GET it.
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/.well-known/jwks.json` で、応答には、どのオリジンからも GET できるようにする `publicCors` のヘッダーを付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, publicCors);
 }
 
 /**
- * Publish the public keys of every signing key set (general, ID Token,
- * UserInfo) as a JWK Set, each kid once, cacheable for an hour
- * (Cache-Control: public, max-age=3600).
+ * すべての署名鍵の公開鍵の JWK Set で応答する。
  *
- * Keys kept in a set after a rotation stay published, so the tokens they
- * signed keep verifying; of the keys without a kid only the newest is
- * published. 503 server_error when the signing keys cannot be loaded.
+ * 汎用、ID トークン用、UserInfo 用の鍵の集合をこの順につなぎ、同じ `kid` の鍵は 1 つだけ含める（`publishedKeys()`）。
+ * 各鍵の公開 JWK を検証用の鍵として読み込み直し、`use`、`alg`、`kid` を付けた JWK にする（core の `exportJwks()`）。
+ * レスポンスは 1 時間キャッシュしてよい（`Cache-Control: public, max-age=3600`）。
+ * 署名鍵を読み込めないときは、503 の `server_error` で応答する。
+ *
+ * 鍵を入れ替えた後も集合に残した鍵は公開し続けるので、その鍵で署名したトークンも検証できる。
+ * `kid` のない鍵は、最も新しいものだけを公開する。
  */
 async function jwks(): Promise<Response> {
   const keys = await loadSigningKeys().catch(() => null);
@@ -71,8 +76,10 @@ async function jwks(): Promise<Response> {
 }
 
 /**
- * The first key of every kid; keys without a kid count as one kid, so only the
- * first of them (the newest, since a set lists its newest key first) is kept.
+ * `kid` ごとに最初の鍵だけを残した配列を返す。
+ *
+ * `kid` のない鍵は 1 つの `kid` として扱うので、そのうち最初の鍵だけを残す。
+ * 鍵の集合は新しい鍵から並ぶので、残るのは最も新しい鍵である。
  */
 function publishedKeys(candidates: readonly SigningKey[]): SigningKey[] {
   const seenKids = new Set<string>();

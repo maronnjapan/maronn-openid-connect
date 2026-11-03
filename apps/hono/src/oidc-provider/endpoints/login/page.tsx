@@ -22,10 +22,14 @@ import type { LoginScreen } from './screen.js';
 export const loginPage = new Hono<{ Variables: Record<string, any> }>();
 
 /**
- * Render the login form. Swap the view, return a framework-rendered Response,
- * or redirect to a UI of your own — here only. renderView() answers with
- * Cache-Control: no-store unless its headers say otherwise (views.tsx says
- * why); a Response of your own keeps it too.
+ * ログイン画面を描画し、HTML の `Response` を返す。
+ *
+ * ビューは、リクエストコンテキストの `views` にあればそれを使い、なければ既定のビューを使う。
+ * ログイン画面の見た目を変えるときは、この関数だけを変えればよい（ビューを差し替える、フレームワークで描画した `Response` を返す、独自の UI へリダイレクトする）。
+ *
+ * `renderView()` は、ヘッダーで別の指定をしない限り `Cache-Control: no-store` を付ける。
+ * ログイン画面の URL はどのトランザクションでも同じなので、保存された画面を別のブラウザや後のフローで表示すると、別のトランザクションの `csrf_token` や `login_hint` が見えてしまうためである。
+ * 独自の `Response` を返すときも、このヘッダーを付ける。
  */
 export function renderLoginPage(c: any, params: LoginPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;
@@ -33,25 +37,29 @@ export function renderLoginPage(c: any, params: LoginPageParams): Response {
 }
 
 /**
- * Map what the logic prepared for the form onto the view's parameters. Extend
- * this when your login view needs more than the defaults.
+ * ログイン画面の内容を、ビューのパラメータに変えて返す。
+ *
+ * ログインのビューに既定より多くの値が必要なときは、ここに加える。
  */
 function loginPageParams(screen: LoginScreen): LoginPageParams {
   return {
     csrfToken: screen.csrfToken,
-    // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
+    // ビューがログインフォームにあらかじめ入れる `login_hint` を渡す（OIDC Core 1.0 §3.1.2.1 では RECOMMENDED）。
     loginHint: screen.loginHint,
-    // The other ways to sign in the features offer (Sign in with Google, ...).
+    // 機能が加える、ほかのログイン方法（Google でのログインなど）の表示を渡す。
     loginMethods: screen.loginMethods,
   };
 }
 
 /**
- * Where a signed-in End-User continues: the consent screen, which finds the
- * transaction through the same cookie. Built on config.issuer, not the request
- * URL — some runtimes derive the request URL from the Host header, which would
- * let the sender pick the redirect origin (OIDC Discovery 1.0 §3 / RFC 9700
- * §2.1).
+ * ログイン後に移る同意画面の URL を返す。
+ *
+ * 同意画面は、ログイン画面と同じトランザクションの Cookie でトランザクションを見つける。
+ * URL は、リクエストの URL ではなく設定の `issuer` をもとに作る。
+ * 実行環境によってはリクエストの URL を `Host` ヘッダーから作るので、リクエストの URL を使うと、送信者がリダイレクト先のオリジンを選べてしまうためである。
+ *
+ * @spec OIDC Discovery 1.0 §3
+ * @spec RFC 9700 §2.1
  */
 export function consentScreenUrl(c: any): string {
   const config = c.get('config');

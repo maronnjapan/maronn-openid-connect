@@ -40,9 +40,10 @@ declare module '../../views.js' {
 // session at all), so the page cannot be used as an oracle for session state
 // or for why the hint failed.
 /**
- * Render the logout confirmation page: a fixed question whether to log out of
- * the OpenID Provider, with a Log out button that posts the csrf_token to
- * /logout/approve.
+ * ログアウトの確認画面を描画する。
+ *
+ * OP からログアウトするかを尋ねる決まった文言と、`csrf_token` を `/logout/approve` へ POST するログアウトのボタンを表示する。
+ * 文言は、どの経路（ヒントがない、無効なヒントや期限切れのヒント、ほかのユーザーのセッション、セッションがない）でこの画面に来ても同じである。
  *
  * @spec RP-Initiated Logout 1.0 §2
  */
@@ -61,8 +62,9 @@ function defaultLogoutConfirmationPage(params: LogoutConfirmationPageParams): JS
 }
 
 /**
- * Render the logged-out page: a fixed message that the End-User has been
- * logged out and can close the page, naming neither the End-User nor a client.
+ * ログアウトの完了画面を描画する。
+ *
+ * ログアウトしたことと、ページを閉じてよいことを決まった文言で伝え、エンドユーザーもクライアントも示さない。
  */
 function defaultLogoutCompletedPage(_params: LogoutCompletedPageParams): JSX.Element {
   return (
@@ -74,7 +76,12 @@ function defaultLogoutCompletedPage(_params: LogoutCompletedPageParams): JSX.Ele
   );
 }
 
-/** The views of the request for these screens: the ones the app replaced, else the defaults above. */
+/**
+ * このリクエストで使うログアウトの画面のビューを返す。
+ *
+ * 確認画面（`logoutConfirmationPage`）と完了画面（`logoutCompletedPage`）のそれぞれについて、アプリが `views` オプションで差し替えたビューがあればそれを、なければ既定のビューを返す。
+ * ビューはリクエストコンテキストの `views` から読む。
+ */
 export function logoutViews(c: any): Required<Pick<Views, 'logoutConfirmationPage' | 'logoutCompletedPage'>> {
   const views: Partial<Views> = c.get('views') ?? {};
   return {

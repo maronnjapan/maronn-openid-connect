@@ -17,18 +17,20 @@
  * boxes it guards. A body that cannot be read this way (JSX text with an
  * apostrophe, for one) gives no flow.
  */
+import { joinLines } from './prose.js';
 
 /** One box of the flow of a function. */
 export interface FunctionFlowNode {
   /** Unique within the flow (`n0`, `n1`, ...), in the order of the source. */
   id: string;
   /**
-   * start: the function itself, with its parameters; call: a call of a
+   * start: the function itself, with its parameters; condition: a boolean
+   * guard or a short-circuit expression; call: a call of a
    * function of the catalog; dynamic: a call of a method of a resolver, a
    * store or a provider; return / throw: where the function ends; end: the
    * end of the body, reached without a return.
    */
-  kind: 'start' | 'call' | 'dynamic' | 'return' | 'throw' | 'end';
+  kind: 'start' | 'condition' | 'call' | 'dynamic' | 'return' | 'throw' | 'end';
   /** What the box says: the name of the callee, `receiver.method`, `return …`, `throw TokenError(InvalidClient)`. */
   label: string;
   /** For a call: the id of the card of the callee. */
@@ -348,12 +350,13 @@ function shorten(text: string, width = 60): string {
 function commentText(comment: string): string {
   const text = comment.startsWith('//')
     ? comment.slice(2)
-    : comment
-        .replace(/^\/\*+/, '')
-        .replace(/\*+\/$/, '')
-        .split('\n')
-        .map((line) => line.replace(/^\s*\*\s?/, ''))
-        .join(' ');
+    : joinLines(
+        comment
+          .replace(/^\/\*+/, '')
+          .replace(/\*+\/$/, '')
+          .split('\n')
+          .map((line) => line.replace(/^\s*\*\s?/, '')),
+      );
   const flat = text.replace(/\s+/g, ' ').trim();
   if (/^(eslint-|@ts-|prettier-ignore|istanbul )/.test(flat)) return '';
   return flat;
@@ -400,6 +403,7 @@ class FlowBuilder {
   private readonly comments: FlowComment[];
   private readonly lines: number[] = [];
   private readonly matches = new Map<number, number>();
+  private readonly exceptionSources: Pending[][] = [];
 
   constructor(private readonly input: FunctionFlowSource) {
     const { tokens, comments } = tokenize(input.source, input.body.start + 1, input.body.end - 1);
@@ -492,7 +496,7 @@ class FlowBuilder {
       .filter((comment) => comment.start >= from && comment.end <= first.start && !trails(comment))
       .map((comment) => commentText(comment.text))
       .filter((text) => text !== '');
-    return texts.length === 0 ? undefined : shorten(texts.join(' '), 220);
+    return texts.length === 0 ? undefined : shorten(joinLines(texts), 220);
   }
 
   /** Arrows that carry a condition into the boxes it guards. */
@@ -514,8 +518,76 @@ class FlowBuilder {
         noted = true;
       }
       pending = [{ from: this.add(node, pending), kind: 'flow' }];
+      this.exceptionSources.at(-1)?.push(...pending);
     }
     return { pending, noted };
+  }
+
+  /** Preserve conditional evaluation of a statement's RHS, including short-circuit fallbacks. */
+  private expression(from: number, to: number, entry: Pending[], note: string | undefined): { pending: Pending[]; noted: boolean } {
+    if (this.is(to - 1, ';')) to -= 1;
+    // A declaration or assignment evaluates its right-hand side.
+    for (let cursor = from; cursor < to; cursor += 1) {
+      if (OPEN.has(this.token(cursor)?.text ?? '')) { cursor = this.close(cursor); continue; }
+      if (this.is(cursor, '=')) return this.expression(cursor + 1, to, entry, note);
+    }
+    while (this.is(from, '(') && this.close(from) === to - 1) { from += 1; to -= 1; }
+    let question = -1;
+    let colon = -1;
+    let nested = 0;
+    let logical = -1;
+    const precedence: Record<string, number> = { '??': 1, '||': 1, '&&': 2 };
+    for (let cursor = from; cursor < to; cursor += 1) {
+      const token = this.token(cursor) as FlowToken;
+      if (token.type !== 'punct') continue;
+      if (OPEN.has(token.text)) { cursor = this.close(cursor); continue; }
+      if (token.text === '?') {
+        if (question < 0) question = cursor;
+        nested += 1;
+      } else if (token.text === ':' && question >= 0) {
+        nested -= 1;
+        if (nested === 0) { colon = cursor; break; }
+      } else if (question < 0 && precedence[token.text] !== undefined && (logical < 0 || precedence[token.text]! <= precedence[(this.token(logical) as FlowToken).text]!)) logical = cursor;
+    }
+    const split = question >= 0 && colon >= 0 ? question : logical;
+    if (split < 0) return this.chain(this.calls(from, to), entry, note);
+    const left = this.expression(from, split, entry, note);
+    const condition = this.add({ kind: 'condition', label: shorten(this.text(from, split)), line: this.line((this.token(from) as FlowToken).start), ...(note === undefined ? {} : { note }) }, left.pending);
+    const branch: Pending[] = [{ from: condition, kind: 'flow' }];
+    if (split === question) {
+      const yes = this.expression(question + 1, colon, this.label(branch, 'true'), left.noted ? undefined : note);
+      const no = this.expression(colon + 1, to, this.label(branch, 'false'), left.noted ? undefined : note);
+      return { pending: [...yes.pending, ...no.pending], noted: left.noted || yes.noted || no.noted };
+    }
+    const operator = (this.token(split) as FlowToken).text;
+    const take = operator === '&&' ? 'true' : operator === '??' ? 'nullish' : 'false';
+    const skip = operator === '&&' ? 'false' : operator === '??' ? 'defined' : 'true';
+    const right = this.expression(split + 1, to, this.label(branch, take), left.noted ? undefined : note);
+    return { pending: [...right.pending, ...this.label(branch, skip)], noted: left.noted || right.noted };
+  }
+
+  /** Evaluate a boolean guard without reconnecting a short-circuited result to both outcomes. */
+  private test(from: number, to: number, entry: Pending[], note: string | undefined): { yes: Pending[]; no: Pending[]; noted: boolean } {
+    while (this.is(from, '(') && this.close(from) === to - 1) { from += 1; to -= 1; }
+    let split = -1;
+    for (let cursor = from; cursor < to; cursor += 1) {
+      const token = this.token(cursor) as FlowToken;
+      if (token.type !== 'punct') continue;
+      if (OPEN.has(token.text)) { cursor = this.close(cursor); continue; }
+      // A ternary or nullish expression needs its value evaluated as a whole.
+      if (token.text === '?' || token.text === '??') { split = -1; break; }
+      if (token.text === '||' || (token.text === '&&' && !this.is(split, '||'))) split = cursor;
+    }
+    if (split >= 0) {
+      const left = this.test(from, split, entry, note);
+      const and = this.is(split, '&&');
+      const right = this.test(split + 1, to, and ? left.yes : left.no, left.noted ? undefined : note);
+      return { yes: and ? right.yes : [...left.yes, ...right.yes], no: and ? [...left.no, ...right.no] : right.no, noted: left.noted || right.noted };
+    }
+    const value = this.expression(from, to, entry, note);
+    const id = this.add({ kind: 'condition', label: shorten(this.text(from, to)), line: this.line((this.token(from) as FlowToken).start), ...(note === undefined ? {} : { note }) }, value.pending);
+    const branch: Pending[] = [{ from: id, kind: 'flow' }];
+    return { yes: this.label(branch, 'true'), no: this.label(branch, 'false'), noted: value.noted || note !== undefined };
   }
 
   /** The calls between two tokens, in the order they finish. */
@@ -613,7 +685,7 @@ class FlowBuilder {
     const continues: Pending[] = [];
     let index = from;
     let previousEnd = after;
-    while (index < to) {
+    while (index < to && pending.length > 0) {
       const note = this.noteBefore(previousEnd, index);
       const result = this.statement(index, to, pending, note);
       if (result.next <= index) throw new FunctionFlowError('no progress');
@@ -672,7 +744,7 @@ class FlowBuilder {
       }
     }
     const next = this.end(index, limit);
-    const { pending } = this.chain(this.calls(index, next), entry, note);
+    const { pending } = this.expression(index, next, entry, note);
     return { next, out: { pending, breaks: [], continues: [] } };
   }
 
@@ -733,28 +805,14 @@ class FlowBuilder {
   private ifStatement(index: number, limit: number, entry: Pending[], note: string | undefined): { next: number; out: Out } {
     if (!this.is(index + 1, '(')) throw new FunctionFlowError('if without a condition');
     const close = this.close(index + 1);
-    const condition = this.chain(this.calls(index + 2, close), entry, note);
-    const text = shorten(this.text(index + 2, close));
-    const before = this.nodes.length;
-    const then = this.statement(close + 1, limit, this.label(condition.pending, text), condition.noted ? undefined : note);
+    const condition = this.test(index + 2, close, entry, note);
+    const then = this.statement(close + 1, limit, condition.yes, condition.noted ? undefined : note);
     let next = then.next;
-    let otherwise: Out = { pending: condition.pending, breaks: [], continues: [] };
+    let otherwise: Out = { pending: condition.no, breaks: [], continues: [] };
     if (this.word(next, 'else')) {
-      const result = this.statement(next + 1, limit, this.label(condition.pending, 'else'), undefined);
+      const result = this.statement(next + 1, limit, condition.no, undefined);
       next = result.next;
       otherwise = result.out;
-    }
-    const silent =
-      this.nodes.length === before &&
-      then.out.breaks.length === 0 &&
-      then.out.continues.length === 0 &&
-      then.out.pending.length > 0 &&
-      otherwise.breaks.length === 0 &&
-      otherwise.continues.length === 0 &&
-      otherwise.pending.length > 0;
-    if (silent) {
-      // Neither branch calls anything or leaves: the condition does not change the flow.
-      return { next, out: { pending: condition.pending, breaks: [], continues: [] } };
     }
     return {
       next,
@@ -839,7 +897,10 @@ class FlowBuilder {
   private tryStatement(index: number, entry: Pending[]): { next: number; out: Out } {
     if (!this.is(index + 1, '{')) throw new FunctionFlowError('try without a block');
     const tryClose = this.close(index + 1);
+    const sources: Pending[] = [];
+    this.exceptionSources.push(sources);
     const attempt = this.statements(index + 2, tryClose, entry, (this.tokens[index + 1] as FlowToken).end);
+    this.exceptionSources.pop();
     let next = tryClose + 1;
     let pending = attempt.pending;
     const breaks = [...attempt.breaks];
@@ -849,11 +910,13 @@ class FlowBuilder {
       if (this.is(open, '(')) open = this.close(open) + 1;
       if (!this.is(open, '{')) throw new FunctionFlowError('catch without a block');
       const close = this.close(open);
-      const handler = this.statements(open + 1, close, this.label(entry, 'catch', 'error'), (this.tokens[open] as FlowToken).end);
+      const handler = this.statements(open + 1, close, this.label(sources.length > 0 ? sources : entry, 'catch', 'error'), (this.tokens[open] as FlowToken).end);
       pending = [...pending, ...handler.pending];
       breaks.push(...handler.breaks);
       continues.push(...handler.continues);
       next = close + 1;
+    } else {
+      this.exceptionSources.at(-1)?.push(...sources);
     }
     if (this.word(next, 'finally') && this.is(next + 1, '{')) {
       const close = this.close(next + 1);
@@ -868,13 +931,15 @@ class FlowBuilder {
 
   private exit(index: number, limit: number, entry: Pending[], note: string | undefined): { next: number; out: Out } {
     const keyword = (this.tokens[index] as FlowToken).text as 'return' | 'throw';
-    const next = this.end(index + 1, limit);
+    const bareReturn = keyword === 'return' && (this.token(index + 1)?.newline ?? false);
+    const next = bareReturn ? index + 1 : this.end(index + 1, limit);
     const expressionEnd = this.is(next - 1, ';') ? next - 1 : next;
-    const { pending, noted } = this.chain(this.calls(index + 1, expressionEnd), entry, note);
+    const { pending, noted } = this.expression(index + 1, expressionEnd, entry, note);
     const label = keyword === 'throw' ? this.describeThrow(index + 1, expressionEnd) : this.describeReturn(index + 1, expressionEnd);
     const node: Omit<FunctionFlowNode, 'id'> = { kind: keyword, label, line: this.line((this.tokens[index] as FlowToken).start) };
     if (note !== undefined && !noted) node.note = note;
-    this.add(node, pending);
+    const id = this.add(node, pending);
+    if (keyword === 'throw') this.exceptionSources.at(-1)?.push({ from: id, kind: 'flow' });
     return { next, out: { pending: [], breaks: [], continues: [] } };
   }
 

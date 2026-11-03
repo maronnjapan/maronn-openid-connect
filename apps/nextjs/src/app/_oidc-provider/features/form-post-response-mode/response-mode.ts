@@ -15,7 +15,11 @@ import type {
 export const FORM_POST_RESPONSE_MODE_NAME = 'form_post';
 
 /**
- * The form_post response mode: the authorization response as an HTML page whose form posts the parameters to the redirect URI.
+ * `form_post` のレスポンスモードを作って返す。
+ *
+ * 作ったレスポンスモードの `respond()` は、ブラウザがリダイレクト URI へ POST するフォームの送信先と値を返す。
+ * フォームの値は認可レスポンスのパラメータと `iss` で、値が `undefined` のパラメータは含めない。
+ * フォームの HTML は、`authorize/response-mode.ts` の `respondToClient()` が `_oidc-provider/html.ts` の `formPostPage()` で描画する。
  *
  * @spec OAuth 2.0 Form Post Response Mode §2
  */
@@ -27,10 +31,10 @@ export function createFormPostResponseMode(input: { issuer: string }): Authoriza
       for (const [name, value] of Object.entries(parameters)) {
         if (value !== undefined) fields[name] = value;
       }
-      // RFC 9207 §2: iss is a parameter of every authorization response, in
-      // whichever response mode it is returned.
+      // `iss` をフォームの値に加える。
+      // `iss` は、どのレスポンスモードで返す認可レスポンスにも含めるパラメータである（RFC 9207 §2）。
       fields['iss'] = input.issuer;
-      // Form Post Response Mode §2: the action is the redirect URI, query included.
+      // 送信先を、クエリも含めたリダイレクト URI にしたフォームを返す（OAuth 2.0 Form Post Response Mode §2）。
       return { method: 'form_post', action: redirectUri, fields };
     },
   };

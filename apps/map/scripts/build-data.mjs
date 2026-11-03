@@ -6,13 +6,27 @@
  * methods of resolvers and stores the code calls (`consentResolver.recordConsent`).
  * Written to public/data/map.json, which the page fetches.
  *
+ * With MAP_BASE (a git revision: origin/main, a commit), the data also holds
+ * the changes of the working tree since it forked from that base: the
+ * functions it adds, changes or removes and what the change notes
+ * (apps/map/changes/*.md) say about them (scripts/changes.mjs). The map of a
+ * pull request marks them; MAP_PR, MAP_PR_TITLE and MAP_PR_URL name the pull
+ * request. The changes are also written in Markdown to
+ * public/data/changes.md (the comment of the pull request quotes it) and to
+ * the summary of the run on GitHub Actions.
+ *
  * Reads the built CLI (packages/cli/dist) and the sources of the repository,
  * so run `pnpm --filter @maronn-openid-connect/cli build` first
  * (pnpm run build:map at the root does both).
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { KIND_ORDER, KIND_WORDS, catalogRoots, changesMarkdown, collectChanges, pullRequestOf } from './changes.mjs';
+import { collectSources } from './sources.mjs';
+import { createSourceHighlighter, highlightSource } from './highlight.mjs';
+import { endpointFlow } from './endpoint-flows.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(appRoot, '../../packages/cli/dist');
@@ -24,19 +38,52 @@ const load = (file) => import(pathToFileURL(join(dist, file)).href);
 const { buildOpFlow, edgesForSteps } = await load('flow/build.js');
 const { annotateFlowModules } = await load('flow/modules.js');
 const { buildOpMap } = await load('explain/map.js');
-const { functionProject } = await load('extract/templates.js');
+const { PACKAGE_ROOT, functionProject, readExtractionDefinition, readSourceFiles, readFunctionRoots } = await load('extract/templates.js');
+const flowReader = {
+  ...await load('extract/function-flow.js'),
+  ...await load('extract/source.js'),
+  ...await load('extract/blocks.js'),
+};
+const { analyzeFunctions } = await load('extract/functions.js');
 const { FEATURE_CONFIG_KEYS } = await load('registry.js');
 const { getAvailableFrameworks } = await load('generator.js');
 
 const features = Object.fromEntries(FEATURE_CONFIG_KEYS.map((key) => [key, true]));
 const project = functionProject();
+const definition = readExtractionDefinition();
+const repositoryRoot = resolve(appRoot, '../..');
+const packageDirectory = relative(repositoryRoot, PACKAGE_ROOT).split('\\').join('/');
+const roots = catalogRoots(definition, packageDirectory);
 const catalog = project.catalog;
 const frameworks = getAvailableFrameworks();
 const flows = {};
+const implementationSources = Object.fromEntries(Object.keys(definition.sources).map((name) => [name, readSourceFiles(name, definition)]));
 let shared;
 for (const framework of frameworks) {
   const flow = annotateFlowModules(buildOpFlow({ features }), framework);
   const map = buildOpMap({ flow, framework, functions: catalog, frameworks });
+  const layout = definition.frameworks[framework];
+  for (const endpoint of map.flow.endpoints) {
+    const source = implementationSources[layout.source].get(`${layout.root}/${endpoint.module}`);
+    if (source === undefined) continue;
+    const keys = [...new Set(endpoint.steps.flatMap((step) => step.feature === undefined ? [] : [step.feature]))].sort();
+    const controlFlows = {};
+    for (let mask = 0; mask < 1 << keys.length; mask += 1) {
+      const on = keys.filter((_key, index) => (mask & (1 << index)) !== 0);
+      const steps = endpoint.steps.filter((step) => step.feature === undefined || on.includes(step.feature));
+      let controlFlow = endpointFlow(source, { ...endpoint, steps }, flowReader, layout.layout);
+      if (controlFlow === undefined && layout.layout === 'nextjs') {
+        const handlers = Object.values(catalog.functions).filter((card) => card.package === layout.source && card.module === `${layout.root}/${endpoint.module}` && card.exported && endpoint.methods.includes(card.name));
+        const parts = handlers.map((card) => project.flowOf(card.id)).filter((flow) => flow !== undefined);
+        if (parts.length > 0) controlFlow = {
+          nodes: parts.flatMap((flow, index) => flow.nodes.map((node) => ({ ...node, id: `h${index}:${node.id}` }))),
+          edges: parts.flatMap((flow, index) => flow.edges.map((edge) => ({ ...edge, from: `h${index}:${edge.from}`, to: `h${index}:${edge.to}` }))),
+        };
+      }
+      if (controlFlow !== undefined) controlFlows[on.join(',')] = controlFlow;
+    }
+    if (Object.keys(controlFlows).length > 0) endpoint.controlFlows = controlFlows;
+  }
   flows[framework] = map.flow;
   shared ??= { commands: map.commands, features: map.features };
 }
@@ -94,6 +141,59 @@ for (const card of Object.values(functions)) {
 }
 const undescribed = Object.keys(members).filter((id) => members[id].summary === '');
 
+// The page shows the text of a JSDoc as it is, so a {@link Name} of the libraries (a link in their API docs)
+// becomes the name as code (`Name`), and {@link Name | text} its text.
+const plain = (text) =>
+  text.replace(/\{@link(?:code|plain)?\s+([^}|\s]+)(?:\s*\|\s*([^}]+)|\s+([^}]+))?\}/g, (_match, name, piped, spaced) => {
+    const label = (piped ?? spaced)?.trim();
+    return label === undefined || label === '' ? `\`${name}\`` : label;
+  });
+for (const card of Object.values(functions)) {
+  card.summary = plain(card.summary);
+  if (card.description !== undefined) card.description = plain(card.description);
+  if (card.throws !== undefined) card.throws = card.throws.map(plain);
+  for (const node of card.flow?.nodes ?? []) if (node.note !== undefined) node.note = plain(node.note);
+}
+for (const doc of Object.values(members)) doc.summary = plain(doc.summary);
+for (const flow of Object.values(flows)) {
+  for (const endpoint of flow.endpoints) if (endpoint.summary !== undefined) endpoint.summary = plain(endpoint.summary);
+}
+
+// The changes since MAP_BASE, for the map of a pull request.
+const base = process.env.MAP_BASE?.trim();
+let changes;
+if (base) {
+  const collected = collectChanges({
+    repositoryRoot,
+    base,
+    roots,
+    analyze: analyzeFunctions,
+    cards: Object.values(catalog.functions),
+    pullRequest: pullRequestOf(process.env),
+  });
+  changes = collected.changes;
+  for (const { file, reference } of collected.unknown) console.warn(`${file}: "${reference}" names no function of the catalog`);
+}
+
+// Code stays out of map.json: the drawer fetches one static file on demand.
+const sourceFiles = collectSources({
+  functions, flows, roots: readFunctionRoots(definition) ?? [],
+  directories: Object.fromEntries(roots.map((root) => [root.name, root.directory])),
+  frameworks: definition.frameworks, spanOf: (id) => project.spanOf(id),
+});
+const sources = {};
+const sourceDirectory = join(appRoot, 'public', 'data', 'sources');
+rmSync(sourceDirectory, { recursive: true, force: true });
+mkdirSync(sourceDirectory, { recursive: true });
+const highlighter = await createSourceHighlighter();
+for (const [id, source] of Object.entries(sourceFiles)) {
+  const content = JSON.stringify(highlightSource(highlighter, source));
+  const filename = `${createHash('sha256').update(id).update('\0').update(content).digest('hex')}.json`;
+  writeFileSync(join(sourceDirectory, filename), content);
+  sources[id] = { path: source.path, url: `./data/sources/${filename}` };
+}
+highlighter.dispose();
+
 const data = {
   version: 3,
   frameworks,
@@ -104,10 +204,20 @@ const data = {
   members,
   memberOfCall,
   edgeSets,
+  sources,
+  ...(changes === undefined ? {} : { changes }),
 };
 const out = join(appRoot, 'public', 'data', 'map.json');
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, JSON.stringify(data));
+const changesOut = join(appRoot, 'public', 'data', 'changes.md');
+if (changes === undefined) {
+  rmSync(changesOut, { force: true });
+} else {
+  const markdown = changesMarkdown(changes);
+  writeFileSync(changesOut, markdown);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## OIDC Provider Map\n\n${markdown}`);
+}
 const steps = Object.values(flows).reduce((n, flow) => n + flow.endpoints.reduce((m, e) => m + e.steps.length, 0), 0);
 const undocumented = Object.values(functions).filter((card) => card.summary === '').length;
 console.log(
@@ -116,3 +226,15 @@ console.log(
     `(${undescribed.length} without a summary${undescribed.length > 0 ? `: ${undescribed.join(', ')}` : ''})` +
     (unresolved.size > 0 ? `; calls of steps that name no member: ${[...unresolved].join(', ')}` : ''),
 );
+if (changes !== undefined) {
+  const changed = changes.functions.filter((change) => change.kind !== 'noted').length;
+  console.log(
+    `Changes since ${base} (${changes.base.commit.slice(0, 7)}${changes.head.dirty ? ', with the uncommitted work' : ''}): ` +
+      `${changed} functions, ${changes.notes.length} notes, ${changes.otherFiles} other files`,
+  );
+  const ordered = [...changes.functions].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+  for (const change of ordered) {
+    const note = change.notes?.[0]?.text.split('\n')[0];
+    console.log(`  ${KIND_WORDS[change.kind]}  ${change.id}${note === undefined ? '' : `  — ${note}`}`);
+  }
+}

@@ -64,14 +64,20 @@ export interface ParseClientRegistrationBodyOptions {
 const DEFAULT_MAX_BODY_BYTES = 16384;
 
 /**
- * 登録リクエストボディ（文字列）を読み取る。
+ * 登録リクエストのボディを解析し、メタデータを返す。
  *
- * ボディ長、JSON 構文、オブジェクト形式を検査し、software_statement メンバー
- * （RFC 7591 §3.1.1 は JWT の文字列と定める。文字列でなければ
- * invalid_software_statement）を平文のメタデータから切り離して返す。文字列の
- * 中身は見ない。検証は OP の設定に渡した関数の責務である。返す metadata は
- * パース結果そのものではなく、software_statement 以外の自身のプロパティを
- * 選び取った新しいオブジェクトである。
+ * ボディ（解析前の文字列）の UTF-8 のバイト長が `maxBodyBytes`（既定は 16384）を超えるとき、JSON として解析できないとき、JSON オブジェクトでないときは、`invalid_client_metadata` を投げる。
+ *
+ * `software_statement` メンバーは、平文のメタデータから切り離して `softwareStatement` で返す。
+ * RFC 7591 §3.1.1 は値を JWT の文字列と定めているので、文字列でなければ `invalid_software_statement` を投げる。
+ * 文字列の中身は見ず、検証は OP の設定に渡した関数に任せる。
+ *
+ * 返す `metadata` は解析結果そのものではなく、`software_statement` 以外の自身のプロパティを選び取った新しいオブジェクトである。
+ *
+ * @spec RFC 7591 §3.1
+ * @spec RFC 7591 §3.1.1
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: ボディが大きすぎるとき、JSON として解析できないとき、または JSON オブジェクトでないとき。
+ * @throws {ClientRegistrationError} `invalid_software_statement`: `software_statement` が文字列でないとき。
  */
 export function parseClientRegistrationBody(
   rawBody: string,
@@ -265,20 +271,31 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
 /**
  * 登録メタデータを検証し、既定値を適用して返す。
  *
- * 既定値は RFC 7591 §2（token_endpoint_auth_method、grant_types、response_types）と
- * OIDC Dynamic Client Registration 1.0 §2（application_type、
- * id_token_signed_response_alg）のもので、AS が適用した既定値は応答に含めなければ
- * ならない（同 §3.2 MUST）ため、どれも登録メタデータ（metadata）に書き込む。
+ * 検証は、`redirect_uris`、`token_endpoint_auth_method`、`grant_types`、`response_types`、`grant_types` と `response_types` の対応、`application_type` ごとの `redirect_uris` の制約、`id_token_signed_response_alg` の順に行う。
+ * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`jwks_uri`、`default_max_age`、`userinfo_signed_response_alg`、`request_object_signing_alg`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
  *
- * 未知フィールドは黙って捨てる（RFC 7591 §2 MUST ignore）。実装は「理解する
- * フィールドだけを新しいオブジェクトへ選び取る」allowlist-pick 方式で、
- * パース結果のスプレッドや Object.assign によるコピーをしない。`__proto__`
- * などプロトタイプ経路のキーを持つ入力は、読まれないまま不活性に落ちる。
+ * `jwks_uri` は宛先を検査して登録するが、登録の時点では取得しない。
+ * `options.acceptJwksUri` が `false` の OP（`jwks_uri` を取得しない OP）では、理解しないメタデータとして無視する。
+ * `request_object_signing_alg` は、`options.requestObjectSigningAlgValuesSupported` を渡した OP（リクエストオブジェクトを扱う OP）でだけ検証して登録し、渡さない OP では無視する。
+ * `jwks` も登録するときは、その alg で使える鍵が `jwks` にあることも確かめる。
  *
- * metadata に software_statement があれば、それは検証済みの JWT として扱い
- * （applySoftwareStatement が置く）、応答へそのまま返す。
+ * 既定値は、RFC 7591 §2 のもの（`token_endpoint_auth_method`、`grant_types`、`response_types`）と、OIDC Dynamic Client Registration 1.0 §2 のもの（`application_type`、`id_token_signed_response_alg`）である。
+ * 認可サーバーが適用した既定値はレスポンスに含めなければならない（OIDC Dynamic Client Registration 1.0 §3.2 の MUST）ので、どれも登録メタデータ（`metadata`）に書き込む。
  *
- * 失敗時は ClientRegistrationError を投げる。
+ * 理解しないフィールドは黙って捨てる（RFC 7591 §2 の MUST）。
+ * 実装は理解するフィールドだけを新しいオブジェクトに選び取る方式で、解析結果をスプレッド構文や `Object.assign` でコピーしない。
+ * `__proto__` のようにプロトタイプに関わるキーは読まれないので、登録の内容に影響しない。
+ *
+ * `metadata` に `software_statement` があれば、検証済みの JWT（`applySoftwareStatement()` が置いた値）として扱い、そのままレスポンスで返す。
+ * カスタムメタデータの検証関数が `undefined` 以外を返した項目だけを登録する。
+ *
+ * @spec RFC 7591 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §3.2
+ * @throws {ClientRegistrationError} `invalid_redirect_uri`: `redirect_uris` がないか、規則に反する URI を含むとき。
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: ほかのメタデータの値が正しくないとき、`grant_types` と `response_types` が対応しないとき、`jwks` と `jwks_uri` を両方含むとき、または `jwks` に `request_object_signing_alg` で使える鍵がないとき。
+ * @throws {ClientRegistrationError} `invalid_software_statement`: `software_statement` が文字列でないとき。
+ * @throws {TypeError} `customMetadata` に標準のメタデータと同じ名前があるとき（設定の誤り）。
  */
 export function validateClientMetadata(
   metadata: Readonly<Record<string, unknown>>,
@@ -296,16 +313,13 @@ export function validateClientMetadata(
   const grantTypes = validateGrantTypes(metadata['grant_types'], grantTypesSupported);
   const responseTypes = validateResponseTypes(metadata['response_types'], responseTypesSupported);
   validateGrantAndResponseTypeConsistency(grantTypes, responseTypes);
-  // OIDC Dynamic Client Registration 1.0 §2: application_type は省略時 web。
-  // AS は登録するすべての redirect_uris がその種別の制約（web で implicit grant を
-  // 使うなら https かつ localhost 以外、native ならカスタムスキームかループバックの
-  // http）に従うことを確かめなければならない（MUST）ので、省略時も web として検査する。
+  // `application_type` を省略したときも、既定値の `web` として検証する（OIDC Dynamic Client Registration 1.0 §2）。
+  // 認可サーバーは、登録するすべての `redirect_uris` がその種別の制約（`web` でグラントタイプ `implicit` を使うなら `https` で `localhost` 以外、`native` ならカスタムスキームかループバックの `http`）に従うことを確かめなければならない（MUST）からである。
   const applicationType = validateApplicationType(
     metadata['application_type'] === undefined ? 'web' : metadata['application_type'],
   );
   validateRedirectUrisForApplicationType(redirectUris, applicationType, grantTypes);
-  // OIDC Dynamic Client Registration 1.0 §2: id_token_signed_response_alg は省略時
-  // RS256。既定値も OP が署名できる alg の一覧に照合する。
+  // `id_token_signed_response_alg` を省略したときは `RS256` として扱い（OIDC Dynamic Client Registration 1.0 §2）、既定値も OP が署名できるアルゴリズムの一覧と照らし合わせる。
   const idTokenSignedResponseAlg = validateSigningAlg(
     metadata['id_token_signed_response_alg'] === undefined ? 'RS256' : metadata['id_token_signed_response_alg'],
     'id_token_signed_response_alg',
@@ -356,8 +370,7 @@ export function validateClientMetadata(
     );
   }
   if (metadata['jwks'] !== undefined && metadata['jwks_uri'] !== undefined) {
-    // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。acceptJwksUri の
-    // 値によらず拒否する。
+    // `jwks` と `jwks_uri` を両方含む登録は、`acceptJwksUri` の値によらず拒否する（RFC 7591 §2 は同時に使うことを禁じている）。
     throw new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present');
   }
   if (metadata['jwks'] !== undefined) {
@@ -365,8 +378,8 @@ export function validateClientMetadata(
     validated.jwks = jwks;
     registered['jwks'] = { keys: jwks.keys.map((key) => ({ ...key })) };
   }
-  // acceptJwksUri: false の OP では、jwks_uri は理解しないメタデータとして無視する。
-  // 登録時には取得しない（宛先の検査だけ）。
+  // `acceptJwksUri` が `false` の OP では、`jwks_uri` を理解しないメタデータとして無視する。
+  // 登録の時点では取得せず、宛先を検査するだけにする。
   if (metadata['jwks_uri'] !== undefined && options?.acceptJwksUri !== false) {
     const jwksUri = validateJwksUri(metadata['jwks_uri'], options?.allowInsecureJwksUri === true);
     validated.jwksUri = jwksUri;
@@ -387,13 +400,13 @@ export function validateClientMetadata(
     validated.userinfoSignedResponseAlg = alg;
     registered['userinfo_signed_response_alg'] = alg;
   }
-  // requestObjectSigningAlgValuesSupported の無い OP（Request Object を扱わない OP）では、
-  // request_object_signing_alg は理解しないメタデータとして無視する。
+  // `requestObjectSigningAlgValuesSupported` を渡さない OP（リクエストオブジェクトを扱わない OP）では、
+  // `request_object_signing_alg` を理解しないメタデータとして無視する。
   const requestObjectSigningAlgs = options?.requestObjectSigningAlgValuesSupported;
   if (metadata['request_object_signing_alg'] !== undefined && requestObjectSigningAlgs !== undefined) {
     const alg = validateRequestObjectSigningAlg(metadata['request_object_signing_alg'], requestObjectSigningAlgs);
-    // 検証できない登録を、Request Object を送る前に気づかせる。jwks_uri の鍵は登録時に
-    // 取得しないので照らさない。
+    // 登録した鍵で検証できない登録に、リクエストオブジェクトを送る前に気づかせる。
+    // `jwks_uri` の鍵は登録の時点では取得しないので、照らし合わせない。
     if (alg !== 'none' && validated.jwks !== undefined && !validated.jwks.keys.some((key) => resolveJwkSigningAlg(key) === alg)) {
       throw new ClientRegistrationError(
         'invalid_client_metadata',
@@ -404,7 +417,7 @@ export function validateClientMetadata(
     registered['request_object_signing_alg'] = alg;
   }
   if (metadata['software_statement'] !== undefined) {
-    // RFC 7591 §3.2.1: 登録に使った software_statement は、そのまま応答に返す。
+    // 登録に使った `software_statement` は、そのままレスポンスで返す（RFC 7591 §3.2.1）。
     const softwareStatement = metadata['software_statement'];
     if (typeof softwareStatement !== 'string') {
       throw new ClientRegistrationError('invalid_software_statement', 'software_statement must be a string');
@@ -430,12 +443,15 @@ export interface ValidateClientRegistrationOptions
     ValidateClientMetadataOptions {}
 
 /**
- * 登録リクエストボディ（文字列）を検証し、既定値を適用して返す短縮形。
+ * 登録リクエストのボディを検証し、既定値を適用して返す。
  *
- * parseClientRegistrationBody と validateClientMetadata を直結し、
- * software_statement は検証せずに無視する（RFC 7591 §3.1.1）。software statement
- * を受け付ける OP は、両関数の間に設定の検証関数と applySoftwareStatement
- * （software-statement.ts）を挟む。
+ * {@link parseClientRegistrationBody} と {@link validateClientMetadata} を続けて呼ぶだけの関数である。
+ * `software_statement` は、文字列でなければ `parseClientRegistrationBody` が `invalid_software_statement` を投げるが、文字列なら中身を検証せずに無視する（RFC 7591 §3.1.1 は、対応しない認可サーバーが無視することを認めている）。
+ * ソフトウェアステートメントを受け付ける OP は、この関数を使わずに、2 つの関数のあいだで設定の検証関数と `applySoftwareStatement()`（`software-statement.ts`）を呼ぶ。
+ *
+ * @spec RFC 7591 §3.1.1
+ * @throws {ClientRegistrationError} `invalid_redirect_uri`、`invalid_client_metadata`、`invalid_software_statement`: 中で呼ぶ 2 つの関数のどちらかが投げたとき。
+ * @throws {TypeError} `customMetadata` に標準のメタデータと同じ名前があるとき。
  */
 export function validateClientRegistrationRequest(
   rawBody: string,
@@ -446,13 +462,18 @@ export function validateClientRegistrationRequest(
 }
 
 /**
- * redirect_uris は REQUIRED（OIDC Dynamic Client Registration 1.0 §2）。
- * URI の規則そのもの（フラグメント禁止・危険スキーム拒否・非ループバック
- * 平文 http 拒否。ネイティブアプリ向けのカスタムスキームは通る）は core の
- * validateRegisteredRedirectUris に委ね、静的クライアントと同一の登録基準を
- * 適用する。core の例外は違反 URI をメッセージへ埋め込んだ server_error
- * なので、コードを invalid_redirect_uri（RFC 7591 §3.2.2）へ、文言を URI を
- * 含まない固定 ASCII へ差し替える。
+ * `redirect_uris` を検証し、同じ値の新しい配列を返す。
+ *
+ * `redirect_uris` は必須（REQUIRED）である（OIDC Dynamic Client Registration 1.0 §2）。
+ * 空でない文字列の配列でなければ、`invalid_redirect_uri` を投げる。
+ *
+ * URI の規則そのもの（スキームがあること、フラグメントがないこと、危険なスキームでないこと、ループバック以外の `http` でないこと）は core の `validateRegisteredRedirectUris()` に任せ、静的なクライアントと同じ登録の基準を適用する。
+ * ネイティブアプリ向けのカスタムスキームは通る。
+ * core の例外は違反した URI をメッセージに含む `server_error` なので、コードを `invalid_redirect_uri`（RFC 7591 §3.2.2）に、文言を URI を含まない固定の ASCII の文に差し替えて投げ直す。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec RFC 7591 §3.2.2
+ * @throws {ClientRegistrationError} `invalid_redirect_uri`: 空でない文字列の配列でないとき、または core の規則に反する URI を含むとき。
  */
 function validateRedirectUris(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0 || !value.every((uri) => typeof uri === 'string')) {
@@ -472,7 +493,15 @@ function validateRedirectUris(value: unknown): string[] {
   return [...value];
 }
 
-/** token_endpoint_auth_method: OPTIONAL、既定 client_secret_basic（RFC 7591 §2）。 */
+/**
+ * `token_endpoint_auth_method` を検証して返す。
+ *
+ * 省略できる（OPTIONAL）メタデータで、省略したときは既定値の `client_secret_basic` を返す（RFC 7591 §2）。
+ * 文字列でないか、`supported` にない値なら、`invalid_client_metadata` を投げる。
+ *
+ * @spec RFC 7591 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 登録できない認証方式のとき。
+ */
 function validateTokenEndpointAuthMethod(value: unknown, supported: readonly string[]): string {
   if (value === undefined) {
     return 'client_secret_basic';
@@ -487,8 +516,14 @@ function validateTokenEndpointAuthMethod(value: unknown, supported: readonly str
 }
 
 /**
- * grant_types: OPTIONAL、既定 ["authorization_code"]（RFC 7591 §2）。
- * supported に無い値は拒否する。重複は 1 つに正規化し、出現順を保つ。
+ * `grant_types` を検証し、重複を除いた配列を返す。
+ *
+ * 省略できる（OPTIONAL）メタデータで、省略したときは既定値の `["authorization_code"]` を返す（RFC 7591 §2）。
+ * 配列でないか、`supported` にない値を含むときは、`invalid_client_metadata` を投げる。
+ * 重複は 1 つにまとめ、最初に現れた順を保つ。
+ *
+ * @spec RFC 7591 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 配列でないとき、または登録できないグラントタイプを含むとき。
  */
 function validateGrantTypes(value: unknown, supported: readonly string[]): string[] {
   if (value === undefined) {
@@ -504,10 +539,16 @@ function validateGrantTypes(value: unknown, supported: readonly string[]): strin
 }
 
 /**
- * response_types: OPTIONAL、既定 ["code"]（RFC 7591 §2）。値は空白区切りで
- * 順序を問わないので（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）、
- * core の normalizeResponseType で並べ直してから supported と照合し、重複を
- * 1 つに正規化する。
+ * `response_types` を検証し、正規化した配列を返す。
+ *
+ * 省略できる（OPTIONAL）メタデータで、省略したときは既定値の `["code"]` を返す（RFC 7591 §2）。
+ * 値は空白で区切った語の並びで、語の順序は意味を持たない（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）。
+ * そのため、core の `normalizeResponseType()` で語を並べ直してから `supported` と照らし合わせ、重複を 1 つにまとめる。
+ * 空でない配列でないとき、または `supported` にない値を含むときは、`invalid_client_metadata` を投げる。
+ *
+ * @spec RFC 7591 §2
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §1.2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 空でない配列でないとき、または登録できないレスポンスタイプを含むとき。
  */
 function validateResponseTypes(value: unknown, supported: readonly string[]): string[] {
   if (value === undefined) {
@@ -531,11 +572,15 @@ function validateResponseTypes(value: unknown, supported: readonly string[]): st
 }
 
 /**
- * RFC 7591 §2.1 / OIDC Dynamic Client Registration 1.0 §2: grant_types と
- * response_types の対応。code を含む response_type は authorization_code grant を、
- * token か id_token を含む response_type は implicit grant を要し、逆に登録した
- * これらの grant には対応する response_type が要る。矛盾した登録は
- * invalid_client_metadata で拒否し、使えない組み合わせを登録させない（§2.1 SHOULD）。
+ * `grant_types` と `response_types` の対応を確かめる。
+ *
+ * `code` を含むレスポンスタイプはグラントタイプ `authorization_code` を、`token` か `id_token` を含むレスポンスタイプはグラントタイプ `implicit` を必要とする。
+ * 逆に、これらのグラントタイプを登録したときは、対応するレスポンスタイプが必要である。
+ * 対応しない登録は、使えない組み合わせを登録させないために `invalid_client_metadata` で拒否する（RFC 7591 §2.1 の SHOULD）。
+ *
+ * @spec RFC 7591 §2.1
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 対応しないとき。
  */
 function validateGrantAndResponseTypeConsistency(grantTypes: readonly string[], responseTypes: readonly string[]): void {
   const usesCode = responseTypes.some((responseType) => responseTypeIncludes(responseType, 'code'));

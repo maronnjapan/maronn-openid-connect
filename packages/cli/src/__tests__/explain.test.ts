@@ -76,7 +76,7 @@ describe('renderOverview', () => {
   it('should list the commands, the frameworks and the endpoints of the configuration', () => {
     expect(text).toContain('maronn-oidc generate <framework>');
     expect(text).toContain('Frameworks: hono, express, fastify, nextjs');
-    expect(text).toMatch(/token\s+POST \/token\s+Token endpoint\s+\d+ steps/);
+    expect(text).toMatch(/token\s+POST \/token\s+トークンエンドポイント\s+\d+ steps/);
   });
 
   it('should name the flag of an endpoint a feature adds, on and off', () => {
@@ -88,8 +88,8 @@ describe('renderOverview', () => {
 describe('renderEndpoint', () => {
   it('should list the steps in pipeline order with their function and the names of their calls', () => {
     const text = renderEndpoint(map, endpointOf(flow, 'token'));
-    expect(text).toContain('POST /token  Token endpoint');
-    expect(text).toMatch(/1\. \[parse-request\] Parse the token request/);
+    expect(text).toContain('POST /token  トークンエンドポイント');
+    expect(text).toMatch(/1\. \[parse-request\] トークンリクエストを解析する/);
     expect(text).toMatch(/2\. \[authenticate-client\][^\n]*\n\s+authenticateTokenClient\(\)[^\n]*\n[^\n]*\n\s+calls: extractClientCredentials, resolveAuthenticatedTokenClient, validateClientAuthMethod, verifyClientSecret/);
   });
 

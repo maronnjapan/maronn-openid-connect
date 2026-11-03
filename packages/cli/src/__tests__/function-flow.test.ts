@@ -121,31 +121,85 @@ describe('buildFunctionFlow', () => {
   });
 
   describe('branches', () => {
-    it('should label the arrow into a guarded box with its condition and the way around it with nothing', () => {
+    it('should attach the explanation of a guard to its condition instead of its early return', () => {
+      const flow = flowOf('function f(session) {\n  // Reject sessions older than the requested max_age.\n  if (!isCurrent(session)) return undefined;\n  return session;\n}', ['isCurrent']);
+      expect(flow?.nodes.find((node) => node.kind === 'condition')?.note).toBe('Reject sessions older than the requested max_age.');
+      expect(flow?.nodes.find((node) => node.kind === 'return')?.note).toBeUndefined();
+    });
+
+    it('should short-circuit a compound early-return condition without introducing an impossible outcome', () => {
+      const flow = flowOf('function f(ok) { if (ok && check()) return cached(); return fresh(); }', ['check', 'cached', 'fresh']);
+      const condition = flow?.nodes.find((node) => node.label === 'ok');
+      const skip = flow?.edges.find((edge) => edge.from === condition?.id && edge.label === 'false');
+      expect(flow?.nodes.find((node) => node.id === skip?.to)?.label).toBe('fresh');
+      const take = flow?.edges.find((edge) => edge.from === condition?.id && edge.label === 'true');
+      expect(flow?.nodes.find((node) => node.id === take?.to)?.label).toBe('check');
+    });
+
+    it('should stop nested early returns and omit code unreachable after both branches return', () => {
+      const flow = flowOf('function f(x) { if (x) { if (x.bad) return fail(); return cached(); } else { return fresh(); } unreachable(); }', ['fail', 'cached', 'fresh', 'unreachable']);
+      expect(flow?.nodes.some((node) => node.label === 'unreachable')).toBe(false);
+      const exits = flow?.nodes.filter((node) => node.kind === 'return') ?? [];
+      expect(exits).toHaveLength(3);
+      expect(flow?.edges.some((edge) => exits.some((node) => node.id === edge.from))).toBe(false);
+    });
+
+    it('should honor the automatic semicolon after return followed by a newline', () => {
+      const flow = flowOf('function f() { return\n work(); }', ['work']);
+      expect(shape(flow)).toEqual({ nodes: ['start:subject()', 'return:return'], edges: ['subject()>return'] });
+    });
+
+    it.each(['??', '||', '&&'])('should guard the fallback call of %s instead of always executing it', (operator) => {
+      const flow = flowOf(`function f(value) { const result = value ${operator} fallback(); return result; }`, ['fallback']);
+      const condition = flow?.nodes.find((node) => node.kind === 'condition');
+      const call = flow?.nodes.find((node) => node.kind === 'call');
+      const take = operator === '??' ? 'nullish' : operator === '||' ? 'false' : 'true';
+      expect(flow?.edges.find((edge) => edge.to === call?.id)).toMatchObject({ from: condition?.id, kind: 'branch', label: take });
+      expect(flow?.edges.filter((edge) => edge.from === condition?.id)).toHaveLength(2);
+    });
+
+    it('should guard the two calls of a conditional return separately', () => {
+      const flow = flowOf('function f(ok) { return ok ? accept() : reject(); }', ['accept', 'reject']);
+      expect(shape(flow).edges.slice(0, 3)).toEqual(['subject(ok)>ok', 'ok>accept[true]', 'ok>reject[false]']);
+    });
+
+    it('should send each failing call and explicit throw to catch from its own node', () => {
+      const flow = flowOf('function f() { try { first(); second(); throw new Error("bad"); } catch (error) { return recover(error); } }', ['first', 'second', 'recover']);
+      const labels = flow?.edges.filter((edge) => edge.kind === 'error').map((edge) => flow.nodes.find((node) => node.id === edge.from)?.label);
+      expect(labels).toEqual(['first', 'second', 'throw Error(bad)']);
+    });
+
+    it('should keep exceptions handled by an inner catch out of the outer catch', () => {
+      const flow = flowOf('function f() { try { try { first(); } catch (error) { recover(); } second(); } catch (error) { outer(); } }', ['first', 'recover', 'second', 'outer']);
+      const outer = flow?.nodes.find((node) => node.label === 'outer');
+      expect(flow?.edges.filter((edge) => edge.to === outer?.id).map((edge) => flow.nodes.find((node) => node.id === edge.from)?.label)).toEqual(['recover', 'second']);
+    });
+
+    it('should show both outcomes of an explicit condition', () => {
       const flow = flowOf('function f(x) {\n  if (!x.ok) {\n    reject(x);\n  }\n  accept(x);\n}', ['reject', 'accept']);
-      expect(shape(flow).edges).toEqual(['subject(x)>reject[!x.ok]', 'reject>accept', 'subject(x)>accept', 'accept>end']);
+      expect(shape(flow).edges).toEqual(['subject(x)>!x.ok', '!x.ok>reject[true]', 'reject>accept', '!x.ok>accept[false]', 'accept>end']);
     });
 
     it('should label the else branch and join both branches after the if', () => {
       const flow = flowOf('function f(x) {\n  if (x) a(); else b();\n  c();\n}', ['a', 'b', 'c']);
-      expect(shape(flow).edges).toEqual(['subject(x)>a[x]', 'subject(x)>b[else]', 'a>c', 'b>c', 'c>end']);
+      expect(shape(flow).edges).toEqual(['subject(x)>x', 'x>a[true]', 'x>b[false]', 'a>c', 'b>c', 'c>end']);
     });
 
     it('should read else if as one chain of conditions', () => {
       const flow = flowOf('function f(x) {\n  if (x === 1) a();\n  else if (x === 2) b();\n  else c();\n}', ['a', 'b', 'c']);
-      expect(shape(flow).edges.slice(0, 3)).toEqual(['subject(x)>a[x === 1]', 'subject(x)>b[else if x === 2]', 'subject(x)>c[else › else]']);
+      expect(shape(flow).edges).toEqual(['subject(x)>x === 1', 'x === 1>a[true]', 'x === 1>x === 2[false]', 'x === 2>b[true]', 'x === 2>c[false]', 'a>end', 'b>end', 'c>end']);
     });
 
-    it('should leave out an if whose branches call nothing and do not leave', () => {
+    it('should retain a condition even when its branches only assign values', () => {
       const flow = flowOf('function f(x) {\n  let y = 0;\n  if (x) { y = 1; } else { y = 2; }\n  return use(y);\n}', ['use']);
-      expect(shape(flow).edges).toEqual(['subject(x)>use', 'use>return use(…)']);
+      expect(shape(flow).edges).toEqual(['subject(x)>x', 'x>use[true]', 'x>use[false]', 'use>return use(…)']);
     });
 
     it('should run the calls of a condition before the branch', () => {
       const flow = flowOf('function f(x) {\n  if (!isValid(x)) throw new TokenError(TokenErrorCode.InvalidRequest, "bad");\n  return x;\n}', ['isValid']);
       expect(shape(flow)).toEqual({
-        nodes: ['start:subject(x)', 'call:isValid', 'throw:throw TokenError(InvalidRequest)', 'return:return x'],
-        edges: ['subject(x)>isValid', 'isValid>throw TokenError(InvalidRequest)[!isValid(x)]', 'isValid>return x'],
+        nodes: ['start:subject(x)', 'call:isValid', 'condition:!isValid(x)', 'throw:throw TokenError(InvalidRequest)', 'return:return x'],
+        edges: ['subject(x)>isValid', 'isValid>!isValid(x)', '!isValid(x)>throw TokenError(InvalidRequest)[true]', '!isValid(x)>return x[false]'],
       });
     });
 
@@ -168,7 +222,7 @@ describe('buildFunctionFlow', () => {
 
     it('should enter a catch block on an error arrow', () => {
       const flow = flowOf('function f() {\n  try {\n    return run();\n  } catch (error) {\n    return respondError(error);\n  }\n}', ['run', 'respondError']);
-      expect(shape(flow).edges).toEqual(['subject()>run', 'run>return run()', 'subject()>respondError[catch]!', 'respondError>return respondError(…)']);
+      expect(shape(flow).edges).toEqual(['subject()>run', 'run>return run()', 'run>respondError[catch]!', 'respondError>return respondError(…)']);
     });
   });
 

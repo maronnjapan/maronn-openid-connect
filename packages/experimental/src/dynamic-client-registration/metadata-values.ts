@@ -21,28 +21,42 @@ import { ClientRegistrationError } from './registration-error.js';
 // eslint-disable-next-line no-control-regex
 const INVISIBLE_CHARACTERS = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/;
 
-/** JSON オブジェクト（配列と null を除く）か。 */
+/**
+ * 値が JSON オブジェクトなら true を返す。
+ *
+ * 配列と `null` は JSON オブジェクトとみなさない。
+ */
 export function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
- * 自身のデータプロパティとして値を置く。`target[name] = value` は name が
- * `__proto__` のときプロトタイプを差し替えてしまうので、リクエスト由来の名前で
- * オブジェクトを組み立てるときはこちらを使う。
+ * `target` に `name` の値を自身のプロパティとして置く。
+ *
+ * プロパティは、列挙でき、書き換えられ、定義し直せるデータプロパティにする。
+ * `target[name] = value` と書くと、`name` が `__proto__` のときにプロトタイプを差し替えてしまうので、リクエストから来た名前でオブジェクトを組み立てるときはこの関数を使う。
  */
 export function defineOwnProperty(target: Record<string, unknown>, name: string, value: unknown): void {
   Object.defineProperty(target, name, { value, enumerable: true, writable: true, configurable: true });
 }
 
-/** description を error_description にした invalid_client_metadata の ClientRegistrationError を作り、投げずに返す。 */
+/**
+ * `invalid_client_metadata` の登録エラーを作って返す。
+ *
+ * `description` を `error_description` にした `ClientRegistrationError` を作り、投げずに返す。
+ */
 function invalidMetadata(description: string): ClientRegistrationError {
   return new ClientRegistrationError('invalid_client_metadata', description);
 }
 
 /**
- * 人間が読む文字列のメタデータ（client_name / software_id / software_version /
- * contacts の各要素）。長さの上限と、制御文字や見えない文字の不在だけを検査する。
+ * 表示用の文字列を検証し、そのまま返す。
+ *
+ * 人が読む文字列のメタデータ（`client_name`、`software_id`、`software_version`、`contacts` の各要素）に使う。
+ * 文字列でないとき、長さが `maxLength` を超えるとき、制御文字や見えない文字（表示の向きを変える文字、ゼロ幅の文字）を含むときは、`invalid_client_metadata` を投げる。
+ * 確かめるのはこの 3 つだけである。
+ *
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき。
  */
 export function validateDisplayString(value: unknown, name: string, maxLength: number): string {
   if (typeof value !== 'string') {
@@ -60,10 +74,16 @@ export function validateDisplayString(value: unknown, name: string, maxLength: n
 const URL_MAX_LENGTH = 2048;
 
 /**
- * 利用者へ示す URL のメタデータ（client_uri / logo_uri / tos_uri / policy_uri。
- * RFC 7591 §2）。OP はこれらを取得しに行かず、保持して応答に返すだけなので、
- * 検査は絶対 URL であることと http / https スキームに限る。`javascript:` などの
- * スキームは、将来この値を画面へ出すときのために登録段階で拒否する。
+ * HTTP か HTTPS の絶対 URL を検証し、そのまま返す。
+ *
+ * 利用者に示す URL のメタデータ（`client_uri`、`logo_uri`、`tos_uri`、`policy_uri`）に使う（RFC 7591 §2）。
+ * 文字列でないとき、空文字列のとき、2048 文字を超えるとき、制御文字や見えない文字を含むとき、URL として解析できないとき、スキームが `http` と `https` 以外のときは、`invalid_client_metadata` を投げる。
+ *
+ * OP はこれらの URL を取得しに行かず、保持してレスポンスで返すだけなので、検証は絶対 URL であることとスキームに限る。
+ * `javascript:` などのスキームは、将来この値を画面に表示するときに備えて、登録の段階で拒否する。
+ *
+ * @spec RFC 7591 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき。
  */
 export function validateHttpUrl(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > URL_MAX_LENGTH) {
@@ -88,8 +108,17 @@ const CONTACTS_MAX_ENTRIES = 32;
 const CONTACT_MAX_LENGTH = 256;
 
 /**
- * contacts: 責任者への連絡手段（通常はメールアドレス）の配列（RFC 7591 §2）。
- * メールアドレスの構文は検査しない（RFC 7591 は形式を定めず、OP は送信しない）。
+ * `contacts` を検証し、文字列の配列を返す。
+ *
+ * `contacts` は、クライアントの責任者への連絡先（通常はメールアドレス）の配列である（RFC 7591 §2）。
+ * 配列でないとき、空のとき、32 個を超えるときは、`invalid_client_metadata` を投げる。
+ * 各要素は {@link validateDisplayString} で、256 文字以下の文字列であることなどを確かめる。
+ *
+ * メールアドレスの構文は確かめない。
+ * RFC 7591 は形式を定めておらず、OP はこの連絡先にメールを送らないからである。
+ *
+ * @spec RFC 7591 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき、または要素のどれかが {@link validateDisplayString} の検証に失敗したとき。
  */
 export function validateContacts(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > CONTACTS_MAX_ENTRIES) {
@@ -106,9 +135,15 @@ export function validateContacts(value: unknown): string[] {
 const SCOPE_SYNTAX = /^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$/;
 
 /**
- * scope: クライアントが要求してよい scope 値のスペース区切り文字列（RFC 7591 §2）。
- * 構文（RFC 6749 §3.3）を検査し、重複を 1 つに正規化した配列で返す。
- * supportedScopes があれば、一覧に無い値は拒否する。
+ * `scope` を検証し、重複を除いた値の配列を返す。
+ *
+ * `scope` は、クライアントが要求してよいスコープを空白で区切った文字列である（RFC 7591 §2）。
+ * 文字列でないとき、構文（RFC 6749 §3.3）に合わないとき、`supportedScopes` を渡していてそこにない値を含むときは、`invalid_client_metadata` を投げる。
+ * 構文では、値の区切りは半角空白 1 つだけで、値に二重引用符、バックスラッシュ、制御文字は使えない。
+ *
+ * @spec RFC 7591 §2
+ * @spec RFC 6749 §3.3
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき。
  */
 export function validateScope(value: unknown, supportedScopes: readonly string[] | undefined): string[] {
   if (typeof value !== 'string') {
@@ -125,7 +160,12 @@ export function validateScope(value: unknown, supportedScopes: readonly string[]
 }
 
 /**
- * application_type: web または native（OIDC Dynamic Client Registration 1.0 §2）。
+ * `application_type` を検証し、そのまま返す。
+ *
+ * 値が `web` か `native` でなければ、`invalid_client_metadata` を投げる（OIDC Dynamic Client Registration 1.0 §2）。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: `web` と `native` 以外の値のとき。
  */
 export function validateApplicationType(value: unknown): 'web' | 'native' {
   if (value !== 'web' && value !== 'native') {
@@ -137,16 +177,16 @@ export function validateApplicationType(value: unknown): 'web' | 'native' {
 const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
 /**
- * OIDC Dynamic Client Registration 1.0 §2 が application_type ごとに redirect_uris へ
- * 課す制約。
+ * リダイレクト URI がアプリの種別に合うか確かめる。
  *
- * - native: カスタム URI スキームか、http スキームのループバック URL
- *   （localhost / 127.0.0.1 / [::1]）だけを登録できる
- * - web かつ implicit grant を使う: https スキームだけを登録でき、ホスト名に
- *   localhost を使えない
+ * OIDC Dynamic Client Registration 1.0 §2 が `application_type` ごとに `redirect_uris` に課す次の制約を確かめ、合わない URI があれば `invalid_client_metadata` を投げる。
+ * - `native`: カスタム URI スキームか、`http` スキームのループバックの URL（`localhost`、`127.0.0.1`、`[::1]`）だけを登録できる。
+ * - `web` でグラントタイプ `implicit` を使う: `https` スキームだけを登録でき、ホスト名に `localhost` を使えない。
  *
- * application_type を省略した登録には、core の規則（validateRegisteredRedirectUris）
- * だけが掛かる。
+ * `application_type` を省略した登録には、core の規則（`validateRegisteredRedirectUris()`）だけを適用する。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: `redirect_uris` のどれかが制約に合わないとき。
  */
 export function validateRedirectUrisForApplicationType(
   redirectUris: readonly string[],
@@ -177,8 +217,13 @@ export function validateRedirectUrisForApplicationType(
 }
 
 /**
- * default_max_age: 秒数を表す非負整数（OIDC Dynamic Client Registration 1.0 §2）。
- * core の validateDefaultMaxAge と同じ規則で、登録段階で拒否する。
+ * `default_max_age` を検証し、そのまま返す。
+ *
+ * 値が秒数を表す 0 以上の整数でなければ、`invalid_client_metadata` を投げる（OIDC Dynamic Client Registration 1.0 §2）。
+ * core の `validateDefaultMaxAge()` と同じ規則を、登録の段階で適用する。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 0 以上の整数でないとき。
  */
 export function validateDefaultMaxAge(value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
@@ -188,9 +233,14 @@ export function validateDefaultMaxAge(value: unknown): number {
 }
 
 /**
- * id_token_signed_response_alg / userinfo_signed_response_alg: OP が署名できる
- * アルゴリズムの一覧（通常は登録済み鍵から導いた値）に含まれる値だけを受理する。
- * none は受理しない（OIDC Dynamic Client Registration 1.0 §2）。
+ * 署名アルゴリズムのメタデータを検証し、そのまま返す。
+ *
+ * `id_token_signed_response_alg` と `userinfo_signed_response_alg` に使う。
+ * 値が `supported`（OP が署名できるアルゴリズムの一覧で、通常は登録した鍵から求める）にある文字列のときだけ受け付け、それ以外は `invalid_client_metadata` を投げる。
+ * `none` は受け付けない（OIDC Dynamic Client Registration 1.0 §2）。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 値が文字列でないとき、`none` のとき、または `supported` にないとき。
  */
 export function validateSigningAlg(value: unknown, name: string, supported: readonly string[]): string {
   if (typeof value !== 'string' || value === 'none' || !supported.includes(value)) {
@@ -247,12 +297,19 @@ const JWKS_DESCRIPTION =
   'jwks must be a JWK Set of 1 to 16 public RSA (RS256, RS384, RS512) or EC (P-256, P-384, P-521) signature keys';
 
 /**
- * jwks: クライアントの公開鍵の JWK Set（RFC 7591 §2）。OP は署名検証にだけ使うので、
- * core が読める RSA / EC の署名用公開鍵に限る。秘密鍵パラメータを持つ鍵は拒否する。
+ * `jwks` を検証し、正規化した JWK Set を返す。
  *
- * 返す鍵は理解するメンバーだけを選び取った新しいオブジェクトで、alg と use が無い
- * 鍵には既定（RSA は RS256、EC は曲線に対応する ES*、use は sig）を補う。
- * 補った値は登録メタデータとして応答に現れる（RFC 7591 §3.1 の「置換してよい」）。
+ * `jwks` は、クライアントの公開鍵の JWK Set である（RFC 7591 §2）。
+ * OP は署名の検証にだけ使うので、core が読める RSA と EC の署名用の公開鍵に限り、秘密鍵のパラメータを持つ鍵は拒否する。
+ * JSON オブジェクトでないとき、`keys` が配列でないとき、鍵が 0 個か 17 個以上のときは、`invalid_client_metadata` を投げる。
+ * 鍵ごとの検証は `validateJwk()` で行う。
+ *
+ * 返す鍵は、理解するメンバーだけを選び取った新しいオブジェクトで、`alg` と `use` がない鍵には既定値（`alg` は RSA なら `RS256`、EC なら曲線に対応する `ES256` などで、`use` は `sig`）を補う。
+ * 補った値は、登録したメタデータとしてレスポンスに現れる（RFC 7591 §3.1 が認める置き換え）。
+ *
+ * @spec RFC 7591 §2
+ * @spec RFC 7591 §3.1
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき、または鍵のどれかが `validateJwk()` の検証に失敗したとき。
  */
 export function validateJwks(value: unknown): JwkSet {
   if (!isJsonObject(value) || !Array.isArray(value['keys'])) {
@@ -266,18 +323,24 @@ export function validateJwks(value: unknown): JwkSet {
 }
 
 /**
- * JWK Set の鍵 1 つを RSA / EC の署名用公開鍵として検証し、理解するメンバーだけを選び取った新しい JWK を返す。
+ * JWK Set の鍵 1 つを検証し、正規化した JWK を返す。
  *
- * 返す鍵の use は常に sig で、alg が無ければ RSA には RS256、EC には曲線に対応する
- * ES256 / ES384 / ES512 を補う。それ以外のメンバー（x5c など）は落とす。JSON オブジェクトでない、
- * kty が RSA / EC 以外、秘密鍵パラメータ（d / p / q / dp / dq / qi / oth / k）を持つ、use が sig 以外、
- * n / e や crv / x / y が文字列でない、曲線が P-256 / P-384 / P-521 以外、alg が鍵種や曲線に合わない、
- * kid が 128 文字以下の文字列でないか制御文字・見えない文字を含む、のいずれかに当たる値では
- * invalid_client_metadata の ClientRegistrationError を投げる。
+ * 鍵が RSA か EC の署名用の公開鍵であることを確かめ、理解するメンバーだけを選び取った新しい JWK を返す。
+ * 返す鍵の `use` は常に `sig` で、`alg` がなければ RSA には `RS256` を、EC には曲線に対応する `ES256`、`ES384`、`ES512` を補う。
+ * それ以外のメンバー（`x5c` など）は捨てる。
+ *
+ * 次のどれかに当たる値には、`invalid_client_metadata` を投げる。
+ * - JSON オブジェクトでない、または `kty` が `RSA` と `EC` 以外である。
+ * - 秘密鍵のパラメータ（`d`、`p`、`q`、`dp`、`dq`、`qi`、`oth`、`k`）を持つ。
+ * - `use` が `sig` 以外である。
+ * - `kid` が 128 文字以下の文字列でないか、制御文字や見えない文字を含む。
+ * - `alg` が文字列でないか、鍵の種類や曲線に合わない（RSA に使えるのは `RS256`、`RS384`、`RS512`）。
+ * - RSA の `n` と `e`、または EC の `crv`、`x`、`y` が文字列でない。
+ * - 曲線が `P-256`、`P-384`、`P-521` 以外である。
  *
  * @spec RFC 7591 §2
  * @spec RFC 7518 §6.2 / §6.3
- * @throws {ClientRegistrationError} invalid_client_metadata
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき。
  */
 function validateJwk(value: unknown): Jwk {
   if (!isJsonObject(value) || (value['kty'] !== 'RSA' && value['kty'] !== 'EC')) {

@@ -159,11 +159,11 @@ describe('renderMermaid', () => {
       const rendered = renderMermaid(buildOpFlow({ features: DEFAULT_FEATURES }));
       expect(rendered.split('\n').slice(0, 4)).toEqual([
         'flowchart LR',
-        '  subgraph metadata["Metadata"]',
-        '    discovery["GET /.well-known/openid-configuration<br/>Discovery"]',
+        '  subgraph metadata["メタデータ"]',
+        '    discovery["GET /.well-known/openid-configuration<br/>ディスカバリー"]',
         '    jwks["GET /.well-known/jwks.json<br/>JWKS"]',
       ]);
-      expect(rendered.includes('  authorize -->|"login required"| login\n')).toBe(true);
+      expect(rendered.includes('  authorize -->|"ログインが必要"| login\n')).toBe(true);
       expect(rendered.includes('  consent -->|"code"| token\n')).toBe(true);
     });
   });

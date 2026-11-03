@@ -40,13 +40,10 @@ declare module '../../views.js' {
  * ...) on .g_id_signin. hono/jsx hoists the async script into <head>.
  */
 /**
- * Render the "Sign in with Google" button below a horizontal rule: the GIS
- * client script, a g_id_onload element carrying the redirect-mode
- * configuration as its attributes, and the g_id_signin element GIS replaces
- * with the button.
+ * 「Google でログイン」のボタンを描画する。
  *
- * Signing in there makes Google post the ID token to the login_uri of that
- * configuration.
+ * 横線（`<hr />`）の下に、GIS のスクリプト、リダイレクトモードの設定を属性として付けた `g_id_onload` 要素、GIS がボタンに置き換える `g_id_signin` 要素を置く。
+ * ボタンからログインすると、Google がその設定の `login_uri` へ ID トークンを POST で送る。
  */
 function defaultGoogleSignInButton(params: GoogleSignInParams): JSX.Element {
   return (
@@ -61,7 +58,12 @@ function defaultGoogleSignInButton(params: GoogleSignInParams): JSX.Element {
   );
 }
 
-/** The view of the request: the one the app replaced, else the default above. */
+/**
+ * このリクエストで使うボタンのビューを返す。
+ *
+ * アプリが `views` オプション（`createApp()` や `applyOidc()`）で `googleSignInButton` を差し替えていればそれを、なければ既定のビュー（`defaultGoogleSignInButton`）を返す。
+ * ビューはリクエストコンテキストの `views` から読む。
+ */
 export function googleViews(c: any): Required<Pick<Views, 'googleSignInButton'>> {
   const views: Partial<Views> = c.get('views') ?? {};
   return {

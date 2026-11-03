@@ -15,8 +15,9 @@ interface ErrorViewProps {
 }
 
 /**
- * Render the OP's error screen: an Error heading, the error code, the
- * description when there is one, and the children the screen adds below them.
+ * OP のエラー画面を描画する。
+ *
+ * 見出し（`Error`）、エラーコード、説明（あれば）、画面が加える `children` の順に並べる。
  */
 export function ErrorView({ error, description, children }: ErrorViewProps) {
   return (

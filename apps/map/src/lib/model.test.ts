@@ -147,6 +147,17 @@ describe('hash', () => {
     expect(parseHash('#fn--isForm', data, defaults)).toEqual({ ...defaults, fn: 'core:b.ts#isForm' });
   });
 
+  it('should round-trip the page of the changes of the pull request, and read #changes alone', () => {
+    const changes = { ...defaults, framework: 'nextjs', changes: true };
+    expect(buildHash(changes, data)).toBe('nextjs--changes');
+    expect(parseHash('#nextjs--changes', data, defaults)).toEqual(changes);
+    expect(parseHash('#changes', data, defaults)).toEqual({ ...defaults, changes: true });
+  });
+
+  it('should name a function opened from the page of the changes by the function', () => {
+    expect(buildHash({ ...defaults, fn: 'core:b.ts#isForm', changes: true }, data)).toBe('hono--fn--isForm');
+  });
+
   it('should keep the defaults for a hash that names nothing known', () => {
     expect(parseHash('#nope--token', data, defaults)).toEqual(defaults);
     expect(parseHash('#hono--nope', data, defaults)).toEqual({ ...defaults, framework: 'hono' });

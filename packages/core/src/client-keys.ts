@@ -39,10 +39,10 @@ export interface ClientKeyLookupHint {
  */
 export interface ClientKeyResolver {
   /**
-   * client_id のクライアントが purpose の用途に登録した公開鍵を返す。
-   * 鍵が無い（クライアントが無い場合も含む）ときは、`keys` が空の JWK Set を返す。
+   * クライアントが `purpose` 用に登録した公開鍵を返す。
    *
-   * hint は任意で、2 引数の実装もそのまま型に合う。
+   * 鍵がないとき（`clientId` のクライアントがないときも含む）は、`keys` が空の JWK Set を返す。
+   * `hint`（{@link ClientKeyLookupHint}）は検証する JWS の手がかりで、省略できる。2 引数の実装もそのまま型に合う。
    */
   findClientKeys(clientId: string, purpose: ClientKeyPurpose, hint?: ClientKeyLookupHint): Promise<JwkSet>;
 }
@@ -56,10 +56,14 @@ export interface ClientKeysByPurpose {
 }
 
 /**
- * クライアントごとの「用途 → JWK Set」を返す lookup から {@link ClientKeyResolver} を作る。
+ * `lookup` で鍵を取得するリゾルバを作って返す。
+ *
+ * `lookup` は、クライアント ID を受け取り、そのクライアントの用途ごとの JWK Set（{@link ClientKeysByPurpose}）を返す関数である。
  * 設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う。
  *
- * 呼ばれるたびに lookup を呼ぶので、lookup が返す値を変えれば次の呼び出しから効く。
+ * 返す {@link ClientKeyResolver} の `findClientKeys()` は、呼ばれるたびに `lookup` を呼び、指定された用途の鍵の配列を複製して返す。
+ * `lookup` が `undefined` を返したとき、またはその用途の鍵がないときは、`keys` が空の JWK Set を返す。
+ * そのため、`lookup` が返す値を変えれば、次の呼び出しから新しい鍵が使われる。
  */
 export function createClientKeyResolver(
   lookup: (clientId: string) => ClientKeysByPurpose | undefined | Promise<ClientKeysByPurpose | undefined>,

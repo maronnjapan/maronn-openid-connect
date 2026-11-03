@@ -152,18 +152,21 @@ export interface IdJagRedemptionContext {
 const FORBIDDEN_KEY_HEADERS = ['jku', 'x5u', 'jwk', 'x5c'] as const;
 
 /**
- * クライアントが jwt-bearer grant を使ってよいかを検証する。
+ * `jwt-bearer` を使えないクライアントなら例外を投げる。
  *
- * RFC 7521 §4.1 は authorization grant の assertion でクライアント認証を必須と
- * しないが、draft §4.4.1 は ID-JAG の client_id クレームと「リクエストの認証
- * クライアント」の一致を MUST とし、§9.1 は confidential client 限定の SHOULD を
- * 置く。本機能はこれを public client の拒否まで強めている（発行側と同じ設計判断）。
+ * クライアントの `grantTypes` に `jwt-bearer` のグラントタイプ（`urn:ietf:params:oauth:grant-type:jwt-bearer`）がないとき、またはパブリッククライアントのときに、`unauthorized_client` の {@link IdJagError} を投げる。
  *
- * @throws {IdJagError} unauthorized_client
+ * RFC 7521 §4.1 は、アサーションを認可グラントとして使うときのクライアント認証を必須としていない。
+ * 一方、ID-JAG draft §4.4.1 は ID-JAG の `client_id` クレームがリクエストで認証したクライアントと一致することを求め（MUST）、§9.1 はコンフィデンシャルクライアントに限ることを推奨（SHOULD）している。
+ * この機能は、それをパブリッククライアントの拒否まで強めている（発行側と同じ設計上の判断）。
+ *
+ * @throws {IdJagError} `unauthorized_client`: `jwt-bearer` のグラントタイプが登録されていないとき、またはパブリッククライアントのとき
+ * @spec ID-JAG draft §4.4.1
+ * @spec ID-JAG draft §9.1
  */
 export function authorizeIdJagRedemptionClient(client: TokenClientInfo): void {
-  // RFC 7591 §2: grantTypes 未指定は ['authorization_code'] 扱い。よって redemption は
-  // jwt-bearer URN を明示登録したクライアントのみ許される。
+  // `grantTypes` が登録されていなければ、`['authorization_code']` として扱う（RFC 7591 §2）。
+  // そのため、ID-JAG を引き換えられるのは、`jwt-bearer` の URN を明示的に登録したクライアントだけである。
   const grantTypes = client.grantTypes ?? ['authorization_code'];
   if (!grantTypes.includes(JWT_BEARER_GRANT_TYPE)) {
     throw new IdJagError(
@@ -180,9 +183,13 @@ export function authorizeIdJagRedemptionClient(client: TokenClientInfo): void {
 }
 
 /**
- * 必須・非対応パラメータを検証して型付けする（RFC 7523 §2.1）。
+ * `jwt-bearer` のパラメータを検証し、必要な値を返す。
  *
- * @throws {IdJagError} invalid_request
+ * `assertion` がないとき、または `authorization_details` があるときは、`invalid_request` の {@link IdJagError} を投げる。
+ * パラメータの値は前後の空白を取り除いて使い、空文字列や空白だけの値は、送られなかったものとして扱う。
+ *
+ * @throws {IdJagError} `invalid_request`: `assertion` がないとき、または `authorization_details` があるとき
+ * @spec RFC 7523 §2.1
  */
 export function parseIdJagRedemptionParams(
   params: Record<string, string>,
@@ -192,7 +199,7 @@ export function parseIdJagRedemptionParams(
     throw new IdJagError('invalid_request', 'assertion is required');
   }
 
-  // RAR（RFC 9396）は非対応（仕様の非目標）。発行側と同じく明示的に拒否する。
+  // `authorization_details`（RFC 9396）には対応していないので、発行側と同じく明示的に拒否する（この機能の対象外）。
   if (optional(params['authorization_details']) !== undefined) {
     throw new IdJagError(
       'invalid_request',
@@ -207,34 +214,38 @@ export function parseIdJagRedemptionParams(
 }
 
 /**
- * assertion（ID-JAG）を検証し、ペイロードを返す。
+ * アサーションの ID-JAG を検証し、ペイロードを返す。
  *
- * RFC 7521 §5.2 の一般規則に加え、draft §4.4.1 の処理規則を適用する:
+ * RFC 7521 §5.2 の一般的な規則に加えて、ID-JAG draft §4.4.1 の処理の規則を、次の順に確かめる。
+ * 1. コンパクト形式の JWS として、構造が正しいこと。
+ * 2. `typ` が `oauth-id-jag+jwt` であること（RFC 8725 §3.11 の明示的な型付け）。
+ *    RFC 7515 §4.1.9 に従い、`application/` の接頭辞と、大文字と小文字の違いは許す。
+ * 3. `alg` があり、`none` でないこと。
+ *    外部から鍵を取得するヘッダー（`jku`、`x5u`、`jwk`、`x5c`）がないこと。
+ * 4. `iss` が信頼する IdP のどれかと一致し、この OP の `issuer` とは異なること。
+ *    同じドメインの中で、ID-JAG をアクセストークンに引き換えないためである（ID-JAG draft §9.3）。
+ * 5. 署名が、その IdP の JWKS で検証できること。
+ *    ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ `alg` が一致する鍵を順に試し、鍵の `alg` がヘッダーの `alg` と違う鍵は使わない（core の ID トークンの検証と同じ規則）。
+ * 6. `aud` がこの OP の `issuer` と一致すること。
+ *    文字列か、要素が一つの配列だけを許し、要素が二つ以上ならオーディエンスの注入として拒否する（ID-JAG draft §4.4.1 の MUST）。
+ * 7. `exp`、`iat`、`nbf`（あるとき）が、許容する時刻のずれ（`clockSkewToleranceSec`、既定は 60 秒）の範囲で妥当であること。
+ * 8. `jti` と `sub` が、空でない文字列であること。
+ * 9. `client_id` が、認証したクライアントと一致すること（ID-JAG draft §4.4.1 の MUST）。
+ *    盗まれた ID-JAG を、別のクライアントが引き換えられないようにする。
+ * 10. `scope` があれば文字列で、`resource` があれば文字列か文字列の配列であること。
+ * 11. `act` があれば、`sub` を持つ正しい入れ子の形であること。
  *
- * 1. compact JWS として構造が正しいこと
- * 2. `typ` が `oauth-id-jag+jwt` であること（RFC 8725 §3.11 の explicit typing。
- *    RFC 7515 §4.1.9 に従い `application/` 前置と大文字小文字の差は許容する）
- * 3. `alg` があり `none` でないこと。外部鍵取得ヘッダが無いこと
- * 4. `iss` が信頼 IdP のいずれかと一致し、かつ自 OP の issuer と異なること
- *    （draft §9.3: 同一ドメイン内で ID-JAG をアクセストークンに引き換えない）
- * 5. 署名がその IdP の JWKS で検証できること（kid 一致を優先、無ければ alg 一致
- *    鍵を順次試行。鍵ごとの alg ピン留めは core の ID トークン検証と同じ規則）
- * 6. `aud` が自 OP の issuer と一致すること。文字列、または要素数 1 の配列のみ
- *    許す（draft §4.4.1 MUST。要素数 2 以上は audience injection として拒否）
- * 7. `exp` / `iat` / `nbf`（存在時）が leeway 内で妥当なこと
- * 8. `jti` / `sub` が非空文字列であること
- * 9. `client_id` が認証済みクライアントと一致すること（draft §4.4.1 MUST。
- *    盗まれた ID-JAG を別クライアントが換金する経路を塞ぐ）
+ * `iss` を信頼していないときと署名が正しくないときは、同じ固定の説明（{@link ASSERTION_UNTRUSTED_DESCRIPTION}）を返し、信頼する IdP のリストをレスポンスから探られないようにする。
+ * それ以外の失敗の説明には、クライアントが手元のアサーションから自分で確かめられる内容だけを書く。
  *
- * `iss` 非信頼と署名不正は同一の固定文言で返し、信頼 IdP リストを応答から
- * 探索させない（{@link ASSERTION_UNTRUSTED_DESCRIPTION}）。それ以外の失敗は、
- * クライアントが手元の assertion から自力で確認できる内容だけを述べる。
+ * `jti` によるリプレイの拒否はしない。
+ * ID-JAG draft §4.4.3 は、有効期間内に同じ ID-JAG を再び提示すること（リフレッシュトークンの代わり）を想定している。
+ * 再提示を許す代わりに、クライアント認証と `client_id` の一致で ID-JAG を使えるクライアントを限り、短い `exp` で使える期間を限る。
  *
- * jti によるリプレイ拒否は行わない。draft §4.4.3 は有効期間内の同一 ID-JAG の
- * 再提示（リフレッシュトークンの代替）を意図しており、束縛はクライアント認証と
- * client_id 一致、短い exp が担う。
- *
- * @throws {IdJagError} invalid_grant
+ * @throws {IdJagError} `invalid_grant`: 上のどれかを満たさないとき
+ * @spec RFC 7521 §5.2
+ * @spec ID-JAG draft §4.4.1
+ * @spec ID-JAG draft §9.3
  */
 export async function verifyIdJagAssertion(options: {
   assertion: string;
@@ -261,8 +272,7 @@ export async function verifyIdJagAssertion(options: {
     throw invalidAssertion('The provided assertion is not a valid JWS compact serialization');
   }
 
-  // draft §4.4.1 / RFC 8725 §3.11: typ の検証で ID トークン等の流用（token
-  // confusion）を構造的に拒否する。
+  // `typ` が ID-JAG でなければ拒否し、ID トークンなど、ほかの JWT の流用（トークンの取り違え）を防ぐ（ID-JAG draft §4.4.1、RFC 8725 §3.11）。
   if (!isIdJagTyp(header['typ'])) {
     throw invalidAssertion(`The assertion typ must be ${ID_JAG_JWT_TYP}`);
   }
@@ -281,9 +291,8 @@ export async function verifyIdJagAssertion(options: {
   if (typeof iss !== 'string' || iss.length === 0) {
     throw invalidAssertion(ASSERTION_UNTRUSTED_DESCRIPTION);
   }
-  // draft §9.3: 自分が発行した ID-JAG を自分で引き換えると、SSO 用の assertion が
-  // 同一ドメイン内のアクセストークンへ昇格する抜け道になる。信頼リストの構成に
-  // かかわらず拒否する。
+  // この OP 自身が発行した ID-JAG は、信頼する IdP のリストの設定にかかわらず拒否する（ID-JAG draft §9.3）。
+  // 自分で引き換えると、SSO 用のアサーションを、同じドメインの中のアクセストークンに変える抜け道になる。
   if (iss === options.issuer) {
     throw invalidAssertion(
       'An assertion issued by this authorization server cannot be redeemed here',
@@ -294,9 +303,9 @@ export async function verifyIdJagAssertion(options: {
     throw invalidAssertion(ASSERTION_UNTRUSTED_DESCRIPTION);
   }
 
-  // 鍵選択: kid 一致を優先し、無ければ alg 一致の鍵を順次試行（core の
-  // validateIdTokenHint と同じ規則）。鍵の alg とヘッダの alg の不一致は
-  // 検証せず読み飛ばす（RFC 7515 §4.1.1 の鍵ごとの alg ピン留め）。
+  // 検証に使う鍵の候補を選ぶ。
+  // ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ `alg` が一致する鍵を候補にする（core の `validateIdTokenHint()` と同じ規則）。
+  // 鍵の `alg` がヘッダーの `alg` と違う候補は、検証せずに飛ばす（RFC 7515 §4.1.1 の、鍵ごとに `alg` を固定する規則）。
   const headerKid = typeof header['kid'] === 'string' ? header['kid'] : undefined;
   const candidates = headerKid
     ? identityProvider.jwks.keys.filter((key) => key.kid === headerKid)
@@ -314,11 +323,12 @@ export async function verifyIdJagAssertion(options: {
     }
   }
   if (!signatureValid) {
-    // 「鍵が見つからない」も「署名が壊れている」も同一文言（信頼構成の探索防止）。
+    // 鍵が見つからないときも、署名が壊れているときも、同じ説明で拒否し、信頼の設定を探られないようにする。
     throw invalidAssertion(ASSERTION_UNTRUSTED_DESCRIPTION);
   }
 
-  // draft §4.4.1: aud は自 AS の issuer identifier。文字列か、要素数 1 の配列のみ。
+  // `aud` がこの OP の `issuer` と一致することを確かめる（ID-JAG draft §4.4.1）。
+  // 文字列か、要素が一つの配列だけを許す。
   const aud = payload['aud'];
   const audMatches =
     aud === options.issuer ||
@@ -358,8 +368,8 @@ export async function verifyIdJagAssertion(options: {
     throw invalidAssertion('The assertion is missing a sub claim');
   }
 
-  // draft §4.4.1: client_id クレームは「リクエストを認証したクライアント」と
-  // 一致しなければならない（クライアント継続性）。
+  // `client_id` クレームが、リクエストで認証したクライアントと一致することを確かめる（ID-JAG draft §4.4.1 の MUST）。
+  // ID-JAG の発行を受けたクライアント以外が、その ID-JAG を引き換えられないようにする。
   const clientId = payload['client_id'];
   if (typeof clientId !== 'string' || clientId.length === 0) {
     throw invalidAssertion('The assertion is missing a client_id claim');
@@ -389,9 +399,8 @@ export async function verifyIdJagAssertion(options: {
       ? (payload['amr'] as string[])
       : undefined;
 
-  // act（draft §3.1 OPTIONAL / RFC 8693 §4.1）: 存在する場合は構造を検証して
-  // そのまま引き継ぐ。黙って落とすと actor の記録が消えて委譲が impersonation に
-  // 見えてしまうため、不明な形は拒否する（fail-closed）。
+  // `act`（ID-JAG draft §3.1 の OPTIONAL、RFC 8693 §4.1）があれば、形を検証してそのまま引き継ぐ。
+  // 黙って捨てるとアクターの記録が消え、委譲がなりすましに見えてしまうので、形の分からない値は拒否する。
   const act = payload['act'];
   if (act !== undefined && !isValidActorChain(act)) {
     throw invalidAssertion('The assertion act claim is malformed');
@@ -415,17 +424,20 @@ export async function verifyIdJagAssertion(options: {
 }
 
 /**
- * 実効 scope を導出する。
+ * 要求された `scope` を検証し、発行する `scope` を返す。
  *
- * 許可の上限は ID-JAG の scope クレーム（IdP が許可した範囲。draft §4.4.1 は
- * リソース AS がさらに部分集合へ絞ることを認める）。要求 scope があれば
- * その範囲内で縮小し、無ければ継承する。
+ * 許可する上限は、ID-JAG の `scope` クレーム（IdP が許可した範囲）である。
+ * ID-JAG draft §4.4.1 は、リソース側の認可サーバーが、それをさらに一部に絞ることを認めている。
+ * `scope` が要求されていれば、要求された値がすべて上限の中にあるときだけその値（重複を除いたもの）を返し、上限にない値があれば `invalid_scope` の {@link IdJagError} を投げる。
+ * 要求されていなければ、上限をそのまま返す。
  *
- * `offline_access` は常に除去する。jwt-bearer grant では refresh token を発行
- * しない（draft §4.4.3 SHOULD NOT。ID-JAG の再提示が代替）ため、実効 scope に
- * 残すと同意していない長期アクセスの表明になってしまう。
+ * `offline_access` は、上限から常に取り除く。
+ * `jwt-bearer` グラントではリフレッシュトークンを発行しない（ID-JAG draft §4.4.3 の SHOULD NOT。ID-JAG を再び提示することで代わりにする）ので、`scope` に残すと、同意していない長期のアクセスを示すことになるためである。
  *
- * @throws {IdJagError} invalid_scope
+ * @returns 発行するアクセストークンの `scope`
+ * @throws {IdJagError} `invalid_scope`: 上限にない値を要求したとき
+ * @spec ID-JAG draft §4.4.1
+ * @spec ID-JAG draft §4.4.3
  */
 export function resolveIdJagGrantScope(
   requestedScope: string | undefined,
@@ -448,15 +460,20 @@ export function resolveIdJagGrantScope(
 }
 
 /**
- * 合成関数: jwt-bearer（ID-JAG）redemption の検証〜発行素材の導出。
+ * 引き換えのリクエストを検証し、発行に必要な値を返す。
  *
- * トークンの発行・保存・応答生成は行わないため、呼び出し側が core の
- * 発行パイプラインと組み合わせる。ID トークンと refresh token は発行しない
- * （jwt-bearer は OIDC の認証フローではなく、refresh token は draft §4.4.3 の
- * SHOULD NOT）。
+ * 設定の確認、クライアントの確認、パラメータの検証、アサーションの検証、`scope` の決定を、この順に行う。
+ * 返す値の `subject`、`idpIssuer`、`jti`、`authTime`、`acr`、`amr`、`actor` は ID-JAG から引き継ぎ、`requestedResources` には ID-JAG の `resource` クレームを配列にして入れる。
+ * `expiresIn` には設定の値（`configuredExpiresIn`）をそのまま入れ、ID-JAG の残りの有効期間では短くしない。
  *
- * @throws {IdJagError}
- * @throws {RangeError} configuredExpiresIn が正の整数でない場合（設定ミス）
+ * トークンの発行、保存、レスポンスの組み立ては行わない。
+ * 呼び出し側が、返した値を core の発行の処理と組み合わせる。
+ * この引き換えでは、ID トークンとリフレッシュトークンを発行しない。
+ * `jwt-bearer` は OIDC の認証のフローではなく、リフレッシュトークンは ID-JAG draft §4.4.3 で発行しないよう推奨されている（SHOULD NOT）ためである。
+ *
+ * @throws {IdJagError} どれかの検証に失敗したとき
+ * @throws {RangeError} `configuredExpiresIn` が正の整数でないとき（設定の誤り）
+ * @spec ID-JAG draft §4.4
  */
 export async function processIdJagRedemptionRequest(
   context: IdJagRedemptionContext,
@@ -467,8 +484,8 @@ export async function processIdJagRedemptionRequest(
     );
   }
 
-  // クライアント認可を最初に行う。許可されていないクライアントには assertion の
-  // 有効性すら判定させない（オラクルを与えない）。
+  // リクエストの検証では、クライアントが `jwt-bearer` を使えるかを最初に確かめる。
+  // 使えないクライアントには、アサーションが有効であるかどうかも判定させず、推測する手がかりを与えない。
   authorizeIdJagRedemptionClient(context.client);
 
   const parsed = parseIdJagRedemptionParams(context.params);
@@ -508,7 +525,11 @@ export async function processIdJagRedemptionRequest(
   };
 }
 
-/** 空文字・空白のみを「未指定」として扱う。 */
+/**
+ * 前後の空白を除いた値か、`undefined` を返す。
+ *
+ * `value` が `undefined` のときと、前後の空白を除くと空文字列になるときは、`undefined`（指定なし）を返す。
+ */
 function optional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -516,10 +537,10 @@ function optional(value: string | undefined): string | undefined {
 }
 
 /**
- * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ * `scope` の文字列を値の配列に分けて返す。
  *
- * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
- * 順で 1 つずつ残す。
+ * 空白（タブや改行を含む）で区切り、空の要素を除き、重複は最初に現れた順で一つずつ残す。
+ * `scope` が `undefined` なら、空の配列を返す。
  */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
@@ -527,7 +548,10 @@ function splitScope(scope: string | undefined): string[] {
 }
 
 /**
- * description を error_description にした invalid_grant の IdJagError を作り、投げずに返す。
+ * `invalid_grant` のエラーを作って返す。
+ *
+ * `description` を説明（`error_description`）にした `invalid_grant` の {@link IdJagError} を作り、投げずに返す。
+ * アサーションの不備は `invalid_grant` で返す（RFC 7521 §4.1）。
  *
  * @spec RFC 7521 §4.1
  */
@@ -536,8 +560,12 @@ function invalidAssertion(description: string): IdJagError {
 }
 
 /**
- * RFC 8693 §4.1 の act claim 構造（`sub` 必須、`act` のネストは同形）を検証する。
- * ネストは「最外が現在の actor、最深が最も古い actor」のチェーンを表す。
+ * `act` クレームの形が正しければ true を返す。
+ *
+ * 値がオブジェクト（配列と `null` は除く）で、`sub` が空でない文字列であり、入れ子の `act` があればそれも同じ形であるとき、true を返す（RFC 8693 §4.1）。
+ * 入れ子は、一番外側が現在のアクター、一番内側が最も古いアクターになる連鎖を表す。
+ *
+ * @spec RFC 8693 §4.1
  */
 function isValidActorChain(value: unknown): value is IdJagActor {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -554,8 +582,12 @@ function isValidActorChain(value: unknown): value is IdJagActor {
 }
 
 /**
- * RFC 7515 §4.1.9: typ は大文字小文字を無視して解釈され、`application/` 前置は
- * 省略形と等価に扱う。`oauth-id-jag+jwt` と `application/oauth-id-jag+jwt` を受ける。
+ * `typ` が ID-JAG の値なら true を返す。
+ *
+ * 文字列を小文字にしてから、`oauth-id-jag+jwt` か `application/oauth-id-jag+jwt` と一致するかで判定し、文字列でない値には false を返す。
+ * RFC 7515 §4.1.9 では、`typ` は大文字と小文字を区別せずに解釈し、`application/` の接頭辞は省略した形と同じに扱うためである。
+ *
+ * @spec RFC 7515 §4.1.9
  */
 function isIdJagTyp(typ: unknown): boolean {
   if (typeof typ !== 'string') return false;
@@ -563,7 +595,11 @@ function isIdJagTyp(typ: unknown): boolean {
   return normalized === ID_JAG_JWT_TYP || normalized === `application/${ID_JAG_JWT_TYP}`;
 }
 
-/** base64url（パディング無し）の JSON セグメントを厳格にパースする。 */
+/**
+ * base64url の JSON を解析してオブジェクトを返す。
+ *
+ * 空文字列、英数字と `-`、`_` 以外の文字（パディングの `=` を含む）を含む値、JSON のオブジェクトとして解析できない値（配列や `null` など）には、例外を投げる。
+ */
 function parseBase64UrlJson(segment: string): Record<string, unknown> {
   if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
     throw new Error('invalid base64url');
@@ -583,12 +619,12 @@ function parseBase64UrlJson(segment: string): Record<string, unknown> {
 }
 
 /**
- * base64url（パディングなし）の文字列をデコードし、そのバイト列を ArrayBuffer にして返す。
+ * base64url の文字列を復号し、`ArrayBuffer` で返す。
  *
- * 空文字列には空の ArrayBuffer を返す。
+ * パディングのない base64url を受け取り、空文字列には空の `ArrayBuffer` を返す。
  *
- * @throws {Error} base64url のアルファベット以外の文字（`+` `/` `=` や空白）を含むとき
- * @throws {DOMException} InvalidCharacterError（長さが 4 で割って 1 余り、復号できないとき）
+ * @throws {Error} base64url で使わない文字（`+`、`/`、`=`、空白など）を含むとき
+ * @throws {DOMException} `InvalidCharacterError`: 長さを 4 で割ると 1 余り、復号できないとき
  */
 function base64UrlToArrayBuffer(segment: string): ArrayBuffer {
   if (!/^[A-Za-z0-9_-]*$/.test(segment)) {
@@ -605,12 +641,13 @@ function base64UrlToArrayBuffer(segment: string): ArrayBuffer {
 }
 
 /**
- * 1 つの JWK で compact JWS の署名を検証する。
+ * 一つの JWK で署名を検証し、正しければ true を返す。
  *
- * 検証パラメータは import 済み鍵の algorithm から導出する（ECDSA のハッシュは
- * 曲線に対応する。core の verify ヘルパーと同じ規則）。鍵の import 失敗・
- * アルゴリズム不一致・署名不一致はすべて false（呼び出し側が次の候補鍵を試すか、
- * 最終的に固定文言で拒否する）。
+ * 検証の方式は、読み込んだ鍵のアルゴリズムから決める。
+ * RSA の鍵は RSASSA-PKCS1-v1_5 で、ECDSA の鍵は曲線に合うハッシュ（P-256 なら SHA-256、P-384 なら SHA-384、それ以外は SHA-512）で検証する（core の署名の検証と同じ規則）。
+ *
+ * 署名を復号できないとき、鍵を読み込めないとき、どちらの方式でもない鍵のとき、署名が一致しないときは、すべて false を返す。
+ * 呼び出し側は次の候補の鍵を試し、どの鍵でも検証できなければ固定の説明で拒否する。
  */
 async function verifySignature(
   signingInput: string,

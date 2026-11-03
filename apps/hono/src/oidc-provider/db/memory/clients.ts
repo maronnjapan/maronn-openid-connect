@@ -17,7 +17,14 @@ import { assertClientJwksUriRegistration } from '../../client-jwks-uri.js';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 import type { MemoryDatabase } from './database.js';
 
-/** The client resolvers of the in-memory database: look a client up by client_id for the authorization and token endpoints, and read its keys. */
+/**
+ * `client_id` でクライアントを取得するリゾルバを返す。
+ *
+ * 返すリゾルバの `findClient()` は、呼ばれるたびにデータベースの `clients` から登録内容を読み、公開鍵（`keys`）を除いた写しを返す。
+ * 登録されていないクライアントには `null` を返す。
+ * 認可エンドポイントとトークンエンドポイントは、このリゾルバでクライアントを取得する。
+ * 公開鍵は返さない（{@link createClientKeyResolver} のリゾルバが返す）。
+ */
 export function createClientResolver(db: MemoryDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
@@ -30,37 +37,44 @@ export function createClientResolver(db: MemoryDatabase): ClientResolver & Token
 }
 
 /**
- * The public keys of the clients (ClientRegistration.keys), one purpose at a
- * time. The OP verifies a signed Request Object with the keys of
- * request_object.
+ * クライアントの公開鍵を用途別に取得するリゾルバを返す。
+ *
+ * 返すリゾルバの `findClientKeys()` は、呼ばれるたびにデータベースの `clients` から登録内容の `keys`（`ClientRegistration.keys`）を読み、指定された用途の鍵を JWK Set で返す。
+ * 登録されていないクライアントと、その用途の鍵がないクライアントには、`keys` が空の JWK Set を返す。
+ * OP は、署名付きのリクエストオブジェクトを `request_object` の用途の鍵で検証する。
  */
 export function createClientKeyResolver(db: MemoryDatabase): ClientKeyResolver {
   return createKeyResolver((clientId) => db.clients.get(clientId)?.keys);
 }
 
 /**
- * Put a client into the database, replacing an earlier registration with the
- * same client_id. clientSecret is kept as its hash (hashClientSecret()), and
- * the client authenticates with any of its tokenEndpointAuthMethods.
+ * クライアントをデータベースに保存する。
  *
- *   await registerClient(db, {
- *     clientId: 'my-client',
- *     clientSecret: '...',
- *     redirectUris: ['https://rp.example.com/callback'],
- *     grantTypes: ['authorization_code', 'refresh_token'],
- *     tokenEndpointAuthMethods: ['client_secret_basic'],
- *   });
+ * 登録内容を公開鍵（`keys`）ごと `clients` に入れ、同じ `client_id` で登録済みのクライアントを置き換える。
+ * `clientSecret` はハッシュ（`hashClientSecret()`）にして `clientSecretHash` に保存し、`clientSecret` そのものは保存しない。
+ * クライアントは、`tokenEndpointAuthMethods` のどの方式でも認証できる。
  *
- * A client that publishes its keys at a jwks_uri (RFC 7591 §2) registers
- * jwksUri instead of keys; registerClient() rejects a client with both, and a
- * jwksUri that is not an absolute http or https URL:
+ * 公開鍵を `jwks_uri` で公開するクライアントは、`keys` の代わりに `jwksUri` を登録する（RFC 7591 §2）。
+ * `jwksUri` と `keys` を両方持つクライアントや、`http` か `https` の絶対 URL でない `jwksUri` は、何も保存せずに拒否する。
  *
- *   await registerClient(db, {
- *     clientId: 'my-client',
- *     redirectUris: ['https://rp.example.com/callback'],
- *     jwksUri: 'https://rp.example.com/jwks.json',
- *     requestObjectSigningAlg: 'ES256',
- *   });
+ * @throws {Error} `jwksUri` が `http` か `https` の絶対 URL でないとき、または `jwksUri` と `keys` を両方持つとき（何も書き込まずに投げる）
+ * @example
+ * ```ts
+ * await registerClient(db, {
+ *   clientId: 'my-client',
+ *   clientSecret: '...',
+ *   redirectUris: ['https://rp.example.com/callback'],
+ *   grantTypes: ['authorization_code', 'refresh_token'],
+ *   tokenEndpointAuthMethods: ['client_secret_basic'],
+ * });
+ *
+ * await registerClient(db, {
+ *   clientId: 'rp-with-jwks-uri',
+ *   redirectUris: ['https://rp.example.com/callback'],
+ *   jwksUri: 'https://rp.example.com/jwks.json',
+ *   requestObjectSigningAlg: 'ES256',
+ * });
+ * ```
  */
 export async function registerClient(db: MemoryDatabase, client: ClientRegistration): Promise<void> {
   assertClientJwksUriRegistration(client);

@@ -32,6 +32,7 @@ import {
   clientCors,
   corsPreflight,
   noStoreJson,
+  readBearerToken,
   signingKeysUnavailable,
   withCors,
 } from '../_oidc-provider/http';
@@ -40,42 +41,46 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Answer a UserInfo request sent as GET /userinfo with the response of
- * userinfo() — the End-User's claims, or a Bearer error — plus the clientCors
- * headers.
+ * UserInfo の GET リクエストに応答する。
+ *
+ * 応答は、`userinfo()` のレスポンス（エンドユーザーのクレームか `Bearer` のエラー）に、`clientCors` のヘッダーを付けたものである。
  */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, clientCors, await userinfo(request));
 }
 
 /**
- * Answer a UserInfo request sent as POST /userinfo (the access token in the
- * Authorization header or the access_token form field) with the response of
- * userinfo() plus the clientCors headers.
+ * UserInfo の POST リクエストに応答する。
+ *
+ * アクセストークンは、`Authorization` ヘッダーか、フォームの `access_token` フィールドで受け取る。
+ * 応答は、`userinfo()` のレスポンスに `clientCors` のヘッダーを付けたものである。
  */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await userinfo(request));
 }
 
 /**
- * Answer the CORS preflight of /userinfo: 204 with no body and the clientCors
- * headers (allowed origin, methods, headers, max age).
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/userinfo` で、応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
 /**
- * Return the claims about the access token's End-User that its scopes and
- * claims request allow: no-store JSON, or a signed JWT (application/jwt) when
- * the client registered userinfo_signed_response_alg.
+ * トークンを検証し、エンドユーザーのクレームで応答する。
  *
- * Token errors are no-store JSON with a Bearer WWW-Authenticate challenge: 401
- * invalid_token without a token or for one that is unknown, expired or not
- * meant for this endpoint (aud), 403 insufficient_scope for a token without
- * openid, 400 invalid_request when the token is sent by more than one method.
- * 503 when the signing keys cannot be loaded, 500 server_error otherwise (no
- * UserInfo key for the registered alg included).
+ * 返すクレームは、アクセストークンのスコープと `claims` パラメータに応じて決まる。
+ * 応答はキャッシュさせない JSON で、クライアントが `userinfo_signed_response_alg` を登録していれば、署名した JWT（`application/jwt`）で応答する。
+ *
+ * トークンのエラーには、キャッシュさせない JSON と、`Bearer` の `WWW-Authenticate` チャレンジで応答する。
+ * - 401 の `invalid_token`: トークンがない、または登録されていない、期限切れ、このエンドポイント向けでない（`aud`）、サブジェクトのユーザーが見つからないとき。
+ * - 403 の `insufficient_scope`: トークンが `openid` スコープを含まないとき。
+ * - 400 の `invalid_request`: トークンを複数の方法で送ったとき。
+ *
+ * リクエストのボディを読めないときは、チャレンジを付けずに 400 の `invalid_request` で応答する。
+ * 署名鍵を読み込めないときは 503 で、それ以外の失敗（登録されたアルゴリズムの UserInfo の鍵がないときを含む）では 500 の `server_error` で応答する。
  *
  * @spec OIDC Core 1.0 §5.3
  */
@@ -87,7 +92,7 @@ async function userinfo(request: Request): Promise<Response> {
   try {
     const { token, methodCount } = await extractAccessToken(request);
     if (methodCount > 1) {
-      // RFC 6750 §2: clients MUST NOT use more than one method per request.
+      // クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
       return noStoreJson(
         {
           error: 'invalid_request',
@@ -100,8 +105,7 @@ async function userinfo(request: Request): Promise<Response> {
       );
     }
     if (!token) {
-      // RFC 6750 §3.1: a request without authentication information gets a
-      // challenge that only names the realm (no error / error_description).
+      // 認証情報のないリクエストへのチャレンジには `error` と `error_description` を付けず、`realm` だけを示す（RFC 6750 §3.1）。
       return noStoreJson(
         { error: 'invalid_token', error_description: 'Access token is required' },
         { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo"' } },
@@ -113,34 +117,31 @@ async function userinfo(request: Request): Promise<Response> {
   }
 
   try {
-    // --- UserInfo request pipeline ------------------------------------------
-    // Each step below is an independent core function. Delete a call to drop
-    // that validation, or insert your own logic between steps. Every step
-    // throws UserInfoError, which the catch block below renders as an RFC 6750
-    // Bearer challenge.
+    // ここからの各ステップは、UserInfo リクエストのパイプラインを構成する core の独立した関数である。
+    // 呼び出しを消せばその検証を外せ、ステップのあいだに独自の処理を入れることもできる。
+    // どのステップも失敗すると `UserInfoError` を投げ、下の `catch` ブロックが RFC 6750 の `Bearer` のチャレンジで応答する。
 
-    // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
+    // 提示されたアクセストークンの情報を取得し、登録されていなければ `invalid_token` のエラーを投げる（OIDC Core 1.0 §5.3.1）。
     const tokenInfo = await resolveUserInfoAccessToken(accessToken, resolvers.accessTokenResolver);
 
-    // RFC 6750 §3.1: an expired access token is invalid_token.
+    // 期限切れのアクセストークンは `invalid_token` にする（RFC 6750 §3.1）。
     validateUserInfoTokenExpiration(tokenInfo);
 
-    // OIDC Core 1.0 §5.3.1: the token must carry the openid scope (insufficient_scope).
+    // トークンが `openid` スコープを含むことを確かめ、含まなければ `insufficient_scope` にする（OIDC Core 1.0 §5.3.1）。
     validateUserInfoScope(tokenInfo);
 
-    // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
-    // The token endpoint always puts it there (buildAccessTokenAudience), so the
-    // check is on for JWT and opaque tokens alike. Pass undefined to turn it off.
+    // アクセストークンの `aud` に、この UserInfo エンドポイントが含まれることを確かめる（RFC 9068 §4）。
+    // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を入れる（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
+    // 確認をやめるときは、第 2 引数に `undefined` を渡す。
     validateUserInfoAudience(tokenInfo, `${config.issuer}/userinfo`);
 
-    // Load every claim the OP knows about the token's subject.
+    // トークンのサブジェクトについて、保存されているすべてのクレームを読み込む。
     const userClaims = await resolveUserInfoClaims(tokenInfo, resolvers.userClaimsResolver);
 
-    // OIDC Core 1.0 §5.4: keep only the claims the granted scopes allow.
+    // 許可したスコープに対応するクレームだけを残す（OIDC Core 1.0 §5.4）。
     const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
 
-    // OIDC Core 1.0 §5.5: overlay the individually requested claims the token
-    // endpoint stored with this access token (claims.userinfo members).
+    // トークンエンドポイントがこのアクセストークンと一緒に保存した、個別に要求されたクレーム（`claims.userinfo` の項目）を重ねる（OIDC Core 1.0 §5.5）。
     const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
 
     const client = (await clientResolver.findClient(tokenInfo.clientId)) as RegisteredClient | null;
@@ -165,10 +166,13 @@ async function userinfo(request: Request): Promise<Response> {
 }
 
 /**
- * OIDC Core 1.0 §5.3.2: the UserInfo Response as a JWS signed with the alg the
- * client registered (RS256, ES256, ...), using the registered UserInfo key of
- * that alg. No key for it is a server configuration error — the response is
- * never silently signed with another alg.
+ * UserInfo のクレームを、署名した JWT で応答する。
+ *
+ * 署名には、登録した UserInfo の鍵のうち、クライアントが登録したアルゴリズム（RS256、ES256 など）の鍵を使う。
+ * JWT の `iss` は設定の `issuer`、`aud` はクライアント ID で、レスポンスはキャッシュさせない。
+ * そのアルゴリズムの鍵がないのはサーバーの設定の誤りなので、別のアルゴリズムで署名せずに 500 の `server_error` で応答する。
+ *
+ * @spec OIDC Core 1.0 §5.3.2
  */
 async function signedUserInfo(
   claims: UserInfoResponse,
@@ -199,20 +203,17 @@ async function signedUserInfo(
 }
 
 /**
- * The access token of the request, from:
- * - the Authorization: Bearer header (RFC 6750 §2.1, REQUIRED), or
- * - the access_token form parameter of a POST (RFC 6750 §2.2, OPTIONAL).
- * The query parameter method (§2.3) is not supported: OAuth 2.1 prohibits it.
- * methodCount lets the caller refuse a request that used more than one.
+ * アクセストークンと、送られた方法の数を返す。
+ *
+ * 次の二つの方法に対応する。
+ * - `Authorization: Bearer` ヘッダー（RFC 6750 §2.1、REQUIRED）
+ * - POST のフォームのボディの `access_token` パラメータ（RFC 6750 §2.2、OPTIONAL）
+ *
+ * URL のクエリパラメータ（RFC 6750 §2.3）は OAuth 2.1 が禁止しているので、意図して対応していない。
+ * 呼び出し側は `methodCount` を見て、複数の方法を使ったリクエストを拒否できる。
  */
 async function extractAccessToken(request: Request): Promise<{ token: string; methodCount: number }> {
-  const authHeader = request.headers.get('Authorization') ?? '';
-  // RFC 7235 §2.1: the auth scheme is case-insensitive; the token value is kept verbatim.
-  const spaceIndex = authHeader.indexOf(' ');
-  const headerToken =
-    spaceIndex !== -1 && authHeader.slice(0, spaceIndex).toLowerCase() === 'bearer'
-      ? authHeader.slice(spaceIndex + 1)
-      : '';
+  const headerToken = readBearerToken(request.headers.get('Authorization') ?? '');
 
   let bodyToken = '';
   if (request.method === 'POST') {

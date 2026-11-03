@@ -51,10 +51,15 @@ export interface GenerateAccessTokenOptions {
 
 
 /**
- * ペイロードを検証する
+ * ペイロードのクレームが不正なら `Error` を投げる。
+ *
+ * 次のどれかに当てはまると `Error` を投げる:
+ * - `iss`、`sub`、`iat` のどれかがない（`iss` と `sub` は空文字列も拒否する）。
+ * - `aud` がない、配列でない、または空の配列である。
+ * - `exp` がない、または 60 秒を超えて過ぎている。
  */
 function validatePayload(payload: AccessTokenPayload): void {
-  // Required claims validation
+  // 必須のクレームがあることを確かめる。
   if (!payload.iss) {
     throw new Error('Missing required claim: iss');
   }
@@ -67,13 +72,13 @@ function validatePayload(payload: AccessTokenPayload): void {
     throw new Error('Missing required claim: aud');
   }
 
-  // RFC 9068 Section 3: the aud claim identifies the resource server(s) the
-  // JWT access token is intended for, so an empty audience is not valid.
+  // `aud` が空でない配列であることを確かめる。
+  // `aud` は JWT のアクセストークンを受け取るリソースサーバーを示すので、空の値は不正である（RFC 9068 §3）。
   if (!Array.isArray(payload.aud) || payload.aud.length === 0) {
     throw new Error('Invalid aud claim: must be a non-empty array');
   }
 
-  // Validate exp is not too far in the past (with 60 second clock skew tolerance)
+  // `exp` が過ぎていないことを確かめる（時計のずれとして 60 秒まで許容する）。
   validateAccessTokenExpiration(payload.exp, Math.floor(Date.now() / 1000), 60);
 
   if (payload.iat === undefined || payload.iat === null) {
@@ -82,8 +87,13 @@ function validatePayload(payload: AccessTokenPayload): void {
 }
 
 /**
- * アクセストークンの exp があり、now から leeway を引いた時刻より前でないことを検証する。
- * RFC 9068 §2.2 / RFC 7519 §4.1.4。now と leeway は秒。
+ * `exp` がないか期限切れなら `Error` を投げる。
+ *
+ * `expiration` が `undefined` か `null` のとき、または `now - leeway` より前のときに `Error` を投げる。
+ * `now` と `leeway` は秒で渡し、`leeway` には時計のずれとして許容する幅を渡す。
+ *
+ * @spec RFC 9068 §2.2
+ * @spec RFC 7519 §4.1.4
  */
 export function validateAccessTokenExpiration(
   expiration: number | undefined | null,
@@ -100,24 +110,29 @@ export function validateAccessTokenExpiration(
 }
 
 /**
- * アクセストークンを生成する（JWT形式）
- * サポートする署名アルゴリズム（JWA名称 = 暗号方式）:
- * - RS256/RS384/RS512 = RSASSA-PKCS1-v1_5 with SHA-256/384/512
- *   ※ OpenID Connect/OAuth 2.1で広く使用されている標準アルゴリズム
- * - ES256/ES384/ES512 = ECDSA with P-256/P-384/P-521 and SHA-256/384/512【推奨】
- *   ※ 楕円曲線暗号による高速かつ安全な署名方式
- * @param options Access Token生成のオプション
- * @returns 生成されたAccess Token（JWT形式）
+ * ペイロードを検証し、署名した JWT を返す。
+ *
+ * 必須のクレーム（`iss`、`sub`、`aud`、`exp`、`iat`）が欠けているとき、`aud` が空の配列のとき、`exp` が 60 秒を超えて過ぎているときは、`Error` を投げる。
+ * ヘッダーの `alg` は秘密鍵のアルゴリズムから決め、`typ` は `at+jwt` にし、`kid` は `keyId` を渡したときだけ付ける。
+ *
+ * 対応する署名アルゴリズム（JWA の名前と暗号方式）は次のとおりである:
+ * - RS256、RS384、RS512: SHA-256、SHA-384、SHA-512 を使う RSASSA-PKCS1-v1_5。OpenID Connect と OAuth 2.1 で広く使われている標準のアルゴリズムである。
+ * - ES256、ES384、ES512: P-256、P-384、P-521 の曲線と SHA-256、SHA-384、SHA-512 を使う ECDSA。楕円曲線暗号による高速で安全な署名方式で、こちらを推奨する。
+ *
+ * RSASSA-PKCS1-v1_5 と ECDSA 以外の鍵を渡すと `Error` を投げる。
+ *
+ * @param options ペイロード、署名に使う秘密鍵、ヘッダーの `kid` に入れる鍵の ID。
+ * @returns 署名した JWT のアクセストークン（JWS のコンパクト形式）。
+ * @spec RFC 9068 §2.1
  */
 export async function generateAccessToken(options: GenerateAccessTokenOptions): Promise<string> {
   const { payload, privateKey, keyId } = options;
 
-  // Validate payload
+  // ペイロードのクレームを検証する。
   validatePayload(payload);
 
-  // Build JOSE header
-  // RFC 9068 Section 2.1: JWT Profile for OAuth 2.0 Access Tokens requires typ = "at+jwt"
-  // so resource servers can distinguish access tokens from ID tokens (typ = "JWT").
+  // 秘密鍵に合う `alg` と、`typ` が `at+jwt` の JOSE ヘッダーを組み立てる。
+  // `typ` を `at+jwt` にするのは、リソースサーバーがアクセストークンと ID トークン（`typ` が `JWT`）を区別できるようにするためである（RFC 9068 §2.1）。
   const header = buildJoseHeader(getJwaAlgorithm(privateKey), 'at+jwt', keyId);
 
   return signJwt(header, payload, privateKey);

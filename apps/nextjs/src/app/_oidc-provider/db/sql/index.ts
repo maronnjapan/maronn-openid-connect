@@ -12,10 +12,13 @@ import { createDatabase as createInstanceDatabase } from './instance';
 export type { SqlDatabase as Database } from './database';
 
 /**
- * The database the provider reads and writes: the database of db/instance.ts.
- * provider.ts creates its database when a Route Handler module is imported,
- * and `next build` imports them, so createDatabase() of db/instance.ts runs
- * on the first statement instead, and only once.
+ * 最初に使うときに開く SQL のデータベースを返す。
+ *
+ * 返すデータベースの各メソッドは、`db/instance.ts` のデータベースの同じメソッドを呼ぶ。
+ * `db/instance.ts` の `createDatabase()` は、最初の SQL 文を実行するときに一度だけ呼んでデータベースを開く。
+ *
+ * `provider.ts` はルートハンドラのモジュールが読み込まれたときにデータベースを作り、`next build` もそれらのモジュールを読み込む。
+ * データベースを開くのを最初の SQL 文まで遅らせるので、`next build` がモジュールを読み込むだけではデータベースを開かない。
  */
 export function createDatabase(): SqlDatabase {
   let database: SqlDatabase | undefined;

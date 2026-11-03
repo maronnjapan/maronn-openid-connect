@@ -20,13 +20,16 @@ export class BackchannelAuthenticationEndpointError extends Error {
 }
 
 /**
- * Forbid caching of the response: auth_req_id is a credential, so the response follows the token response rules.
+ * レスポンスにキャッシュを禁じるヘッダーを設定する。
  *
- * @spec RFC 6749 §5.1 / §5.2
+ * リクエストコンテキスト `c` に、`Cache-Control: no-store` と `Pragma: no-cache` を設定する。
+ * `auth_req_id` はトークンの取得に使う秘密の値なので、このエンドポイントの応答はトークンレスポンスの規則に従う。
+ *
+ * @spec RFC 6749 §5.1
+ * @spec RFC 6749 §5.2
  */
 export function noStore(c: any): void {
-  // auth_req_id is a credential, so the response follows the token response
-  // rules of RFC 6749 §5.1 / §5.2.
+  // `auth_req_id` はトークンの取得に使う秘密の値なので、トークンレスポンスと同じくキャッシュを禁じる（RFC 6749 §5.1、§5.2）。
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
 }

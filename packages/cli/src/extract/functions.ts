@@ -25,6 +25,7 @@
 import { posix } from 'node:path';
 import { buildFunctionFlow, codeMaskOf, type FunctionFlow } from './function-flow.js';
 import { codeOf, type StepKind } from './meta.js';
+import { joinLines, joinLinesFlat } from './prose.js';
 
 /** The responsibility of a function: the step kinds, or `other` for one the name does not tell. */
 export type FunctionKind = StepKind | 'other';
@@ -98,6 +99,27 @@ export interface FunctionProject {
   memberOf(call: string): MemberDoc | undefined;
   /** A member by its id, `Type.member` (the `member` of a box of a flow). */
   memberById(id: string): MemberDoc | undefined;
+  /**
+   * The lines the function of a card takes in its file: its JSDoc, its
+   * declaration and its body (the map of a pull request compares them with
+   * the base to tell which functions the pull request changed). Undefined for
+   * an unknown id.
+   */
+  spanOf(id: string): FunctionSpan | undefined;
+}
+
+/**
+ * The lines (1-based, inclusive) of a function in its file. An overload set
+ * counts as one function: from the first signature to the end of the body of
+ * the implementation.
+ */
+export interface FunctionSpan {
+  /** The line where the JSDoc right above the declaration opens; absent without one. */
+  doc?: number;
+  /** The line of the declaration (of the first signature of an overload set). */
+  start: number;
+  /** The line of the brace that closes the body; the line of the declaration for one without a body. */
+  end: number;
 }
 
 /** The JSDoc of a member of an interface or a type literal. */
@@ -202,7 +224,7 @@ export function parseJsDoc(comment: string): JsDoc {
     }
   }
   if (current) pushTag(tags, current);
-  // Paragraphs are separated by blank lines; the first is the summary.
+  // Paragraphs are separated by blank lines; the first is the summary, on one line.
   const paragraphs: string[][] = [[]];
   for (const line of textLines) {
     if (line.trim() === '') {
@@ -211,16 +233,16 @@ export function parseJsDoc(comment: string): JsDoc {
     }
     (paragraphs[paragraphs.length - 1] as string[]).push(line.trim());
   }
-  const joined = paragraphs.filter((lines) => lines.length > 0).map((lines) => lines.join(' '));
+  const filled = paragraphs.filter((lines) => lines.length > 0);
   return {
-    summary: joined[0] ?? '',
-    description: joined.slice(1).join('\n\n'),
+    summary: filled.length === 0 ? '' : joinLinesFlat(filled[0] as string[]),
+    description: filled.slice(1).map(joinLines).join('\n\n'),
     tags,
   };
 }
 
 function pushTag(tags: Map<string, string[]>, tag: { name: string; lines: string[] }): void {
-  const text = tag.lines.map((line) => line.trim()).filter((line) => line.length > 0).join(' ');
+  const text = joinLinesFlat(tag.lines);
   const list = tags.get(tag.name) ?? [];
   list.push(text);
   tags.set(tag.name, list);
@@ -518,6 +540,25 @@ class Project implements FunctionProject {
       resolve: (name) => this.resolveName(file, name),
       resolveMember: (receiver, method) => this.memberCalled(receiver, method, parameters, bindings),
     });
+  }
+
+  spanOf(id: string): FunctionSpan | undefined {
+    const card = this.catalog.functions[id];
+    if (card === undefined) return undefined;
+    const file = this.files.get(card.package)?.get(card.module);
+    const declarations = file?.declarations.filter((candidate) => candidate.name === card.name) ?? [];
+    const first = declarations[0];
+    const last = declarations[declarations.length - 1];
+    if (file === undefined || first === undefined || last === undefined) return undefined;
+    const span: FunctionSpan = {
+      start: lineOf(file.source, first.index),
+      end: lineOf(file.source, last.body === undefined ? last.index : last.body.end - 1),
+    };
+    if (first.jsdoc !== undefined) {
+      const doc = file.source.lastIndexOf(first.jsdoc, first.index);
+      if (doc !== -1) span.doc = lineOf(file.source, doc);
+    }
+    return span;
   }
 
   memberById(id: string): MemberDoc | undefined {

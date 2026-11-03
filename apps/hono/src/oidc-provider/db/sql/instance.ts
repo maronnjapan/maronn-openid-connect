@@ -25,7 +25,18 @@
 import type { Context } from 'hono';
 import type { SqlDatabase } from './database.js';
 
-/** Open the SQL database the provider keeps its data in. Written by you: the generated file throws until it returns a SqlDatabase. */
+/**
+ * OP がデータを保存する SQL のデータベースを返す。
+ *
+ * この関数は利用者が書く。
+ * 生成されたままでは、`SqlDatabase` を返さずに常に `Error` を投げる。
+ * 実装の例はこのファイルの末尾にある。
+ *
+ * 生成されたアプリは、リクエストごとにそのリクエストコンテキスト（Hono の `Context`）を渡して呼ぶ。
+ * Cloudflare Workers では、D1 などのバインディング（`c.env.DB`）をコンテキストから読める。
+ *
+ * @throws {Error} 利用者が書き換える前は常に投げる
+ */
 export function createDatabase(_c: Context): SqlDatabase {
   throw new Error(
     'db/instance.ts: createDatabase() is not implemented yet. ' +

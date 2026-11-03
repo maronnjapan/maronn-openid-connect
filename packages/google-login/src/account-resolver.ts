@@ -18,16 +18,25 @@ import type { GoogleIdTokenPayload } from './id-token.js';
  * - 初回ログインでユーザーを作る（Just-in-Time provisioning）構成: 無ければ作って subject を返す
  */
 export interface GoogleAccountResolver {
-  /** 対応する OP の subject を返す。対応するユーザーが無ければ null。 */
+  /**
+   * Google アカウントに対応する OP のサブジェクトを返す。
+   *
+   * 対応するユーザーがいなければ `null` を返す。
+   */
   resolveSubject(account: GoogleIdTokenPayload): Promise<string | null>;
 }
 
 /**
- * 検証済みの Google アカウントから OP の subject を解決する。
+ * Google アカウントに対応する OP のサブジェクトを返す。
  *
- * 返した subject を core の認証セッション（`SessionInfo.subject`）と同意ステップへ渡す。
+ * サブジェクトは `resolver.resolveSubject()` で取得する。
+ * `resolver` が `null` か空文字を返したときは、対応するユーザーがいないものとして `account_not_linked` を投げる。
  *
- * @throws {GoogleLoginError} `account_not_linked`（対応するユーザーが無い）
+ * 呼び出し側は、返したサブジェクトを core の認証セッション（`SessionInfo.subject`）と同意のステップに渡す。
+ *
+ * @param account 検証済みの ID トークンのペイロード
+ * @param resolver Google アカウントと OP のユーザーを対応付けるリゾルバ
+ * @throws {GoogleLoginError} `account_not_linked`: 対応するユーザーがいないとき
  */
 export async function resolveGoogleLoginSubject(
   account: GoogleIdTokenPayload,

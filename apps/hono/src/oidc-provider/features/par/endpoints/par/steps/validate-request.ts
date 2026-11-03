@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'validate',
-  label: 'Validate the request as /authorize would',
+  label: '/authorize と同じ規則でリクエストを検証する',
   spec: 'RFC 9126 §2.1',
   function: 'validatePushedRequest',
   consumes: ['pushedParams'],
@@ -15,9 +15,14 @@ export const meta = step({
 });
 
 /**
- * RFC 9126 §2.1: "validate the request the same way the authorization
- * endpoint would" — an unregistered redirect_uri or a bad scope fails here,
- * before the user ever sees a screen.
+ * パラメータを、認可エンドポイントと同じ規則で検証する。
+ *
+ * 認可サーバーは、認可エンドポイントに送られた認可リクエストと同じようにリクエストを検証しなければならない（RFC 9126 §2.1）。
+ * そのため、登録されていない `redirect_uri` や不正な `scope` は、エンドユーザーが画面を見る前にここで拒否する。
+ * PKCE を省いたリクエストを許すかどうかは、認可エンドポイントと同じ `allowNonPkceAuthorizationCodeFlow` の設定に従う。
+ *
+ * @spec RFC 9126 §2.1
+ * @throws {ParError} `invalid_request`、`invalid_scope`、`unauthorized_client`、`unsupported_response_type`: 認可エンドポイントが拒否するパラメータがあるとき
  */
 export async function validatePushedRequest(c: any, pushedParams: Record<string, string>): Promise<void> {
   const clientResolver = c.get('clientResolver');

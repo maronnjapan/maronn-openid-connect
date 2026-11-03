@@ -6,7 +6,7 @@
  * draft.ts). It goes into the note the branch already adds, or into
  * apps/map/changes/<branch>.md.
  *
- * Usage: MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft [-- <note file>]
+ * Usage: MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft [<note file from the root of the repository>]
  */
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,8 @@ import { writeDraft } from '@maronn-openid-connect/map-analysis';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const base = process.env.MAP_BASE?.trim() || 'origin/main';
-const file = process.argv[2];
+// pnpm passes on the `--` before the arguments of a script.
+const [file] = process.argv.slice(2).filter((arg) => arg !== '--');
 const result = await writeDraft({ repository, base, ...(file === undefined ? {} : { file }) });
 if (result.file === undefined) {
   console.log(`Every change since ${base} has a section in a change note already.`);

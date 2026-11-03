@@ -21,7 +21,9 @@ import { fileURLToPath } from 'node:url';
 import { checkMap } from '@maronn-openid-connect/map-analysis';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const directory = resolve(process.argv[2] ?? join(appRoot, 'public', 'data'));
+// pnpm passes on the `--` before the arguments of a script.
+const [argument] = process.argv.slice(2).filter((arg) => arg !== '--');
+const directory = resolve(argument ?? join(appRoot, 'public', 'data'));
 const data = JSON.parse(readFileSync(join(directory, 'map.json'), 'utf8'));
 /** A url of the data (`./data/functions/<hash>.json`) as a file of the directory. */
 const fileOf = (url) => join(directory, url.replace(/^\.\/data\//, ''));

@@ -1,6 +1,5 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
-import { MobileMenuSection } from './MobileMenu';
 
 /** Keep the existing width fit, with a readable initial scale and space around the graph. */
 function fitWidth(view: ReactZoomPanPinchRef, width: number): void {
@@ -10,14 +9,33 @@ function fitWidth(view: ReactZoomPanPinchRef, width: number): void {
   void view.setTransform(Math.max(12, (wrapper.clientWidth - width * scale) / 2), 12, scale, 0);
 }
 
-/** Pan and zoom a diagram with the library's mouse, touch and trackpad gestures. */
+/**
+ * Pan and zoom a diagram with the library's mouse, touch and trackpad
+ * gestures. It fits the width again once its box has a size (a diagram that
+ * opens in a drawer is measured before the drawer shows).
+ */
 export function DiagramViewport({ children, controls, width, height }: { children: ReactNode; controls: ReactNode; width: number; height: number }) {
   const start = useRef({ x: 0, y: 0 });
   const moved = useRef(false);
   const [scale, setScale] = useState(1);
+  const viewRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = box.current;
+    if (element === null || typeof ResizeObserver === 'undefined') return;
+    let fitted = element.clientWidth > 0;
+    const observer = new ResizeObserver(() => {
+      if (fitted || element.clientWidth === 0 || viewRef.current === null) return;
+      fitted = true;
+      fitWidth(viewRef.current, width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [width]);
   return (
-    <div className="diagram-viewport">
+    <div className="diagram-viewport" ref={box}>
       <TransformWrapper
+        ref={viewRef}
         minScale={0.1}
         maxScale={4}
         limitToBounds={false}
@@ -40,8 +58,7 @@ export function DiagramViewport({ children, controls, width, height }: { childre
       >
         {(view) => (
           <>
-            <MobileMenuSection section="diagram">
-              <div className="diagram-tools" role="group" aria-label="図の表示操作">
+            <div className="diagram-tools" role="group" aria-label="図の表示操作">
                 {controls}
                 <div className="diagram-zoom">
                   <button type="button" aria-label="図を縮小" disabled={scale <= 0.1} onClick={() => void view.zoomOut(0.25, 0)}>−</button>
@@ -52,8 +69,7 @@ export function DiagramViewport({ children, controls, width, height }: { childre
                 <button type="button" onClick={() => void view.fitToView({ maxScale: 1, animationTime: 0 })}>全体を表示</button>
                 <button type="button" onClick={() => fitWidth(view, width)}>表示を戻す</button>
                 <span className="note">ドラッグで移動・ピンチで拡大縮小</span>
-              </div>
-            </MobileMenuSection>
+            </div>
             <TransformComponent
               wrapperClass="diagram-gestures"
               wrapperStyle={{ width: '100%', height: '100%' }}

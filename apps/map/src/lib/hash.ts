@@ -64,7 +64,8 @@ export function parseTrace(part: string): TraceState {
     else if (option.startsWith('d=')) {
       const choice: Decisions = {};
       for (const pair of option.slice(2).split(',')) {
-        const at = pair.lastIndexOf(':');
+        // A decision key never holds a colon; the side after it is encoded.
+        const at = pair.indexOf(':');
         if (at <= 0) continue;
         choice[pair.slice(0, at)] = decode(pair.slice(at + 1));
       }

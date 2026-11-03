@@ -6,7 +6,7 @@
  */
 import type { Decisions, FlowTree, TreeNode } from '../types';
 import type { GraphEdge, GraphNode } from './graph';
-import { branchesOf, chosenSide, decisionKey, forcedSide, nodesOn, nodesRun } from './trace';
+import { branchesOf, chosenSide, decisionKey, findNode, forcedSide, nodesOn, nodesRun } from './trace';
 
 export interface DiagramNode extends GraphNode {
   /** The first line of the box. */
@@ -148,22 +148,11 @@ export function activeOf(diagram: Diagram, tree: FlowTree, frame: string, choice
     if (!nodes.has(edge.from) || !nodes.has(edge.to)) return;
     const side = diagram.sides.get(index);
     if (side !== undefined) {
-      const decision = diagram.nodes.find((node) => node.node === side.node);
-      const treeNode = decision === undefined ? undefined : findIn(tree.nodes, side.node);
+      const treeNode = findNode(tree.nodes, side.node);
       const chosen = (treeNode === undefined ? undefined : forcedSide(treeNode, enabled)) ?? chosenSide(choices, decisionKey(frame, side.node));
       if (chosen !== undefined && chosen !== side.side) return;
     }
     edges.add(index);
   });
   return { nodes, edges };
-}
-
-function findIn(nodes: readonly TreeNode[], id: string): TreeNode | undefined {
-  for (const node of nodes) {
-    if (node.id === id) return node;
-    if (!id.startsWith(node.id)) continue;
-    const found = findIn(node.pre ?? [], id) ?? (node.branches ?? []).reduce<TreeNode | undefined>((hit, branch) => hit ?? findIn(branch.nodes, id), undefined);
-    if (found !== undefined) return found;
-  }
-  return undefined;
 }

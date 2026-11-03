@@ -19,6 +19,16 @@ function same(a: Decisions, b: Decisions): boolean {
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
+/** The failure choices grouped by what fails, in the order each first appears. */
+export function failureGroups(list: readonly Selection[]): Array<{ error: string; items: Selection[] }> {
+  const groups = new Map<string, Selection[]>();
+  for (const selection of list) {
+    const error = selection.failure?.error ?? selection.name;
+    groups.set(error, [...(groups.get(error) ?? []), selection]);
+  }
+  return [...groups].map(([error, items]) => ({ error, items }));
+}
+
 const GROUPS: ReadonlyArray<{ kind: Selection['kind']; heading: string }> = [
   { kind: 'step', heading: 'ステップ' },
   { kind: 'change', heading: '変更に至る道筋' },
@@ -66,18 +76,35 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
         {GROUPS.map(({ kind, heading }) => {
           const list = selections.filter((selection) => selection.kind === kind);
           if (list.length === 0) return null;
+          const item = (selection: Selection, index: number, label = selection.name) => (
+            <label key={`${kind}-${index}`} className={`selection${picked(selection) ? ' checked' : ''}${kind === 'failure' ? ' error' : ''}`} title={`${selection.name} ${selection.note ?? ''}`.trim()}>
+              <input type="checkbox" checked={picked(selection)} onChange={() => toggle(selection)} />
+              <span>{label}</span>
+              {selection.note !== undefined && kind !== 'exit' && kind !== 'failure' ? <span className="muted">{selection.note}</span> : null}
+            </label>
+          );
+          if (kind === 'failure') {
+            // The failures by what fails, each with where it is thrown: its own throw by the way to it, one from below by the function.
+            return (
+              <section key={kind} className="selection-group">
+                <h4>
+                  {heading}（{list.length}）
+                </h4>
+                <div className="selection-failures">
+                  {failureGroups(list).map(({ error, items }) => (
+                    <div key={error} className="selection-failure">
+                      <code className="selection-error">{error}</code>
+                      <div className="selection-list">{items.map((selection, index) => item(selection, index, (selection.frames ?? []).length > 0 && selection.failure !== undefined ? `${selection.failure.name} から` : selection.name))}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          }
           return (
             <section key={kind} className="selection-group">
               <h4>{heading}</h4>
-              <div className="selection-list">
-                {list.map((selection, index) => (
-                  <label key={`${kind}-${index}`} className={`selection${picked(selection) ? ' checked' : ''}${kind === 'failure' ? ' error' : ''}`} title={selection.note ?? selection.name}>
-                    <input type="checkbox" checked={picked(selection)} onChange={() => toggle(selection)} />
-                    <span>{selection.name}</span>
-                    {selection.note !== undefined && kind !== 'exit' && kind !== 'failure' ? <span className="muted">{selection.note}</span> : null}
-                  </label>
-                ))}
-              </div>
+              <div className="selection-list">{list.map((selection, index) => item(selection, index))}</div>
             </section>
           );
         })}

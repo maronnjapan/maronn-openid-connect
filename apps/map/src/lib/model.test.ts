@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { FlowEndpoint, FunctionCard, MapData, MapFeature, OpFlow } from '../types';
-import { buildHash, parseHash } from './hash';
-import { callersOf, commandLine, defaultEnabled, endpointsInModule, endpointsUsing, featureKey, featuresToShow, generatedWhen, search, usesOf, visibleEndpoints } from './model';
+import type { FlowEndpoint, FunctionEntry, MapData, MapFeature, OpFlow } from '../types';
+import { callersOf, commandLine, defaultEnabled, enabledMarkers, endpointsInModule, endpointsRootedAt, endpointsUsing, featureKey, featuresToShow, generatedWhen, search, usesOf, visibleEndpoints } from './model';
 
 const features: MapFeature[] = [
   { id: 'pkce', tier: 'stable', summary: 'PKCE', enabled: true, flag: '--disable pkce', endpoints: [], packages: [] },
@@ -10,7 +9,7 @@ const features: MapFeature[] = [
 ];
 
 const token: FlowEndpoint = {
-  id: 'token', label: 'Token endpoint', path: '/token', methods: ['POST'], layer: 'api', group: { id: 'code', label: 'Code' }, rearrangeable: true,
+  id: 'token', label: 'Token endpoint', path: '/token', methods: ['POST'], layer: 'api', group: { id: 'code', label: 'Code' }, rearrangeable: true, root: 'endpoint:token',
   steps: [
     { id: 'parse-request', label: 'Parse', kind: 'parse', function: 'parseTokenRequest', functionId: 'hono:a.ts#parseTokenRequest', calls: ['core:b.ts#isForm'], consumes: [], produces: ['params'], removable: false },
     { id: 'validate-refresh-token-grant', label: 'Refresh', kind: 'validate', function: 'validateRefresh', functionId: 'hono:r.ts#validateRefresh', calls: ['core:b.ts#isForm'], consumes: ['params'], produces: [], removable: false, feature: 'refreshToken' },
@@ -27,13 +26,13 @@ const token: FlowEndpoint = {
 const par: FlowEndpoint = { ...token, id: 'par', path: '/par', feature: 'par', steps: [], edges: [] };
 const flow: OpFlow = { version: 2, features: {}, scopes: [], db: null, endpoints: [token, par], edges: [] };
 
-function card(id: string, name: string, calls: string[], calledBy: string[], summary = `${name} does it.`): FunctionCard {
+function card(id: string, name: string, calls: string[], calledBy: string[], summary = `${name} does it.`): FunctionEntry {
   const [root, rest] = id.split(':') as [string, string];
-  return { id, name, package: root, module: rest.split('#')[0] as string, line: 1, exported: true, kind: 'other', summary, calls, calledBy };
+  return { id, name, package: root, module: rest.split('#')[0] as string, line: 1, exported: true, kind: 'other', summary, calls, calledBy, sites: [], frame: '' };
 }
 
 const data: MapData = {
-  version: 3, frameworks: ['hono', 'nextjs'], commands: [], features, flows: { hono: flow, nextjs: flow }, members: {}, memberOfCall: {}, edgeSets: {},
+  version: 4, frameworks: ['hono', 'nextjs'], commands: [], features, flows: { hono: flow, nextjs: flow }, members: {}, bodies: {}, sources: {},
   functions: {
     'core:b.ts#isForm': card('core:b.ts#isForm', 'isForm', [], ['hono:a.ts#parseTokenRequest', 'hono:r.ts#validateRefresh']),
     'core:d.ts#deep': card('core:d.ts#deep', 'deep', [], ['core:b.ts#isForm']),
@@ -68,14 +67,19 @@ describe('visibleEndpoints', () => {
     expect(visible[0]!.edges.map((edge) => `${edge.from}>${edge.to}`)).toEqual(['parse-request>respond', 'parse-request>respond-error']);
   });
 
-  it('should take the arrows the generation of the enabled features draws, when the data has them', () => {
-    const edgeSets = { token: { '': [{ from: 'parse-request', to: 'respond', kind: 'flow' as const }], refreshToken: token.edges } };
-    expect(visibleEndpoints(flow, features, new Set(['pkce']), edgeSets)[0]!.edges).toEqual([{ from: 'parse-request', to: 'respond', kind: 'flow' }]);
-    expect(visibleEndpoints(flow, features, new Set(['pkce', 'refresh-token']), edgeSets)[0]!.edges).toEqual(token.edges);
-  });
-
   it('should show everything when every feature is on', () => {
     expect(visibleEndpoints(flow, features, new Set(['pkce', 'refresh-token', 'par'])).map((endpoint) => endpoint.id)).toEqual(['token', 'par']);
+  });
+
+  it('should narrow the trees by the ids of the features that are on, as the markers of the code name them', () => {
+    expect([...enabledMarkers(features, new Set(['refresh-token', 'gone']))]).toEqual(['refresh-token']);
+  });
+});
+
+describe('endpointsRootedAt', () => {
+  it('should find the endpoints whose trace starts from a frame', () => {
+    expect(endpointsRootedAt(flow, 'endpoint:token').map((endpoint) => endpoint.id)).toEqual(['token', 'par']);
+    expect(endpointsRootedAt(flow, 'core:b.ts#isForm')).toEqual([]);
   });
 });
 
@@ -124,44 +128,6 @@ describe('search', () => {
   it('should find steps by id, label or function and functions by name, and nothing under two characters', () => {
     expect(search(data, [token], 'parse').map((hit) => hit.text)).toEqual(['Parse', 'parseTokenRequest()']);
     expect(search(data, [token], 'p')).toEqual([]);
-  });
-});
-
-describe('hash', () => {
-  const defaults = { framework: 'hono', endpoint: null, step: null, fn: null };
-
-  it('should round-trip an endpoint and a step', () => {
-    const step = { framework: 'nextjs', endpoint: 'token', step: 'respond', fn: null };
-    expect(buildHash(step, data)).toBe('nextjs--token--respond');
-    expect(parseHash('#nextjs--token--respond', data, defaults)).toEqual(step);
-  });
-
-  it('should round-trip a function by its name, and by its package and module when the name is shared', () => {
-    expect(buildHash({ ...defaults, fn: 'core:b.ts#isForm' }, data)).toBe('hono--fn--isForm');
-    expect(parseHash('#hono--fn--isForm', data, defaults)).toEqual({ ...defaults, fn: 'core:b.ts#isForm' });
-    expect(buildHash({ ...defaults, fn: 'core:y.ts#split' }, data)).toBe('hono--fn--split--core--y.ts');
-    expect(parseHash('#nextjs--fn--split--core--y.ts', data, defaults)).toEqual({ ...defaults, framework: 'nextjs', fn: 'core:y.ts#split' });
-  });
-
-  it('should still open the function of an earlier link (#fn--name)', () => {
-    expect(parseHash('#fn--isForm', data, defaults)).toEqual({ ...defaults, fn: 'core:b.ts#isForm' });
-  });
-
-  it('should round-trip the page of the changes of the pull request, and read #changes alone', () => {
-    const changes = { ...defaults, framework: 'nextjs', changes: true };
-    expect(buildHash(changes, data)).toBe('nextjs--changes');
-    expect(parseHash('#nextjs--changes', data, defaults)).toEqual(changes);
-    expect(parseHash('#changes', data, defaults)).toEqual({ ...defaults, changes: true });
-  });
-
-  it('should name a function opened from the page of the changes by the function', () => {
-    expect(buildHash({ ...defaults, fn: 'core:b.ts#isForm', changes: true }, data)).toBe('hono--fn--isForm');
-  });
-
-  it('should keep the defaults for a hash that names nothing known', () => {
-    expect(parseHash('#nope--token', data, defaults)).toEqual(defaults);
-    expect(parseHash('#hono--nope', data, defaults)).toEqual({ ...defaults, framework: 'hono' });
-    expect(parseHash('#fn--nope', data, defaults)).toEqual(defaults);
   });
 });
 

@@ -394,7 +394,8 @@ export function traceRows(options: RowOptions): Row[] {
       // A guard and an optional item read as one line: `if (!x) → throw ...`.
       if ((node.form === 'guard' || node.form === 'optional') && !unfolded.has(rowKey) && change?.marks[node.id] === undefined && !branches.some((branch) => branch.nodes.some((child) => change?.marks[child.id] !== undefined))) {
         const yes = branches.find((branch) => branch.key === 'true');
-        const words = yes === undefined || yes.nodes.length === 0 ? '' : node.form === 'guard' ? `→ ${foldedWords(yes.nodes)}` : `→ ${yes.nodes.map((child) => child.code).join('、')}`;
+        const shown = yes === undefined ? [] : nodesOn(yes.nodes, enabled);
+        const words = shown.length === 0 ? '' : node.form === 'guard' ? `→ ${foldedWords(shown)}` : `→ ${shown.map((child) => child.code).join('、')}`;
         rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, folded: words });
         return;
       }
@@ -407,7 +408,7 @@ export function traceRows(options: RowOptions): Row[] {
         const other = chosen !== undefined && branch.key !== chosen && branch.always !== true;
         const branchOn = branch.nodes.some((child) => on.has(child.id)) || (isOn && !other);
         if (other && !unfolded.has(branchKey)) {
-          rows.push({ kind: 'branch', key: branchKey, frame: key, node, branch, depth: depth + 1, on: false, folded: foldedWords(branch.nodes) });
+          rows.push({ kind: 'branch', key: branchKey, frame: key, node, branch, depth: depth + 1, on: false, folded: foldedWords(nodesOn(branch.nodes, enabled)) });
           continue;
         }
         rows.push({ kind: 'branch', key: branchKey, frame: key, node, branch, depth: depth + 1, on: branchOn });

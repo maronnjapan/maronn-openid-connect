@@ -19,11 +19,14 @@
 export const CIBA_LOGIN_BINDING_COOKIE_PREFIX = 'oidc_ciba_login_';
 
 /**
- * Build the Set-Cookie value binding one CIBA login transaction to this
- * browser. Same attributes as the session cookie: HttpOnly (no JS access),
- * Secure (HTTPS only; http://localhost is treated as trustworthy by browsers)
- * and SameSite=Lax. Max-Age matches the transaction TTL so an abandoned login
- * form does not leave a cookie behind.
+ * バインディング Cookie の `Set-Cookie` の値を返す。
+ *
+ * この Cookie で、CIBA のログイントランザクションをこのブラウザに結び付ける。
+ * 名前は `oidc_ciba_login_<transactionId>` で、値には `bindingSecret` をそのまま入れる。
+ * 属性はセッションの Cookie と同じ `HttpOnly`（JavaScript から読めない）、`Secure`（HTTPS でだけ送られる）、`SameSite=Lax` である。
+ * ブラウザは `http://localhost` も安全な接続として扱うので、そこでは HTTP でも送られる。
+ * `Max-Age` には `ttlSeconds` を入れる。
+ * 呼び出し側はトランザクションの残りの有効期間を渡すので、ログインフォームを放置しても Cookie がいつまでも残ることはない。
  */
 export function buildCibaLoginBindingCookie(
   transactionId: string,
@@ -37,8 +40,10 @@ export function buildCibaLoginBindingCookie(
 }
 
 /**
- * Build the Set-Cookie value that clears the binding cookie once the login
- * succeeded, so the browser does not accumulate one cookie per login form.
+ * バインディング Cookie を消す `Set-Cookie` の値を返す。
+ *
+ * 名前と属性は {@link buildCibaLoginBindingCookie} と同じにし、値を空に、`Max-Age` を 0 にする。
+ * ログインに成功した後に使い、ログインフォームを開くたびに Cookie がブラウザにたまっていくのを防ぐ。
  */
 export function buildClearedCibaLoginBindingCookie(transactionId: string): string {
   return (
@@ -48,9 +53,11 @@ export function buildClearedCibaLoginBindingCookie(transactionId: string): strin
 }
 
 /**
- * Extract the binding secret for one CIBA login transaction from a Cookie
- * header. Returns null when the header is missing or this transaction's cookie
- * is absent, which validateCibaLoginSubmission() rejects with 403.
+ * バインディング Cookie の値を取り出して返す。
+ *
+ * `cookieHeader`（`Cookie` ヘッダーの値）から、名前が `oidc_ciba_login_<transactionId>` の Cookie を探して、その値を返す。
+ * ヘッダーがないときと、その Cookie がないときは `null` を返す。
+ * `validateCibaLoginSubmission()` は、`null` を受け取ると 403 で拒否する。
  */
 export function parseCibaLoginBindingSecret(
   cookieHeader: string | null,

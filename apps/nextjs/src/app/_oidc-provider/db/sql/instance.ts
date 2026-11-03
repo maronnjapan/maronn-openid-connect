@@ -24,7 +24,18 @@
  */
 import type { SqlDatabase } from './database';
 
-/** Open the SQL database the provider keeps its data in. Written by you: the generated file throws until it returns a SqlDatabase. */
+/**
+ * OP がデータを保存する SQL のデータベースを返す。
+ *
+ * この関数は利用者が書く。
+ * 生成されたままでは、`SqlDatabase` を返さずに常に `Error` を投げる。
+ * 実装の例はこのファイルの末尾にある。
+ *
+ * 生成されたアプリは、`db/index.ts` の `createDatabase()` が返すデータベースで最初の SQL 文を実行するときに、この関数を呼ぶ。
+ * Next.js のモジュールの層ごとに呼ばれることがあるので、接続はここで開かずに `globalThis` に置く（ファイルの冒頭を参照）。
+ *
+ * @throws {Error} 利用者が書き換える前は常に投げる
+ */
 export function createDatabase(): SqlDatabase {
   throw new Error(
     'db/instance.ts: createDatabase() is not implemented yet. ' +

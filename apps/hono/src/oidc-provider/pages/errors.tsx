@@ -10,11 +10,11 @@
 import { defaultViews, renderView, type ErrorPageParams, type Views } from '../views.js';
 
 /**
- * Render the OP's error page.
+ * OP のエラー画面の HTML で応答する。
  *
- * params.statusCode is both the HTTP status of the response and the value the
- * view receives, so a custom view can show it and the status never diverges
- * from the message (a 429 lockout page answers 429, a 403 binding failure 403).
+ * ビューの `errorPage` に `params` を渡して描画する。
+ * `params.statusCode` は、レスポンスのステータスコードであり、ビューが受け取る値でもある。
+ * そのため、独自のビューでもステータスコードを表示でき、ステータスコードと表示する内容が食い違わない（ロックアウトの画面は 429、ブラウザのバインディングを確かめられなかった画面は 403 で応答する）。
  */
 export function renderErrorPage(c: any, params: ErrorPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;
@@ -22,13 +22,13 @@ export function renderErrorPage(c: any, params: ErrorPageParams): Response {
 }
 
 /**
- * Deliver a non-redirectable authorization error (OIDC Core 1.0 §3.1.2.2) to
- * the browser.
+ * リダイレクトできない認可エラーを 400 の画面で返す。
  *
- * An unknown client_id, an unregistered redirect_uri or a redirect_uri with a
- * fragment leaves the OP without a redirect target it may trust, so the error
- * MUST stay on the OP (RFC 6749 §4.1.2.1): the error view is answered as an
- * HTML 400 response.
+ * 登録されていない `client_id`、登録されていない `redirect_uri`、フラグメントを含む `redirect_uri` では、OP が信頼してよいリダイレクト先がない。
+ * そのため、エラーはクライアントへリダイレクトせず、OP の画面に表示しなければならない（RFC 6749 §4.1.2.1 の MUST）。
+ * `renderErrorPage()` で、エラーのビューを 400 の HTML のレスポンスにして返す。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.2
  */
 export function renderAuthorizationErrorPage(
   c: any,

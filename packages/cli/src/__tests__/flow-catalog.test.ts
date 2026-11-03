@@ -111,10 +111,10 @@ describe('buildOpFlow', () => {
     it('should connect the Authorization Code Flow endpoints in the order a browser and client follow', () => {
       const flow = buildOpFlow({ features: DEFAULT_FEATURES });
       expect(flow.edges).toEqual([
-        { from: 'authorize', to: 'login', label: 'login required', kind: 'flow' },
-        { from: 'authorize', to: 'consent', label: 'SSO: consent required', kind: 'flow' },
-        { from: 'authorize', to: 'token', label: 'code (prompt=none / SSO)', kind: 'flow' },
-        { from: 'login', to: 'consent', label: 'authenticated', kind: 'flow' },
+        { from: 'authorize', to: 'login', label: 'ログインが必要', kind: 'flow' },
+        { from: 'authorize', to: 'consent', label: 'SSO: 同意が必要', kind: 'flow' },
+        { from: 'authorize', to: 'token', label: 'code（prompt=none / SSO）', kind: 'flow' },
+        { from: 'login', to: 'consent', label: '認証済み', kind: 'flow' },
         { from: 'consent', to: 'token', label: 'code', kind: 'flow' },
         { from: 'token', to: 'userinfo', label: 'access_token', kind: 'flow' },
         { from: 'token', to: 'introspection', label: 'token', kind: 'flow' },

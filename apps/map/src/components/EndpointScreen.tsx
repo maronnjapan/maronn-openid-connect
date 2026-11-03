@@ -62,7 +62,7 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
         </div>
         {endpoint.summary ? <p className="lead">{endpoint.summary}</p> : null}
         <p className="note">
-          {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · ボックスを選ぶとそのステップの詳細を開きます
+          {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · 箱を選ぶと、そのステップの詳細を開きます
           {marks.size > 0 ? ` · このPRの変更の札が付いたステップ ${marks.size} 個` : ''}
         </p>
         {fileChanges.length > 0 ? (

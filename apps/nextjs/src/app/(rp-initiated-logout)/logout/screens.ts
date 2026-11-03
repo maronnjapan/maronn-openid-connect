@@ -8,10 +8,13 @@
 import { escapeHtml, htmlResponse } from '../../_oidc-provider/html';
 
 /**
- * The logout confirmation screen (§2 MUST when no valid id_token_hint is
- * presented). The wording is the same on every path into it — no hint, an
- * invalid or expired hint, another user's session, no session at all — so the
- * page is no oracle for session state or for why the hint failed.
+ * ログアウトの確認画面の HTML を、Cookie を付けて返す。
+ *
+ * 有効な `id_token_hint` がないときに出す画面で、確認は必須である（RP-Initiated Logout 1.0 §2 の MUST）。
+ * OP からログアウトするかを尋ねる決まった文言と、`csrf_token` を `/logout/approve` へ POST するログアウトのボタンを表示する。
+ *
+ * 文言は、どの経路（ヒントがない、無効なヒントや期限切れのヒント、ほかのユーザーのセッション、セッションがない）でこの画面に来ても同じである。
+ * 文言を変えると、画面からセッションの状態やヒントが通らなかった理由が分かってしまうためである。
  */
 export function confirmationScreen(csrfToken: string, cookies: readonly string[]): Response {
   return htmlResponse(
@@ -33,9 +36,11 @@ export function confirmationScreen(csrfToken: string, cookies: readonly string[]
 }
 
 /**
- * The logged-out screen. It shows no End-User or client identifier, and its
- * wording never depends on whether anything was actually deleted — varying it
- * would make the page a session-existence oracle.
+ * ログアウトの完了画面の HTML を、Cookie を付けて返す。
+ *
+ * ログアウトしたことと、ページを閉じてよいことを決まった文言で伝え、エンドユーザーやクライアントの識別子は表示しない。
+ * 文言は、実際に何かを削除したかどうかによって変えない。
+ * 変えると、画面からセッションがあったかどうかが分かってしまうためである。
  */
 export function completedScreen(cookies: readonly string[]): Response {
   return htmlResponse(

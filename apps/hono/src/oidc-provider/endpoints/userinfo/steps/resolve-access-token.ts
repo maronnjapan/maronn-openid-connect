@@ -11,7 +11,7 @@ export const meta = step({
   id: 'resolve-access-token',
   endpoint: 'userinfo',
   kind: 'resolve',
-  label: 'Resolve and validate the access token',
+  label: 'アクセストークンを取得して検証する',
   spec: 'OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4',
   function: 'resolveUserInfoToken',
   consumes: ['accessToken'],
@@ -20,12 +20,13 @@ export const meta = step({
 });
 
 /**
- * Resolve the presented Bearer token and validate it: known, not expired,
- * carries the openid scope, and names this UserInfo endpoint in its audience.
+ * アクセストークンの情報を取得し、検証して返す。
  *
- * Each check is an independent core function that throws UserInfoError, which
- * respondUserInfoError() renders as an RFC 6750 Bearer challenge.
+ * トークンが登録されていること、期限切れでないこと、`openid` スコープを含むこと、オーディエンスにこの UserInfo エンドポイントを含むことを確かめる。
+ * どの確認も core の独立した関数で、失敗すると `UserInfoError` を投げ、`respondUserInfoError()` が RFC 6750 の `Bearer` のチャレンジで応答する。
  *
+ * @throws {UserInfoError} `invalid_token`: トークンが登録されていない、期限切れ、オーディエンスにこのエンドポイントを含まないとき（401）。
+ * @throws {UserInfoError} `insufficient_scope`: トークンが `openid` スコープを含まないとき（403）。
  * @spec OIDC Core 1.0 §5.3.1
  * @spec RFC 6750 §3.1
  * @spec RFC 9068 §4
@@ -33,19 +34,18 @@ export const meta = step({
 export async function resolveUserInfoToken(c: any, accessToken: string): Promise<AccessTokenInfo> {
   const accessTokenResolver = c.get('accessTokenResolver');
 
-  // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
+  // 提示されたアクセストークンの情報を取得し、登録されていなければ `invalid_token` のエラーを投げる（OIDC Core 1.0 §5.3.1）。
   const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
 
-  // RFC 6750 §3.1: an expired access token is invalid_token.
+  // 期限切れのアクセストークンは `invalid_token` にする（RFC 6750 §3.1）。
   validateUserInfoTokenExpiration(tokenInfo);
 
-  // OIDC Core 1.0 §5.3.1: the token must carry the openid scope (insufficient_scope).
+  // トークンが `openid` スコープを含むことを確かめ、含まなければ `insufficient_scope` にする（OIDC Core 1.0 §5.3.1）。
   validateUserInfoScope(tokenInfo);
 
-  // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
-  // The token endpoint always stores the UserInfo endpoint URL in aud
-  // (buildAccessTokenAudience), so audience validation is on by default for
-  // both JWT and opaque tokens. Pass undefined to turn it off.
+  // アクセストークンの `aud` に、この UserInfo エンドポイントが含まれることを確かめる（RFC 9068 §4）。
+  // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を入れる（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
+  // 確認をやめるときは、第 2 引数に `undefined` を渡す。
   validateUserInfoAudience(tokenInfo, `${c.get('config').issuer}/userinfo`);
 
   return tokenInfo;

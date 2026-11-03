@@ -42,18 +42,24 @@ const OPAQUE_RESOLUTION_FAILURE_DESCRIPTION =
   'The request_uri is invalid, expired, or has already been used';
 
 /**
- * `request_uri` が URN 形式なら pushed パラメータへ展開する（RFC 9126 §4）。
+ * `request_uri` を保存済みのパラメータに展開して返す。
  *
- * - `request_uri` が無い、または URN 前置詞に一致しない場合は `null` を返す。
- *   呼び出し側は従来どおりのフローを続ける（OIDC Core §6.2 の URL 形式は core が
- *   `request_uri_not_supported` で拒否する）。
- * - 一致した場合は store から単回使用（atomic consume）で取得し、期限と client_id の
- *   紐付けを検証したうえで、`request_uri` を除いた pushed パラメータを返す。
+ * `request_uri` がないか、URN の接頭辞（`urn:ietf:params:oauth:request_uri:`）で始まらないときは、`null` を返す。
+ * このとき呼び出し側は、これまでどおりの処理を続ける。
+ * URL 形式の `request_uri`（OIDC Core 1.0 §6.2）は、core が `request_uri_not_supported` で拒否する。
  *
- * 展開後のパラメータは既存の core 検証パイプラインへそのまま流すこと
- * （RFC 9126 §4 の "MUST validate ... as it would any other authorization request"）。
+ * 接頭辞で始まるときは、ストアからレコードを取り出すと同時に削除する（`store.consume()`）。
+ * そのうえで有効期限と `client_id` の結び付きを検証し、保存されたパラメータから `request_uri` を除いて返す。
  *
- * @throws {PushedRequestUriError} 解決に失敗した場合（常に非リダイレクト）
+ * レコードがないとき、期限切れのとき、`client_id` が一致しないときは、同じ説明の `PushedRequestUriError`（`invalid_request_uri`）を投げる。
+ * 失敗の種類を区別しないのは、レスポンスの違いから `request_uri` が存在したかを推測させないためである。
+ *
+ * 返したパラメータは、ほかの認可リクエストと同じく core の既存の検証に通す（RFC 9126 §4 の MUST）。
+ *
+ * @throws {PushedRequestUriError} `invalid_request_uri`: レコードがない、期限切れ、`client_id` が一致しないとき（リダイレクトしないエラー）
+ * @spec RFC 9126 §4
+ * @spec RFC 9126 §2.2
+ * @spec RFC 9126 §7.3
  */
 export async function resolvePushedRequestUri(options: {
   params: Record<string, string>;
@@ -65,36 +71,39 @@ export async function resolvePushedRequestUri(options: {
     return null;
   }
 
-  // RFC 9126 §7.3: 単回使用。取得と同時に削除する（失敗種別に関わらず消費する）。
+  // レコードを取り出すと同時に削除し、`request_uri` を一度しか使えないようにする（RFC 9126 §7.3）。
+  // この後の検証で失敗しても、レコードは削除されたままになる。
   const record = await options.store.consume(requestUri);
   if (record === null) {
     throw new PushedRequestUriError('invalid_request_uri', OPAQUE_RESOLUTION_FAILURE_DESCRIPTION);
   }
 
-  // RFC 9126 §4: "An expired request_uri MUST be rejected as invalid."
+  // 期限切れの `request_uri` は無効として拒否する（RFC 9126 §4 の MUST）。
   const now = options.now ?? new Date();
   if (record.expiresAt.getTime() < now.getTime()) {
     throw new PushedRequestUriError('invalid_request_uri', OPAQUE_RESOLUTION_FAILURE_DESCRIPTION);
   }
 
-  // RFC 9126 §2.2: "The request_uri value ... MUST be bound to the client that posted
-  // the authorization request."
+  // リクエストの `client_id` が、PAR でリクエストを送ったクライアントと一致しなければ拒否する。
+  // `request_uri` は、送ったクライアントに結び付いていなければならない（RFC 9126 §2.2 の MUST）。
   if (options.params['client_id'] !== record.clientId) {
     throw new PushedRequestUriError('invalid_request_uri', OPAQUE_RESOLUTION_FAILURE_DESCRIPTION);
   }
 
-  // 展開後は request_uri を残さない。残すと core の rejectUnsupportedRequestParams が
-  // request_uri_not_supported で拒否してしまう。
+  // 展開したパラメータから `request_uri` を取り除く。
+  // 残すと、core の `rejectUnsupportedRequestParams()` が `request_uri_not_supported` で拒否する。
   const { request_uri: _consumed, ...pushedParams } = record.params;
   return pushedParams;
 }
 
 /**
- * `require_pushed_authorization_requests` 用のガード（RFC 9126 §5）。
+ * URN 形式の `request_uri` がなければ例外を投げる。
  *
- * PAR 必須設定のとき、URN 形式の `request_uri` を伴わない認可リクエストを拒否する。
+ * PAR を必須にする設定（`require_pushed_authorization_requests`）のときに、生成されたコードが認可エンドポイントで呼ぶ。
+ * PAR を経由していない認可リクエストを、これで拒否する（RFC 9126 §5）。
  *
- * @throws {PushedRequestUriError} invalid_request（非リダイレクト）
+ * @throws {PushedRequestUriError} `invalid_request`: `request_uri` がないか、URN の接頭辞で始まらないとき（リダイレクトしないエラー）
+ * @spec RFC 9126 §5
  */
 export function assertPushedRequestUsed(params: Record<string, string>): void {
   const requestUri = params['request_uri'];

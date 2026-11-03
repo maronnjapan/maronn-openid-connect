@@ -7,7 +7,7 @@ export const meta = step({
   id: 'respond-error',
   endpoint: 'authorize',
   kind: 'respond',
-  label: 'Map a failure to a redirectable or on-OP error',
+  label: '失敗をリダイレクトか OP 上のエラーに振り分ける',
   spec: 'OIDC Core 1.0 §3.1.2.6 / §3.1.2.2',
   function: 'authorizationErrorOutcome',
   consumes: ['responseMode'],
@@ -17,17 +17,18 @@ export const meta = step({
 });
 
 /**
- * Map a failure of any step to the outcome: a redirectable error goes back to
- * the client with the state and iss (RFC 9207 §2); an error thrown before the
- * redirect_uri was verified stays on the OP (OIDC Core 1.0 §3.1.2.2: unknown
- * client_id, unregistered redirect_uri, redirect_uri with a fragment);
- * anything else is a server_error.
+ * ステップが投げた例外を、処理結果に変えて返す。
  *
- * When the request asked for a response mode of a feature (JARM §2.1 signs
- * the error members into one JWT, the Form Post Response Mode posts them),
- * the error goes back in that mode.
- * responseMode is undefined for errors thrown before response_mode was
- * interpreted (unknown client, unsupported JWT mode), which is why those stay plain.
+ * 例外は、次のように結果に変える。
+ * - `redirectUri` がある `AuthorizationError`: `state` と `iss` を付けたエラーの認可レスポンス（RFC 9207 §2）
+ * - `redirectUri` が無い `AuthorizationError`: OP で応答するエラー
+ * - それ以外の例外: `server_error`
+ *
+ * `redirectUri` が無いのは、`redirect_uri` を確かめる前に投げたエラー（未知の `client_id`、登録されていない `redirect_uri`、フラグメントを含む `redirect_uri`）である（OIDC Core 1.0 §3.1.2.2）。
+ *
+ * リクエストが機能のレスポンスモードを求めていたときは、エラーもそのモードで返す。
+ * 例えば JARM ではエラーのパラメータを一つの JWT に入れて署名し（JARM §2.1）、`form_post` のレスポンスモードではそれを HTML のフォームからブラウザに送らせる。
+ * `response_mode` を読み取る前に投げたエラー（未知のクライアント、対応していない JWT のモードなど）では `responseMode` が `undefined` なので、そのエラーはレスポンスモードを使わずに返す。
  */
 export async function authorizationErrorOutcome(
   c: any,
@@ -48,11 +49,8 @@ export async function authorizationErrorOutcome(
         ),
       };
     }
-    // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected MUST NOT
-    // redirect to the supplied redirect_uri. They stay on the OP:
-    // the authorization page (page.ts) answers programmatic callers (Accept:
-    // application/json) with the OAuth error JSON and browsers with the OP's
-    // own error page.
+    // リダイレクトできないエラーは、リクエストの `redirect_uri` へリダイレクトせず、OP で応答する結果にする（OIDC Core 1.0 §3.1.2.2）。
+    // `page.ts` は、`Accept: application/json` の呼び出し元には JSON の OAuth のエラーレスポンスで、ブラウザには OP のエラー画面で応答する。
     return { kind: 'error', error: error.error, errorDescription: error.errorDescription };
   }
   return { kind: 'server_error' };

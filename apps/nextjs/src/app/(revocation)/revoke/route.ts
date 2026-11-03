@@ -38,32 +38,36 @@ export const runtime = 'nodejs';
 const revocationResolvers = createRevocationResolvers(stores);
 
 /**
- * Answer a revocation request (POST /revoke) with the response of revoke() —
- * 200 with an empty body, or an OAuth error — plus the clientCors headers.
+ * `revoke()` の結果に CORS ヘッダーを付けて返す。
+ *
+ * `POST /revoke` の失効リクエストに、ボディが空の 200 か、OAuth のエラーレスポンスで応答する。
+ * CORS ヘッダーは `clientCors` の設定に従う。
  */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await revoke(request));
 }
 
 /**
- * Answer the CORS preflight of /revoke: 204 with no body and the clientCors
- * headers (allowed origin, methods, headers, max age).
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/revoke` で、応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
 /**
- * Authenticate the client and revoke the presented token when it was issued
- * to that client — a refresh token together with the access tokens of its
- * grant — answering 200 with an empty no-store body, also for an unknown
- * token.
+ * クライアントを認証し、提示されたトークンを失効させる。
  *
- * A public client identifies itself by client_id alone. Errors are no-store
- * OAuth error JSON: 400 invalid_request for a body that is not form-urlencoded
- * or has no token, 400 invalid_grant for a token issued to another client, 401
- * invalid_client (with WWW-Authenticate) when client authentication fails, 500
- * server_error otherwise.
+ * トークンがそのクライアントに発行されたものなら失効させ、リフレッシュトークンのときは同じグラントのアクセストークンも失効させる。
+ * 成功したときは、トークンが見つからなかったときも含めて、キャッシュさせない空のボディの 200 で応答する。
+ * パブリッククライアントは、`client_id` だけで自分を示す。
+ *
+ * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
+ * - 400 `invalid_request`: リクエストが不正なとき（ボディがフォームの形式でない、`token` がないなど）。
+ * - 400 `invalid_grant`: トークンがほかのクライアントに発行されたものであるとき。
+ * - 401 `invalid_client`（`WWW-Authenticate` ヘッダー付き）: クライアントの認証に失敗したとき。
+ * - 500 `server_error`: そのほかの失敗のとき。
  *
  * @spec RFC 7009 §2
  */
@@ -74,10 +78,8 @@ async function revoke(request: Request): Promise<Response> {
   const params = Object.fromEntries(new URLSearchParams(await request.text()));
 
   try {
-    // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
-    // Public clients registered with token_endpoint_auth_method=none pass with
-    // client_id only (RFC 7009 §2.1).
+    // クライアントの認証：トークンエンドポイントと同じ手順で、クライアントを認証する（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
+    // `token_endpoint_auth_method` を `none` で登録したパブリッククライアントは、`client_id` だけで通る（RFC 7009 §2.1）。
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
@@ -90,40 +92,37 @@ async function revoke(request: Request): Promise<Response> {
     await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
     const authenticatedClientId = presentedCredentials.clientId;
 
-    // --- Revocation pipeline ------------------------------------------------
-    // Each step below is an independent core function, called in RFC 7009 §2
-    // order. Delete a call to drop that step, or insert your own logic between
-    // steps.
+    // トークンの失効：以下の呼び出しはそれぞれ core の独立した関数で、RFC 7009 §2 の順に呼ぶ。
+    // 呼び出しを消せばその処理を省け、呼び出しの間に独自の処理を挟める。
 
-    // RFC 7009 §2.1: token is REQUIRED (invalid_request when absent).
+    // `token` パラメータは必須で、なければ `invalid_request` にする（RFC 7009 §2.1）。
     const token = requireRevocationToken({ token: params.token });
 
-    // RFC 7009 §2.1: the caller must be an identified client (invalid_client).
+    // 呼び出し元のクライアントが識別されていることを確かめ、されていなければ `invalid_client` にする（RFC 7009 §2.1）。
     requireRevocationClient(authenticatedClientId);
 
-    // RFC 7009 §2.1: token_type_hint only reorders the lookup — the other token
-    // type is still searched when the hint misses.
+    // 提示されたトークンを、アクセストークンとリフレッシュトークンのストアから探す（RFC 7009 §2.1）。
+    // `token_type_hint` は探す順番を変えるだけで、ヒントの種類で見つからなければもう一方の種類も探す。
     const resolved = await resolveRevocationTarget({
       token,
       tokenTypeHint: params.token_type_hint,
       resolvers: revocationResolvers,
     });
 
-    // RFC 7009 §2.2: an unknown token is still a success, so the client cannot
-    // probe which token values exist.
+    // トークンが見つからなければ何もせず、成功として応答する（RFC 7009 §2.2）。
+    // 失敗として応答すると、どのトークンの値が存在するかをクライアントが探れてしまうためである。
     if (resolved !== null) {
-      // RFC 7009 §2.1: a token issued to another client is refused (invalid_grant).
+      // ほかのクライアントに発行されたトークンなら、`invalid_grant` で拒否する（RFC 7009 §2.1）。
       validateRevocationTokenClient(resolved, authenticatedClientId);
 
       await revokeResolvedToken(token, resolved, revocationResolvers);
 
-      // RFC 7009 §2.1 SHOULD: revoking a refresh token also revokes the access
-      // tokens of the same grant. Delete this call to revoke only the presented
-      // token.
+      // リフレッシュトークンを失効させたときは、同じグラントのアクセストークンも失効させる（RFC 7009 §2.1 の SHOULD）。
+      // 提示されたトークンだけを失効させたいときは、この呼び出しを消す。
       await revokeGrantAccessTokens(resolved, revocationResolvers);
     }
 
-    // RFC 7009 §2.2: 200 with an empty body.
+    // ボディが空の 200 で応答し、キャッシュさせない（RFC 7009 §2.2）。
     return new Response(null, {
       status: 200,
       headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },

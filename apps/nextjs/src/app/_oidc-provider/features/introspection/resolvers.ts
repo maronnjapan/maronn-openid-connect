@@ -8,7 +8,12 @@ import type {
 } from '@maronn-openid-connect/core';
 import type { ProviderStores } from '../../store';
 
-/** The resolvers the introspection endpoint reads tokens through, on top of the access token and refresh token stores. */
+/**
+ * ストアからトークンを探すリゾルバを作って返す。
+ *
+ * イントロスペクションエンドポイントが、アクセストークンとリフレッシュトークンを探すのに使う。
+ * どちらのリゾルバも、ストアにトークンがなければ `null` を返す。
+ */
 export function createIntrospectionResolvers(stores: ProviderStores): {
   introspectionAccessTokenResolver: IntrospectionAccessTokenResolver;
   introspectionRefreshTokenResolver: IntrospectionRefreshTokenResolver;

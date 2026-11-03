@@ -41,9 +41,13 @@ export interface DeviceCodeGrantResult {
 }
 
 /**
- * クライアントがデバイス認可グラントを許可されているか検証する。
+ * クライアントがデバイス認可グラントを使えるか確かめる。
  *
- * @throws {DeviceAuthorizationError} unauthorized_client
+ * トークンエンドポイントで、デバイスコードをトークンと引き換えるときに呼ぶ。
+ * 登録したグラントタイプ（`grantTypes`）に {@link DEVICE_CODE_GRANT_TYPE} がなければ、`unauthorized_client` を投げる（RFC 6749 §5.2）。
+ *
+ * @spec RFC 6749 §5.2
+ * @throws {DeviceAuthorizationError} `unauthorized_client`: クライアントがデバイスコードのグラントタイプを登録していないとき。
  */
 export function validateDeviceCodeGrantAllowed(client: DeviceCodeGrantClient): void {
   if (!(client.grantTypes ?? []).includes(DEVICE_CODE_GRANT_TYPE)) {
@@ -55,12 +59,16 @@ export function validateDeviceCodeGrantAllowed(client: DeviceCodeGrantClient): v
 }
 
 /**
- * `device_code` パラメータを取り出し、発行先クライアントのレコードを解決する。
+ * `device_code` のレコードを探し、発行先を確かめて返す。
  *
- * RFC 8628 §3.4: device_code は発行先クライアントに紐づく。存在しない場合も
- * クライアント不一致の場合も同一文言の `invalid_grant` にする。
+ * `device_code` パラメータがないか空文字列なら、`invalid_request` を投げる。
+ * `device_code` は発行先のクライアントに結び付いている（RFC 8628 §3.4）。
+ * レコードがないときも、レコードの発行先が `client` でないときも、同じ文言の `invalid_grant` を投げる。
+ * 文言を同じにするのは、ほかのクライアントの `device_code` が実在するかを確かめられないようにするためである。
  *
- * @throws {DeviceAuthorizationError} invalid_request / invalid_grant
+ * @spec RFC 8628 §3.4
+ * @throws {DeviceAuthorizationError} `invalid_request`: `device_code` がないとき。
+ * @throws {DeviceAuthorizationError} `invalid_grant`: レコードがないとき、または別のクライアントに発行した `device_code` のとき。
  */
 export async function resolveDeviceCodeRecord(
   params: Record<string, string>,
@@ -82,20 +90,26 @@ export async function resolveDeviceCodeRecord(
 }
 
 /**
- * RFC 8628 §3.5 の状態機械を評価する。
+ * 状態を判定し、承認済みなら発行に使う情報を返す。
  *
- * 判定順序（上から評価し、最初に該当したものを返す）:
+ * 判定は次の順に行い、最初に当てはまったものが結果になる（RFC 8628 §3.5）。
+ * 1. 有効期限を過ぎていれば、レコードを削除して `expired_token` を投げる。
+ * 2. 前回のポーリングから `interval` 秒が経っていなければ、`interval` を {@link SLOW_DOWN_INTERVAL_INCREMENT} 秒延ばし、`lastPolledAt` を `now` にして保存し、`slow_down` を投げる。
+ * 3. 状態が `pending` なら、`lastPolledAt` を `now` にして保存し、`authorization_pending` を投げる。
+ * 4. 状態が `denied` なら、レコードを削除して `access_denied` を投げる。
+ * 5. それ以外（`approved`）なら、`consume` でレコードを取り出すと同時に削除し、トークンの発行に使う情報（{@link DeviceCodeGrantResult}）を返す。
  *
- * 1. 期限切れ → `expired_token`（レコード削除）
- * 2. ポーリング過速 → `slow_down`（interval を +5 して保存）
- * 3. pending → `authorization_pending`（lastPolledAt 更新）
- * 4. denied → `access_denied`（レコード削除）
- * 5. approved → 結果を返す（レコードは consume で単回使用にする）
+ * 取り出したレコードがないとき（並行した引き換えで先に削除されたときなど）、状態が `approved` でないとき、または `subject`、`authTime`、`grantId` のどれかがないときは、`invalid_grant` を投げる。
+ * 返す `scope` は、承認したときに決めた `approvedScope` があればその値で、なければ要求された `scope` である。
  *
- * 期限切れをポーリング過速より先に評価するのは、期限切れレコードに対して interval を
- * 増やしても意味がなく、デバイスへはフロー終了を伝えるべきだから。
+ * 期限切れをポーリングの間隔より先に判定するのは、期限切れのレコードの `interval` を延ばしても意味がなく、デバイスにはフローの終了を伝えるべきだからである。
  *
- * @throws {DeviceAuthorizationError} §3.5 の各状態
+ * @spec RFC 8628 §3.5
+ * @throws {DeviceAuthorizationError} `expired_token`: 有効期限を過ぎたとき。
+ * @throws {DeviceAuthorizationError} `slow_down`: 前回のポーリングから `interval` 秒が経っていないとき。
+ * @throws {DeviceAuthorizationError} `authorization_pending`: ユーザーがまだ承認も拒否もしていないとき。
+ * @throws {DeviceAuthorizationError} `access_denied`: ユーザーが拒否したとき。
+ * @throws {DeviceAuthorizationError} `invalid_grant`: 承認済みのレコードを取り出せなかったとき。
  */
 export async function evaluateDeviceCodeState(
   record: DeviceAuthorizationRecord,
@@ -114,8 +128,8 @@ export async function evaluateDeviceCodeState(
     record.lastPolledAt !== null &&
     now.getTime() - record.lastPolledAt.getTime() < record.interval * 1000
   ) {
-    // RFC 8628 §3.5: "the interval MUST be increased by 5 seconds for this and
-    // all subsequent requests" — サーバー側も新しい間隔を強制する。
+    // 間隔を 5 秒延ばしてポーリングの時刻とともに保存し、サーバー側でも新しい間隔を守らせる。
+    // このリクエストと以降のすべてのリクエストで、間隔を 5 秒延ばさなければならない（RFC 8628 §3.5 の MUST）。
     record.interval += SLOW_DOWN_INTERVAL_INCREMENT;
     record.lastPolledAt = now;
     await store.update(record);
@@ -142,8 +156,9 @@ export async function evaluateDeviceCodeState(
     );
   }
 
-  // approved: 単回使用を強制するため atomic な consume で回収する。並行リデンプション
-  // では先勝ちの 1 本だけがトークンを得て、後続は record が null になり invalid_grant。
+  // 状態が `approved` なら、`consume` でレコードを取り出すと同時に削除し、一度しか使えないようにする。
+  // `consume` は取り出しと削除を不可分に行うので、並行して引き換えられても、最初の 1 つだけがレコードを得る。
+  // 後続のリクエストは `null` を受け取り、`invalid_grant` になる。
   const consumed = await store.consume(record.deviceCode);
   if (
     consumed === null ||
@@ -165,12 +180,14 @@ export async function evaluateDeviceCodeState(
 }
 
 /**
- * 合成関数: トークンエンドポイントのデバイスコード分岐（RFC 8628 §3.4 / §3.5）。
+ * 承認済みの `device_code` なら、発行に使う情報を返す。
  *
- * 承認済みのときだけ {@link DeviceCodeGrantResult} を返し、それ以外の状態は
- * {@link DeviceAuthorizationError} を throw する。
+ * トークンエンドポイントで、グラントタイプがデバイスコードのトークンリクエストを処理する関数で、{@link validateDeviceCodeGrantAllowed}、{@link resolveDeviceCodeRecord}、{@link evaluateDeviceCodeState} を順に呼ぶだけである。
+ * 承認済みのときだけ {@link DeviceCodeGrantResult} を返し、それ以外の状態では {@link DeviceAuthorizationError} を投げる。
  *
- * @throws {DeviceAuthorizationError}
+ * @spec RFC 8628 §3.4
+ * @spec RFC 8628 §3.5
+ * @throws {DeviceAuthorizationError} `unauthorized_client`、`invalid_request`、`invalid_grant`、`expired_token`、`slow_down`、`authorization_pending`、`access_denied`: 中で呼ぶ関数が、それぞれの条件に当たったとき。
  */
 export async function processDeviceCodeGrant(input: {
   params: Record<string, string>;

@@ -28,12 +28,17 @@ export interface VerifiedSoftwareStatement {
 }
 
 /**
- * 検証済み software statement のメタデータを、平文のメタデータへ適用する。
+ * 検証済みのステートメントをメタデータに重ねて返す。
  *
- * RFC 7591 §3.1.1: software statement のメタデータは平文の同名メタデータに優先する。
- * 返すオブジェクトは software_statement メンバーに元の JWT 文字列を持ち、
- * validateClientMetadata がそれを応答へ返す（§3.2.1 の MUST）。statement の
- * 中に software_statement という名のクレームがあっても、外側の JWT 文字列が勝つ。
+ * 平文のメタデータ（`metadata`）に、検証済みのソフトウェアステートメントのメタデータ（`verified.metadata`）を重ねた新しいオブジェクトを返す。
+ * 同じ名前のメタデータは、ソフトウェアステートメントの値を優先する（RFC 7591 §3.1.1）。
+ *
+ * 返すオブジェクトの `software_statement` メンバーには元の JWT の文字列（`softwareStatement`）を入れ、`validateClientMetadata` がそれをレスポンスで返す（RFC 7591 §3.2.1 の MUST）。
+ * ステートメントの中に `software_statement` という名前のクレームがあっても、外側の JWT の文字列で上書きする。
+ * ほかのプロパティは {@link defineOwnProperty} で置くので、`__proto__` という名前のメタデータがあってもプロトタイプは変わらない。
+ *
+ * @spec RFC 7591 §3.1.1
+ * @spec RFC 7591 §3.2.1
  */
 export function applySoftwareStatement(
   metadata: Readonly<Record<string, unknown>>,

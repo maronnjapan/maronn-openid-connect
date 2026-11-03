@@ -8,11 +8,13 @@
  */
 
 /**
- * Attach Set-Cookie headers to a Response a view already produced.
+ * レスポンスに `Set-Cookie` ヘッダーを足して返す。
  *
- * renderView() builds its own Response, so headers staged on the framework
- * context never reach it; rebuilding the Response is the framework-neutral way
- * to add cookies without making views cookie-aware.
+ * `cookies` の値ごとに `Set-Cookie` ヘッダーを一つ加え、ボディ、ステータス、ほかのヘッダーはそのままの新しいレスポンスを作って返す。
+ * `cookies` が空なら、受け取ったレスポンスをそのまま返す。
+ *
+ * `renderView()` は自分でレスポンスを作るので、フレームワークのコンテキストに設定したヘッダーはそのレスポンスに入らない。
+ * レスポンスを作り直せば、ビューに Cookie を扱わせずに、フレームワークによらない方法で Cookie を付けられる。
  */
 export function withCookies(response: Response, cookies: readonly string[]): Response {
   if (cookies.length === 0) return response;
@@ -28,8 +30,10 @@ export function withCookies(response: Response, cookies: readonly string[]): Res
 }
 
 /**
- * Send the browser to location (302 unless told otherwise) with the given
- * cookies attached.
+ * `location` へリダイレクトし、Cookie を設定する。
+ *
+ * ステータスコードは `status` で、渡さなければ 302 である。
+ * `cookies` の値ごとに `Set-Cookie` ヘッダーを一つ付け、ボディは空にする。
  */
 export function redirectWithCookies(
   location: string,

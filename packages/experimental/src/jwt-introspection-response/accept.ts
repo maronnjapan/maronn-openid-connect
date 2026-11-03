@@ -16,13 +16,16 @@
 export const TOKEN_INTROSPECTION_JWT_MEDIA_TYPE = 'application/token-introspection+jwt';
 
 /**
- * Accept ヘッダが署名付き JWT のイントロスペクション応答を要求しているかを返す。
+ * `Accept` ヘッダーが JWT 形式を求めるなら true を返す。
  *
- * カンマ区切りの各要素からメディアタイプ部分（`;` より前）を取り出し、
- * 前後空白を除いて小文字化した値が {@link TOKEN_INTROSPECTION_JWT_MEDIA_TYPE}
- * と完全一致する要素が 1 つでもあれば true。q 値による選好順位は解決しない
- * （`;q=0` の明示的拒否も JWT 要求として扱う。§4 に q 値の規定はなく、拒否
- * したい RS はメディアタイプ自体を送らなければよい）。
+ * ヘッダーの値をカンマで区切り、各要素の `;` より前（メディアタイプ）を、前後の空白を除いて小文字にしてから {@link TOKEN_INTROSPECTION_JWT_MEDIA_TYPE} と比べる。
+ * 完全に一致する要素が一つでもあれば true を返し、ヘッダーが `null`、`undefined`、空文字列のときは false を返す。
+ * 完全一致で比べるので、`application/*` のようなワイルドカードは一致しない。
+ *
+ * `q` 値による優先順位は見ないので、`;q=0` で明示的に拒否した要素も、JWT 形式を求める要素として扱う。
+ * RFC 9701 §4 には `q` 値の規定がなく、JWT 形式を受け取りたくないリソースサーバーは、このメディアタイプを送らなければよいためである。
+ *
+ * @spec RFC 9701 §4
  */
 export function acceptsIntrospectionJwt(acceptHeader: string | null | undefined): boolean {
   if (acceptHeader === null || acceptHeader === undefined || acceptHeader === '') {

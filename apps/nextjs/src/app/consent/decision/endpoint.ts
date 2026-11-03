@@ -1,6 +1,15 @@
 import { defineEndpoint } from '../../_oidc-provider/endpoint';
 
-/** The steps of route.ts (the consent decision, OIDC Core 1.0 §3.1.2.4). */
+/**
+ * 同意フォームから送られたエンドユーザーの決定を受け取り、認可レスポンスをクライアントへ返す。
+ * 承認なら認可コード（インプリシットフローとハイブリッドフローでは ID トークンやアクセストークン）を発行して同意を記録し、拒否なら `access_denied` を返す。
+ *
+ * 認可レスポンスは認可リクエストが求めたレスポンスモードで返し、トランザクションの Cookie を消す。
+ * フォームが別オリジンから送られたとき、トランザクションが見つからないとき、`csrf_token` が一致しないとき、決定の値が `approve` でも `deny` でもないとき、レスポンスモードの署名鍵を読み込めないときは、OP のエラーページへリダイレクトする。
+ * ログインが済んでいないときは `/login` へリダイレクトする。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.4
+ */
 export const endpoint = defineEndpoint({
   path: '/consent/decision',
   steps: [

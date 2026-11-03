@@ -33,13 +33,24 @@ import { submitCibaLogin } from './steps/submit-login.js';
 
 export const cibaPage = new Hono<{ Variables: Record<string, any> }>();
 
-/** Render the sign-in form of the authentication device UI. */
+/**
+ * 認証デバイスのログインフォームを HTML で返す。
+ *
+ * ビューは `cibaViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ */
 export function renderCibaLoginPage(c: any, params: CibaLoginPageParams): Response {
   const views = cibaViews(c);
   return renderView(<views.cibaLoginPage {...params} />);
 }
 
-/** Render the pending-requests approval screen (CIBA Core 1.0 §7.1 binding_message). */
+/**
+ * 保留中のリクエストの承認画面を HTML で返す。
+ *
+ * ビューは `cibaViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ * ビューには、リクエストごとの `binding_message` も渡す（CIBA Core 1.0 §7.1）。
+ *
+ * @spec CIBA Core 1.0 §7.1
+ */
 export function renderCibaPendingRequestsPage(
   c: any,
   params: CibaPendingRequestsPageParams,
@@ -48,13 +59,29 @@ export function renderCibaPendingRequestsPage(
   return renderView(<views.cibaPendingRequestsPage {...params} />);
 }
 
-/** Render the decision-recorded screen. */
+/**
+ * 承認か拒否を記録した後の完了画面を HTML で返す。
+ *
+ * ビューは `cibaViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ */
 export function renderCibaCompletedPage(c: any, params: CibaCompletedPageParams): Response {
   const views = cibaViews(c);
   return renderView(<views.cibaCompletedPage {...params} />);
 }
 
-/** Turn the outcome of a step into the screen that follows it. */
+/**
+ * ステップの結果に応じた画面で応答する。
+ *
+ * 結果の種類（`kind`）ごとに、次の画面を返す。
+ * - `error`: 結果のステータスコードの OP のエラーページ
+ * - `session_required`: ログインし直すよう求める 401 のエラーページ
+ * - `invalid_decision`: `invalid_request` を示す 400 のエラーページ
+ * - `locked_out`: 試行回数が多すぎることを示す 429 のエラーページ
+ * - `login`: ログインフォーム（結果の Cookie を設定する）
+ * - `invalid_credentials`: エラーと残りの試行回数を添えたログインフォーム
+ * - `pending_requests`: 保留中のリクエストの一覧（結果の Cookie を設定する）
+ * - `completed`: 完了画面
+ */
 function respond(c: any, outcome: CibaOutcome): Response {
   if (outcome.kind === 'error') return renderErrorPage(c, outcome);
   if (outcome.kind === 'session_required') {
@@ -71,7 +98,7 @@ function respond(c: any, outcome: CibaOutcome): Response {
     });
   }
   if (outcome.kind === 'locked_out') {
-    // The login transaction is gone: this form cannot be retried at all.
+    // ログイントランザクションは削除されているので、このフォームからは再試行できない。
     return renderErrorPage(c, {
       error: 'Too many login attempts',
       statusCode: 429,

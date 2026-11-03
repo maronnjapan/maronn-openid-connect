@@ -4,25 +4,35 @@
  */
 
 /**
- * scope の値を空白で区切る。重複は除去しない。
- * 同意の照会など、保存済みの値を加工せずに渡す箇所で使う。
+ * `scope` の値を半角空白で分けた配列を返す。
+ *
+ * 空白が続いてできる空の値は取り除くが、重複は取り除かない。
+ * 同意の照会のように、保存済みの値を変えずに渡す箇所で使う。
  */
 export function splitScope(scopeValue: string): string[] {
   return scopeValue.split(' ').filter((value) => value.length > 0);
 }
 
 /**
- * RFC 6749 §3.3: 空白区切りの scope を集合として解析し、重複を挿入順のまま除去する。
- * 値の妥当性（openid の有無、許可範囲）は検査しない。
+ * `scope` の値を半角空白で分け、重複を除いた配列を返す。
+ *
+ * スコープの値は集合として扱うので、同じ値は最初に現れた位置にだけ残し、値の順序は変えない（RFC 6749 §3.3）。
+ * 空白が続いてできる空の値も取り除く。
+ * 値の妥当性（`openid` があるか、許された範囲か）は確かめない。
+ *
+ * @spec RFC 6749 §3.3
  */
 export function parseScope(scopeValue: string): string[] {
   return [...new Set(splitScope(scopeValue))];
 }
 
 /**
- * RFC 7591 §2: クライアント登録メタデータ `scope`（クライアントが要求してよい scope の一覧）に
- * 無い値を、要求の順に返す。
- * 登録が無い（undefined）クライアントには制限を掛けないので、空配列を返す。
+ * クライアントに登録されていないスコープを返す。
+ *
+ * `requested` のうち、クライアントの登録メタデータ `scope`（クライアントが要求してよいスコープの一覧）にない値を、要求の順に返す（RFC 7591 §2）。
+ * `registered` が `undefined`（登録がない）クライアントにはスコープを制限しないので、空の配列を返す。
+ *
+ * @spec RFC 7591 §2
  */
 export function findUnregisteredClientScopes(
   requested: readonly string[],

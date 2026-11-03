@@ -59,8 +59,14 @@ export interface AuthorizationResponseModeHandler {
 export type ResponseModeTransaction = AuthTransaction & { responseMode?: string };
 
 /**
- * The response mode a stored transaction asked for, from the feature that
- * answers in it; undefined for the plain query response.
+ * トランザクションのレスポンスモードを復元して返す。
+ *
+ * トランザクションの `responseMode` にある名前に応答する機能を、有効な機能の中から探し、その機能に復元させる。
+ * 機能には、`issuer` と、署名鍵を読み込む関数（`loadSigningKeys`）も渡す。
+ * `responseMode` が無いトランザクション（パラメータをクエリに付ける通常の認可レスポンス）には `undefined` を返す。
+ *
+ * @throws {Error} トランザクションが示すレスポンスモードに応答する機能が、有効な機能の中に無いとき。
+ *   トランザクションが残っている間に設定を変えると起きる。
  */
 export async function restoreResponseMode(
   transaction: ResponseModeTransaction,
@@ -76,8 +82,10 @@ export async function restoreResponseMode(
 }
 
 /**
- * The authorization response: in the response mode when there is one,
- * otherwise the parameters in the query with iss (RFC 9207 §2).
+ * パラメータを入れた認可レスポンスを返す。
+ *
+ * `responseMode` があれば、そのレスポンスモードで返す。
+ * 無ければ、`undefined` でないパラメータをリダイレクト URI のクエリに設定し、`iss` も設定して、リダイレクトの認可レスポンスにする（RFC 9207 §2）。
  */
 export async function authorizationResponseOf(
   responseMode: AuthorizationResponseMode | undefined,
@@ -95,9 +103,11 @@ export async function authorizationResponseOf(
 }
 
 /**
- * Send the authorization response to the client: a 302 to the URL that
- * carries it, or the HTML form a form_post response is posted from
- * (formPostPage() in _oidc-provider/html.ts), with the given cookies attached.
+ * 認可レスポンスでクライアントに応答する。
+ *
+ * リダイレクトなら、パラメータを含む URL へ 302 でリダイレクトする。
+ * `form_post` なら、パラメータを送らせる HTML のフォーム（`_oidc-provider/html.ts` の `formPostPage()`）で応答する。
+ * どちらにも、渡された Cookie を `Set-Cookie` ヘッダーで付ける。
  */
 export function respondToClient(response: AuthorizationResponse, cookies: readonly string[] = []): Response {
   const answer =

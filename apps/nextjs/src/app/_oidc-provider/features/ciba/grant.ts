@@ -31,10 +31,15 @@ import { cibaAuthenticationRequestStore } from './store';
 import { noStoreJson, oauthError } from '../../http';
 
 /**
- * Redeem an approved backchannel authentication request for tokens. Every
- * state but "approved" is thrown as CibaGrantError — authorization_pending /
- * slow_down / access_denied / expired_token, plus invalid_request /
- * invalid_grant (CIBA §11) — and answered by the token route.
+ * 承認済みの `auth_req_id` でトークンを発行して返す。
+ *
+ * `processCibaGrant()` で `auth_req_id` のリクエストの状態を判定し、承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンス（キャッシュ禁止の JSON）で応答する。
+ * 承認済みでなければ `CibaGrantError` を投げ、`dispatchCiba()` がそれを OAuth のエラーレスポンスにして返す。
+ * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` で応答する。
+ *
+ * @spec CIBA Core 1.0 §10.1
+ * @spec CIBA Core 1.0 §11
+ * @throws {CibaGrantError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `auth_req_id` のリクエストが承認済みでないか、使えないとき。
  */
 export async function redeemCibaRequest(
   params: Record<string, string>,
@@ -47,9 +52,10 @@ export async function redeemCibaRequest(
     store: cibaAuthenticationRequestStore,
   });
 
-  // T-022: the ID Token follows the same key-selection rule as the standard
-  // grants — the registered ID Token key whose alg matches the client's
-  // id_token_signed_response_alg, not simply the first key of the set.
+  // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ。
+  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OIDC Dynamic Client Registration 1.0 §2）。
+  // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
+  // `at_hash` も誤ったアルゴリズムで計算してしまう。
   const idTokenAlg = (client as RegisteredClient).idTokenSignedResponseAlg;
   const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);
   if (!idTokenKey) {
@@ -60,9 +66,9 @@ export async function redeemCibaRequest(
     );
   }
 
-  // Same aud policy as the standard grants: the UserInfo endpoint stays a
-  // permanent member (RFC 9068 §3). CIBA §7.1 has no resource parameter, so nothing else is
-  // requested.
+  // アクセストークンの `aud` を、標準のグラントと同じ方針で組み立てる。
+  // UserInfo エンドポイントを常に含める（RFC 9068 §3）。
+  // CIBA §7.1 には `resource` パラメータがないので、ほかのオーディエンスは要求されない。
   const audience = buildAccessTokenAudience({
     userInfoEndpoint: `${config.issuer}/userinfo`,
     issuer: config.issuer,
@@ -84,12 +90,11 @@ export async function redeemCibaRequest(
     keyId: keys.general[0].keyId,
   });
 
-  // The backchannel authentication endpoint requires the openid scope, so an ID
-  // Token is always issued. It carries no nonce (CIBA §7.1 defines no such
-  // parameter, and OIDC Core 1.0 §2 only requires nonce when the authentication
-  // request carried one) and no c_hash (there is no code). Poll mode adds no
-  // CIBA-specific claims either — the auth_req_id claim of §10.3.1 belongs to
-  // the push-mode token delivery message.
+  // ID トークンは必ず発行する。
+  // バックチャネル認証エンドポイントが `openid` スコープを必須にしているためである。
+  // CIBA §7.1 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
+  // 認可コードがないので、`c_hash` も含めない。
+  // ポーリングモードでは CIBA 固有のクレームも加えない（§10.3.1 の `auth_req_id` クレームは、プッシュモードでトークンを配信するメッセージのものである）。
   const { acr, amr } = await resolveAcrAmr({
     subject: cibaGrant.subject,
     clientId: cibaGrant.clientId,
@@ -117,8 +122,7 @@ export async function redeemCibaRequest(
     clientId: cibaGrant.clientId,
     scope: cibaGrant.scope,
     expiresAt: issuedAt + config.accessTokenExpiresIn,
-    // Inherit the grantId minted at approval so revoking the grant kills
-    // every token issued from this backchannel authentication.
+    // 承認のときに作ったグラント ID を引き継ぎ、そのグラントを失効させれば、このバックチャネル認証から発行したトークンがすべて失効するようにする。
     grantId: cibaGrant.grantId,
     iat: issuedAt,
     nbf: issuedAt,
@@ -127,10 +131,9 @@ export async function redeemCibaRequest(
     jti: accessTokenPayload.jti,
   });
 
-  // OIDC Core 1.0 §11: offline_access survived the request endpoint's policy
-  // check only if this client may hold refresh tokens, and the approval screen the user
-  // just went through
-  // IS the explicit consent §11 asks for. Nothing further to gate on here.
+  // `scope` に `offline_access` があれば、リフレッシュトークンを発行する（OIDC Core 1.0 §11）。
+  // `offline_access` がここまで残るのは、バックチャネル認証エンドポイントの方針の確認で、このクライアントがリフレッシュトークンを持てると判定されたときだけである。
+  // エンドユーザーが通った承認画面が §11 の求める明示的な同意にあたるので、ここで確かめることはほかにない。
   const refreshToken = cibaGrant.scope.includes('offline_access')
     ? generateRandomString(32)
     : undefined;
@@ -139,8 +142,8 @@ export async function redeemCibaRequest(
       subject: cibaGrant.subject,
       clientId: cibaGrant.clientId,
       scope: cibaGrant.scope,
-      // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
-      // inherit originalIssuedAt so the deadline never slides forward.
+      // 有効期限は、最初の発行から数えた絶対的な期間で決める（OAuth 2.1 §6.1）。
+      // ローテーションでは `originalIssuedAt` を引き継ぐので、期限が後ろにずれることはない。
       expiresAt: issuedAt + config.refreshTokenAbsoluteLifetime,
       originalIssuedAt: issuedAt,
       used: false,
@@ -149,8 +152,7 @@ export async function redeemCibaRequest(
       issuer: config.issuer,
       audience,
       authTime: cibaGrant.authTime,
-      // CIBA §7.1 defines no nonce parameter, so the re-issued ID Token has
-      // none to preserve either.
+      // CIBA §7.1 には `nonce` パラメータがないので、再発行する ID トークンにも引き継ぐ `nonce` はない。
       nonce: undefined,
       acr,
       amr,
@@ -169,9 +171,17 @@ export async function redeemCibaRequest(
 }
 
 /**
- * The CIBA block of the token endpoint (CIBA Core 1.0 §10.1 / §11): the
- * answer to a CIBA grant, undefined for any other grant. CibaGrantError is
- * answered in the RFC 6749 §5.2 shape.
+ * グラントタイプが CIBA ならトークンで応答する。
+ *
+ * `grant_type` が CIBA の URN でなければ、何もせず `undefined` を返す。
+ * トークンエンドポイントのルートハンドラは、この関数をクライアント認証の直後、`grant_type` の検証より前に呼ぶ。
+ * `grant_type` の検証（core の `validateGrantTypeSupported()`）は `authorization_code` と `refresh_token` しか受け付けず、この URN を `unsupported_grant_type` で拒否するためである。
+ *
+ * CIBA のグラントなら `redeemCibaRequest()` で応答し、`CibaGrantError` は RFC 6749 §5.2 の形のエラーレスポンス（400）にして返す。
+ * それ以外の例外は、そのまま投げ直す。
+ *
+ * @spec CIBA Core 1.0 §10.1
+ * @spec CIBA Core 1.0 §11
  */
 export async function dispatchCiba(
   params: Record<string, string>,

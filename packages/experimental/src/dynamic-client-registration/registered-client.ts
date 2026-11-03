@@ -81,13 +81,16 @@ export const CLIENT_SECRET_AUTH_METHODS: readonly string[] = [
 ];
 
 /**
- * 検証済みメタデータから登録レコードを組み立てる。
+ * 検証済みのメタデータから登録レコードを作って返す。
  *
- * token_endpoint_auth_method が none のクライアントはシークレットを持てない
- * （RFC 6749 §2.1 の public client）ため、clientType: 'public' とする。それ以外は
- * confidential で、client_secret で認証する方式（clientSecretAuthMethods）にだけ
- * 256 ビットのシークレットを発行する。private_key_jwt のように鍵で認証する方式は
- * confidential だがシークレットを持たない。
+ * `token_endpoint_auth_method` が `none` のクライアントはシークレットを持てない（RFC 6749 §2.1 のパブリッククライアント）ので、`clientType` を `'public'` にする。
+ * それ以外のクライアントはコンフィデンシャルクライアントで、`client_secret` で認証する方式（`clientSecretAuthMethods`、既定は {@link CLIENT_SECRET_AUTH_METHODS}）を登録したクライアントにだけ、256 ビットのシークレットを発行する。
+ * `private_key_jwt` のように鍵で認証する方式のクライアントは、コンフィデンシャルクライアントだがシークレットを持たない。
+ *
+ * 既定では、`client_id` は `dcr-` のあとに 16 バイト（128 ビット）の乱数の base64url を続けた値、シークレットは 32 バイトの乱数の base64url で、`clientIdIssuedAt` には現在時刻（秒）を入れる。
+ * これらは `options` の `generateClientId`、`generateClientSecret`、`now` で差し替えられる。
+ *
+ * @spec RFC 6749 §2.1
  */
 export function buildRegisteredClient(
   metadata: ValidatedClientRegistration,
@@ -123,15 +126,17 @@ export function buildRegisteredClient(
 }
 
 /**
- * 201 応答ボディ（RFC 7591 §3.2.1。スネークケースの JSON オブジェクト）を
- * 組み立てる。§3.2.1 は「登録済みの全メタデータを返す MUST」なので、発行値の
- * 後に登録メタデータ（既定値適用後の値、software_statement、カスタム
- * メタデータを含む）をすべて載せる。client_secret_expires_at は client_secret を
- * 発行した場合のみの REQUIRED で、0 は「無期限」を意味する。
+ * 登録レコードから 201 のレスポンスボディを作って返す。
  *
- * registration_access_token / registration_client_uri は返さない（RFC 7592 は
- * 非目標。OIDC Dynamic Client Registration 1.0 §3.2 の「両方返すか両方返さ
- * ないか」の MUST に従い、両方返さない側を選ぶ）。
+ * ボディはスネークケースの JSON オブジェクトで、`client_id` と `client_id_issued_at`、シークレットを発行したときは `client_secret` と `client_secret_expires_at` を入れ、そのあとに登録したメタデータ（既定値を適用したあとの値、`software_statement`、独自のメタデータを含む）をすべて入れる。
+ * 登録したメタデータをすべて返すことは、RFC 7591 §3.2.1 の要求（MUST）である。
+ * `client_secret_expires_at` は `client_secret` を発行したときだけ必須（REQUIRED）で、値の 0 は有効期限がないことを表す。
+ *
+ * `registration_access_token` と `registration_client_uri` は返さない。
+ * RFC 7592 はこの機能の対象外であり、OIDC Dynamic Client Registration 1.0 §3.2 の「両方を返すか、どちらも返さないか」という MUST に従って、どちらも返さない側を選んでいる。
+ *
+ * @spec RFC 7591 §3.2.1
+ * @spec OIDC Dynamic Client Registration 1.0 §3.2
  */
 export function buildClientRegistrationResponse(
   client: DynamicallyRegisteredClient,

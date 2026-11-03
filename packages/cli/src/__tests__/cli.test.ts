@@ -658,7 +658,7 @@ describe('run', () => {
       stdout.restore();
       expect(process.exitCode).toBe(undefined);
       expect(lines[0]).toBe('flowchart LR');
-      expect(lines.includes('    token["POST /token<br/>Token endpoint"]')).toBe(true);
+      expect(lines.includes('    token["POST /token<br/>トークンエンドポイント"]')).toBe(true);
       expect(lines.includes('  consent -->|"code"| token')).toBe(true);
     });
 
@@ -691,7 +691,7 @@ describe('run', () => {
       run(['graph', '--detail', 'steps', '--endpoint', 'token', '--enable', 'token-exchange']);
       const output = stdout.output();
       stdout.restore();
-      expect(output.startsWith('flowchart TD\n  subgraph token["POST /token<br/>Token endpoint"]\n')).toBe(true);
+      expect(output.startsWith('flowchart TD\n  subgraph token["POST /token<br/>トークンエンドポイント"]\n')).toBe(true);
       expect(output.includes('token__dispatch_token_exchange[')).toBe(true);
       expect(output.includes('subgraph authorize[')).toBe(false);
     });
@@ -963,7 +963,7 @@ describe('run explain', () => {
 
   it('should list the steps of an endpoint', () => {
     const { stdout } = explain(['token']);
-    expect(stdout).toContain('[authenticate-client] Authenticate the client');
+    expect(stdout).toContain('[authenticate-client] クライアントを認証する');
     expect(stdout).toContain('calls: extractClientCredentials, resolveAuthenticatedTokenClient');
   });
 

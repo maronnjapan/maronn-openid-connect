@@ -1,6 +1,16 @@
 import { defineEndpoint } from '../_oidc-provider/endpoint';
 
-/** The steps of route.ts (Authorization Endpoint, OIDC Core 1.0 §3.1.2). */
+/**
+ * 認可リクエストを検証し、トランザクションとして保存してから、画面が要るかどうかで応答を分ける。
+ * 画面が要らないとき（`prompt=none` でセッションと同意がそろっているとき、または有効なセッションのエンドユーザーが要求されたスコープにすでに同意しているとき）は、すぐに認可レスポンスでクライアントに応答する。
+ * 画面が要るときは、トランザクションの Cookie を付けて、ログイン画面か同意画面へリダイレクトする。
+ * エラーになったときは、`redirect_uri` を確かめた後ならエラーの認可レスポンスでクライアントに応答し、確かめる前なら OP のエラー画面へリダイレクトする（`Accept` ヘッダーで JSON を求める呼び出し元には 400 の JSON で応答する）。
+ * `POST` の `Content-Type` の誤り、パラメータの重複、`client_id` の欠落には 400 の JSON で、署名鍵を読み込めなければ 503 で応答する。
+ *
+ * ここに並べたステップは、`route.ts` の中のブロックである。
+ *
+ * @spec OIDC Core 1.0 §3.1.2
+ */
 export const endpoint = defineEndpoint({
   path: '/authorize',
   steps: [

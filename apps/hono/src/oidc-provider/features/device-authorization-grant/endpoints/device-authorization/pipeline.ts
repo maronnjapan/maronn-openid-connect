@@ -32,19 +32,19 @@ export const deviceAuthorizationApp = new Hono<{ Variables: Record<string, any> 
 
 deviceAuthorizationApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the device authorization request — RFC 8628 §3.1
+    // [parse-request] デバイス認可リクエストを解析する — RFC 8628 §3.1
     const { params, authorization } = await parseDeviceAuthorizationRequest(c);
 
-    // [authenticate-client] Authenticate the client — RFC 8628 §3.1 / RFC 6749 §3.2.1
+    // [authenticate-client] クライアントを認証する — RFC 8628 §3.1 / RFC 6749 §3.2.1
     const client = await authenticateDeviceClient(c, params, authorization);
 
-    // [validate-request] Validate the grant registration and the scope — RFC 8628 §3.1 / RFC 7591 §2 / OIDC Core 1.0 §11
+    // [validate-request] 登録済みのグラントとスコープを検証する — RFC 8628 §3.1 / RFC 7591 §2 / OIDC Core 1.0 §11
     const scope = validateDeviceAuthorizationRequest(params, client);
 
-    // [issue-device-code] Mint the device_code and user_code — RFC 8628 §3.2 / §5.2
+    // [issue-device-code] device_code と user_code を発行する — RFC 8628 §3.2 / §5.2
     const record = await issueDeviceCodes(c, client, scope);
 
-    // [respond] Respond with the device authorization response (no-store) — RFC 8628 §3.2
+    // [respond] デバイス認可レスポンスで応答する（no-store） — RFC 8628 §3.2
     return respondDeviceAuthorization(c, record);
   } catch (error) {
     return respondDeviceAuthorizationError(c, error);

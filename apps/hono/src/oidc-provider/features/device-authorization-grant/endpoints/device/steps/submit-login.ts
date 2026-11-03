@@ -17,7 +17,7 @@ export const meta = step({
   endpoint: 'device',
   feature: 'device-authorization-grant',
   kind: 'validate',
-  label: 'Sign the End-User in on this browser',
+  label: 'このブラウザでエンドユーザーをログインさせる',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceLogin',
   consumes: ['record', 'bindingCookie'],
@@ -26,11 +26,16 @@ export const meta = step({
 });
 
 /**
- * Device login (POST /device/login)
+ * エンドユーザーをログインさせ、承認画面の結果を返す。
  *
- * Binding first, then CSRF, then credentials: the binding is what proves this is
- * the browser that submitted the user_code, and it must gate the step that would
- * otherwise let a forged POST establish an OP session in the victim's browser.
+ * `POST /device/login` の処理で、`user_code`、バインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
+ * バインディング Cookie は、このブラウザが `user_code` を送信したブラウザであることを示す。
+ * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
+ *
+ * `user_code` が保留中のレコードに一致しなければ `invalid_user_code`、バインディング Cookie か `csrf_token` がないか一致しなければ `error`（403）の結果を返す。
+ * 認証情報が誤っていればレコードに失敗の回数を記録し、残りの回数を持つ `invalid_credentials` の結果を返す。
+ * 上限に達するとレコードを拒否の状態にし、`locked_out`（429）の結果を返す。
+ * 成功すると新しい ID の OP のセッションを保存し、このエンドユーザーに許可できるスコープと、セッションの Cookie を持つ `approval` の結果を返す。
  *
  * @spec RFC 8628 §3.3
  */
@@ -56,20 +61,21 @@ export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): P
     return verificationFailure(error);
   }
 
-  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
-  // upstream IdP) without touching anything above or below it.
+  // ユーザー名とパスワードでエンドユーザーを認証する。
+  // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
   const user = await authenticateUser(username, password);
   if (!user) {
-    // Per-record throttling only. An attacker holding a device-grant client can
-    // mint unlimited records, so the aggregate password-guess budget is the same
-    // as the one on /login. Subject-scoped throttling is a separate concern.
+    // 失敗の回数をレコードに記録し、上限に達したらレコードを拒否の状態にする。
+    // 回数の制限は、レコードごとにしかかからない。
+    // デバイス認可グラントを使えるクライアントを持つ攻撃者はレコードをいくらでも作れるので、パスワードを試せる合計の回数は `/login` と同じく実質的に制限されない。
+    // ユーザーごとの制限は、別に扱う課題である。
     const failure = await recordDeviceLoginFailure(
       record,
       deviceStore,
       deviceAuthorizationConfig.maxLoginAttempts,
     );
     if (!failure.canRetry) {
-      // The record is now denied: the device gets access_denied on its next poll.
+      // レコードは拒否の状態になったので、デバイスは次のポーリングで `access_denied` を受け取る。
       return { kind: 'locked_out' };
     }
     return {
@@ -84,8 +90,8 @@ export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): P
   const sessionId = generateRandomString(32);
   await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
 
-  // The new OP session travels with the approval screen; the approval step
-  // will have to present the binding cookie again as well.
+  // 承認画面に、新しい OP のセッションの Cookie を付ける。
+  // 承認の送信でも、ブラウザはバインディング Cookie をもう一度提示する必要がある。
   return {
     kind: 'approval',
     userCode: record.userCodeDisplay,

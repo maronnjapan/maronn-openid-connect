@@ -247,7 +247,10 @@ export function renderFunction(map: OpMap, catalog: FunctionCatalog, card: Funct
   lines.push(`${cardLine(card)}${card.exported ? '  exported' : '  (not exported)'}`);
   if (card.summary !== '') lines.push(`   ${card.summary}`);
   if (card.description !== undefined) {
-    for (const paragraph of card.description.split('\n\n')) lines.push(`   ${truncate(paragraph, 400)}`);
+    // A paragraph keeps the line breaks of its list items (extract/prose.ts): each line of it is a line here.
+    for (const paragraph of card.description.split('\n\n')) {
+      for (const line of paragraph.split('\n')) lines.push(`   ${truncate(line, 400)}`);
+    }
   }
   if (card.spec !== undefined) lines.push(`   spec: ${card.spec.join(', ')}`);
   if (card.throws !== undefined) lines.push(`   throws: ${card.throws.join(', ')}`);

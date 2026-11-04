@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { uncoveredLines } from '../check.js';
 import { escapingFailures } from '../failures.js';
-import type { TreeNode } from '../model.js';
+import { CallGraph, reachOf, type EndpointRoot } from '../impact.js';
+import type { FlowTree, TreeNode } from '../model.js';
 import { readRepository, type Repository } from '../repository.js';
 import { frameSelections } from '../selections.js';
 import { nodesOf } from '../tree.js';
@@ -114,6 +115,29 @@ describe('the trees of the repository', () => {
       expect(sides(refresh)).toContain('defined');
       expect(sides(code)).toContain('nullish');
     }
+  });
+
+  it('should take the words of an if from the JSDoc of a predicate only when its condition is that one call', () => {
+    const worded: string[] = [];
+    for (const [id, built] of repository.head.trees) {
+      for (const node of nodesOf(built.tree.nodes)) {
+        if (node.kind !== 'if' || node.from !== 'doc') continue;
+        const condition = (built.own.get(node) ?? '').replace(/^if \((.*)\)$/, '$1');
+        if (!/^(!\s*)*\(?\s*(await\s+)?[\w$.?]+\(.*\)\s*\)?$/.test(condition) || /&&|\|\||[!=]==?|[<>]=?/.test(condition.replace(/\(.*\)/, '()'))) worded.push(`${id} ${node.id}: ${condition}`);
+      }
+    }
+    expect(worded).toEqual([]);
+  });
+
+  it('should reach every call of a member of a store of hono through the resolvers that read it, under the endpoints of hono only', () => {
+    const trees = new Map<string, FlowTree>([...repository.head.trees].map(([id, built]) => [id, built.tree]));
+    const roots: EndpointRoot[] = repository.endpoints.flatMap((source) => source.endpoints.map((endpoint) => ({ source: source.source, frameworks: source.frameworks, endpoint: { id: endpoint.id }, root: repository.head.endpointRoots.get(`${source.source}:${endpoint.id}`) ?? '' })));
+    const graph = new CallGraph(trees, roots);
+    const endpointsOf = (member: string) => [...new Set(reachOf(graph, { member, root: 'hono' }).map((way) => `${way.source}:${way.endpoint}`))].sort();
+    expect(endpointsOf('hono:oidc-provider/store.ts#AccessTokenStorage.get')).toEqual(expect.arrayContaining(['hono:introspection', 'hono:revocation', 'hono:userinfo']));
+    expect(endpointsOf('hono:oidc-provider/store.ts#AuthorizationCodeStorage.consume')).toEqual(['hono:token']);
+    // The resolvers of hono implement the members of core; the endpoints of Next.js run their own.
+    expect(endpointsOf('core:token-request.ts#AuthorizationCodeResolver.revokeAuthorizationCode')).toEqual(['hono:token']);
   });
 
   it('should find the failures that leave a function from its trees, through the functions it calls', () => {

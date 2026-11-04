@@ -6,12 +6,12 @@
  * (model.ts).
  */
 export { buildMap, plain, type BuildOptions, type BuildResult } from './build.js';
-export { changesMarkdown, collectChanges, diffLines, hunksOf, KIND_ORDER, KIND_WORDS, parseNameStatus, pullRequestOf, type ChangeResult } from './changes.js';
+export { changesMarkdown, changeTargets, collectChanges, diffLines, hunksOf, KIND_ORDER, KIND_WORDS, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangeResult } from './changes.js';
 export { checkMap, uncoveredLines, type CheckResult, type MapMetrics } from './check.js';
-export { countWords, diffTrees, expressionChanges, placeHunks } from './diff.js';
+export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeHunks } from './diff.js';
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';
 export { escapingFailures } from './failures.js';
-export { CallGraph, reachOf } from './impact.js';
+export { CallGraph, catcherIn, reachOf, rootOf, type EndpointRoot, type ReachOptions, type ReachTarget } from './impact.js';
 export { attachNotes, draftHeading, draftSections, isNote, NOTES_DIRECTORY, parseNote, referencesOf, resolveReference, withoutComments } from './notes.js';
 export { readRepository, type Repository } from './repository.js';
 export { frameSelections, inFrame, wayTo } from './selections.js';

@@ -5,7 +5,8 @@
  *   framework with every feature on (each endpoint naming the frame its
  *   trace starts from), every function of the catalog and every endpoint
  *   body with what its tree calls and how it fails, the members of the
- *   interfaces, and in the map of a pull request its changes.
+ *   interfaces (who implements each and what the implementations call),
+ *   and in the map of a pull request its changes.
  * - functions/<hash>.json: one file a frame, with its tree and its
  *   ready-made choices, and for a changed frame its tree before and the diff.
  * - sources/<hash>.json: one file a source file, its code highlighted.
@@ -15,7 +16,7 @@
  * forked from it (changes.ts) come with it.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { BodyEntry, FlowEndpoint, FrameFile, FunctionEntry, MapChanges, MapData, MemberDoc, OpFlow } from './model.js';
 import { escapingFailures } from './failures.js';
@@ -39,6 +40,28 @@ export function plain(text: string): string {
 /** A file name for some content: its hash, so a changed file gets a new name and a cache never serves an old one. */
 function hashed(id: string, content: string): string {
   return `${createHash('sha256').update(id).update('\0').update(content).digest('hex')}.json`;
+}
+
+/**
+ * Write a file of a directory under the name its content hashes to (see
+ * hashed), unless the directory has it already whole (the same name holds
+ * the same content), and note the name in `written`. The directory is made when
+ * missing, never emptied first: a dev server serving it (vite) would stop
+ * seeing the files written again into a directory it saw removed.
+ */
+export function writeHashed(directory: string, id: string, content: string, written: Set<string>): string {
+  const name = hashed(id, content);
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, name);
+  if (!existsSync(path) || statSync(path).size !== Buffer.byteLength(content)) writeFileSync(path, content);
+  written.add(name);
+  return name;
+}
+
+/** Remove the files of a directory a build did not write (see writeHashed): those of an earlier build. */
+export function removeStale(directory: string, written: ReadonlySet<string>): void {
+  if (!existsSync(directory)) return;
+  for (const name of readdirSync(directory)) if (!written.has(name)) rmSync(join(directory, name), { recursive: true, force: true });
 }
 
 export interface BuildOptions {
@@ -72,10 +95,8 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   // The changes, before the files are written: a changed frame's file carries its diff.
   const changes = options.base === undefined ? undefined : collectChanges({ repository, base: options.base, ...(options.pullRequest === undefined ? {} : { pullRequest: options.pullRequest }), failures });
 
-  rmSync(join(options.out, 'functions'), { recursive: true, force: true });
-  rmSync(join(options.out, 'sources'), { recursive: true, force: true });
-  mkdirSync(join(options.out, 'functions'), { recursive: true });
-  mkdirSync(join(options.out, 'sources'), { recursive: true });
+  // The files are written in place and the stale ones removed after (see writeHashed, removeStale): a dev server already serving the directory keeps seeing it.
+  const written = { functions: new Set<string>(), sources: new Set<string>() };
 
   // One file a frame.
   const frameUrls = new Map<string, string>();
@@ -84,19 +105,13 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     const file: FrameFile = { version: 4, tree: built.tree, selections };
     const change = changes?.frames.get(id);
     if (change !== undefined) file.change = change;
-    const content = JSON.stringify(file);
-    const name = hashed(id, content);
-    writeFileSync(join(options.out, 'functions', name), content);
-    frameUrls.set(id, `./data/functions/${name}`);
+    frameUrls.set(id, `./data/functions/${writeHashed(join(options.out, 'functions'), id, JSON.stringify(file), written.functions)}`);
   }
   // The frames of removed functions: their tree before, for the page of the changes.
   for (const [id, change] of changes?.frames ?? []) {
     if (frameUrls.has(id) || change.before === undefined) continue;
     const file: FrameFile = { version: 4, tree: change.before, selections: [], change };
-    const content = JSON.stringify(file);
-    const name = hashed(id, content);
-    writeFileSync(join(options.out, 'functions', name), content);
-    frameUrls.set(id, `./data/functions/${name}`);
+    frameUrls.set(id, `./data/functions/${writeHashed(join(options.out, 'functions'), id, JSON.stringify(file), written.functions)}`);
   }
 
   /** What a tree calls: the functions (in the order of the first call, its own deferred calls after), the members, the call nodes, the untraceable calls. */
@@ -199,12 +214,18 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
 
   const members: Record<string, MemberDoc> = {};
   for (const [id, member] of [...head.members].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) members[id] = { ...member, summary: plain(member.summary) };
+  // Who implements each member, and what the implementations call (the functions of the catalog and the members).
   for (const [id, tree] of trees) {
     for (const implementation of tree.implements ?? []) {
       const member = members[implementation.member];
       if (member === undefined) continue;
       member.implementedBy ??= [];
       if (!member.implementedBy.includes(id)) member.implementedBy.push(id);
+      for (const callee of implementation.calls ?? []) {
+        if (callee === implementation.member || (cli.catalog[callee] === undefined && members[callee] === undefined)) continue;
+        member.calls ??= [];
+        if (!member.calls.includes(callee)) member.calls.push(callee);
+      }
     }
   }
 
@@ -228,12 +249,12 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   const highlighter = await createSourceHighlighter();
   const sources: MapData['sources'] = {};
   for (const [id, source] of [...sourceFiles].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const content = JSON.stringify(highlightSource(highlighter, source));
-    const name = hashed(id, content);
-    writeFileSync(join(options.out, 'sources', name), content);
+    const name = writeHashed(join(options.out, 'sources'), id, JSON.stringify(highlightSource(highlighter, source)), written.sources);
     sources[id] = { path: source.path, url: `./data/sources/${name}` };
   }
   highlighter.dispose();
+  removeStale(join(options.out, 'functions'), written.functions);
+  removeStale(join(options.out, 'sources'), written.sources);
 
   const data: MapData = {
     version: 4,

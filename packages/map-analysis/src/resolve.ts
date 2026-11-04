@@ -180,7 +180,7 @@ export class Resolver {
     const read = this.contextRead(receiver);
     if (read === undefined) return undefined;
     const types = this.contextKeys.get(read.key);
-    if (types === undefined || types.length === 0) return { kind: 'untraceable', why: `c.get('${read.key}') の型が分からない` };
+    if (types === undefined || types.length === 0) return { kind: 'untraceable', why: `c.get('${read.key}') の型が分からない`, method };
     for (let type of types) {
       let found = true;
       for (const property of read.path) {
@@ -196,7 +196,7 @@ export class Resolver {
       const member = this.memberOf(this.checker.getPropertyOfType(type, method));
       if (member !== undefined) return { kind: 'member', id: member };
     }
-    return { kind: 'untraceable', why: `c.get('${read.key}') の ${[...read.path, method].join('.')} がどの型のメンバーか分からない` };
+    return { kind: 'untraceable', why: `c.get('${read.key}') の ${[...read.path, method].join('.')} がどの型のメンバーか分からない`, method };
   }
 
   /** The function a name defined in the same file refers to, when it is not a function of the catalog: a `const f = () => ...`, a nested function. */

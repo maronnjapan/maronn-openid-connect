@@ -3,7 +3,9 @@
  * build of the map measures and fails on.
  *
  * - The ready-made choices of every frame are named, and the names of one
- *   frame are distinct: no choice falls back to a nameless "exit case".
+ *   frame are distinct without the number the selections add as a last
+ *   resort (`… (2)`): no choice falls back to a nameless or numbered "exit
+ *   case".
  * - Every line of the body of every frame is inside a node of its tree (the
  *   lines of the nodes cover the body), and every line a pull request
  *   changes in a frame is inside one.
@@ -16,7 +18,7 @@ import type { FlowTree, FrameFile, MapData, TreeNode } from './model.js';
 export interface MapMetrics {
   frames: number;
   selections: number;
-  /** Choices named by nothing but a number or empty, and repeated names. */
+  /** Choices named by nothing but a number or empty, and names repeated in a frame (or told apart by a number only). */
   unnamed: number;
   duplicateNames: Array<{ frame: string; name: string }>;
   /** Lines of the bodies outside every node, by frame. */
@@ -77,8 +79,9 @@ export async function checkMap(data: MapData, readFrame: (url: string) => Promis
     const names = new Set<string>();
     for (const selection of file.selections) {
       if (selection.name.trim() === '' || /^\(?\d+\)?$/.test(selection.name.trim())) metrics.unnamed += 1;
-      if (names.has(selection.name)) metrics.duplicateNames.push({ frame: entry.id, name: selection.name });
-      names.add(selection.name);
+      const name = selection.name.replace(/ \(\d+\)$/, '');
+      if (names.has(name)) metrics.duplicateNames.push({ frame: entry.id, name });
+      names.add(name);
     }
     const source = entry.source?.file;
     if (source !== undefined && !texts.has(source)) texts.set(source, await readSource(source));

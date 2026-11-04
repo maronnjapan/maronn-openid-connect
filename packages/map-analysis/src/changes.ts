@@ -15,11 +15,11 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Failure, FlowTree, FrameChange, FrameChangeEntry, MapChanges, Reach } from './model.js';
+import type { Failure, FlowTree, FrameChange, FrameChangeEntry, MapChanges, Reach, TreeNode } from './model.js';
 import { readRevision, type FrameInfo, type Revision } from './analyze.js';
-import { countWords, diffTrees, placeHunks } from './diff.js';
+import { countWords, diffTrees, markCounts, nodeWords, placeHunks } from './diff.js';
 import { escapingFailures } from './failures.js';
-import { CallGraph, reachOf, type EndpointRoot } from './impact.js';
+import { CallGraph, reachOf, rootOf, type EndpointRoot } from './impact.js';
 import { attachNotes, draftSections, isNote, NOTES_DIRECTORY, parseNote, type Named } from './notes.js';
 import type { Repository } from './repository.js';
 import { moduleOf } from './roots.js';
@@ -170,6 +170,26 @@ export function hunksOf(
   return { hunks, added };
 }
 
+/** The lines of the head the operations of diffLines touch: each line they add, and the line before which they remove one. */
+export function touchedLines(ops: ReturnType<typeof diffLines>, headLine: number): number[] {
+  const lines: number[] = [];
+  let next = 0;
+  for (const op of ops) {
+    if (op.op === '-') {
+      lines.push(headLine + next);
+      continue;
+    }
+    if (op.op === '+') lines.push(headLine + (op.b as number));
+    next = (op.b as number) + 1;
+  }
+  return lines;
+}
+
+/** The name of a member in a summary: `AuthorizationCodeStorage.consume` of its id. */
+function memberName(id: string): string {
+  return id.slice(id.indexOf('#') + 1);
+}
+
 /** The pull request the map is built for, from MAP_PR, MAP_PR_TITLE and MAP_PR_URL; undefined without a number. */
 export function pullRequestOf(env: Readonly<Record<string, string | undefined>>): MapChanges['pullRequest'] {
   const number = Number(env['MAP_PR']);
@@ -274,6 +294,8 @@ export function collectChanges(input: ChangeInput): ChangeResult {
 
   const entries: FrameChangeEntry[] = [];
   const diffs = new Map<string, FrameChange>();
+  /** The frames whose code changed but not their tree: comments or the layout only, which need no note. */
+  const cosmetic = new Set<string>();
   const outside: MapChanges['outside'] = [];
   const framesOfFile = (revision: Revision, rootName: string, module: string) => [...revision.frames.values()].filter((frame) => frame.root === rootName && frame.module === module && frame.synthetic !== true);
   const entryOf = (frame: FrameInfo, kind: FrameChangeEntry['kind']): FrameChangeEntry => ({
@@ -305,15 +327,27 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     const ops = diffLines(a.all, b.all);
     const { hunks, added } = hunksOf(ops, a.all, b.all, was.frame.start, now.frame.start);
     entry.changedLines = added;
-    const diff = code ? diffTrees(was.built.tree, now.built.tree, { before: was.built.own, after: now.built.own }, { signature: !same(a.head, b.head), docs }) : { marks: {}, removed: [], exprs: {}, summary: docs ? ['JSDoc だけ変えた'] : [`${was.frame.module} から移した（コードは同じ）`], counts: {} };
-    if (code && diff.summary.length === 0) diff.summary.push('コメントや書き方だけを変えた（木は同じ）');
+    // The members whose implementation the change touches, which name the node that holds them in the summary.
+    const touched = touchedLines(ops, now.frame.start);
+    const implementations = (now.built.tree.implements ?? []).filter((implementation) => touched.some((line) => line >= implementation.lines[0] && line <= implementation.lines[1]));
+    const describe = (node: TreeNode) => {
+      const inside = implementations.filter((implementation) => implementation.lines[0] >= node.lines[0] && implementation.lines[1] <= node.lines[1]);
+      return inside.length === 0 ? undefined : `${[...new Set(inside.map((implementation) => `\`${memberName(implementation.member)}\``))].join('、')} の実装`;
+    };
+    const diff = code
+      ? diffTrees(was.built.tree, now.built.tree, { before: was.built.own, after: now.built.own }, { signature: !same(a.head, b.head), docs }, { describe })
+      : { marks: {}, removed: [], exprs: {}, summary: docs ? ['JSDoc だけ変えた'] : [`${was.frame.module} から移した（コードは同じ）`], counts: {} };
+    if (code && Object.keys(diff.marks).length === 0 && diff.removed.length === 0) {
+      cosmetic.add(now.frame.id);
+      diff.summary.unshift('コメントや書き方だけを変えた（木は同じ）');
+    }
     if (moved && code) diff.summary.unshift(`${was.frame.module} から移した`);
     entry.summary = diff.summary;
     entry.counts = diff.counts;
     const change: FrameChange = { kind, before: was.built.tree, marks: diff.marks, removed: diff.removed, exprs: diff.exprs, hunks: placeHunks(now.built.tree, hunks, diff.marks), summary: diff.summary };
-    // The members whose implementation the change touches.
-    const members = (now.built.tree.implements ?? []).filter((implementation) => added.some((line) => line >= implementation.lines[0] && line <= implementation.lines[1])).map((implementation) => implementation.member);
+    const members = implementations.map((implementation) => implementation.member);
     if (members.length > 0) entry.members = [...new Set(members)];
+    if (code && members.length > 0) entry.memberCounts = memberCounts(now.built.tree, diff.marks, implementations, touched);
     entries.push(entry);
     diffs.set(now.frame.id, change);
   };
@@ -365,8 +399,10 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     entry.summary = [item.frame.kind === 'body' ? 'エンドポイントの処理を足した' : '関数を足した'];
     const marks: FrameChange['marks'] = {};
     for (const node of item.built.tree.nodes) marks[node.id] = 'added';
+    const members = (item.built.tree.implements ?? []).map((implementation) => implementation.member);
+    if (members.length > 0) entry.members = [...new Set(members)];
     entries.push(entry);
-    diffs.set(item.frame.id, { kind: 'added', marks, removed: [], exprs: {}, hunks: { '': hunks }, summary: entry.summary });
+    diffs.set(item.frame.id, { kind: 'added', marks, removed: [], exprs: {}, hunks: placeHunks(item.built.tree, hunks, marks), summary: entry.summary });
   }
   for (const item of removed) {
     if (movedFrom.has(item)) continue;
@@ -401,19 +437,42 @@ export function collectChanges(input: ChangeInput): ChangeResult {
   const roots: EndpointRoot[] = repo.endpoints.flatMap((source) =>
     source.endpoints.flatMap((endpoint) => {
       const rootId = repo.head.endpointRoots.get(`${source.source}:${endpoint.id}`);
-      return rootId === undefined ? [] : [{ source: source.source, frameworks: source.frameworks, endpoint: { id: endpoint.id, ...(endpoint.feature === undefined ? {} : { feature: endpoint.feature }) }, root: rootId }];
+      // The feature of an endpoint by its id (`device-authorization-grant`), as the markers of the blocks name theirs.
+      const feature = endpoint.feature === undefined ? undefined : (repo.cli.featureIds[endpoint.feature] ?? endpoint.feature);
+      return rootId === undefined ? [] : [{ source: source.source, frameworks: source.frameworks, endpoint: { id: endpoint.id, ...(feature === undefined ? {} : { feature }) }, root: rootId }];
     }),
   );
   const graph = new CallGraph(trees, roots);
+  // The calls the types do not tell the target of that call a method, by the name they call.
+  const untraceableSites: Array<{ frame: string; node: string; why: string; method: string }> = [];
+  for (const [id, tree] of trees) {
+    for (const node of nodesOf(tree.nodes)) {
+      if (node.kind === 'call' && node.target?.kind === 'untraceable' && node.target.method !== undefined) untraceableSites.push({ frame: id, node: node.id, why: node.target.why, method: node.target.method });
+    }
+  }
   for (const entry of entries) {
     if (entry.kind === 'removed' || entry.kind === 'noted') continue;
     const change = diffs.get(entry.id);
-    const marked = change === undefined ? undefined : firstMarked(trees.get(entry.id), change);
-    const ways: Reach[] = reachOf(graph, { frame: entry.id, node: marked ?? '' });
-    for (const member of entry.members ?? []) ways.push(...reachOf(graph, { member }));
+    const tree = trees.get(entry.id);
+    // A way to every place the frame changed (each changed node outside another, and where nodes were removed).
+    const targets = change === undefined || tree === undefined ? [''] : changeTargets(tree, change);
+    const labels = change === undefined || tree === undefined || targets.length < 2 ? new Map<string, string>() : targetLabels(tree, change, targets);
+    const failures = (entry.failuresAdded ?? []).length > 0;
+    const ways: Reach[] = [];
+    for (const target of targets) {
+      // A way that stops at the call of a member does not open the frame, so it leads to no place of it.
+      const label = labels.get(target);
+      for (const way of reachOf(graph, { frame: entry.id, node: target }, { failures })) ways.push(label === undefined || way.through !== undefined ? way : { ...way, label });
+    }
+    for (const member of entry.members ?? []) ways.push(...reachOf(graph, { member, root: rootOf(entry.id) }, { failures }));
     entry.reach = dedupeReach(ways);
-    const untraceable = [...nodesOf(trees.get(entry.id)?.nodes ?? [])].filter((node) => node.target?.kind === 'untraceable').length;
+    const untraceable = [...nodesOf(tree?.nodes ?? [])].filter((node) => node.target?.kind === 'untraceable').length;
     if (untraceable > 0) entry.untraceable = untraceable;
+    // The calls the types do not tell that may call a member the change reaches through, outside the frames it is known to reach.
+    const upstream = graph.upstream([entry.id, ...(entry.members ?? [])]);
+    const names = new Set([...upstream].filter((id) => !trees.has(id)).map((id) => memberName(id).slice(memberName(id).lastIndexOf('.') + 1)));
+    const callers = untraceableSites.filter((site) => names.has(site.method) && !upstream.has(site.frame)).map(({ frame, node, why }) => ({ frame, node, why }));
+    if (callers.length > 0) entry.untraceableCallers = callers;
   }
 
   // The notes.
@@ -433,7 +492,7 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     required: false,
   }));
   for (const entry of entries) {
-    entry.required = (entry.kind === 'added' || entry.kind === 'modified') && (entry.body === true || entry.reach.length > 0);
+    entry.required = (entry.kind === 'added' || entry.kind === 'modified') && !cosmetic.has(entry.id) && (entry.body === true || entry.reach.length > 0);
   }
   entries.sort((a, b) => compare(a.id, b.id));
   const changes: MapChanges = {
@@ -452,21 +511,118 @@ export function collectChanges(input: ChangeInput): ChangeResult {
   return { changes, frames: diffs, base: baseRevision };
 }
 
-/** The first node of a tree the diff marks, in the order of the tree ('' for the start). */
-function firstMarked(tree: FlowTree | undefined, change: FrameChange): string | undefined {
-  if (change.marks[''] !== undefined) return '';
-  for (const node of nodesOf(tree?.nodes ?? [])) if (change.marks[node.id] !== undefined) return node.id;
-  const hunked = Object.keys(change.hunks).find((id) => id !== '');
-  if (hunked !== undefined) return hunked;
-  const removed = change.removed[0];
-  return removed?.after ?? (removed?.parent === '' ? undefined : removed?.parent);
+/** Whether a node of a tree holds another (or is it). */
+function holdsNode(node: TreeNode, id: string): boolean {
+  if (node.id === id) return true;
+  return (node.pre ?? []).some((child) => holdsNode(child, id)) || (node.branches ?? []).some((branch) => branch.nodes.some((child) => holdsNode(child, id)));
 }
 
-/** One way per endpoint and step. */
+/**
+ * The places of a tree a change is at, for the ways to it: '' for the start
+ * (the declaration), each marked node that no marked node holds, and where
+ * nodes were removed (the node they stood behind, else the node whose list
+ * they were in, the start for the body when nothing else changed) unless a
+ * place already holds it; with none of those (a comment changed), the first
+ * node a hunk is on, else ''.
+ */
+export function changeTargets(tree: FlowTree, change: Pick<FrameChange, 'marks' | 'removed' | 'hunks'>): string[] {
+  const targets: string[] = [];
+  const marked: TreeNode[] = [];
+  const visit = (nodes: readonly TreeNode[]) => {
+    for (const node of nodes) {
+      if (change.marks[node.id] !== undefined) {
+        marked.push(node);
+        continue;
+      }
+      if (node.pre !== undefined) visit(node.pre);
+      for (const branch of node.branches ?? []) visit(branch.nodes);
+    }
+  };
+  visit(tree.nodes);
+  targets.push(...marked.map((node) => node.id));
+  for (const removed of change.removed) {
+    const at = removed.after ?? removed.parent;
+    if (at === '' || targets.includes(at) || marked.some((node) => holdsNode(node, at))) continue;
+    targets.push(at);
+  }
+  if (change.marks[''] !== undefined || (targets.length === 0 && change.removed.length > 0)) targets.unshift('');
+  if (targets.length > 0) return targets;
+  return [Object.keys(change.hunks).find((id) => id !== '') ?? ''];
+}
+
+/**
+ * The places of a change (changeTargets) in words, to tell the ways to them
+ * apart: the start is what the summary says of the declaration (宣言 when
+ * it says nothing); a node added, `… を足した`; a node changed, what
+ * changed in it; where nodes were removed, `… を消した`. Two that read the
+ * same get the line of their node.
+ */
+export function targetLabels(tree: FlowTree, change: Pick<FrameChange, 'marks' | 'removed' | 'exprs'> & Partial<Pick<FrameChange, 'summary'>>, targets: readonly string[]): Map<string, string> {
+  const nodes = new Map([...nodesOf(tree.nodes)].map((node) => [node.id, node]));
+  const labels = new Map<string, string>();
+  for (const target of targets) {
+    const node = nodes.get(target);
+    if (node === undefined) {
+      // The start: what the summary says of the declaration (`宣言を \`f(a)\` から \`f(a, b)\` に変えた`), else that it changed.
+      labels.set(target, change.marks[''] !== undefined ? (change.summary?.find((line) => line.startsWith('宣言')) ?? '宣言') : '始め');
+      continue;
+    }
+    const removed = change.removed.filter((entry) => (entry.after ?? entry.parent) === target);
+    const exprs = change.exprs[target] ?? [];
+    const mark = change.marks[target];
+    labels.set(
+      target,
+      mark === 'added'
+        ? `${nodeWords(node)} を足した`
+        : mark === 'modified' && exprs.length > 0
+          ? `${nodeWords(node)}: ${exprs.map((expr) => expr.text).join('、')}`
+          : mark === undefined && removed.length > 0
+            ? `${removed.map((entry) => nodeWords(entry.node)).join('、')} を消した`
+            : nodeWords(node),
+    );
+  }
+  const counts = new Map<string, number>();
+  for (const label of labels.values()) counts.set(label, (counts.get(label) ?? 0) + 1);
+  for (const [target, label] of labels) {
+    const node = nodes.get(target);
+    if ((counts.get(label) ?? 0) > 1 && node !== undefined) labels.set(target, `${label}（${node.lines[0]} 行目）`);
+  }
+  return labels;
+}
+
+/**
+ * The counts of the changes inside the implementation of each member a
+ * change touches (FrameChangeEntry.memberCounts): for each changed line in
+ * its lines, the smallest node the diff marks that holds the line, each
+ * node once (markCounts).
+ */
+export function memberCounts(
+  tree: FlowTree,
+  marks: FrameChange['marks'],
+  implementations: ReadonlyArray<{ member: string; lines: readonly [number, number] }>,
+  touched: readonly number[],
+): Record<string, Record<string, number>> {
+  const marked = [...nodesOf(tree.nodes)].filter((node) => marks[node.id] !== undefined);
+  const holder = (line: number) =>
+    marked.filter((node) => node.lines[0] <= line && line <= node.lines[1]).reduce<TreeNode | undefined>((best, node) => (best === undefined || node.lines[1] - node.lines[0] < best.lines[1] - best.lines[0] ? node : best), undefined);
+  const held = new Map<string, Set<TreeNode>>();
+  for (const implementation of implementations) {
+    const nodes = held.get(implementation.member) ?? new Set<TreeNode>();
+    held.set(implementation.member, nodes);
+    for (const line of touched) {
+      if (line < implementation.lines[0] || line > implementation.lines[1]) continue;
+      const node = holder(line);
+      if (node !== undefined) nodes.add(node);
+    }
+  }
+  return Object.fromEntries([...held].map(([member, nodes]) => [member, markCounts(nodes, marks)]));
+}
+
+/** One way per endpoint, step and place of the change. */
 function dedupeReach(ways: readonly Reach[]): Reach[] {
   const seen = new Set<string>();
   return ways.filter((way) => {
-    const key = `${way.source}:${way.endpoint}:${way.step ?? ''}`;
+    const key = `${way.source}:${way.endpoint}:${way.step ?? ''}:${way.target}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -481,11 +637,26 @@ function cell(text: string): string {
   return joinLines(text).replace(/\|/g, '\\|');
 }
 
-/** The endpoints a change reaches, in a cell: `token (hono), token (nextjs)`. */
+/** The name of the endpoint of a way in the comment: `token`, `token (nextjs)`. */
+function endpointWords(way: Reach): string {
+  return `${way.endpoint}${way.source === 'hono' ? '' : ` (${way.source})`}`;
+}
+
+/**
+ * The endpoints a change reaches, in a cell: `token, token (nextjs)`, each
+ * with the features every way to it needs (`token（機能: refresh-token）`),
+ * and the calls the types do not tell that may reach more.
+ */
 function reachWords(entry: FrameChangeEntry): string {
-  if (entry.reach.length === 0) return entry.body === true ? '（エンドポイントそのもの）' : 'なし';
-  const names = [...new Set(entry.reach.map((way) => `${way.endpoint}${way.source === 'hono' ? '' : ` (${way.source})`}`))];
-  return names.length > 6 ? `${names.slice(0, 6).join(', ')} ほか ${names.length - 6}` : names.join(', ');
+  const unknown = entry.untraceableCallers === undefined ? '' : `（追えない呼び出し ${entry.untraceableCallers.length} 箇所）`;
+  if (entry.reach.length === 0) return `${entry.body === true ? '（エンドポイントそのもの）' : 'なし'}${unknown}`;
+  const features = new Map<string, string[][]>();
+  for (const way of entry.reach) features.set(endpointWords(way), [...(features.get(endpointWords(way)) ?? []), way.features]);
+  const names = [...features].map(([name, lists]) => {
+    const common = (lists[0] ?? []).filter((feature) => lists.every((list) => list.includes(feature)));
+    return common.length === 0 ? name : `${name}（機能: ${common.join('、')}）`;
+  });
+  return `${names.length > 6 ? `${names.slice(0, 6).join(', ')} ほか ${names.length - 6}` : names.join(', ')}${unknown}`;
 }
 
 /** Where an entry is, in a cell. */
@@ -498,19 +669,90 @@ function nameWords(entry: FrameChangeEntry): string {
   return entry.body === true ? `\`${entry.name}\`（エンドポイントの処理）` : `\`${entry.name}()\``;
 }
 
-/** The summary of the diff, in a cell. */
+/** The failures that leave a frame now and did not before (+), and the other way (−), in words. */
+function failureWords(entry: FrameChangeEntry): string {
+  return [...(entry.failuresAdded ?? []).map((error) => `+\`${error}\``), ...(entry.failuresRemoved ?? []).map((error) => `−\`${error}\``)].join(' ');
+}
+
+/** A phrase cut to a width with its code spans closed (an odd backtick left open would run into the rest of the table). */
+function cutPhrase(text: string, width: number): string {
+  const cut = shorten(text, width);
+  return (cut.match(/`/g) ?? []).length % 2 === 0 ? cut : `${cut}\``;
+}
+
+/** The summary of the diff, in a cell: the phrases that fit (whole), how many more, the counts, and the change of the failures that leave the frame. */
 function summaryWords(entry: FrameChangeEntry): string {
-  const summary = entry.summary.slice(0, 3).join(' / ');
-  const more = entry.summary.length > 3 ? ` ほか ${entry.summary.length - 3}` : '';
+  const shown: string[] = [];
+  let length = 0;
+  for (const phrase of entry.summary.slice(0, 3)) {
+    if (shown.length > 0 && length + phrase.length > 180) break;
+    shown.push(cutPhrase(phrase, 180));
+    length += phrase.length;
+  }
+  const more = entry.summary.length > shown.length ? ` ほか ${entry.summary.length - shown.length}` : '';
   const counts = countWords(entry.counts);
-  return shorten(`${summary}${more}${counts === '' ? '' : `（${counts}）`}`, 200) || '—';
+  const failures = failureWords(entry);
+  const text = `${shown.join(' / ')}${more}${counts === '' ? '' : `（${counts}）`}${failures === '' ? '' : ` / 外へ出る失敗 ${failures}`}`;
+  return text.trim() === '' ? '—' : text;
+}
+
+/**
+ * What the table cannot hold, one line an entry: where each failure the
+ * change makes leave its frame is caught on the way from each endpoint (the
+ * `try` of a frame on the way, or nothing: it leaves the endpoint), and the
+ * calls the types do not tell that may reach the change.
+ */
+function effectLines(entries: readonly FrameChangeEntry[]): string[] {
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if ((entry.failuresAdded ?? []).length > 0) {
+      // The endpoints by what catches the failure on the way from each: the call its catch answers with, else the frame of the catch, else nothing.
+      const answers = new Map<string, string[]>();
+      const frames = new Map<string, string[]>();
+      const escapes: string[] = [];
+      const seen = new Set<string>();
+      for (const way of entry.reach) {
+        const name = endpointWords(way);
+        if (seen.has(name) || (way.caught === undefined && way.escapes !== true)) continue;
+        seen.add(name);
+        if (way.caught === undefined) escapes.push(name);
+        else if (way.caught.call === undefined) frames.set(way.caught.name, [...(frames.get(way.caught.name) ?? []), name]);
+        else answers.set(way.caught.call, [...(answers.get(way.caught.call) ?? []), name]);
+      }
+      const listed = (map: ReadonlyMap<string, string[]>) => [...map].map(([key, endpoints]) => `\`${key}\`（${endpoints.join('、')}）`).join('、');
+      const where = [
+        ...(answers.size === 0 ? [] : [`catch で捕まえて ${listed(answers)}が応答する`]),
+        ...(frames.size === 0 ? [] : [`${listed(frames)}の catch で捕まる`]),
+        ...(escapes.length === 0 ? [] : [`エンドポイントの外へ出る（${escapes.join('、')}）`]),
+      ];
+      lines.push(`- ${nameWords(entry)} から新しく外へ出る失敗 ${(entry.failuresAdded ?? []).map((error) => `\`${error}\``).join('、')}${where.length === 0 ? '' : `: ${where.join(' / ')}`}`);
+    }
+    if ((entry.failuresRemoved ?? []).length > 0) lines.push(`- ${nameWords(entry)} から外へ出なくなった失敗 ${(entry.failuresRemoved ?? []).map((error) => `\`${error}\``).join('、')}`);
+    if (entry.untraceableCallers !== undefined) {
+      const sites = entry.untraceableCallers.map((site) => `\`${site.frame.slice(site.frame.indexOf('#') + 1)}\`（${site.why}）`);
+      lines.push(`- ${nameWords(entry)}: 型で呼び先を引けない呼び出し ${sites.length} 箇所が、この変更を呼んでいるかもしれません（届くエンドポイントには入れていません）: ${sites.slice(0, 6).join('、')}${sites.length > 6 ? ` ほか ${sites.length - 6}` : ''}`);
+    }
+  }
+  return lines;
+}
+
+/** How to narrow a heading that names more than one change: by a root when the matches are in more than one, by the id otherwise. */
+function narrowWords(warning: MapChanges['ambiguous'][number]): string {
+  const roots = [...new Set(warning.matches.map(rootOf))];
+  const ids = warning.matches.map((id) => `\`${id}\``).join(', ');
+  return roots.length > 1
+    ? `\`${roots[0]}:${warning.reference}\` のようにルートで絞り込むか、id を書いてください: ${ids}`
+    : `どれも \`${roots[0] ?? ''}\` にあるので、id（見出しの末尾に \`<!-- id -->\`）で絞り込んでください: ${ids}`;
 }
 
 /**
  * The changes in Markdown (see the module comment): first the changes that
  * need a note and have none (and a draft of the sections to add), then the
- * notes, then every changed frame with its badge, place, automatic summary,
- * the endpoints it reaches and the first line of its note.
+ * notes, then every changed frame with its badge, place, automatic summary
+ * (with the failures that leave it now or no more), the endpoints it reaches
+ * (with the features they need) and the first line of its note, and under
+ * the table where the new failures are caught and the calls the types do not
+ * tell that may reach a change.
  */
 export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): string {
   const lines: string[] = [];
@@ -521,7 +763,7 @@ export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): strin
     lines.push(
       required > 0
         ? `このうち、エンドポイントに届く変更とエンドポイントの処理の変更 ${required} 個は変更メモ（\`${NOTES_DIRECTORY}/*.md\`）に説明が要ります。説明が無いと地図の検査が落ちます。`
-        : 'どれもエンドポイントに届かないので、検査は落ちません。',
+        : 'どれも説明の要る変更ではない（エンドポイントに届かないか、コメントや書き方だけの変更）ので、検査は落ちません。',
       '',
       '| | 関数 | 場所 | 自動要約 | 届くエンドポイント |',
       '|---|---|---|---|---|',
@@ -546,7 +788,7 @@ export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): strin
     lines.push('', `> ${title}${summary}`.trimEnd(), `> — \`${note.file}\``);
   }
   if (changes.notes.length === 0) lines.push('', `変更メモ（\`${NOTES_DIRECTORY}/*.md\`）がありません。なぜ変えたかを書くと、地図とこのコメントに表示されます。`);
-  for (const warning of changes.ambiguous) lines.push('', `- 見出し \`${warning.reference}\`（${warning.file}）は ${warning.matches.length} 個の変更に当たります。\`core:${warning.reference}\` のようにルートで絞り込むか、id を書いてください: ${warning.matches.map((id) => `\`${id}\``).join(', ')}`);
+  for (const warning of changes.ambiguous) lines.push('', `- 見出し \`${warning.reference}\`（${warning.file}）は ${warning.matches.length} 個の変更に当たります。${narrowWords(warning)}`);
   for (const unknown of changes.unknown) lines.push('', `- 見出し \`${unknown.reference}\`（${unknown.file}）に当たる関数がありません。`);
   const ordered = [...changes.frames].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || compare(a.id, b.id));
   const listed = ordered.filter((entry) => entry.kind !== 'docs' || entry.documented);
@@ -557,6 +799,8 @@ export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): strin
       lines.push(`| ${KIND_WORDS[entry.kind]} | ${nameWords(entry)} | ${cell(placeWords(entry))} | ${cell(summaryWords(entry))} | ${cell(reachWords(entry))} | ${cell(note)} |`);
     }
     if (listed.length > limit) lines.push('', `ほか ${listed.length - limit} 個は地図で見てください。`);
+    const effects = effectLines(listed.slice(0, limit));
+    if (effects.length > 0) lines.push('', ...effects);
   }
   const folded = ordered.length - listed.length;
   if (folded > 0) lines.push('', `説明のない、JSDoc だけ変えた関数 ${folded} 個は表に入れていません（地図の「このPRの変更」にあります）。`);

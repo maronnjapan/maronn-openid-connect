@@ -39,6 +39,34 @@ export function textOf(file: SourceFile, node: Node): string {
   return file.text.slice(node.getStart(file), node.end);
 }
 
+/** A text between the children of a node (punctuation, keywords and trivia only) without its comments. */
+function withoutComments(text: string): string {
+  return text.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
+}
+
+/**
+ * The text of a node without the comments in it: a comment is not code, so a
+ * comment added inside a statement does not change what the statement is.
+ * The comments sit between the children of the nodes (the strings, templates
+ * and regular expressions are children of their own), so they are taken out
+ * of the text between the children only.
+ */
+export function codeText(file: SourceFile, node: Node): string {
+  const start = node.getStart(file);
+  const kids = children(node);
+  if (kids.length === 0) return file.text.slice(start, node.end);
+  let text = '';
+  let at = start;
+  for (const child of kids) {
+    const childStart = child.getStart(file);
+    if (childStart < at) continue;
+    text += withoutComments(file.text.slice(at, childStart));
+    text += codeText(file, child);
+    at = child.end;
+  }
+  return text + withoutComments(file.text.slice(at, node.end));
+}
+
 /** The kinds that only wrap an expression: what runs is the expression inside. */
 const WRAPPERS = new Set<SyntaxKind>([
   SyntaxKind.ParenthesizedExpression,

@@ -10,7 +10,8 @@
 #   PR の地図は、base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
 #   何を変えたか（木の差分の要約）、どこに効くか（届くエンドポイントと経路）、PR が足した変更メモ
 #   （apps/map/changes/*.md）の意図を並べる。コメントは先頭に「説明の無い変更」を置き、続けて
-#   変わった関数の表（札・関数・場所・自動要約・届くエンドポイント・メモの一行目）を載せる。
+#   変わった関数の表（札・関数・場所・自動要約・届くエンドポイント・メモの一行目）と、新しく外へ出る
+#   失敗が捕まる場所、型で追えない呼び出しを載せる。プレビューの URL とランへのリンクはその後に置く。
 #   エンドポイントに届く変更か、エンドポイントの処理本体の変更に説明の節が無いと、地図のビルド
 #   （`pnpm run build:map` の最後の検査、apps/map/scripts/check-map.mjs）が落ちてこのジョブが失敗する。
 #   そのときも、作ったページのデプロイと PR へのコメントは行う（説明の無い変更とメモの雛形を
@@ -135,18 +136,19 @@ jobs:
             const failed = process.env.BUILD_OUTCOME === 'failure'
               ? ['', '> [!WARNING]', '> 地図のビルドの検査が落ちました。下の「説明の無い変更」に変更メモの節を足すか、検査の出力を Run で確かめてください（`pnpm --filter @maronn-openid-connect/map changes:draft` で雛形を作れます）。']
               : [];
+            // The changes come first (they open with 説明の無い変更), then the preview, the run and what the map is.
             const body = [
               marker,
               '## OIDC Provider Map',
+              ...failed,
+              ...(changes ? ['', changes] : []),
               '',
               status,
-              ...failed,
               ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路）: ${url}#changes`] : []),
               '',
               `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
               '',
               `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches, and what its change notes (\`apps/map/changes/*.md\`) say.`,
-              ...(changes ? ['', changes] : []),
             ].join('\n');
             const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
             const existing = comments.find((comment) => comment.body && comment.body.includes(marker));

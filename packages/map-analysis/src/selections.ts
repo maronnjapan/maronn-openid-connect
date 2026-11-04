@@ -12,9 +12,16 @@
  *   named by the step's label.
  * - failures from below (failureSelections): for each failure a call of the
  *   frame can bring up from the functions below, the frames down to the
- *   throw and the sides that lead there, a `try` around the way left
- *   undecided so its catch shows too. It is named by the failure and the
- *   function that throws it: `TokenError(invalid_client) で終わる（verifyClientSecret から）`.
+ *   throw and the sides that lead there, each call on the way decided
+ *   `fails` (the call throws there: the trace runs the failure up to the
+ *   `try` that catches it, or out of the frame), a `try` around the way left
+ *   undecided. It is named by the failure and the function that throws it:
+ *   `TokenError(invalid_client) で終わる（verifyClientSecret から）`.
+ *
+ * Two choices that the sides do not tell apart (two catches that both
+ * `return null`) name each catch by what its try runs first
+ * (「`formUrlDecode()` で例外が起きたとき」), then by where they end, and only
+ * then by a number.
  *
  * The decisions of a choice are keyed by node id; a choice that spans frames
  * (a way to a change, changes.ts) prefixes them with the frame (Decisions).
@@ -23,6 +30,7 @@ import { outlets } from './failures.js';
 import type { Branch, Decisions, Failure, FlowTree, Selection, TreeNode } from './model.js';
 import { ends } from './tree.js';
 import type { ValueUse } from './tree.js';
+import { shorten } from './words.js';
 
 /** The kinds of node a choice is made at. */
 const DECISIONS = new Set(['if', 'switch', 'try', 'cond-expr', 'loop']);
@@ -91,12 +99,39 @@ export function sideName(node: TreeNode, branch: Branch): string {
   return `${node.subject ?? node.code}: ${branch.label}`;
 }
 
-/** The name of a way: the sides it is inside of, the plain run of a try left out. */
-function nameOf(way: Way): string {
+/**
+ * What a `try` runs first, in words: its first call (`` `formUrlDecode()` ``,
+ * with `code` as it is called, `` `formUrlDecode(body)` ``), else its first
+ * statement; empty for an empty try.
+ */
+function attemptWords(node: TreeNode, code: boolean): string {
+  const attempt = node.branches?.find((branch) => branch.key === 'try')?.nodes ?? [];
+  const call = [...all(attempt)].find((child) => child.kind === 'call');
+  if (call?.target !== undefined && call.target.kind !== 'untraceable' && !code) return `\`${call.target.id.slice(call.target.id.indexOf('#') + 1)}()\``;
+  const first = call ?? attempt[0];
+  return first === undefined ? '' : `\`${shorten(first.code.replace(/^(?:const|let|var)?\s*[^=(]+=\s*(?:await\s+)?/, ''), 40)}\``;
+}
+
+/**
+ * The name of a way: the sides it is inside of, the plain run of a try left
+ * out; a catch named by what its try runs first with `tries` (by its callee,
+ * or by the call as it is written).
+ */
+function nameOf(way: Way, tries?: 'callee' | 'call'): string {
   return way.inside
     .filter(({ node, branch }) => !(node.kind === 'try' && branch.key === 'try') && node.kind !== 'loop')
-    .map(({ node, branch }) => sideName(node, branch))
+    .map(({ node, branch }) => {
+      const attempt = tries !== undefined && node.kind === 'try' && branch.key === 'catch' ? attemptWords(node, tries === 'call') : '';
+      return attempt === '' ? sideName(node, branch) : `${attempt} で${branch.label}`;
+    })
     .join(' › ');
+}
+
+/** The names of choices counted, to find the ones a name does not tell apart. */
+function repeated(selections: readonly Selection[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const selection of selections) counts.set(selection.name, (counts.get(selection.name) ?? 0) + 1);
+  return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
 }
 
 /** Every node of a list, depth first. */
@@ -151,6 +186,7 @@ export function frameSelections(tree: FlowTree, uses: ReadonlyMap<TreeNode, read
     steps.push({ kind: 'step', name: node.step.label, ...(note === undefined ? {} : { note }), decisions, target: node.id });
   }
   const exits: Selection[] = [];
+  const ways = new Map<Selection, Way>();
   for (const node of all(tree.nodes)) {
     const isExit = (node.kind === 'return' && node.local !== true) || node.kind === 'throw' || node.kind === 'end';
     if (!isExit) continue;
@@ -162,13 +198,22 @@ export function frameSelections(tree: FlowTree, uses: ReadonlyMap<TreeNode, read
     const exit: Selection = { kind: node.kind === 'throw' ? 'failure' : 'exit', name: name === '' ? code : name, note: `→ ${code}`, decisions: way.decisions, target: node.id };
     if (node.kind === 'throw') exit.failure = { error: node.error ?? 'Error', from: tree.id, name: tree.name };
     exits.push(exit);
+    ways.set(exit, way);
   }
-  // Names the sides do not tell apart get where they end, then a number.
+  // Names the sides do not tell apart name each catch by its try, then get where they end, then a number.
   const named = [...steps, ...exits];
-  const counts = new Map<string, number>();
-  for (const selection of named) counts.set(selection.name, (counts.get(selection.name) ?? 0) + 1);
+  let shared = repeated(named);
+  for (const tries of ['callee', 'call'] as const) {
+    for (const selection of exits) {
+      const way = ways.get(selection);
+      if (!shared.has(selection.name) || way === undefined) continue;
+      const qualified = nameOf(way, tries);
+      if (qualified !== '') selection.name = qualified;
+    }
+    shared = repeated(named);
+  }
   for (const selection of named) {
-    if ((counts.get(selection.name) ?? 0) > 1 && selection.note !== undefined && selection.kind !== 'step') selection.name = `${selection.name} ${selection.note}`;
+    if (shared.has(selection.name) && selection.note !== undefined && selection.kind !== 'step' && !selection.name.endsWith(selection.note)) selection.name = `${selection.name} ${selection.note}`;
   }
   const seen = new Map<string, number>();
   for (const selection of named) {
@@ -242,7 +287,9 @@ export function failureSelections(rootId: string, trees: ReadonlyMap<string, Flo
     const found = find(rootId, '', failure, new Set([rootId]));
     if (found === undefined) continue;
     const name = nameOf(failure.from);
-    selections.push({ kind: 'failure', name: `\`${failure.error}\` で終わる（\`${name}\` から）`, note: `→ ${found.code}`, decisions: found.decisions, frames: found.frames, target: found.target, failure: { ...failure, name } });
+    // Each call on the way throws there (`fails`, see Decisions).
+    const decisions: Decisions = { ...found.decisions, ...Object.fromEntries(found.frames.map((key) => [key, 'fails'])) };
+    selections.push({ kind: 'failure', name: `\`${failure.error}\` で終わる（\`${name}\` から）`, note: `→ ${found.code}`, decisions, frames: found.frames, target: found.target, failure: { ...failure, name } });
   }
   return selections;
 }

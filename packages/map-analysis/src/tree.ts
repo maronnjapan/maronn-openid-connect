@@ -25,9 +25,9 @@
  */
 import type { Branch, CallTarget, FlowTree, StepMark, TreeNode } from './model.js';
 import { SyntaxKind, getLeadingCommentRanges, type Node, type SourceFile } from './ts.js';
-import { any, endLine, is, isFunctionLike, lineAt, nameOf, startLine, stringOf, textOf, unwrap, walk } from './ast.js';
+import { any, codeText, endLine, is, isFunctionLike, lineAt, nameOf, startLine, stringOf, textOf, unwrap, walk } from './ast.js';
 import type { FileResolution } from './resolve.js';
-import { SIDE_WORDS, actionWords, bindingNames, conditionWords, errorWords, shorten } from './words.js';
+import { SIDE_WORDS, actionWords, bindingNames, conditionWords, errorWords, predicateWords, shorten } from './words.js';
 
 /** A marker line: `// [id] (feature: f) Label — Spec`. */
 const MARKER = /^\/\/ \[([a-z0-9-]+)\](?: \(feature: ([a-z0-9-]+)\))? (.*)$/;
@@ -189,7 +189,7 @@ function flat(text: string): string {
 class Builder {
   readonly own = new Map<TreeNode, string>();
   readonly deferred = new Set<string>();
-  readonly implementations: Array<{ member: string; lines: [number, number] }> = [];
+  readonly implementations: Array<{ member: string; lines: [number, number]; calls?: string[] }> = [];
   readonly uses = new Map<TreeNode, ValueUse[]>();
   /** A name → the block that declares it (and the feature of the block). */
   private readonly declaredBy = new Map<string, { block: TreeNode; feature?: string }>();
@@ -217,6 +217,29 @@ class Builder {
 
   private text(node: Node): string {
     return textOf(this.file, node);
+  }
+
+  /** The code of a node in full, on one line, without its comments: what the diff compares (BuiltTree.own). */
+  private code(node: Node): string {
+    return flat(codeText(this.file, node));
+  }
+
+  /** The header of a loop statement in full, without its comments: `for (const x of xs)`, `while (more)`. */
+  private loopHead(statement: Node): string {
+    const node = any(statement);
+    const part = (key: string) => (node[key] === undefined ? '' : this.code(node[key] as Node));
+    switch (statement.kind) {
+      case SyntaxKind.ForStatement:
+        return `for (${part('initializer')}; ${part('condition')}; ${part('incrementor')})`;
+      case SyntaxKind.ForOfStatement:
+        return `for ${node['awaitModifier'] === undefined ? '' : 'await '}(${part('initializer')} of ${part('expression')})`;
+      case SyntaxKind.ForInStatement:
+        return `for (${part('initializer')} in ${part('expression')})`;
+      case SyntaxKind.DoStatement:
+        return `do … while (${part('expression')})`;
+      default:
+        return `while (${part('expression')})`;
+    }
   }
 
   // ---- the code of a node, on one line
@@ -455,11 +478,11 @@ class Builder {
         const code = this.statementCode(statement);
         if (evaluated.length === 0) {
           const action: TreeNode = { id: '', kind: 'action', lines, code };
-          this.own.set(action, flat(this.text(statement)));
+          this.own.set(action, this.code(statement));
           return words(action, { text: actionWords(code), from: 'code' });
         }
         const node = evaluated.pop() as TreeNode;
-        this.own.set(node, flat(this.text(statement)));
+        this.own.set(node, this.code(statement));
         const pre = [...evaluated, ...(node.pre ?? [])];
         if (pre.length > 0) node.pre = pre;
         else delete node.pre;
@@ -475,7 +498,7 @@ class Builder {
         const expression = any(statement)['expression'] as Node | undefined;
         const pre = expression === undefined ? [] : this.evaluate(expression, 'value');
         const node: TreeNode = { id: '', kind: 'return', lines, code: expression === undefined ? 'return' : shorten(`return ${this.compact(expression)}`, 80) };
-        this.own.set(node, flat(this.text(statement)));
+        this.own.set(node, this.code(statement));
         if (pre.length > 0) node.pre = pre;
         if (this.callbackDepth > 0) node.local = true;
         return words(node);
@@ -485,7 +508,7 @@ class Builder {
         const pre = this.evaluate(expression, 'value');
         const node: TreeNode = { id: '', kind: 'throw', lines, code: '', error: this.errorOf(expression) };
         node.code = `throw ${node.error}`;
-        this.own.set(node, flat(this.text(statement)));
+        this.own.set(node, this.code(statement));
         const thrown = unwrap(expression);
         if (is(thrown, SyntaxKind.Identifier) && this.catchNames.includes(thrown['text'] as string)) node.rethrow = true;
         if (pre.length > 0) node.pre = pre;
@@ -520,13 +543,13 @@ class Builder {
         const name = nameOf(any(statement)['name']) ?? '';
         const keyword = statement.kind === SyntaxKind.ClassDeclaration ? 'class' : 'function';
         const definition: TreeNode = { id: '', kind: 'action', lines, code: `${keyword} ${name}`, text: `\`${name}\` を定義する`, from: 'code' };
-        this.own.set(definition, flat(this.text(statement)));
+        this.own.set(definition, this.code(statement));
         return words(definition);
       }
       default: {
         const code = shorten(this.text(statement), 90);
         const action: TreeNode = { id: '', kind: 'action', lines, code };
-        this.own.set(action, flat(this.text(statement)));
+        this.own.set(action, this.code(statement));
         return words(action, { text: actionWords(code), from: 'code' });
       }
     }
@@ -599,24 +622,39 @@ class Builder {
       ],
     };
     if (pre.length > 0) node.pre = pre;
-    this.own.set(node, flat(`if (${this.text(condition)})`));
+    this.own.set(node, `if (${this.code(condition)})`);
     node.form = this.formOf(yes, no);
-    // What it checks: the JSDoc of the predicate it calls, else the words of the code.
-    const predicate = pre.find((call) => call.kind === 'call' && call.text !== undefined && call.from === 'doc');
-    const negated = is(unwrap(condition), SyntaxKind.PrefixUnaryExpression);
-    if (predicate?.text !== undefined) {
-      node.text = negated ? `「${predicate.text.replace(/。$/, '')}」が成り立たないか` : predicate.text;
-      node.from = 'doc';
-    } else {
-      const words = conditionWords(this.text(condition));
-      if (words !== '') {
-        node.text = words;
-        node.from = 'code';
-      }
+    // What it checks: the JSDoc of the predicate when the condition is that one call, else the words of the code.
+    const predicate = this.predicateWords(condition, pre);
+    const words = predicate ?? conditionWords(this.text(condition));
+    if (words !== '') {
+      node.text = words;
+      node.from = predicate === undefined ? 'code' : 'doc';
     }
     const tested = this.tested(condition);
     if (tested !== undefined) this.noteUse(node, tested.name, tested.present ? 'true' : 'false', tested.present ? 'false' : 'true');
     return node;
+  }
+
+  /**
+   * What a condition that is one call of a predicate (`isPublic(client)`,
+   * `!(await isValid(x))`) checks, from the JSDoc of the predicate
+   * (predicateWords); undefined for any other condition, whose words the
+   * JSDoc of a call inside it does not say (`a && !isValid(x)`).
+   */
+  private predicateWords(condition: Node, pre: readonly TreeNode[]): string | undefined {
+    let test = unwrap(condition);
+    let negated = false;
+    while (is(test, SyntaxKind.PrefixUnaryExpression) && test['operator'] === SyntaxKind.ExclamationToken) {
+      negated = !negated;
+      test = unwrap(test['operand'] as Node);
+    }
+    if (!is(test, SyntaxKind.CallExpression)) return undefined;
+    const code = this.code(test);
+    const call = pre.find((node) => node.kind === 'call' && node.from === 'doc' && node.text !== undefined && this.own.get(node) === code);
+    if (call?.text === undefined) return undefined;
+    const words = predicateWords(call.text, negated);
+    return words === '' ? undefined : words;
   }
 
   /** guard, optional or fork (see TreeNode.form). */
@@ -660,7 +698,7 @@ class Builder {
     if (!branches.some((branch) => branch.key === 'default')) branches.push({ key: 'default', label: SIDE_WORDS['default'] as string, nodes: [] });
     const subject = shorten(this.compact(expression), 60);
     const node: TreeNode = { id: '', kind: 'switch', lines, code: `switch (${subject})`, subject, branches };
-    this.own.set(node, flat(`switch (${this.text(expression)})`));
+    this.own.set(node, `switch (${this.code(expression)})`);
     if (pre.length > 0) node.pre = pre;
     return node;
   }
@@ -695,8 +733,7 @@ class Builder {
     const branches: Branch[] = [{ key: 'body', label: SIDE_WORDS['body'] as string, nodes: body }];
     if (statement.kind !== SyntaxKind.DoStatement) branches.push({ key: 'skip', label: SIDE_WORDS['skip'] as string, nodes: [] });
     const loop: TreeNode = { id: '', kind: 'loop', lines, code: shorten(header, 80), subject: shorten(header, 60), branches };
-    const inside = node['statement'] as Node;
-    this.own.set(loop, flat(this.file.text.slice(statement.getStart(this.file), inside.getStart(this.file))));
+    this.own.set(loop, this.loopHead(statement));
     if (pre.length > 0) loop.pre = pre;
     return loop;
   }
@@ -843,17 +880,41 @@ class Builder {
     });
   }
 
-  /** A property of an object literal that is a function: deferred, and an implementation when it implements a member. */
+  /** A property of an object literal that is a function: deferred, and an implementation when it implements a member, with what it calls. */
   private implementation(property: Node, value: Node): void {
     this.defer(value);
     const member = this.context.resolution.implementations.get(property);
-    if (member !== undefined) this.implementations.push({ member, lines: [this.start(property), this.end(property)] });
+    if (member === undefined) return;
+    const calls = this.callsIn(value);
+    this.implementations.push({ member, lines: [this.start(property), this.end(property)], ...(calls.length > 0 ? { calls } : {}) });
+  }
+
+  /**
+   * The functions of the catalog and the members a definition calls, by id,
+   * in the order of the code; a call of a function the frame defines itself
+   * (`revokeConsentAndTokens(…)`) counts what that function calls.
+   */
+  private callsIn(definition: Node, seen: Set<Node> = new Set()): string[] {
+    const calls: string[] = [];
+    const add = (id: string) => {
+      if (!calls.includes(id)) calls.push(id);
+    };
+    seen.add(definition);
+    walk(definition, (inner) => {
+      if (!is(inner, SyntaxKind.CallExpression)) return true;
+      const target = this.context.resolution.targets.get(inner);
+      if (target !== undefined && target.kind !== 'untraceable') add(target.id);
+      const local = this.context.resolution.locals.get(inner);
+      if (local !== undefined && !seen.has(local)) for (const id of this.callsIn(local, seen)) add(id);
+      return true;
+    });
+    return calls;
   }
 
   private condExpr(node: Node, operator: string, test: Node, pre: TreeNode[], branches: Branch[]): TreeNode {
     const subject = shorten(this.compact(test), 60);
     const condition: TreeNode = { id: '', kind: 'cond-expr', lines: [this.start(node), this.end(node)], code: shorten(this.compact(node), 80), subject, operator, branches };
-    this.own.set(condition, flat(`${this.text(test)} ${operator}`));
+    this.own.set(condition, `${this.code(test)} ${operator}`);
     if (pre.length > 0) condition.pre = pre;
     const calls = branches.flatMap((branch) => branch.nodes).filter((child) => child.kind === 'call');
     const first = calls[0]?.code.replace(/\(.*$/, '()');
@@ -907,7 +968,7 @@ class Builder {
       return;
     }
     const call: TreeNode = { id: '', kind: 'call', lines: [this.start(node), this.end(node)], code: shorten(this.compact(node), 80), target };
-    this.own.set(call, flat(this.text(node)));
+    this.own.set(call, this.code(node));
     const summary = this.context.summaryOf(target);
     if (summary !== undefined && summary !== '') {
       call.text = summary;
@@ -951,7 +1012,7 @@ class Builder {
       from: 'code',
       branches: [{ key: 'body', label: `\`${name}\` の中で`, nodes }],
     };
-    this.own.set(loop, flat(this.text(call)));
+    this.own.set(loop, this.code(call));
     return loop;
   }
 
@@ -984,7 +1045,7 @@ class Builder {
         { key: 'skip', label: iterates ? '要素がない' : '呼ばれない', nodes: [] },
       ],
     };
-    this.own.set(loop, flat(`${this.text(callee)}(…)`));
+    this.own.set(loop, `${this.code(callee)}(…)`);
     return loop;
   }
 }
@@ -1024,7 +1085,7 @@ export function buildTree(context: TreeContext, input: FrameInput): BuiltTree {
     bodyOpen = startLine(file, body);
     const pre = builder.evaluate(body, 'value');
     const node: TreeNode = { id: '', kind: 'return', lines: [startLine(file, body), endLine(file, body)], code: shorten(`return ${builder.compact(body)}`, 80) };
-    builder.own.set(node, flat(`return ${textOf(file, body)}`));
+    builder.own.set(node, `return ${flat(codeText(file, body))}`);
     if (pre.length > 0) node.pre = pre;
     nodes = [node];
   }

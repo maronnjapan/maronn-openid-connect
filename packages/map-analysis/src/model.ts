@@ -112,8 +112,13 @@ export type NodeKind = 'call' | 'action' | 'if' | 'switch' | 'loop' | 'try' | 'c
 export type CallTarget =
   | { kind: 'function'; id: string }
   | { kind: 'member'; id: string }
-  /** A call whose target the types do not tell: a value read by a string key (`c.get('store')`) of no known type. */
-  | { kind: 'untraceable'; why: string };
+  /**
+   * A call whose target the types do not tell: a value read by a string key
+   * (`c.get('store')`) of no known type. `method` is the name it calls
+   * (`recordGrant` of `c.get('consentResolver')?.recordGrant(…)`), when it
+   * calls a method.
+   */
+  | { kind: 'untraceable'; why: string; method?: string };
 
 /** A step a node is: a block opened by a marker, or a call of the step's function. */
 export interface StepMark {
@@ -203,8 +208,13 @@ export interface FlowTree {
   /** The lines of the declaration up to the brace that opens the body: a change there is a change of the start. */
   head: [number, number];
   nodes: TreeNode[];
-  /** The members of interfaces the frame implements in an object literal it returns (a store, a resolver). */
-  implements?: Array<{ member: string; lines: [number, number] }>;
+  /**
+   * The members of interfaces the frame implements in an object literal it
+   * returns (a store, a resolver): the lines of each implementation, and what
+   * it calls (functions of the catalog and members, by id, the functions the
+   * frame defines itself followed into).
+   */
+  implements?: Array<{ member: string; lines: [number, number]; calls?: string[] }>;
   /** Functions and members called inside definitions the frame makes (nested functions, methods): they do not run when it runs. */
   deferred?: string[];
   /** A tree made from the endpoint's handlers, with no lines of its own. */
@@ -215,6 +225,10 @@ export interface FlowTree {
  * A choice of the sides of the decisions, by key. A key is `<frame>.<node>`:
  * the frame is the chain of call nodes from the root frame that opened it,
  * joined with dots, and is left out (with its dot) for the root frame.
+ *
+ * On a call node, the side `fails` says that the call throws there: the call
+ * runs, the rest of its list does not, and the failure goes up to the
+ * innermost `try` with a `catch` around it in that frame (or ends the frame).
  */
 export type Decisions = Record<string, string>;
 
@@ -227,7 +241,7 @@ export interface Selection {
   /** Where it leads, in words (`→ return respondToken(…)`). */
   note?: string;
   decisions: Decisions;
-  /** The frames to open, by key. */
+  /** The frames to open, by key. For a failure, each of their calls is decided `fails` (Decisions). */
   frames?: string[];
   /** The node it leads to, `<frame>.<node>` as a decision key. */
   target: string;
@@ -317,6 +331,13 @@ export interface MemberDoc {
   line: number;
   /** The functions whose object literals implement it. */
   implementedBy?: string[];
+  /**
+   * What its implementations call, across every implementation: functions of
+   * the catalog and other interface members (a resolver's method that reads a
+   * store calls the store's member). A change below one of them reaches every
+   * call of this member.
+   */
+  calls?: string[];
 }
 
 /** A source file with Shiki tokens and the colors of its light and dark themes. */
@@ -389,7 +410,11 @@ export interface FrameChange {
   removed: RemovedNode[];
   /** The changes inside the expressions of the modified nodes. */
   exprs: Record<string, ExprChange[]>;
-  /** The hunks, each on the smallest node whose lines hold it ('' for the start). */
+  /**
+   * The hunks by node: each run of changed lines, with the lines around it
+   * that its node holds, on the smallest node whose lines hold the run (a
+   * marked one first); '' holds the runs in the JSDoc and the declaration.
+   */
   hunks: Record<string, DiffHunk[]>;
   /** The diff in words, one phrase a change. */
   summary: string[];
@@ -428,6 +453,24 @@ export interface Reach {
   features: string[];
   /** The changed node (or the call into the changed frame), as a decision key. */
   target: string;
+  /** The change the way leads to, in words (`条件 \`a < b\``), when the frame has changes at more than one place. */
+  label?: string;
+  /**
+   * The members of interfaces the way goes through below its last frame,
+   * outermost first: the trace stops at the call of the first (an
+   * implementation has no frame to open), the implementations of each call
+   * the next, and the last calls the change or is the member whose
+   * implementation changed.
+   */
+  through?: string[];
+  /**
+   * For a change that makes a new failure leave its frame: the frame on the
+   * way whose `try` catches it (its id, name and `try` node, and the first
+   * call of its catch, `respondTokenError(…)`).
+   */
+  caught?: { frame: string; name: string; node: string; call?: string };
+  /** For a change that makes a new failure leave its frame: nothing on the way catches it, so it leaves the endpoint. */
+  escapes?: true;
 }
 
 /** A frame the pull request changed, or one its change notes explain. */
@@ -454,16 +497,34 @@ export interface FrameChangeEntry {
   reach: Reach[];
   /** The members of interfaces whose implementation it changed (every call of them is reached). */
   members?: string[];
+  /**
+   * The counts (see counts) of the changes inside the implementation of each
+   * member of `members`: what a call of that member leads to, where `counts`
+   * holds every change of the frame.
+   */
+  memberCounts?: Record<string, Record<string, number>>;
   /** The failures that leave it now and did not before, and the other way. */
   failuresAdded?: string[];
   failuresRemoved?: string[];
   /** Calls in it whose target the types do not tell. */
   untraceable?: number;
+  /**
+   * Calls whose target the types do not tell, outside the frames the change
+   * is known to reach, that call a method of the name of a member the change
+   * reaches through (`c.get('consentResolver')?.recordGrant(…)` for a change
+   * of the implementation of `recordGrant`): the change may reach the
+   * endpoints through them too, which the reach does not hold.
+   */
+  untraceableCallers?: Array<{ frame: string; node: string; why: string }>;
   /** The first line of what the notes say; absent without a note. */
   noteLine?: string;
   /** A note with text names it. */
   documented: boolean;
-  /** A change the map requires a note for: its code changed and it reaches an endpoint, or it is an endpoint body. */
+  /**
+   * A change the map requires a note for: its code changed (not only its
+   * comments or its layout, which leave the tree the same) and it reaches an
+   * endpoint, or it is an endpoint body.
+   */
   required: boolean;
 }
 

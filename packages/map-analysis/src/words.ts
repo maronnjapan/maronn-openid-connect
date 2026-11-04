@@ -24,14 +24,107 @@ export function joinLines(text: string): string {
   return text.trim().replace(/[ \t]*\n\s*/g, (match: string, offset: number, whole: string) => (WIDE.test(whole[offset - 1] ?? '') && WIDE.test(whole[offset + match.length] ?? '') ? '' : ' '));
 }
 
+/** The operators of a comparison, the longest first. */
+const COMPARISONS = ['===', '!==', '==', '!=', '>=', '<=', '>', '<'];
+
+/** The words of a comparison operator. */
+const COMPARISON_WORDS: Readonly<Record<string, string>> = {
+  '===': 'と等しいか',
+  '==': 'と等しいか',
+  '!==': 'と異なるか',
+  '!=': 'と異なるか',
+  '>': 'より大きいか',
+  '<': 'より小さいか',
+  '>=': '以上か',
+  '<=': '以下か',
+};
+
+/**
+ * The places of code outside brackets and strings where an operator starts:
+ * `test` is asked at each such index whether one of the operators starts
+ * there, and returns its length (0 for none).
+ */
+function topLevel(text: string, test: (index: number) => number): Array<{ index: number; length: number }> {
+  const found: Array<{ index: number; length: number }> = [];
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index] as string;
+    if (char === '"' || char === "'" || char === '`') {
+      for (index += 1; index < text.length && text[index] !== char; index += text[index] === '\\' ? 2 : 1);
+      continue;
+    }
+    if ('([{'.includes(char)) depth += 1;
+    else if (')]}'.includes(char)) depth -= 1;
+    else if (depth === 0) {
+      const length = test(index);
+      if (length > 0) {
+        found.push({ index, length });
+        index += length - 1;
+      }
+    }
+  }
+  return found;
+}
+
+/** The parts of code between its top-level occurrences of an operator (`a && b && c` → a, b, c). */
+function splitAt(text: string, operator: string): string[] {
+  const places = topLevel(text, (index) => (text.startsWith(operator, index) ? operator.length : 0));
+  const parts: string[] = [];
+  let from = 0;
+  for (const place of places) {
+    parts.push(text.slice(from, place.index).trim());
+    from = place.index + place.length;
+  }
+  parts.push(text.slice(from).trim());
+  return parts;
+}
+
+/** Code without the parentheses around the whole of it (`(a || b)` → `a || b`). */
+function unparenthesize(text: string): string {
+  let current = text.trim();
+  while (current.startsWith('(') && current.endsWith(')')) {
+    const inner = current.slice(1, -1);
+    // `(a) || (b)` is not one parenthesized expression.
+    let depth = 0;
+    let closesEarly = false;
+    for (const char of inner) {
+      if (char === '(') depth += 1;
+      else if (char === ')') depth -= 1;
+      if (depth < 0) {
+        closesEarly = true;
+        break;
+      }
+    }
+    if (closesEarly) break;
+    current = inner.trim();
+  }
+  return current;
+}
+
 /**
  * What a condition checks, in words (the rules the map has used since its
  * first version): `x === y` is "x が y と等しいか", `!x` is "x が偽として評価されるか",
- * `a.includes(b)` is "a に b が含まれるか". Empty for a condition the rules do not
- * read (the comment above it, or the JSDoc of the function it calls, says it).
+ * `a.includes(b)` is "a に b が含まれるか". A chain of `&&` (or of `||`) reads
+ * part by part, joined by 「かつ」 (「または」). Empty for a condition the rules
+ * do not read, a part of a chain included: `??`, `?:`, `&&` and `||` mixed,
+ * a call (the comment above it, or the JSDoc of the function it calls, says it).
  */
 export function conditionWords(condition: string): string {
-  const text = condition.replace(/\s+/g, ' ').trim();
+  const text = unparenthesize(condition.replace(/\s+/g, ' '));
+  for (const [operator, joiner] of [['||', 'または'], ['&&', 'かつ']] as const) {
+    const parts = splitAt(text, operator);
+    if (parts.length === 1) continue;
+    const words = parts.map((part) => singleConditionWords(unparenthesize(part)));
+    if (words.some((word) => word === '')) return '';
+    if (words.every((word) => word === words[0])) return words[0] as string;
+    return words.map((word, index) => (index === words.length - 1 ? word : word.replace(/か$/, '').trim())).join(`、${joiner} `);
+  }
+  return singleConditionWords(text);
+}
+
+/** What one condition checks (see conditionWords): empty for one with `&&`, `||`, `??` or `?:` outside its brackets. */
+function singleConditionWords(text: string): string {
+  if (topLevel(text, (index) => (['&&', '||', '??'].some((operator) => text.startsWith(operator, index)) ? 2 : text[index] === '?' && text[index + 1] !== '.' ? 1 : 0)).length > 0) return '';
   const includes = /^(!?)([\w.$?]+)\.(includes|startsWith|endsWith|has)\(([^()]*)\)$/.exec(text);
   if (includes) {
     const [, negate, value, method, expected] = includes;
@@ -39,33 +132,55 @@ export function conditionWords(condition: string): string {
     const verb = method === 'startsWith' ? (negate ? '始まらないか' : '始まるか') : negate ? '終わらないか' : '終わるか';
     return `${value} が ${expected} で${verb}`;
   }
-  const comparison = /^(.+?)\s*(===|!==|==|!=|>=|<=|>|<)\s*(.+)$/.exec(text);
-  if (comparison) {
-    const [, left, operator, right] = comparison;
-    const phrases: Record<string, string> = {
-      '===': 'と等しいか',
-      '==': 'と等しいか',
-      '!==': 'と異なるか',
-      '!=': 'と異なるか',
-      '>': 'より大きいか',
-      '<': 'より小さいか',
-      '>=': '以上か',
-      '<=': '以下か',
-    };
-    if (right?.trim() === 'undefined' || right?.trim() === 'null') {
+  const typeOf = /^typeof (.+?) (===|!==) ['"](\w+)['"]$/.exec(text);
+  if (typeOf) return `${typeOf[1]} の型が ${typeOf[3]} ${typeOf[2] === '===' ? 'か' : 'でないか'}`;
+  const [comparison] = topLevel(text, (index) => {
+    if (text.startsWith('=>', index) || (text[index] === '>' && text[index - 1] === '=')) return 0;
+    return COMPARISONS.find((operator) => text.startsWith(operator, index))?.length ?? 0;
+  });
+  if (comparison !== undefined) {
+    const left = text.slice(0, comparison.index).trim();
+    const operator = text.slice(comparison.index, comparison.index + comparison.length);
+    const right = text.slice(comparison.index + comparison.length).trim();
+    if (left === '' || right === '') return '';
+    if (right === 'undefined' || right === 'null') {
       const missing = operator === '===' || operator === '==';
-      return `${left?.trim()} が ${missing ? '無いか' : 'あるか'}`;
+      return `${left} が ${missing ? '無いか' : 'あるか'}`;
     }
-    return `${left?.trim()} が ${right?.trim()} ${phrases[operator as string]}`;
+    return `${left} が ${right} ${COMPARISON_WORDS[operator] as string}`;
   }
   const instance = /^(.+) instanceof (.+)$/.exec(text);
   if (instance) return `${instance[1]} が ${instance[2]} 型の値か`;
   const property = /^(['"]?[\w$]+['"]?) in (.+)$/.exec(text);
   if (property) return `${property[2]} に ${property[1]} プロパティがあるか`;
-  const typeOf = /^typeof (.+?) (===|!==) ['"](\w+)['"]$/.exec(text);
-  if (typeOf) return `${typeOf[1]} の型が ${typeOf[3]} ${typeOf[2] === '===' ? 'か' : 'でないか'}`;
   const truthy = /^(!?)([\w.$?]+)$/.exec(text);
   if (truthy) return `${truthy[2]} が${truthy[1] ? '偽' : '真'}として評価されるか`;
+  return '';
+}
+
+/** The endings of a JSDoc that says when a predicate returns true, and the words of the condition before each (「正しければ」 → 「正しい」). */
+const PREDICATE_ENDINGS: ReadonlyArray<[RegExp, (base: string) => string]> = [
+  [/^(.+?)(?:なら|ならば|であれば|のとき|の場合)、?\s*`?true`?\s*を返す$/, (base) => base],
+  [/^(.+?)ければ、?\s*`?true`?\s*を返す$/, (base) => `${base}い`],
+  [/^(.+?)れば、?\s*`?true`?\s*を返す$/, (base) => `${base}る`],
+  [/^(.+?)えば、?\s*`?true`?\s*を返す$/, (base) => `${base}う`],
+  [/^(.+?)か(?:どうか)?を返す$/, (base) => base],
+];
+
+/**
+ * What a condition that calls one predicate checks, from the JSDoc of the
+ * predicate: 「パブリッククライアントなら true を返す。」 is 「パブリッククライアントか」,
+ * and with `!` 「「パブリッククライアント」が成り立たないか」. Empty for a JSDoc
+ * that does not say when the predicate is true (「クレームを返す。」).
+ */
+export function predicateWords(doc: string, negated: boolean): string {
+  const text = doc.trim().replace(/[。.]$/, '').trim();
+  for (const [pattern, base] of PREDICATE_ENDINGS) {
+    const match = pattern.exec(text);
+    if (match === null) continue;
+    const condition = base((match[1] as string).trim());
+    return negated ? `「${condition}」が成り立たないか` : `${condition}か`;
+  }
   return '';
 }
 

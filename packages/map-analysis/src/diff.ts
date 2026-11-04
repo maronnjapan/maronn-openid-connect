@@ -9,11 +9,17 @@
  *   nodes left over of the same kind are matched in order too. A matched
  *   pair whose own code differs is modified; the nodes left are added
  *   (after) and removed (before, placed behind the node they followed).
- * - A modified node's code is compared token by token: one token changed is
- *   "`<` を `<=` に変えた", an argument more or less is "引数 `issuedAt` を足した",
- *   anything larger is "式を書き換えた" with the code before and after.
- * - The hunks of the text diff go on the smallest node whose lines hold
- *   them; the lines of the nodes cover the frame, so every hunk has one.
+ * - Code is compared by its tokens (comments, line breaks and the commas
+ *   and semicolons a formatter adds are no change). A modified node's code
+ *   is compared token by token: one token changed is "`<` を `<=` に変えた",
+ *   an argument more or less is "引数 `issuedAt` を足した", code added or
+ *   removed whole is shown as the code it is ("`.trim()` を足した"), anything
+ *   larger is "式を書き換えた" with the code before and after. A change made at
+ *   several places is said once, with how many.
+ * - Each run of changed lines of the text diff goes on the smallest node
+ *   whose lines hold it, with the lines around it that node holds; the
+ *   JSDoc and the declaration on the start (''). The lines of the nodes
+ *   cover the body, so every run has one.
  */
 import type { DiffHunk, ExprChange, FlowTree, FrameChange, RemovedNode, TreeNode } from './model.js';
 import { shorten, splitTopLevel } from './words.js';
@@ -46,10 +52,12 @@ const CATEGORY_WORDS: Record<string, string> = {
 
 // ---- tokens
 
-/** The tokens of code: words, numbers, strings, and operators (the longest first). */
-export function tokens(code: string): string[] {
-  const out: string[] = [];
-  const operators = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=', '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**', '<<', '>>'];
+/** The operators of code a token can be, the longest first. */
+const OPERATORS = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=', '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**', '<<', '>>'];
+
+/** The tokens of code with where each starts and ends in it (see tokens). */
+export function tokenSpans(code: string): Array<{ text: string; start: number; end: number }> {
+  const out: Array<{ text: string; start: number; end: number }> = [];
   let index = 0;
   while (index < code.length) {
     const char = code[index] as string;
@@ -60,21 +68,21 @@ export function tokens(code: string): string[] {
     if (char === '"' || char === "'" || char === '`') {
       let end = index + 1;
       while (end < code.length && code[end] !== char) end += code[end] === '\\' ? 2 : 1;
-      out.push(code.slice(index, end + 1));
+      out.push({ text: code.slice(index, end + 1), start: index, end: Math.min(end + 1, code.length) });
       index = end + 1;
       continue;
     }
     const word = /^[\p{L}\p{N}_$]+/u.exec(code.slice(index));
-    if (word !== null) {
-      out.push(word[0]);
-      index += word[0].length;
-      continue;
-    }
-    const operator = operators.find((candidate) => code.startsWith(candidate, index));
-    out.push(operator ?? char);
-    index += (operator ?? char).length;
+    const text = word?.[0] ?? OPERATORS.find((candidate) => code.startsWith(candidate, index)) ?? char;
+    out.push({ text, start: index, end: index + text.length });
+    index += text.length;
   }
   return out;
+}
+
+/** The tokens of code: words, numbers, strings, and operators (the longest first). */
+export function tokens(code: string): string[] {
+  return tokenSpans(code).map((token) => token.text);
 }
 
 /** The pairs of equal items of two lists, in order (longest common subsequence): [index in a, index in b]. */
@@ -128,6 +136,11 @@ function callIn(code: string): string {
 
 /** The changes inside the code of a node: what was replaced, added and removed (see the module comment). */
 export function expressionChanges(before: string, after: string): ExprChange[] {
+  return collapseChanges(rawExpressionChanges(before, after));
+}
+
+/** The changes inside the code of a node, each place on its own (expressionChanges). */
+function rawExpressionChanges(before: string, after: string): ExprChange[] {
   if (before === after) return [];
   const beforeCall = argumentsOf(callIn(before));
   const afterCall = argumentsOf(callIn(after));
@@ -152,34 +165,102 @@ export function expressionChanges(before: string, after: string): ExprChange[] {
   return tokenChanges(before, after);
 }
 
-/** The changes between two pieces of code, token by token. */
+/** How much a list of tokens opens brackets more than it closes them. */
+function depthOf(list: ReadonlyArray<{ text: string }>): number {
+  let depth = 0;
+  for (const { text } of list) {
+    if (text === '(' || text === '[' || text === '{') depth += 1;
+    else if (text === ')' || text === ']' || text === '}') depth -= 1;
+  }
+  return depth;
+}
+
+/**
+ * The changes between two pieces of code, token by token: the runs of tokens
+ * between the matched ones, each shown as the code it is (a slice of the
+ * code, not tokens joined). A run that opens a bracket the next one closes
+ * (`.trim(` and `)` of `get(token)` → `get(token.trim())`) is joined with
+ * it and with the matched tokens between, and the tokens both sides then
+ * share at the start and the end are left out again (`.trim()`).
+ */
 function tokenChanges(before: string, after: string): ExprChange[] {
-  const a = tokens(before);
-  const b = tokens(after);
-  const pairs = matchInOrder(a, b, (x, y) => x === y);
-  // The runs of tokens between the matches.
-  const runs: Array<{ before: string[]; after: string[] }> = [];
+  const a = tokenSpans(before);
+  const b = tokenSpans(after);
+  const pairs = matchInOrder(a, b, (x, y) => x.text === y.text);
+  // The runs of tokens between the matches, as ranges of indexes [from, to).
+  type Run = { a: [number, number]; b: [number, number] };
+  const runs: Run[] = [];
   let i = 0;
   let j = 0;
   for (const [pi, pj] of [...pairs, [a.length, b.length] as [number, number]]) {
-    if (pi > i || pj > j) runs.push({ before: a.slice(i, pi), after: b.slice(j, pj) });
+    if (pi > i || pj > j) runs.push({ a: [i, pi], b: [j, pj] });
     i = pi + 1;
     j = pj + 1;
   }
-  const changed = runs.reduce((count, run) => count + Math.max(run.before.length, run.after.length), 0);
-  if (runs.length > 3 || changed > Math.max(4, Math.min(a.length, b.length) / 2)) {
+  const merged: Run[] = [];
+  for (let index = 0; index < runs.length; index += 1) {
+    let run = runs[index] as Run;
+    const balanced = (candidate: Run) => depthOf(a.slice(...candidate.a)) === 0 && depthOf(b.slice(...candidate.b)) === 0;
+    let end = index;
+    while (!balanced(run) && end + 1 < runs.length) {
+      end += 1;
+      const next = runs[end] as Run;
+      run = { a: [run.a[0], next.a[1]], b: [run.b[0], next.b[1]] };
+      // The tokens both sides share at the start and at the end are no change.
+      const trimmed = { a: [...run.a] as [number, number], b: [...run.b] as [number, number] };
+      while (trimmed.a[0] < trimmed.a[1] && trimmed.b[0] < trimmed.b[1] && a[trimmed.a[0]]?.text === b[trimmed.b[0]]?.text) {
+        trimmed.a[0] += 1;
+        trimmed.b[0] += 1;
+      }
+      while (trimmed.a[1] > trimmed.a[0] && trimmed.b[1] > trimmed.b[0] && a[trimmed.a[1] - 1]?.text === b[trimmed.b[1] - 1]?.text) {
+        trimmed.a[1] -= 1;
+        trimmed.b[1] -= 1;
+      }
+      if (balanced(trimmed)) {
+        run = trimmed;
+        break;
+      }
+    }
+    if (balanced(run)) index = end;
+    else run = runs[index] as Run;
+    merged.push(run);
+  }
+  // Code added or removed whole reads as such up to a length; code replaced, while it is a small part.
+  const size = (run: Run) => Math.max(run.a[1] - run.a[0], run.b[1] - run.b[0]);
+  const replaced = merged.filter((run) => run.a[1] > run.a[0] && run.b[1] > run.b[0]).reduce((count, run) => count + size(run), 0);
+  const whole = merged.filter((run) => run.a[1] === run.a[0] || run.b[1] === run.b[0]);
+  if (merged.length > 3 || replaced > Math.max(4, Math.min(a.length, b.length) / 2) || whole.some((run) => size(run) > 30)) {
     return [{ text: '式を書き換えた', before: shorten(before, 120), after: shorten(after, 120) }];
   }
-  return runs.map((run) => {
-    const was = run.before.join(' ');
-    const now = run.after.join(' ');
+  const slice = (code: string, spans: typeof a, [from, to]: [number, number]) => (from >= to ? '' : code.slice((spans[from] as (typeof a)[number]).start, (spans[to - 1] as (typeof a)[number]).end));
+  return merged.map((run) => {
+    const was = slice(before, a, run.a);
+    const now = slice(after, b, run.b);
     if (was === '') return { text: `\`${shorten(now, 40)}\` を足した`, after: now };
     if (now === '') return { text: `\`${shorten(was, 40)}\` を消した`, before: was };
     return { text: `\`${shorten(was, 40)}\` を \`${shorten(now, 40)}\` に変えた`, before: was, after: now };
   });
 }
 
+/** Phrases with the repeats of each said once, with how many times (`… を変えた（2 箇所）`), in the order of their first time. */
+export function collapse(phrases: readonly string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const phrase of phrases) counts.set(phrase, (counts.get(phrase) ?? 0) + 1);
+  return [...counts].map(([phrase, count]) => (count > 1 ? `${phrase}（${count} 箇所）` : phrase));
+}
+
 // ---- trees
+
+/**
+ * Code as the diff compares it: its tokens, without the commas before a
+ * closing bracket and the semicolons before a closing brace or at the end,
+ * so a formatter that breaks lines, adds trailing commas or semicolons
+ * changes nothing.
+ */
+export function normalCode(code: string): string {
+  const list = tokens(code);
+  return list.filter((token, index) => !((token === ',' && [')', ']', '}'].includes(list[index + 1] ?? '')) || (token === ';' && (list[index + 1] ?? '}') === '}'))).join(' ');
+}
 
 /** What identifies a node across a change: its kind and its callee, step, or code. */
 function identity(node: TreeNode, own: ReadonlyMap<TreeNode, string>): string {
@@ -192,7 +273,7 @@ function identity(node: TreeNode, own: ReadonlyMap<TreeNode, string>): string {
     case 'end':
       return node.kind;
     default:
-      return `${node.kind}:${own.get(node) ?? node.code}`;
+      return `${node.kind}:${normalCode(own.get(node) ?? node.code)}`;
   }
 }
 
@@ -204,16 +285,21 @@ interface Diff {
   counts: Record<string, number>;
 }
 
+/** How a diff names the nodes of the tree after in its summary: nodeWords, unless `describe` names one (the member a part of an object literal implements). */
+interface Naming {
+  describe?: (node: TreeNode) => string | undefined;
+}
+
 /** The name of a node in a summary: `\`verifyClientSecret()\` の呼び出し`, `条件 \`!client\``. */
-function nodeWords(node: TreeNode): string {
+export function nodeWords(node: TreeNode): string {
   switch (node.kind) {
     case 'call':
       return `\`${node.code.replace(/^.*?=\s*(?:await\s+)?/, '').replace(/\(.*$/, '')}()\` の呼び出し`;
     case 'if':
     case 'cond-expr':
-      return `条件 \`${shorten(node.subject ?? node.code, 50)}\``;
+      return `条件 \`${shorten(node.subject ?? node.code, 70)}\``;
     case 'switch':
-      return `分岐 \`${shorten(node.subject ?? node.code, 50)}\``;
+      return `分岐 \`${shorten(node.subject ?? node.code, 70)}\``;
     case 'loop':
       return `繰り返し \`${shorten(node.code, 50)}\``;
     case 'try':
@@ -226,6 +312,24 @@ function nodeWords(node: TreeNode): string {
     default:
       return `処理 \`${shorten(node.code, 50)}\``;
   }
+}
+
+/**
+ * The counts of the nodes a diff marks among some nodes (see Diff.counts:
+ * `call+`, `action~`, ...): what a part of a frame changed, the
+ * implementation of a member for one. The nodes it removed have no place
+ * in the tree after and are left out.
+ */
+export function markCounts(nodes: Iterable<TreeNode>, marks: FrameChange['marks']): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const node of nodes) {
+    const mark = marks[node.id];
+    const category = CATEGORY[node.kind];
+    if (mark === undefined || category === undefined || category === 'end') continue;
+    const key = `${category}${mark === 'added' ? '+' : '~'}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function count(diff: Diff, node: TreeNode, sign: '+' | '-' | '~'): void {
@@ -241,6 +345,25 @@ function early(list: readonly TreeNode[], index: number): boolean {
   return (node.kind === 'return' || node.kind === 'throw' || (node.kind === 'if' && node.form === 'guard')) && list.slice(index + 1).some((next) => next.kind !== 'end');
 }
 
+/** How an added node leaves its list early, in words: by a throw (a guard whose side throws included) or by a return. */
+function earlyWords(node: TreeNode): string {
+  const exit = node.kind === 'if' ? [...(node.branches?.find((branch) => branch.key === 'true')?.nodes ?? [])].reverse().find((child) => child.kind === 'return' || child.kind === 'throw') : node;
+  return exit?.kind === 'throw' ? '（失敗で抜ける）' : '（早期リターン）';
+}
+
+/** The changes of a node with the repeats of each said once (collapse). */
+function collapseChanges(changes: readonly ExprChange[]): ExprChange[] {
+  const counts = new Map<string, number>();
+  for (const change of changes) counts.set(change.text, (counts.get(change.text) ?? 0) + 1);
+  const seen = new Set<string>();
+  return changes.flatMap((change) => {
+    if (seen.has(change.text)) return [];
+    seen.add(change.text);
+    const times = counts.get(change.text) ?? 1;
+    return [times > 1 ? { ...change, text: `${change.text}（${times} 箇所）` } : change];
+  });
+}
+
 function diffLists(
   before: readonly TreeNode[],
   after: readonly TreeNode[],
@@ -248,7 +371,9 @@ function diffLists(
   branch: string | undefined,
   own: { before: ReadonlyMap<TreeNode, string>; after: ReadonlyMap<TreeNode, string> },
   diff: Diff,
+  naming: Naming,
 ): void {
+  const named = (node: TreeNode) => naming.describe?.(node) ?? nodeWords(node);
   const exact = matchInOrder(before, after, (x, y) => identity(x, own.before) === identity(y, own.after));
   const pairs: Array<[number, number]> = [];
   let i = 0;
@@ -270,25 +395,25 @@ function diffLists(
     if (from === undefined) {
       diff.marks[node.id] = 'added';
       count(diff, node, '+');
-      diff.summary.push(`${nodeWords(node)} を足した${early(after, index) ? '（早期リターン）' : ''}`);
+      diff.summary.push(`${named(node)} を足した${early(after, index) ? earlyWords(node) : ''}`);
       return;
     }
     const was = before[from] as TreeNode;
     const ownBefore = own.before.get(was) ?? was.code;
     const ownAfter = own.after.get(node) ?? node.code;
-    if (ownBefore !== ownAfter) {
+    if (normalCode(ownBefore) !== normalCode(ownAfter)) {
       diff.marks[node.id] = 'modified';
       count(diff, node, '~');
-      const changes = identity(was, own.before) === identity(node, own.after) || was.kind !== 'call' ? expressionChanges(ownBefore, ownAfter) : [{ text: `${nodeWords(was)} を ${nodeWords(node)} に置き換えた`, before: was.code, after: node.code }];
+      const changes = collapseChanges(identity(was, own.before) === identity(node, own.after) || was.kind !== 'call' ? expressionChanges(ownBefore, ownAfter) : [{ text: `${nodeWords(was)} を ${nodeWords(node)} に置き換えた`, before: was.code, after: node.code }]);
       if (changes.length > 0) {
         diff.exprs[node.id] = changes;
-        diff.summary.push(...changes.map((change) => (change.text.includes('置き換えた') && was.kind === 'call' ? change.text : `${nodeWords(node)}: ${change.text}`)));
+        diff.summary.push(...changes.map((change) => (change.text.includes('置き換えた') && was.kind === 'call' ? change.text : `${named(node)}: ${change.text}`)));
       }
     }
-    diffLists(was.pre ?? [], node.pre ?? [], node.id, 'pre', own, diff);
+    diffLists(was.pre ?? [], node.pre ?? [], node.id, 'pre', own, diff, naming);
     const keys = new Set([...(was.branches ?? []).map((side) => side.key), ...(node.branches ?? []).map((side) => side.key)]);
     for (const key of keys) {
-      diffLists(was.branches?.find((side) => side.key === key)?.nodes ?? [], node.branches?.find((side) => side.key === key)?.nodes ?? [], node.id, key, own, diff);
+      diffLists(was.branches?.find((side) => side.key === key)?.nodes ?? [], node.branches?.find((side) => side.key === key)?.nodes ?? [], node.id, key, own, diff, naming);
     }
   });
   const partner = new Map(pairs.map(([x, y]) => [x, y]));
@@ -309,12 +434,17 @@ function diffLists(
   });
 }
 
-/** The diff of two trees of a frame (see the module comment). */
+/**
+ * The diff of two trees of a frame (see the module comment); `describe`
+ * names a node of the tree after in the summary instead of nodeWords. A
+ * phrase said more than once is said once, with how many times.
+ */
 export function diffTrees(
   before: FlowTree,
   after: FlowTree,
   own: { before: ReadonlyMap<TreeNode, string>; after: ReadonlyMap<TreeNode, string> },
   head: { signature: boolean; docs: boolean },
+  naming: Naming = {},
 ): Diff {
   const diff: Diff = { marks: {}, removed: [], exprs: {}, summary: [], counts: {} };
   if (head.signature) {
@@ -322,8 +452,9 @@ export function diffTrees(
     diff.counts['signature~'] = 1;
     diff.summary.push(before.signature === after.signature ? '宣言（引数か戻り値の型）を変えた' : `宣言を \`${before.signature}\` から \`${after.signature}\` に変えた`);
   }
-  diffLists(before.nodes, after.nodes, '', undefined, own, diff);
+  diffLists(before.nodes, after.nodes, '', undefined, own, diff, naming);
   if (head.docs) diff.summary.push('JSDoc を変えた');
+  diff.summary = collapse(diff.summary);
   return diff;
 }
 
@@ -341,46 +472,165 @@ export function countWords(counts: Readonly<Record<string, number>>): string {
 
 // ---- hunks on nodes
 
-/** Every node of a tree, depth first. */
-function* all(nodes: readonly TreeNode[]): Generator<TreeNode> {
-  for (const node of nodes) {
-    yield node;
-    if (node.pre !== undefined) yield* all(node.pre);
-    for (const branch of node.branches ?? []) yield* all(branch.nodes);
+/** The lines of context a piece of a hunk keeps on each side of its changes. */
+const HUNK_CONTEXT = 3;
+
+/** A line of a hunk with where it is: the lines of the base and of the head before it, and the line of the head it stands at. */
+interface HunkLine {
+  text: string;
+  op: string;
+  base: number;
+  head: number;
+  /** The line of the head it is at: its own for a kept or added line; for a removed line, that of the added line it became, else where it was removed. */
+  at: number;
+}
+
+/** How alike two lines of code are: the share of their tokens they have in common (0 to 1). */
+function likeness(a: string, b: string): number {
+  const left = tokens(a);
+  const right = tokens(b);
+  if (left.length + right.length === 0) return 1;
+  const counts = new Map<string, number>();
+  for (const token of left) counts.set(token, (counts.get(token) ?? 0) + 1);
+  let common = 0;
+  for (const token of right) {
+    const count = counts.get(token) ?? 0;
+    if (count === 0) continue;
+    counts.set(token, count - 1);
+    common += 1;
   }
+  return (2 * common) / (left.length + right.length);
 }
 
 /**
- * The node each hunk goes on: the smallest node whose lines hold the lines
- * the hunk changes in the head (for a hunk that only removes, the line it
- * removes before), a marked node first among nodes with the same lines; ''
- * (the start) for a hunk in the JSDoc or the declaration, or one no single
- * node holds.
+ * Where the removed lines of a run of changed lines stand in the head: each
+ * at the added line it became (as many removed as added: in order; else
+ * the alike ones, in order), the others at the added line after the one
+ * the removed line before became, and with nothing added, where they were
+ * removed.
+ */
+function placeRemoved(run: readonly HunkLine[]): void {
+  const removed = run.filter((line) => line.op === '-');
+  const added = run.filter((line) => line.op === '+');
+  if (removed.length === 0 || added.length === 0) return;
+  const pairs = removed.length === added.length ? removed.map((_line, index) => [index, index] as [number, number]) : matchInOrder(removed, added, (x, y) => likeness(x.text.slice(1), y.text.slice(1)) >= 0.5);
+  const partner = new Map(pairs);
+  let next = 0;
+  removed.forEach((line, index) => {
+    const paired = partner.get(index);
+    if (paired !== undefined) {
+      line.at = (added[paired] as HunkLine).head;
+      next = paired + 1;
+      return;
+    }
+    line.at = (added[Math.min(next, added.length - 1)] as HunkLine).head;
+  });
+}
+
+/**
+ * The hunks by node (FrameChange.hunks). Each run of changed lines of a hunk
+ * goes to the smallest node whose lines hold it, with the kept lines around
+ * it (up to three on each side) that the node holds too: a node of a list
+ * or a marked node, so a run on the line of an `if` goes to the `if`, not to
+ * the call its condition makes. The lines of the JSDoc and the declaration
+ * go to '' (the start). A run that no node holds whole is cut where the
+ * nodes of the body meet, each piece (its removed lines with the added lines
+ * they became) on the node that holds it. Two runs on the same node in one
+ * hunk stay one hunk.
  */
 export function placeHunks(tree: FlowTree, hunks: readonly DiffHunk[], marks: FrameChange['marks']): Record<string, DiffHunk[]> {
   const placed: Record<string, DiffHunk[]> = {};
-  const nodes = [...all(tree.nodes)];
-  for (const hunk of hunks) {
-    let head = hunk.head;
-    const touched: number[] = [];
-    for (const line of hunk.lines) {
-      if (line[0] === '+') touched.push(head);
-      if (line[0] === '-') touched.push(head);
-      if (line[0] !== '-') head += 1;
+  const candidates: TreeNode[] = [];
+  const visit = (nodes: readonly TreeNode[], evaluated: boolean) => {
+    for (const node of nodes) {
+      if (!evaluated || marks[node.id] !== undefined) candidates.push(node);
+      if (node.pre !== undefined) visit(node.pre, true);
+      for (const branch of node.branches ?? []) visit(branch.nodes, false);
     }
-    const first = Math.min(...touched);
-    const last = Math.max(...touched);
+  };
+  visit(tree.nodes, false);
+  const span = (node: TreeNode) => node.lines[1] - node.lines[0];
+  /** The node that holds lines: the smallest, a marked one first among those of one size, the outer first among the rest. */
+  const holder = (first: number, last: number): TreeNode | undefined => {
     let best: TreeNode | undefined;
-    if (first > tree.head[1]) {
-      for (const node of nodes) {
-        if (node.lines[0] > first || node.lines[1] < last) continue;
-        const span = node.lines[1] - node.lines[0];
-        const bestSpan = best === undefined ? Infinity : best.lines[1] - best.lines[0];
-        if (span < bestSpan || (span === bestSpan && marks[node.id] !== undefined && marks[best?.id ?? ''] === undefined)) best = node;
-      }
+    for (const node of candidates) {
+      if (node.lines[0] > first || node.lines[1] < last) continue;
+      if (best === undefined || span(node) < span(best) || (span(node) === span(best) && marks[node.id] !== undefined && marks[best.id] === undefined)) best = node;
     }
-    const key = best?.id ?? '';
-    (placed[key] ??= []).push(hunk);
+    return best;
+  };
+  const start: [number, number] = [tree.lines[0], tree.head[1]];
+  const topOf = (line: number) => tree.nodes.find((node) => line >= node.lines[0] && line <= node.lines[1]) ?? tree.nodes[tree.nodes.length - 1];
+  for (const hunk of hunks) {
+    // Where each line is.
+    const lines: HunkLine[] = [];
+    let base = hunk.base;
+    let head = hunk.head;
+    for (const text of hunk.lines) {
+      const op = text[0] ?? ' ';
+      lines.push({ text, op, base, head, at: head });
+      if (op !== '+') base += 1;
+      if (op !== '-') head += 1;
+    }
+    // The pieces of the runs of changed lines, in order: the node, the lines (indexes), and the first and the last index of the run.
+    type Piece = { key: string; lines: [number, number]; indexes: number[]; from: number; to: number };
+    const pieces: Piece[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if ((lines[index] as HunkLine).op === ' ') continue;
+      let end = index;
+      while (end + 1 < lines.length && (lines[end + 1] as HunkLine).op !== ' ') end += 1;
+      const run = lines.slice(index, end + 1);
+      placeRemoved(run);
+      // A run that only removes lines past the last node of the body stands on the line before.
+      if (!run.some((line) => line.op === '+')) {
+        const at = (run[0] as HunkLine).at;
+        if (at > tree.head[1] && !candidates.some((node) => node.lines[0] <= at && node.lines[1] >= at)) for (const line of run) line.at = at - 1;
+      }
+      const indexes = run.map((_line, offset) => index + offset);
+      // Removed lines first, then added ones, in each piece.
+      const ordered = (list: readonly number[]) => [...list.filter((at) => (lines[at] as HunkLine).op === '-'), ...list.filter((at) => (lines[at] as HunkLine).op === '+')];
+      const add = (key: string, range: [number, number], list: readonly number[]) => {
+        if (list.length > 0) pieces.push({ key, lines: range, indexes: ordered(list), from: index, to: end });
+      };
+      add('', start, indexes.filter((at) => (lines[at] as HunkLine).at <= tree.head[1]));
+      const body = indexes.filter((at) => (lines[at] as HunkLine).at > tree.head[1]);
+      const ats = body.map((at) => (lines[at] as HunkLine).at);
+      const whole = body.length === 0 ? undefined : holder(Math.min(...ats), Math.max(...ats));
+      if (whole !== undefined) add(whole.id, whole.lines, body);
+      else {
+        // Cut where the nodes of the body meet.
+        const tops = new Map<TreeNode | undefined, number[]>();
+        for (const at of body) tops.set(topOf((lines[at] as HunkLine).at), [...(tops.get(topOf((lines[at] as HunkLine).at)) ?? []), at]);
+        for (const [top, list] of tops) {
+          const part = list.map((at) => (lines[at] as HunkLine).at);
+          const node = holder(Math.min(...part), Math.max(...part)) ?? top;
+          if (node === undefined) add('', start, list);
+          else add(node.id, node.lines, list);
+        }
+      }
+      index = end;
+    }
+    // Two pieces of one node from runs one after the other are one piece, with the kept lines between.
+    const merged: Piece[] = [];
+    for (const piece of pieces) {
+      const last = merged[merged.length - 1];
+      if (last !== undefined && last.key === piece.key && last.to < piece.from) {
+        last.indexes = [...last.indexes, ...Array.from({ length: piece.from - last.to - 1 }, (_value, offset) => last.to + 1 + offset), ...piece.indexes];
+        last.to = piece.to;
+      } else merged.push({ ...piece, indexes: [...piece.indexes] });
+    }
+    for (const piece of merged) {
+      const holds = (line: HunkLine | undefined) => line !== undefined && line.op === ' ' && line.head >= piece.lines[0] && line.head <= piece.lines[1];
+      const before: number[] = [];
+      for (let at = piece.from - 1; at >= 0 && before.length < HUNK_CONTEXT && holds(lines[at]); at -= 1) before.unshift(at);
+      const after: number[] = [];
+      for (let at = piece.to + 1; at < lines.length && after.length < HUNK_CONTEXT && holds(lines[at]); at += 1) after.push(at);
+      const chosen = [...before, ...piece.indexes, ...after].map((at) => lines[at] as HunkLine);
+      const first = chosen[0] as HunkLine;
+      const baseLine = chosen.find((line) => line.op !== '+')?.base ?? first.base;
+      const headLine = chosen.find((line) => line.op !== '-')?.head ?? first.head;
+      (placed[piece.key] ??= []).push({ base: baseLine, head: headLine, lines: chosen.map((line) => line.text) });
+    }
   }
   return placed;
 }

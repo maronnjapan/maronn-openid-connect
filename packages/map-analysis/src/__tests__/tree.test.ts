@@ -333,6 +333,14 @@ export async function fromContext(c: any) {
   await unknown.run();
   c.json({});
 }
+export function audit(subject: string) { return subject; }
+export function createAuditedResolver(inner: ConsentResolver): ConsentResolver {
+  const check = (subject: string) => { audit(subject); return inner.hasConsent(subject); };
+  return {
+    async hasConsent(subject: string) { return check(subject); },
+    async recordConsent(subject: string) { void subject; },
+  };
+}
 `;
   let members: Fixture;
   beforeAll(() => {
@@ -348,13 +356,20 @@ export async function fromContext(c: any) {
   it('should read a value of the request context by the type c.set() puts under its key, and say when it cannot', () => {
     const nodes = members.tree('fromContext').tree.nodes;
     expect(nodes[1]?.target).toEqual({ kind: 'member', id: 'lib:a.ts#ConsentResolver.recordConsent' });
-    expect(nodes[3]?.target).toEqual({ kind: 'untraceable', why: "c.get('somethingElse') の型が分からない" });
+    expect(nodes[3]?.target).toEqual({ kind: 'untraceable', why: "c.get('somethingElse') の型が分からない", method: 'run' });
     // A call of the framework on the context is no node.
     expect(nodes[4]?.kind).toBe('action');
   });
 
   it('should find the members an object literal implements', () => {
     expect(members.tree('createConsentResolver').tree.implements?.map((implementation) => implementation.member)).toEqual(['lib:a.ts#ConsentResolver.hasConsent', 'lib:a.ts#ConsentResolver.recordConsent']);
+  });
+
+  it('should keep what each implementation calls, through the functions the frame defines itself', () => {
+    expect(members.tree('createAuditedResolver').tree.implements).toEqual([
+      { member: 'lib:a.ts#ConsentResolver.hasConsent', lines: [33, 33], calls: ['lib:a.ts#audit', 'lib:a.ts#ConsentResolver.hasConsent'] },
+      { member: 'lib:a.ts#ConsentResolver.recordConsent', lines: [34, 34] },
+    ]);
   });
 });
 
@@ -428,5 +443,35 @@ app.post('/', async (c) => {
       ['defined', 'Validate refresh_token の値を使う'],
       ['nullish', 'Validate authorization_code へ'],
     ]);
+  });
+});
+
+describe('the words of a condition', () => {
+  const CONDITIONS = `
+export function isPublic(client: { secret?: string }): boolean { return client.secret === undefined; }
+export function lookup(key: string): string | undefined { return key; }
+export function single(client: { secret?: string }) { if (isPublic(client)) return; throw new Error('x'); }
+export function negated(client: { secret?: string }) { if (!(isPublic(client))) throw new Error('x'); }
+export function compound(url: URL, client: { secret?: string }) { if (url.protocol !== 'https:' && !isPublic(client)) throw new Error('x'); }
+export function value(key: string) { if (lookup(key)) return 1; return 2; }
+export function either(length: number) { if (length < 43 || length > 128) throw new Error('x'); }
+`;
+  let conditions: Fixture;
+  beforeAll(() => {
+    conditions = compile({ 'a.ts': CONDITIONS }, { summaries: { 'lib:a.ts#isPublic': 'パブリッククライアントなら true を返す。', 'lib:a.ts#lookup': '鍵の値を返す。' } });
+  });
+  afterAll(() => conditions.dispose());
+
+  it.each([
+    ['single', 'パブリッククライアントか', 'doc'],
+    ['negated', '「パブリッククライアント」が成り立たないか', 'doc'],
+    ['either', 'length が 43 より小さい、または length が 128 より大きいか', 'code'],
+  ])('should say what the condition of %s checks', (name, text, from) => {
+    const node = conditions.tree(name).tree.nodes[0];
+    expect([node?.text, node?.from]).toEqual([text, from]);
+  });
+
+  it.each(['compound', 'value'])('should not take the JSDoc of a call for the words of the condition of %s, which is more than that call or says no condition', (name) => {
+    expect(conditions.tree(name).tree.nodes[0]?.text).toBeUndefined();
   });
 });

@@ -754,11 +754,7 @@ function copyOf(jwks: JwkSet): JwkSet {
  */
 export function withClientJwksUriKeys(
   base: ClientKeyResolver,
-  options: {
-    findJwksUri: (clientId: string) => Promise<string | undefined>;
-    purposes: readonly ClientKeyPurpose[];
-    load: (uri: string, hint?: ClientKeyLookupHint) => Promise<JwkSet>;
-  },
+  options: ClientJwksUriKeyOptions,
 ): ClientKeyResolver {
   return {
     ...base,
@@ -772,4 +768,14 @@ export function withClientJwksUriKeys(
       return base.findClientKeys(clientId, purpose, hint);
     },
   };
+}
+
+/** The client lookup and key loader a jwks_uri resolver calls on demand. */
+export interface ClientJwksUriKeyOptions {
+  /** Return the jwks_uri the client registered, or undefined when it has none. */
+  findJwksUri(clientId: string): Promise<string | undefined>;
+  /** The purposes for which a registered jwks_uri supplies the client's keys. */
+  purposes: readonly ClientKeyPurpose[];
+  /** Load the URI's keys, refreshing for an unknown kid according to the cache policy. */
+  load(uri: string, hint?: ClientKeyLookupHint): Promise<JwkSet>;
 }

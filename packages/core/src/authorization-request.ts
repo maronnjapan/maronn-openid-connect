@@ -214,7 +214,7 @@ export type OfflineAccessGrantedCallback = (
 ) => boolean | Promise<boolean>;
 
 /**
- * `offline_access` の既定許可ロジック。
+ * 明示的な同意があり、クライアントが refresh_token グラントを許可されたときだけ offline_access を許可する。
  *
  * 独立した 2 軸の AND を取る。
  *
@@ -228,10 +228,12 @@ export type OfflineAccessGrantedCallback = (
  * 保存させるだけになる（RFC 9700 §4.14）。しかも失敗するのは発行時ではなく
  * クライアントが実際に更新を試みた時点なので、設定ミスの発見が遅れる。
  */
-export const defaultIsOfflineAccessGranted: OfflineAccessGrantedCallback = (
-  _request,
-  { promptValues, client },
-) => promptValues.includes('consent') && clientAllowsRefreshTokenGrant(client);
+export function defaultIsOfflineAccessGranted(
+  _request: Parameters<OfflineAccessGrantedCallback>[0],
+  { promptValues, client }: Parameters<OfflineAccessGrantedCallback>[1],
+): ReturnType<OfflineAccessGrantedCallback> {
+  return promptValues.includes('consent') && clientAllowsRefreshTokenGrant(client);
+}
 
 /**
  * `claims` リクエストパラメータ（OIDC Core 1.0 §5.5）を `JSON.parse` する前に課す
@@ -935,6 +937,35 @@ export interface ResolvedRequestObjectParams {
   requestObjectClaims?: Record<string, unknown>;
 }
 
+/** リクエストオブジェクトの検証に使う鍵と、受け付けるアルゴリズムの設定。 */
+export interface ResolveRequestObjectOptions {
+  /**
+   * 署名の検証に使う、クライアントが request_object の用途に登録した公開鍵を読む
+   * （`parseRequestObject()` の `loadJwks`）。JOSE ヘッダーを検査した後でだけ呼び、
+   * ヘッダーの `alg` と `kid` を渡す。`ClientKeyResolver.findClientKeys()` の第 3 引数
+   * （`{ kid }`）に渡せば、`jwks_uri` を登録したクライアントの見慣れない kid で鍵を取り直せる
+   * （OIDC Core 1.0 §10.1.1）。無いか、空の JWK Set を返すと、署名付き Request Object を
+   * invalid_request_object で拒否する。
+   */
+  loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
+  /**
+   * 受理する JWS 署名アルゴリズム。
+   * 未指定なら {@link SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS}（core が検証できる alg すべて）。
+   */
+  supportedSigningAlgs?: string[];
+  /**
+   * 署名無し（`alg: "none"`）Request Object を互換受理するか。既定 false（署名必須）。
+   * OIDF Conformance Suite 互換の場合のみ true にする。
+   */
+  allowUnsigned?: boolean;
+  /**
+   * クライアントが登録した `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）。
+   * あれば、ヘッダーの `alg` がこれと違う Request Object を invalid_request_object で拒否する
+   * （OIDC Core 1.0 §6.3.2）。
+   */
+  requestObjectSigningAlg?: string;
+}
+
 /**
  * リクエストオブジェクトを検証し、パラメータを返す。
  *
@@ -957,33 +988,7 @@ export interface ResolvedRequestObjectParams {
  */
 export async function resolveRequestObjectParams(
   params: AuthorizationRequestParams,
-  options: {
-    /**
-     * 署名の検証に使う、クライアントが request_object の用途に登録した公開鍵を読む
-     * （`parseRequestObject()` の `loadJwks`）。JOSE ヘッダーを検査した後でだけ呼び、
-     * ヘッダーの `alg` と `kid` を渡す。`ClientKeyResolver.findClientKeys()` の第 3 引数
-     * （`{ kid }`）に渡せば、`jwks_uri` を登録したクライアントの見慣れない kid で鍵を取り直せる
-     * （OIDC Core 1.0 §10.1.1）。無いか、空の JWK Set を返すと、署名付き Request Object を
-     * invalid_request_object で拒否する。
-     */
-    loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
-    /**
-     * 受理する JWS 署名アルゴリズム。
-     * 未指定なら {@link SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS}（core が検証できる alg すべて）。
-     */
-    supportedSigningAlgs?: string[];
-    /**
-     * 署名無し（`alg: "none"`）Request Object を互換受理するか。既定 false（署名必須）。
-     * OIDF Conformance Suite 互換の場合のみ true にする。
-     */
-    allowUnsigned?: boolean;
-    /**
-     * クライアントが登録した `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）。
-     * あれば、ヘッダーの `alg` がこれと違う Request Object を invalid_request_object で拒否する
-     * （OIDC Core 1.0 §6.3.2）。
-     */
-    requestObjectSigningAlg?: string;
-  } = {},
+  options: ResolveRequestObjectOptions = {},
 ): Promise<ResolvedRequestObjectParams> {
   if (params.request === undefined) {
     return { effectiveParams: { ...params } };

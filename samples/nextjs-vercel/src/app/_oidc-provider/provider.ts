@@ -108,18 +108,21 @@ const context = contextOf(features, {
 export const clientResolver = context.clientResolver;
 
 /**
- * The public keys of the registered clients, one purpose at a time (the OP
- * verifies signed Request Objects with those of request_object), read from
- * db/ for each request — and, for a client that registered a jwksUri, fetched
- * from its jwks_uri (client-jwks-uri.ts, RFC 7591 §2), the dynamically
- * registered clients included. Pass { fetch } as the last argument to send
- * those fetches through an egress proxy.
+ * The base public keys of the registered clients, including the feature
+ * hooks' additions. Endpoints call getClientKeyResolver() to add jwks_uri
+ * lookup explicitly when using these keys.
  */
-export const clientKeyResolver: ClientKeyResolver = withRegisteredClientJwksUri(
-  config,
-  () => context.clientResolver,
-  context.clientKeyResolver,
-);
+export const clientKeyResolver: ClientKeyResolver = context.clientKeyResolver;
+
+/**
+ * クライアントの鍵を、登録された `jwks_uri` も使って読むリゾルバを返す。
+ *
+ * 初期化の副作用として包まず、エンドポイントが明示的に呼ぶので、設定と core まで型で辿れる。
+ * 機能が組み立てたリゾルバと、その時点の設定を使う。
+ */
+export function getClientKeyResolver(): ClientKeyResolver {
+  return withRegisteredClientJwksUri(config, () => context.clientResolver, clientKeyResolver);
+}
 
 /** The stores of the authorization flows, on the same database. */
 export const stores = createProviderStores(database);
@@ -144,6 +147,8 @@ export const accessTokenIssuer: AccessTokenIssuer =
 export const corsOrigins: string | readonly string[] = process.env.OIDC_CORS_ORIGINS ?? config.issuer;
 
 /**
+ * 要求された acr_values の最優先の値と pwd の amr を返し、要求がなければ undefined を返す。
+ *
  * acr / amr of the tokens (OIDC Core 1.0 §2 / §3.1.2.1): the ID Token carries
  * both, and the access token the acr (RFC 9068 §2.2.1).
  *
@@ -154,11 +159,11 @@ export const corsOrigins: string | readonly string[] = process.env.OIDC_CORS_ORI
  * A real deployment must map this to its actual authentication context instead
  * of trusting the request.
  */
-export const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
+export async function acrResolver({ requestedAcrValues }: Parameters<AcrResolver>[0]): ReturnType<AcrResolver> {
   const acr = selectPreferredAcr(requestedAcrValues);
   if (acr === undefined) return undefined;
   return { acr, amr: ['pwd'] };
-};
+}
 
 // --- Signing keys -------------------------------------------------------------
 //

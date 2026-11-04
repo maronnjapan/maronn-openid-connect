@@ -1,8 +1,8 @@
 import {
-  type ClientKeyResolver,
   resolveRequestObjectParams,
   type ResolvedRequestObjectParams,
 } from '@maronn-openid-connect/core';
+import { getClientKeyResolver } from '../../../client-jwks-uri.js';
 import type { RegisteredClient } from '../../../config.js';
 import type { AuthorizationRequestInput } from '../../../endpoints/authorize/outcome.js';
 import { step } from '../../../endpoints/step.js';
@@ -46,7 +46,7 @@ export async function resolveRequestObject(
   client: RegisteredClient,
 ): Promise<ResolvedRequestObjectParams> {
   const config = c.get('config');
-  const clientKeyResolver: ClientKeyResolver = c.get('clientKeyResolver');
+  const clientKeyResolver = getClientKeyResolver(c);
   // 鍵は、resolveRequestObjectParams() がヘッダーの `alg` を確かめた後でだけ読む（loadJwks）。
   // そのため、検証しないリクエストオブジェクトのために鍵や `jwks_uri` を読むことはない。
   return resolveRequestObjectParams(params, {

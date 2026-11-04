@@ -3,7 +3,6 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  signingKeysToJwkSet,
   type AcrResolver,
   type ClientKeyResolver,
   type ClientResolver,
@@ -14,7 +13,6 @@ import {
   type SigningKeyProvider,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
-import { withRegisteredClientJwksUri } from './client-jwks-uri.js';
 import { createProviderConfig, type ProviderConfig } from './config.js';
 import { createCorsMiddleware } from './cors.js';
 import {
@@ -300,7 +298,8 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
  *
  * `c.set()` で入れるのは、設定、用途ごとの署名鍵の集合、ストア、ストアの上に作ったリゾルバ、クライアントのリゾルバ、ビュー、各機能のコンテキストのフックが返す値などである。
  * オプションでリゾルバやストアが渡されていれば、`db/` のものの代わりにそれを使う。
- * クライアントの鍵のリゾルバ（`clientKeyResolver`）は、渡されたものも `db/` のものも、`jwksUri` を持つクライアントに `jwks_uri` の鍵を返すよう包む（client-jwks-uri.ts の `withRegisteredClientJwksUri()`）。
+ * クライアントの鍵のリゾルバはそのまま入れ、`jwks_uri` の扱いはエンドポイントが呼ぶ `getClientKeyResolver()` に置く。
+ * 既定の認証と ID トークンの検証鍵も、使う側で型のあるストアと署名鍵から読む。
  *
  * 署名鍵を読み込めないとき、または読み込んだ集合が `validateSigningKeySet()` の検証に通らないときは、何も入れずに `server_error` の 503 のレスポンスを返す。
  * 呼び出し側は、そのレスポンスで応答する。
@@ -337,13 +336,8 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('config', createProviderConfig(options.config));
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
-  // クライアントの `jwks_uri` は、上で置いた `clientResolver` と `config` で読む。ほかのクライアントの鍵を持つのが、渡されたリゾルバでも db/ のリゾルバでも同じである。
-  c.set(
-    'clientKeyResolver',
-    withRegisteredClientJwksUri(c, options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)), {
-      fetch: options.clientJwksFetch,
-    }),
-  );
+  c.set('clientKeyResolver', options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)));
+  c.set('clientJwksFetch', options.clientJwksFetch);
   c.set('stores', stores);
   c.set('transactionStore', stores.transactionStore);
   c.set('authCodeStore', stores.authCodeStore);
@@ -352,14 +346,11 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('authSessionStore', stores.authSessionStore);
   c.set('browserSessionStore', stores.browserSessionStore);
   c.set('userStore', stores.userStore);
-  c.set('authenticateUser', (username: string, password: string) =>
-    stores.userStore.authenticate(username, password));
   c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
   c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
   c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
   c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
   c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);
-  c.set('revokeConsentAndTokens', storeResolvers.revokeConsentAndTokens);
 
   // `acrResolver` が渡されていれば入れる。
   // 渡されていなければ、トークンエンドポイントは、要求された `acr_values` のうち最も優先されるものをトークンに入れる。
@@ -368,7 +359,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   }
   // `id_token_hint` を検証する JWKS のプロバイダを入れる。
   // 渡されていなければ OP 自身の ID トークンの署名鍵を使うので、OP が発行した ID トークンを `id_token_hint` として検証できる（OIDC Core 1.0 §3.1.2.2）。
-  c.set('jwksProvider', options.jwksProvider ?? (() => signingKeysToJwkSet(idTokenSigningKeys)));
+  c.set('jwksProvider', options.jwksProvider);
   // セッションと同意のリゾルバを入れる。
   // 渡されていなければ、Cookie のセッションとストアの同意を読む既定のリゾルバを使うので、設定しなくても `prompt=none`、`max_age`、SSO が動く（OIDC Core 1.0 §3.1.2.1、§3.1.2.3）。
   c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);

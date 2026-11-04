@@ -11,6 +11,7 @@ import { deviceAuthorizationConfig } from '../../../config.js';
 import { resolveGrantableScopes } from '../../../../../scopes.js';
 import { type DeviceOutcome, type DeviceLoginSubmission, verificationFailure } from '../outcome.js';
 import { step } from '../../../../../endpoints/step.js';
+import type { UserStorage } from '../../../../../store.js';
 
 export const meta = step({
   id: 'submit-login',
@@ -44,7 +45,7 @@ export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): P
 
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore');
-  const authenticateUser = c.get('authenticateUser');
+  const userStore: UserStorage = c.get('userStore');
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
@@ -63,7 +64,7 @@ export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): P
 
   // ユーザー名とパスワードでエンドユーザーを認証する。
   // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
-  const user = await authenticateUser(username, password);
+  const user = await userStore.authenticate(username, password);
   if (!user) {
     // 失敗の回数をレコードに記録し、上限に達したらレコードを拒否の状態にする。
     // 回数の制限は、レコードごとにしかかからない。

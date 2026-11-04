@@ -3,6 +3,7 @@ import { contextOf, formPost, requestTo, TEST_ISSUER } from '../test-support/con
 import { rs256Key, staticKeyProvider } from '../test-support/keys.js';
 import { es256Key, providerApp } from '../test-support/screens.js';
 import { providerRoutes, setRequestContext, validateSigningKeySet } from './app.js';
+import { getClientKeyResolver } from './client-jwks-uri.js';
 import { createClientResolver, registerClient } from './db/memory/clients.js';
 import { createEmptyDatabase } from './db/memory/database.js';
 
@@ -193,7 +194,7 @@ describe('setRequestContext', () => {
       );
       const c = await contextWithJwksUriClient('https://default-resolver.example.com/jwks.json', { clientJwksFetch });
 
-      const jwks = await c.get('clientKeyResolver').findClientKeys('rp-uri', 'request_object', { kid: 'rp-key' });
+      const jwks = await getClientKeyResolver(c).findClientKeys('rp-uri', 'request_object', { kid: 'rp-key' });
 
       expect(jwks).toEqual({ keys: [{ ...jwk, use: 'sig', alg: 'RS256' }] });
       expect(clientJwksFetch.mock.calls.map(([input]) => input)).toEqual(['https://default-resolver.example.com/jwks.json']);
@@ -213,7 +214,7 @@ describe('setRequestContext', () => {
         clientJwksFetch,
       });
 
-      const jwks = await c.get('clientKeyResolver').findClientKeys('rp-uri', 'request_object', { kid: 'rp-key' });
+      const jwks = await getClientKeyResolver(c).findClientKeys('rp-uri', 'request_object', { kid: 'rp-key' });
 
       expect(jwks).toEqual({ keys: [{ ...jwk, use: 'sig', alg: 'RS256' }] });
       expect(clientJwksFetch.mock.calls.map(([input]) => input)).toEqual(['https://own-resolver.example.com/jwks.json']);
@@ -228,7 +229,7 @@ describe('setRequestContext', () => {
         clientJwksFetch,
       });
 
-      expect(await c.get('clientKeyResolver').findClientKeys('rp-plain', 'request_object')).toEqual({ keys: [] });
+      expect(await getClientKeyResolver(c).findClientKeys('rp-plain', 'request_object')).toEqual({ keys: [] });
       expect(clientKeyResolver.findClientKeys).toHaveBeenCalledWith('rp-plain', 'request_object', undefined);
       expect(clientJwksFetch).not.toHaveBeenCalled();
     });

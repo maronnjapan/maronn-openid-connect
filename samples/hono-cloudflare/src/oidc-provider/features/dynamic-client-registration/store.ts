@@ -1,4 +1,4 @@
-import type { ClientKeyResolver, ClientKeysByPurpose, JwkSet } from '@maronn-openid-connect/core';
+import type { ClientKeyResolver, ClientKeysByPurpose, ClientResolver, JwkSet, TokenClientResolver } from '@maronn-openid-connect/core';
 import type { DynamicallyRegisteredClient } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 
@@ -141,7 +141,7 @@ function keysByPurpose(jwks: JwkSet, purposes: readonly string[]): ClientKeysByP
  * 実験的な機能（RFC 7591）である。
  */
 export function withDynamicallyRegisteredClients<
-  Resolver extends { findClient(clientId: string): Promise<any> },
+  Resolver extends ClientResolver | TokenClientResolver,
 >(base: Resolver): Resolver {
   return {
     ...base,
@@ -169,8 +169,8 @@ export function withDynamicallyRegisteredClients<
  * どちらにもないクライアントや、鍵のない用途には、空の鍵の集合を返す（core の `ClientKeyResolver` の約束どおり）。
  *
  * 手がかり（`hint`。検証する JWS の `kid`）は、そのまま `base` に渡す。
- * `base` は `jwks_uri` の鍵を返すリゾルバ（client-jwks-uri.ts の `withRegisteredClientJwksUri()`）で包まれているので、`jwksUri` を持つクライアントには、動的に登録したものも含めて `jwks_uri` の鍵が返る。
- * そのリゾルバは、この機能が広げた `clientResolver` でクライアントを探す。
+ * `jwks_uri` の鍵は、使うエンドポイントが呼ぶ `getClientKeyResolver()` が、このリゾルバの外側に加える。
+ * そのリゾルバは、この機能が広げた `clientResolver` でクライアントを探すので、動的に登録したものも同じ扱いになる。
  *
  * 実験的な機能（RFC 7591）である。
  */

@@ -74,8 +74,10 @@ function respond(c: any, outcome: AuthorizationOutcome): Response {
   return c.json({ error: 'server_error' }, 500);
 }
 
-const handleAuthorizationRequest = async (c: any): Promise<Response> =>
-  respond(c, await processAuthorizationRequest(c));
+/** 認可リクエストを処理し、結果を HTTP レスポンスにして返す。 */
+async function handleAuthorizationRequest(c: any): Promise<Response> {
+  return respond(c, await processAuthorizationRequest(c));
+}
 
 // OIDC Core 1.0 Section 3.1.2.1: Authorization Endpoint must support both GET and POST.
 authorizePage.get('/', handleAuthorizationRequest);

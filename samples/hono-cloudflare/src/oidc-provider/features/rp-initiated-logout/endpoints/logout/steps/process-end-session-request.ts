@@ -14,6 +14,7 @@ import { buildLogoutConfirmationCookie } from '../../../cookies.js';
 import type { LogoutOutcome } from '../outcome.js';
 import { step } from '../../../../../endpoints/step.js';
 import { rpInitiatedLogoutConfig } from '../../../config.js';
+import { idTokenHintJwks } from '../../../../../id-token-hint-jwks.js';
 
 export const meta = step({
   id: 'process-end-session-request',
@@ -62,7 +63,8 @@ export async function processEndSessionRequest(c: any, params: URLSearchParams):
     expectedAudience = request.clientId ?? extractIdTokenHintAudience(request.idTokenHint);
     if (expectedAudience !== null) {
       try {
-        const jwks = await c.get('jwksProvider')();
+        const jwks = await idTokenHintJwks(c);
+        if (jwks === undefined) throw new Error('ID Token verification keys are not configured');
         verifiedHint = await validateIdTokenHint(request.idTokenHint, {
           expectedIss: config.issuer,
           expectedAud: expectedAudience,

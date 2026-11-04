@@ -2,8 +2,8 @@ import {
   type AuthTransaction,
   validateIdTokenHint,
   IdTokenHintError,
-  type JwkSet,
 } from '@maronn-openid-connect/core';
+import { idTokenHintJwks } from '../../../id-token-hint-jwks.js';
 import { type AuthorizationOutcome, buildErrorResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { step } from '../../step.js';
@@ -46,17 +46,16 @@ export async function verifyIdTokenHint(
 ): Promise<{ verifiedHintSubject: string | undefined } | AuthorizationOutcome> {
   if (transaction.idTokenHint === undefined) return { verifiedHintSubject: undefined };
   const transactionStore = c.get('transactionStore');
-  const jwksProvider = c.get('jwksProvider') as undefined | (() => Promise<JwkSet> | JwkSet);
-  if (!jwksProvider) {
-    // `jwksProvider` が無ければ `id_token_hint` を検証できないので、`login_required` で拒否する。
-    await transactionStore.delete('auth_txn:' + transactionId);
-    return {
-      kind: 'authorization_response',
-      response: await buildErrorResponse(responseMode, transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer),
-    };
-  }
   try {
-    const jwks = await jwksProvider();
+    const jwks = await idTokenHintJwks(c);
+    if (jwks === undefined) {
+      // 検証鍵が無ければ、`login_required` で拒否する。
+      await transactionStore.delete('auth_txn:' + transactionId);
+      return {
+        kind: 'authorization_response',
+        response: await buildErrorResponse(responseMode, transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer),
+      };
+    }
     const verified = await validateIdTokenHint(transaction.idTokenHint, {
       expectedIss: issuer,
       expectedAud: transaction.clientId,

@@ -1,7 +1,7 @@
 /**
  * The jwks_uri of the registered clients (RFC 7591 §2 / OIDC Dynamic Client
- * Registration 1.0 §2): app.ts wraps the ClientKeyResolver (that of db/, or
- * the one passed in) so it hands out the keys of a client's jwks_uri for the
+ * Registration 1.0 §2): the endpoint calls getClientKeyResolver() to wrap the
+ * ClientKeyResolver (that of db/, or the one passed in) for the
  * purposes of config.clientJwksUriPurposes, so a client rotates its keys by
  * changing its jwks_uri, with no change to the OP.
  *
@@ -31,6 +31,17 @@ const registry = globalThis as typeof globalThis & { __oidcClientJwksUriCache?: 
 
 /** The keys of the jwks_uri this process fetched, by jwks_uri. */
 export const clientJwksUriCache: ClientJwksUriCache = (registry.__oidcClientJwksUriCache ??= createClientJwksUriCache());
+
+/**
+ * リクエストのクライアントの鍵を、登録された `jwks_uri` も使って読むリゾルバを返す。
+ *
+ * 配線をエンドポイントから呼ぶ関数に置き、コンテキストには設定と素のリゾルバだけを持たせる。
+ * 機能のコンテキストフックが置き換えたリゾルバも、呼ばれた時点のものを使う。
+ */
+export function getClientKeyResolver(c: any): ClientKeyResolver {
+  const base: ClientKeyResolver = c.get('clientKeyResolver');
+  return withRegisteredClientJwksUri(c, base, { fetch: c.get('clientJwksFetch') });
+}
 
 /**
  * `base`（db/ のリゾルバか、`createApp()` / `applyOidc()` に渡したリゾルバ）を包み、`jwksUri` を持つクライアントには `config.clientJwksUriPurposes` の用途で `jwks_uri` の鍵だけを返すリゾルバを作って返す。

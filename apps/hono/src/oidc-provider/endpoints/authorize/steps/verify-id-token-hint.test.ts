@@ -92,6 +92,7 @@ describe('verifyIdTokenHint', () => {
     it('should redirect login_required and drop the transaction when no jwksProvider is configured', async () => {
       const { c, db, signingKey, stores } = await providerContext();
       c.set('jwksProvider', undefined);
+      c.set('idTokenSigningKeys', undefined);
       const transaction = transactionOf({ idTokenHint: await idTokenHintFor(signingKey) });
       await storeTransaction(stores, transaction);
 

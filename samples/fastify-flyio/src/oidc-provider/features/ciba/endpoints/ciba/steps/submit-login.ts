@@ -8,6 +8,7 @@ import { buildSessionCookie } from '../../../../../cookies.js';
 import { cibaConfig } from '../../../config.js';
 import { type CibaOutcome, type CibaLoginSubmission, verificationFailure, listPendingRequests } from '../outcome.js';
 import { step } from '../../../../../endpoints/step.js';
+import type { UserStorage } from '../../../../../store.js';
 
 export const meta = step({
   id: 'submit-login',
@@ -38,7 +39,7 @@ export async function submitCibaLogin(c: any, input: CibaLoginSubmission): Promi
 
   const browserSessionStore = c.get('browserSessionStore');
   const loginTransactionStore = c.get('cibaLoginTransactionStore');
-  const authenticateUser = c.get('authenticateUser');
+  const userStore: UserStorage = c.get('userStore');
 
   let transaction;
   try {
@@ -54,7 +55,7 @@ export async function submitCibaLogin(c: any, input: CibaLoginSubmission): Promi
 
   // ユーザー名とパスワードでエンドユーザーを認証する。
   // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
-  const user = await authenticateUser(username, password);
+  const user = await userStore.authenticate(username, password);
   if (!user) {
     // 失敗の回数をログイントランザクションに記録し、上限に達したらトランザクションを削除する。
     // 回数の制限は、トランザクションごとにしかかからない。

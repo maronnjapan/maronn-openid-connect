@@ -78,7 +78,7 @@ describe('withRegisteredClientJwksUri', () => {
   });
 
   // UC-3: the DCR feature replaces clientResolver in its context hook, after
-  // app.ts wrapped the ClientKeyResolver, so the client is looked up on use.
+  // a caller created a resolver, so the client is looked up on use.
   it('should look the client up with the clientResolver the context holds when the keys are asked for', async () => {
     const { c, resolver } = setUp();
     c.set('clientResolver', clientsOf({ clientId: 'dcr-1', redirectUris: ['https://rp.example.com/cb'], jwksUri: JWKS_URI }));

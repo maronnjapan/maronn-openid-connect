@@ -15,6 +15,7 @@ import { type TokenRequestBody, TokenEndpointError } from '../../../endpoints/to
 import { respondToken } from '../../../endpoints/token/steps/respond.js';
 import { idJagConfig } from '../config.js';
 import { step } from '../../../endpoints/step.js';
+import { idTokenHintJwks } from '../../../id-token-hint-jwks.js';
 
 export const meta = step({
   id: 'dispatch-id-jag-issuance',
@@ -76,7 +77,8 @@ export async function issueIdJag(
     }
     // `subject_token` は、`id_token_hint` と同じ JWKS（この OP の ID トークンの署名鍵）で検証する。
     // アサーションのオーディエンスが認証したクライアントであることも求められ（ID-JAG draft §4.3.3）、それは `processIdJagIssuanceRequest()` が確かめる。
-    const idJagJwks = await c.get('jwksProvider')();
+    const idJagJwks = await idTokenHintJwks(c);
+    if (idJagJwks === undefined) throw new Error('ID Token verification keys are not configured');
 
     const idJagIssuanceResponse = await processIdJagIssuanceRequest({
       params,

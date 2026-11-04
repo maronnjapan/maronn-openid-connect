@@ -19,6 +19,7 @@ import {
   validateClientJwksUri,
   withClientJwksUriKeys,
   type ClientJwksUriCache,
+  type ClientJwksUriKeyOptions,
   type ClientJwksUriLoadOptions,
   type ClientKeyResolver,
   type ClientResolver,
@@ -56,7 +57,7 @@ export function withRegisteredClientJwksUri(
   options: { fetch?: typeof fetch; cache?: ClientJwksUriCache } = {},
 ): ClientKeyResolver {
   const cache = options.cache ?? clientJwksUriCache;
-  const jwksUriOptions = {
+  const jwksUriOptions: Omit<ClientJwksUriKeyOptions, 'purposes'> = {
     async findJwksUri(clientId: string): Promise<string | undefined> {
       const client = (await clientResolver().findClient(clientId)) as RegisteredClient | null;
       return client?.jwksUri;
@@ -75,7 +76,7 @@ export function withRegisteredClientJwksUri(
   };
   return {
     ...base,
-    // provider.ts はこのリゾルバを一度だけ作るので、設定は呼ばれるたびに読み、その後の `config` の変更も効くようにする。
+    // 作ったリゾルバを保持する呼び出し側にも、以降の設定変更が効くようにする。
     findClientKeys: (clientId, purpose, hint) =>
       withClientJwksUriKeys(base, { ...jwksUriOptions, purposes: config.clientJwksUriPurposes }).findClientKeys(
         clientId,

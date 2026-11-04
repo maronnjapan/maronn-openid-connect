@@ -4,7 +4,7 @@ import {
   type ResolvedRequestObjectParams,
 } from '@maronn-openid-connect/core';
 import type { RegisteredClient } from '../../config';
-import { clientKeyResolver, config } from '../../provider';
+import { getClientKeyResolver, config } from '../../provider';
 
 /**
  * リクエストオブジェクトを検証し、値をクエリに反映する。
@@ -30,6 +30,7 @@ export async function resolveRequestObject(
   params: AuthorizationRequestParams,
   client: RegisteredClient,
 ): Promise<ResolvedRequestObjectParams> {
+  const clientKeyResolver = getClientKeyResolver();
   // 鍵は、resolveRequestObjectParams() がヘッダーの `alg` を確かめた後でだけ読む（loadJwks）。
   // そのため、検証しないリクエストオブジェクトのために鍵や `jwks_uri` を読むことはない。
   return resolveRequestObjectParams(params, {

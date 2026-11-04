@@ -19,7 +19,8 @@ import { respondUserInfo } from './steps/respond.js';
  */
 export const userinfoApp = new WebRouter();
 
-const handler = async (c: any) => {
+/** アクセストークンを検証し、開示できる UserInfo を JSON か署名付き JWT で返す。 */
+async function handler(c: any): Promise<Response> {
   try {
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
     const accessToken = await parseUserInfoRequest(c);
@@ -38,7 +39,7 @@ const handler = async (c: any) => {
   } catch (error) {
     return respondUserInfoError(c, error);
   }
-};
+}
 
 userinfoApp.get('/', handler);
 userinfoApp.post('/', handler);

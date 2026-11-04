@@ -1,6 +1,5 @@
 import {
   AuthorizationError,
-  createClientJwksUriCache,
   signJwt,
   type ClientInfo,
   type Jwk,
@@ -11,9 +10,8 @@ import { contextOf, providerContext } from '../../../../test-support/context.js'
 import { es256Key, signRs256Jwt, unsignedJwt } from '../../../../test-support/feature-endpoints.js';
 import { rs256Key } from '../../../../test-support/keys.js';
 import type { AuthorizationRequestInput } from '../../../endpoints/authorize/outcome.js';
-import { withRegisteredClientJwksUri } from '../../../client-jwks-uri.js';
 import { createProviderConfig, type ProviderConfig, type RegisteredClient } from '../../../config.js';
-import { createClientKeyResolver, registerClient } from '../../../db/memory/clients.js';
+import { registerClient } from '../../../db/memory/clients.js';
 import { resolveRequestObject } from './resolve-request-object.js';
 
 const REDIRECT_URI = 'https://rp.example.com/callback';
@@ -46,7 +44,7 @@ function paramsWith(request?: string): AuthorizationRequestInput {
   return (request === undefined ? { ...QUERY } : { ...QUERY, request }) as AuthorizationRequestInput;
 }
 
-const JWKS_URI = 'https://rp.example.com/jwks.json';
+let jwksUriCount = 0;
 
 /** The public JWK a jwks_uri publishes for a signing key. */
 function publishedJwk(key: SigningKey): Record<string, unknown> {
@@ -60,21 +58,19 @@ function publishedJwk(key: SigningKey): Record<string, unknown> {
 async function contextWithJwksUriClient(
   input: { config?: Partial<ProviderConfig>; requestObjectSigningAlg?: string; published: SigningKey[][] },
 ) {
+  jwksUriCount += 1;
   const context = await providerContext({ options: { config: input.config ?? {} } });
   await registerClient(context.db, {
     clientId: 'ro-client',
     redirectUris: [REDIRECT_URI],
-    jwksUri: JWKS_URI,
+    jwksUri: `https://rp-${jwksUriCount}.example.com/jwks.json`,
     ...(input.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: input.requestObjectSigningAlg }),
   });
   const responses = [...input.published];
   const fetch = vi.fn(async () =>
     new Response(JSON.stringify({ keys: (responses.shift() ?? []).map(publishedJwk) }), { status: 200 }),
   );
-  context.c.set(
-    'clientKeyResolver',
-    withRegisteredClientJwksUri(context.c, createClientKeyResolver(context.db), { fetch, cache: createClientJwksUriCache() }),
-  );
+  context.c.set('clientJwksFetch', fetch);
   return { ...context, fetch };
 }
 

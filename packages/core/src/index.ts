@@ -115,6 +115,7 @@ export type {
   ClientInfo,
   ClientResolver,
   ResolvedRequestObjectParams,
+  ResolveRequestObjectOptions,
   ValidatedAuthorizationRequest,
   OfflineAccessGrantedCallback,
 } from './authorization-request.js';
@@ -423,6 +424,7 @@ export type {
   FetchedClientJwkSet,
   ClientJwksUriLoadOptions,
   ClientJwksUriCache,
+  ClientJwksUriKeyOptions,
 } from './client-jwks-uri.js';
 
 export {

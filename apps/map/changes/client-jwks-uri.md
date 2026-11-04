@@ -5,8 +5,8 @@ OP は署名付きのリクエストオブジェクトを検証するときに `
 クライアントが `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）を登録していれば、その alg で署名したリクエストオブジェクトだけを受け付ける（OIDC Core 1.0 §6.3.2）。
 あわせて、リクエストオブジェクトの検証で鍵ごとに使える alg を一つに決め、ヘッダーの `alg` と一致する鍵だけを使う（RFC 8725 §3.1）。
 
-`jwks_uri` から鍵を取る関数（取得、期限、キャッシュ、生成コードのリゾルバ）は、地図では届く先が無いと出る。
-鍵は `ClientKeyResolver.findClientKeys()`（型で追えない呼び出し）の先で読むからで、実際には /authorize のリクエストオブジェクトの検証から呼ばれる。
+鍵の取得は、署名を検証するために必要になった時点まで遅らせる。
+この遅延した処理も構築元や callback の型に隠れないよう、生成コードは明示的な helper と型付きの契約を通す。
 
 ## parseRequestObject, loadVerificationKeys <!-- core:request-object.ts#parseRequestObject core:request-object.ts#loadVerificationKeys -->
 
@@ -36,7 +36,7 @@ OP は署名付きのリクエストオブジェクトを検証するときに `
 
 `jwks_uri` はクライアントが決める URL で、OP がそこへ取りに行く。
 そのため、OP の内側のネットワーク（ループバック、私設、リンクローカル、クラウドのメタデータ）へ届かせる SSRF の踏み台になりうる（RFC 8725 §3.10、RFC 9101 §10.4.1）。
-地図では DCR の登録にだけ届くと出るが、鍵を取るたびに、キャッシュと取得の関数もこの検査を通す。
+登録時の検査だけで信用せず、鍵の取得時にも同じ宛先の方針を適用する。
 
 気をつけること:
 - 見るのはホスト名で、DNS の解決先は見ない（Web 標準の API では解決先を得られない）。解決先まで縛るときは、egress プロキシを通る fetch を注入する（生成コードの `clientJwksFetch`）
@@ -82,7 +82,7 @@ RFC 7591 §2 は `jwks` より `jwks_uri` を勧めるので、`jwks_uri` を既
 ## withRegisteredClientJwksUri, clientJwksUriLoadOptionsOf, hostOf, setRequestContext, secondsFromEnvironment <!-- hono:oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri nextjs:app/_oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri hono:oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf nextjs:app/_oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf hono:oidc-provider/client-jwks-uri.ts#hostOf nextjs:app/_oidc-provider/client-jwks-uri.ts#hostOf hono:oidc-provider/app.ts#setRequestContext nextjs:app/_oidc-provider/provider.ts#secondsFromEnvironment -->
 
 生成コードで、`jwksUri` を持つクライアントの鍵の出どころを `jwks_uri` だけにし、ほかのクライアントは今までどおり db/ か渡したリゾルバに任せるため。
-`createApp()` / `applyOidc()` に渡したリゾルバも包む（`setRequestContext`）のは、リゾルバを差し替えても `jwks_uri` が効くようにするためである。
+`createApp()` / `applyOidc()` に渡した元のリゾルバも、利用時に `getClientKeyResolver()` から包む。リゾルバを差し替えても `jwks_uri` が効き、構築の振る舞いが初期化の陰に隠れないようにするためである。
 Next.js の provider.ts は、取得とキャッシュの設定の一部を環境変数（`OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS`、`OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS`）から読む（`secondsFromEnvironment`）。
 
 気をつけること: 使えない `jwks_uri` は、ホストと理由を `console.warn` に書き、応答には出さない。ログにはクライアントが決めたホスト名が載る。

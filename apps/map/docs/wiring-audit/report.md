@@ -1,6 +1,6 @@
 # 配線の地図化: 調査・設計・検証報告
 
-基準は `claude/upbeat-faraday-64u0g7` の `ef250f1`。題材が main にないため、このブランチに対する差分として実装した。コミットは、コードの形（`71627ac`）、解析・画面（`ecf04a2`）、規則・検査・skill・記録の順に分けた。
+棚卸しと配線の修正前後比較の調査基準は `claude/upbeat-faraday-64u0g7` の `ef250f1`。PR のマージ先は `main` であり、main に未反映の背景ブランチの `jwks_uri` / `request_object_signing_alg` 対応も含む。コミットは、コードの形（`71627ac`）、解析・画面（`ecf04a2`）、規則・検査・skill・記録の順に分けた。
 
 ## 地図が根にするもの、型で辿るもの、辿らないもの
 
@@ -70,7 +70,9 @@ apps/map の実行トレースの根は Hono の handler/pipeline と Next.js �
 
 cache までの型の橋は、ParseRequestObjectOptions.loadJwks → ResolveRequestObjectOptions.loadJwks → ClientKeyResolver.findClientKeys → ClientJwksUriKeyOptions.load → ClientJwksUriCache.load。defaulted optional options、spread での受渡し、NonNullable の indexed callable を含む。repository test が実際の両アプリの経路と必要 feature を検査する。
 
-PR モード（MAP_BASE=origin/claude/upbeat-faraday-64u0g7）でも、getClientKeyResolver、callback contract の変更に到達先があり、変更 30 フレーム、説明不足 0、変えた行のノード外 0 を確認した。PR に手書きの到達先は加えていない。
+配線変更だけの比較（MAP_BASE=origin/claude/upbeat-faraday-64u0g7）では、getClientKeyResolver、callback contract の変更に到達先があり、変更 30 フレーム、説明不足 0、変えた行のノード外 0 を確認した。PR に手書きの到達先は加えていない。
+
+マージ先 main 基準でも `MAP_BASE=origin/main pnpm run build:map` を実行した。変更 87 フレーム、説明不足・変更行のノード外・無効な診断は 0、全候補照合も通過した。unknown / ambiguous な変更メモも 0。[main 基準の出力要約](main-base-check.json) に比較対象と件数を保存した。
 
 ## 検証結果
 
@@ -95,4 +97,4 @@ PR モード（MAP_BASE=origin/claude/upbeat-faraday-64u0g7）でも、getClient
 
 instance 単位の値の provenance、middleware の正確な route/mount 順序、外部コード・動的 key・任意 callback の実装推定は行っていない。interface 単位の保守的な結び付けを保ち、不確実なところは診断とする。生成 OP の入力外のアプリ入口や CLI/解析ツール自身を OP の endpoint と混同していない。
 
-core の実行時 API は壊しておらず、公開 callback の戻り値型も保持したので core/CLI の changeset は patch とした。Hono 内部 context の旧既定 callback を直接差し替える利用と、Next.js の素の clientKeyResolver の利用は新しい helper を通す形へ移る。ブラウザ E2E と外部 OIDF 実環境テストは今回指定されたパッケージ検査とは別であり実行していない。公開・デプロイ・マージは行っていない。
+配線修正の追加分では core の実行時 API と公開 callback の戻り値型を保ち、core/CLI の patch changeset を追加した。main との差分全体には、背景ブランチから継承した `jwks` オプションと `DEFAULT_REQUEST_OBJECT_SIGNING_ALGS` の削除などの破壊的変更も含む。移行方法は既存の core minor changeset と `client-jwks-uri.md` に記載済みであり、追加の patch だけで PR 全体のバージョン変更を表していない。Hono 内部 context の旧既定 callback を直接差し替える利用と、Next.js の素の clientKeyResolver の利用は新しい helper を通す形へ移る。ブラウザ E2E と外部 OIDF 実環境テストは今回指定されたパッケージ検査とは別であり実行していない。公開・デプロイ・マージは行っていない。

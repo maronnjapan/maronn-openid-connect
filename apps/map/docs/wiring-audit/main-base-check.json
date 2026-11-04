@@ -1,0 +1,19 @@
+{
+  "base": {
+    "ref": "origin/main",
+    "commit": "70959cd0f7d53bdd197e12928b8effacb6f8c49c"
+  },
+  "head": {
+    "commit": "8a010e25b4b72cce52008319697208c8e1cb3382",
+    "dirty": false
+  },
+  "changedFrames": 87,
+  "undocumented": [],
+  "unknown": [],
+  "ambiguous": [],
+  "coverage": {
+    "outside-map-roots": 651,
+    "traced": 307,
+    "untraceable": 419
+  }
+}

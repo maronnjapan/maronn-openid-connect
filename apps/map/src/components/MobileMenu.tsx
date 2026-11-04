@@ -2,19 +2,19 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { createPortal } from 'react-dom';
 
 const MOBILE_QUERY = '(max-width: 899px)';
-const SECTIONS = ['navigation', 'screen', 'cases', 'diagram', 'callers', 'endpoints'] as const;
+const SECTIONS = ['navigation', 'screen', 'cases', 'endpoints'] as const;
 const MenuContext = createContext<{ mobile: boolean; target: HTMLDivElement | null; close: () => void }>({
   mobile: false,
   target: null,
   close: () => {},
 });
 
-/** Read the shared menu so navigation can return the reader to the diagram. */
+/** Read the shared menu so navigation can return the reader to the outline. */
 export function useMobileMenu() {
   return useContext(MenuContext);
 }
 
-/** Keep mobile navigation and settings in a modal above a full-size diagram. */
+/** Keep mobile navigation and settings in a modal above the full-size outline. */
 export function MobileMenu({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches);
   const [open, setOpen] = useState(false);

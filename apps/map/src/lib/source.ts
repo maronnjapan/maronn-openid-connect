@@ -1,6 +1,13 @@
-import type { FlowEndpoint, FunctionCard, MapData } from '../types';
+/**
+ * What the code drawer can show: a whole file, or the lines of a function or
+ * an endpoint body, and the functions those call (down to core), so the
+ * reader can follow the code without leaving the trace. Nothing here touches
+ * the DOM.
+ */
+import type { FlowEndpoint, FunctionEntry, MapData } from '../types';
+import { entryOf } from './trace';
 
-/** A whole file or a function's inclusive source range, selectable in the drawer. */
+/** A whole file or the inclusive lines of a frame, selectable in the drawer. */
 export interface SourceTarget {
   id: string;
   label: string;
@@ -9,13 +16,21 @@ export interface SourceTarget {
   end?: number;
 }
 
+/** The lines of a frame, when this version of the map carries them. */
+export function frameSource(data: MapData, id: string): SourceTarget | undefined {
+  const entry = entryOf(data, id);
+  if (entry?.source === undefined) return undefined;
+  const label = 'endpoint' in entry ? `${entry.name}（エンドポイントの処理） · ${entry.package}:${entry.module}` : `${entry.name}() · ${entry.package}:${entry.module}`;
+  return { id, label, ...entry.source };
+}
+
 /** A function's source, when this version of the map carries it. */
-export function functionSource(card: FunctionCard): SourceTarget | undefined {
+export function functionSource(card: FunctionEntry): SourceTarget | undefined {
   return card.source === undefined ? undefined : { id: card.id, label: `${card.name}() · ${card.package}:${card.module}`, ...card.source };
 }
 
-/** Functions reachable from the given roots, once each even when calls form a cycle. */
-function reachedSources(data: MapData, roots: string[]): SourceTarget[] {
+/** The frames reachable from some roots (themselves included), once each even when calls form a cycle. */
+function reachedSources(data: MapData, roots: readonly string[]): SourceTarget[] {
   const seen = new Set<string>();
   const targets: SourceTarget[] = [];
   const queue = [...roots];
@@ -23,26 +38,24 @@ function reachedSources(data: MapData, roots: string[]): SourceTarget[] {
     const id = queue[index] as string;
     if (seen.has(id)) continue;
     seen.add(id);
-    const card = data.functions[id];
-    if (card === undefined) continue;
-    const target = functionSource(card);
+    const entry = entryOf(data, id);
+    if (entry === undefined) continue;
+    const target = frameSource(data, id);
     if (target !== undefined) targets.push(target);
-    queue.push(...card.calls, ...(card.flow?.nodes.flatMap((node) => node.callee === undefined ? [] : [node.callee]) ?? []));
+    queue.push(...entry.calls);
   }
   return targets;
 }
 
-/** The endpoint file, its step functions and every function they call, including unmarked Route Handlers. */
+/** The file of an endpoint, the frame its trace starts from and every function that calls. */
 export function endpointSources(data: MapData, endpoint: FlowEndpoint): SourceTarget[] {
-  const targets: SourceTarget[] = endpoint.source === undefined ? [] : [{ id: endpoint.source, label: 'エンドポイント全体', file: endpoint.source }];
-  const own = Object.values(data.functions).filter((card) => card.source?.file === endpoint.source && endpoint.source !== undefined);
-  const roots = [...endpoint.steps.flatMap((step) => [...(step.functionId === undefined ? [] : [step.functionId]), ...step.calls]), ...own.map((card) => card.id)];
-  return [...targets, ...reachedSources(data, roots)];
+  const targets: SourceTarget[] = endpoint.source === undefined ? [] : [{ id: endpoint.source, label: 'エンドポイントのファイル全体', file: endpoint.source }];
+  return [...targets, ...reachedSources(data, [endpoint.root])];
 }
 
-/** A function and all of its callees, so the reader can follow code without leaving the diagram. */
-export function functionSources(data: MapData, card: FunctionCard): SourceTarget[] {
-  return reachedSources(data, [card.id]);
+/** A frame and all of its callees. */
+export function frameSources(data: MapData, id: string): SourceTarget[] {
+  return reachedSources(data, [id]);
 }
 
 /** Source lines with their original file numbers; a whole file leaves the range unspecified. */

@@ -1,40 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import type { FlowEndpoint, FunctionCard, MapData } from '../types';
-import { endpointSources, functionSources, sourceLines } from './source';
+import type { FlowEndpoint, FunctionEntry, MapData } from '../types';
+import { endpointSources, frameSources, sourceLines } from './source';
 
-function card(id: string, calls: string[] = []): FunctionCard {
-  return { id, name: id, package: 'core', module: `${id}.ts`, line: 3, exported: true, kind: 'other', summary: '', calls, calledBy: [], source: { file: `core:${id}.ts`, start: 1, end: 5 } };
+function card(id: string, calls: string[] = []): FunctionEntry {
+  return { id, name: id, package: 'core', module: `${id}.ts`, line: 3, exported: true, kind: 'other', summary: '', calls, calledBy: [], sites: [], frame: `./data/functions/${id}.json`, source: { file: `core:${id}.ts`, start: 1, end: 5 } };
 }
 
 const first = card('first', ['shared', 'unknown']);
 const shared = card('shared', ['first']);
 const handler = card('handler', ['shared']);
 handler.source = { file: 'nextjs:app/token/route.ts', start: 3, end: 10 };
-const data = { functions: { first, shared, handler } } as unknown as MapData;
+const data = {
+  functions: { first, shared, handler },
+  bodies: { 'endpoint:token': { id: 'endpoint:token', endpoint: 'token', name: 'POST /token', package: 'hono', module: 'oidc-provider/endpoints/token/pipeline.ts', line: 40, summary: '', calls: ['first'], sites: [], frame: 'x', source: { file: 'hono:oidc-provider/endpoints/token/pipeline.ts', start: 40, end: 120 } } },
+} as unknown as MapData;
 
 describe('code targets', () => {
   it('follows nested calls once even with recursion and unknown callees', () => {
-    expect(functionSources(data, first).map((target) => target.id)).toEqual(['first', 'shared']);
+    expect(frameSources(data, 'first').map((target) => target.id)).toEqual(['first', 'shared']);
   });
 
-  it('offers the endpoint and its steps before their transitive callees', () => {
-    const endpoint = { source: 'hono:token/pipeline.ts', steps: [{ functionId: 'first', calls: ['shared'] }] } as FlowEndpoint;
-    expect(endpointSources(data, endpoint).map((target) => target.id)).toEqual(['hono:token/pipeline.ts', 'first', 'shared']);
+  it('offers the file of the endpoint, the frame its trace starts from and what that calls', () => {
+    const endpoint = { source: 'hono:oidc-provider/endpoints/token/pipeline.ts', root: 'endpoint:token', steps: [] } as unknown as FlowEndpoint;
+    expect(endpointSources(data, endpoint).map((target) => target.id)).toEqual(['hono:oidc-provider/endpoints/token/pipeline.ts', 'endpoint:token', 'first', 'shared']);
+    expect(endpointSources(data, endpoint)[1]).toMatchObject({ start: 40, end: 120, label: 'POST /token（エンドポイントの処理） · hono:oidc-provider/endpoints/token/pipeline.ts' });
   });
 
-  it('follows Route Handlers even when Next.js has no annotated step calls', () => {
-    const endpoint = { source: handler.source!.file, steps: [] } as unknown as FlowEndpoint;
+  it('starts the targets of a Route Handler from the handler', () => {
+    const endpoint = { source: handler.source!.file, root: 'handler', steps: [] } as unknown as FlowEndpoint;
     expect(endpointSources(data, endpoint).map((target) => target.id)).toEqual([handler.source!.file, 'handler', 'shared', 'first']);
-  });
-
-  it('still follows callees for an older function card without source data', () => {
-    const old = { ...first, source: undefined };
-    expect(functionSources({ ...data, functions: { ...data.functions, first: old } }, old).map((target) => target.id)).toEqual(['shared']);
-  });
-
-  it('includes callees resolved by the function flow but absent from the catalog calls', () => {
-    const withFlow = { ...first, calls: [], flow: { nodes: [{ id: 'call', kind: 'call' as const, label: 'shared', callee: 'shared', line: 4 }], edges: [] } };
-    expect(functionSources({ ...data, functions: { ...data.functions, first: withFlow } }, withFlow).map((target) => target.id)).toEqual(['first', 'shared']);
   });
 });
 

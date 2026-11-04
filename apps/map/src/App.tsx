@@ -6,9 +6,10 @@ import { MobileMenu, MobileMenuSection, useMobileMenu } from './components/Mobil
 import { Search } from './components/Search';
 import { Sidebar } from './components/Sidebar';
 import { indexChanges } from './lib/changes';
-import { buildHash, parseHash, type View } from './lib/hash';
-import { defaultEnabled, featuresToShow, visibleEndpoints, type SearchHit } from './lib/model';
-import type { MapData } from './types';
+import { buildHash, parseHash, plainView, type View } from './lib/hash';
+import { defaultEnabled, enabledMarkers, featuresMissing, featuresToShow, visibleEndpoints, type SearchHit } from './lib/model';
+import { EMPTY_TRACE, sourceOf, type TraceState } from './lib/trace';
+import type { MapData, Reach } from './types';
 
 const FEATURES_KEY = 'oidc-map-features';
 const SIDEBAR_KEY = 'oidc-map-sidebar';
@@ -53,7 +54,10 @@ export function App() {
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
         return (await response.json()) as MapData;
       })
-      .then((data) => setLoaded({ state: 'ready', data }))
+      .then((data) => {
+        if (data.version !== 4) throw new Error(`地図のデータの版（${String(data.version)}）がこのページ（4）と合いません`);
+        setLoaded({ state: 'ready', data });
+      })
       .catch((error: unknown) => setLoaded({ state: 'failed', message: error instanceof Error ? error.message : String(error) }));
   }, []);
   if (loaded.state === 'loading') return <p className="empty">地図を読み込んでいます…</p>;
@@ -84,7 +88,8 @@ function historyDepth(): number {
  */
 function ProviderMap({ data }: { data: MapData }) {
   const { mobile, close: closeMenu } = useMobileMenu();
-  const changes = useMemo(() => indexChanges(data), [data]);
+  // Whether the map is of a pull request is known before a view is: the changes as the default framework reaches them.
+  const anyChanges = useMemo(() => indexChanges(data), [data]);
   const fallbackEndpoint = useCallback(
     (framework: string) => {
       const flow = data.flows[framework];
@@ -94,21 +99,22 @@ function ProviderMap({ data }: { data: MapData }) {
   );
   const fromHash = useCallback(
     (framework: string): View => {
-      const view = parseHash(location.hash, data, { framework, endpoint: null, step: null, fn: null });
-      if (view.changes === true && changes === undefined) view.changes = false;
+      const view = parseHash(location.hash, data, { framework, endpoint: null, step: null, fn: null, trace: EMPTY_TRACE });
+      if (view.changes === true && anyChanges === undefined) view.changes = false;
       if (view.endpoint === null && view.fn === null && view.changes !== true) {
-        if (changes !== undefined) view.changes = true;
+        if (anyChanges !== undefined) view.changes = true;
         else view.endpoint = fallbackEndpoint(view.framework);
       }
       return view;
     },
-    [data, changes, fallbackEndpoint],
+    [data, anyChanges, fallbackEndpoint],
   );
   const [view, setView] = useState<View>(() => fromHash(data.frameworks[0] ?? 'hono'));
+  // The changes as the endpoints of the framework shown reach them: an implementation in hono or nextjs reaches only its own endpoints.
+  const changes = useMemo(() => indexChanges(data, sourceOf(view.framework)), [data, view.framework]);
   const [depth, setDepth] = useState(historyDepth);
   const [enabled, setEnabled] = useState<Set<string>>(() => new Set(readSavedFeatures() ?? defaultEnabled(data.features)));
   const [sidebar, setSidebar] = useState(() => readSaved(SIDEBAR_KEY) !== 'closed' && window.matchMedia('(min-width: 900px)').matches);
-  const [checked, setChecked] = useState<Record<string, Set<string>>>({});
 
   // The first entry names the view, so a reload or a shared link opens the same page.
   useEffect(() => {
@@ -149,7 +155,8 @@ function ProviderMap({ data }: { data: MapData }) {
   );
 
   const flow = data.flows[view.framework] ?? (data.flows[data.frameworks[0] as string] as MapData['flows'][string]);
-  const endpoints = useMemo(() => visibleEndpoints(flow, data.features, enabled, data.edgeSets), [flow, data.features, enabled, data.edgeSets]);
+  const endpoints = useMemo(() => visibleEndpoints(flow, data.features, enabled), [flow, data.features, enabled]);
+  const markers = useMemo(() => enabledMarkers(data.features, enabled), [data.features, enabled]);
   // A link or a caller may name an endpoint or a step of a feature that is off: turn the feature on to show it.
   useEffect(() => {
     if (view.fn !== null) return;
@@ -165,17 +172,31 @@ function ProviderMap({ data }: { data: MapData }) {
   const narrow = () => !window.matchMedia('(min-width: 900px)').matches;
 
   const openEndpoint = (id: string) => {
-    navigate({ ...view, endpoint: id, step: null, fn: null, changes: false }, 'push');
+    navigate({ ...plainView(view), endpoint: id, step: null, fn: null, changes: false, trace: EMPTY_TRACE }, 'push');
     if (narrow()) setSidebar(false);
   };
-  const openStep = (endpointId: string, step: string) => navigate({ ...view, endpoint: endpointId, step, fn: null, changes: false }, 'push');
-  const openFunction = (id: string) => navigate({ ...view, fn: id }, 'push');
-  const openChanges = () => navigate({ ...view, endpoint: null, step: null, fn: null, changes: true }, 'push');
+  const openStep = (endpointId: string, step: string) => navigate({ ...plainView(view), endpoint: endpointId, step, fn: null, changes: false, trace: EMPTY_TRACE }, 'push');
+  const openFunction = (id: string) => navigate({ ...plainView(view), fn: id, changes: false, trace: EMPTY_TRACE }, 'push');
+  const openChanges = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: true, trace: EMPTY_TRACE }, 'push');
+  /** Open an endpoint's trace along a way to a change: its frames open, its sides chosen, the features it needs on, the diagram on the changed frame. */
+  const openWay = (way: Reach) => {
+    // A way through a feature that is off turns it on: the trace shows only the frames of the features that are on.
+    const missing = featuresMissing(data.features, enabled, way.features);
+    if (missing.length > 0) {
+      const next = new Set([...enabled, ...missing]);
+      save(FEATURES_KEY, JSON.stringify([...next]));
+      setEnabled(next);
+    }
+    const framework = way.frameworks.includes(view.framework) ? view.framework : (way.frameworks[0] ?? view.framework);
+    const trace: TraceState = { open: way.frames, choices: Object.keys(way.decisions).length === 0 ? [] : [way.decisions], errors: false, focus: way.frames[way.frames.length - 1] ?? '' };
+    navigate({ framework, endpoint: way.endpoint, step: null, fn: null, changes: false, trace, target: way.target }, 'push');
+  };
+  /** Change the trace of the open page: its frames, choices and focus, kept in the hash without a new entry of the history. */
+  const onTrace = (trace: TraceState) => navigate({ ...view, trace }, 'replace');
   const onPick = (hit: SearchHit) => {
     if ('fn' in hit.target) openFunction(hit.target.fn);
     else openStep(hit.target.endpoint, hit.target.step);
   };
-  const onCases = (key: string, next: Set<string>) => setChecked((current) => ({ ...current, [key]: next }));
 
   return (
     <div className={`app${sidebar ? ' sidebar-open' : ''}`}>
@@ -199,12 +220,12 @@ function ProviderMap({ data }: { data: MapData }) {
           {changes !== undefined ? (
             <button type="button" className="changes-button" aria-pressed={onChanges} onClick={openChanges} title="このPRで変えた関数と、その説明">
               このPRの変更
-              <span className="count">{changes.changes.functions.filter((change) => change.kind !== 'noted').length}</span>
+              <span className="count">{changes.changes.frames.filter((change) => change.kind !== 'noted').length}</span>
             </button>
           ) : null}
           <div className="seg" role="group" aria-label="フレームワーク">
             {data.frameworks.map((name) => (
-              <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...view, framework: name, step: null }, 'replace')}>
+              <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...plainView(view), framework: name, step: null, trace: EMPTY_TRACE }, 'replace')}>
                 {name}
               </button>
             ))}
@@ -242,9 +263,10 @@ function ProviderMap({ data }: { data: MapData }) {
               framework={view.framework}
               flow={flow}
               card={card}
-              checked={checked[`fn:${card.id}`]}
+              trace={view.trace}
+              enabled={markers}
               canGoBack={depth > 0}
-              onCases={onCases}
+              onTrace={onTrace}
               onBack={() => history.back()}
               onOpenFunction={openFunction}
               onOpenStep={openStep}
@@ -252,17 +274,19 @@ function ProviderMap({ data }: { data: MapData }) {
               onFramework={(framework) => navigate({ ...view, framework }, 'replace')}
             />
           ) : onChanges ? (
-            <ChangesScreen data={data} index={changes} flow={flow} onOpenFunction={openFunction} onOpenEndpoint={openEndpoint} />
+            <ChangesScreen data={data} index={changes} framework={view.framework} onOpenFunction={openFunction} onOpenEndpoint={openEndpoint} onOpenWay={openWay} />
           ) : endpoint !== undefined ? (
             <EndpointScreen
               key={`${view.framework}/${endpoint.id}`}
               data={data}
               changes={changes}
+              framework={view.framework}
               endpoint={endpoint}
-              selected={view.step}
-              checked={checked[`endpoint:${endpoint.id}`]}
-              onCases={onCases}
-              onSelectStep={(step) => navigate({ ...view, endpoint: endpoint.id, step, fn: null }, 'replace')}
+              trace={view.trace}
+              enabled={markers}
+              step={view.step}
+              target={view.target ?? null}
+              onTrace={onTrace}
               onOpenFunction={openFunction}
             />
           ) : (

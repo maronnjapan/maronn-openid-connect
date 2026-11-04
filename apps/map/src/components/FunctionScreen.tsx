@@ -1,29 +1,26 @@
-import { useMemo, useState } from 'react';
-import type { FunctionCard, MapData, OpFlow } from '../types';
-import { changesBelow, markOf, nodeMark, type ChangeIndex, type Mark, type ReachedChange } from '../lib/changes';
-import { functionDiagram, type DiagramNode } from '../lib/diagram';
-import { activeOf } from '../lib/graph';
-import { callersOf, endpointsInModule, endpointsUsing, locationOf, type EndpointUse } from '../lib/model';
-import { functionSources } from '../lib/source';
-import { CasePicker } from './CasePicker';
-import { Badge, ChangeDetail, ReachedList } from './ChangeParts';
+import { useEffect, useMemo, useState } from 'react';
+import type { DiffHunk, FunctionEntry, MapData, OpFlow } from '../types';
+import { allHunks, frameMark, markOf, type ChangeIndex } from '../lib/changes';
+import { callersOf, endpointsInModule, endpointsRootedAt, endpointsUsing, locationOf, type EndpointUse } from '../lib/model';
+import { frameSources } from '../lib/source';
+import type { TraceState } from '../lib/trace';
+import { Badge, ChangeDetail } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
-import { FlowDiagram } from './FlowDiagram';
-import { ScreenHeader } from './ScreenHeader';
 import { Chips, Description } from './Parts';
-import { DetailDrawer } from './DetailDrawer';
-import { MobileMenuSection } from './MobileMenu';
+import { ScreenHeader } from './ScreenHeader';
+import { Trace } from './Trace';
+import { fetchFrame } from './useFrames';
 
 export interface FunctionScreenProps {
   data: MapData;
-  /** The changes of the pull request, in the map of one. */
   changes: ChangeIndex | undefined;
   framework: string;
   flow: OpFlow;
-  card: FunctionCard;
-  checked: ReadonlySet<string> | undefined;
+  card: FunctionEntry;
+  trace: TraceState;
+  enabled: ReadonlySet<string>;
   canGoBack: boolean;
-  onCases: (key: string, checked: Set<string>) => void;
+  onTrace: (next: TraceState) => void;
   onBack: () => void;
   onOpenFunction: (id: string) => void;
   onOpenStep: (endpoint: string, step: string) => void;
@@ -38,30 +35,18 @@ function wayOf(use: EndpointUse): string {
   return `${use.via.map((card) => `${card.name}()`).join(' → ')} を経由して呼ぶ`;
 }
 
-type CallersProps = Omit<FunctionScreenProps, 'changes' | 'checked' | 'canGoBack' | 'onCases' | 'onBack'> & {
-  /** The functions the pull request changed that this one calls, directly or further down. */
-  below: readonly ReachedChange[];
-};
-
 /**
- * Where the function is used: the steps of the endpoints that reach it, and
- * the functions that call it; first, in the map of a pull request, the
- * changed functions it calls.
+ * Where the function is used: the endpoints whose trace starts from it or
+ * whose file holds it, the steps that reach it, and the functions that call
+ * it. Moving up to a caller starts a new trace (a trace goes down).
  */
-function Callers({ data, framework, flow, card, below, onOpenFunction, onOpenStep, onOpenEndpoint, onFramework }: CallersProps) {
+function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOpenEndpoint, onFramework }: Omit<FunctionScreenProps, 'changes' | 'trace' | 'enabled' | 'canGoBack' | 'onTrace' | 'onBack'>) {
   const uses = useMemo(() => endpointsUsing(data, flow, card.id), [data, flow, card]);
-  const homes = useMemo(() => endpointsInModule(flow, card), [flow, card]);
+  const homes = useMemo(() => [...new Set([...endpointsRootedAt(flow, card.id), ...endpointsInModule(flow, card)])], [flow, card]);
   const callers = callersOf(data, card);
   const otherFramework = card.package === 'nextjs' && framework !== 'nextjs' ? 'nextjs' : card.package === 'hono' && framework === 'nextjs' ? 'hono' : undefined;
   return (
-    <aside className="side-panel callers" aria-label="呼び出し元">
-      {below.length > 0 ? (
-        <section>
-          <h4>この関数から呼ぶ、このPRで変えた関数</h4>
-          <ReachedList reached={below} onOpenFunction={onOpenFunction} />
-        </section>
-      ) : null}
-      <h3>呼び出し元</h3>
+    <div className="callers">
       <section>
         <h4>使われるエンドポイント</h4>
         {homes.length > 0 ? (
@@ -73,7 +58,7 @@ function Callers({ data, framework, flow, card, below, onOpenFunction, onOpenSte
                     {endpoint.methods.join(' | ')} {endpoint.path}
                   </span>
                   <span className="row-title">{endpoint.label}</span>
-                  <span className="row-text">このエンドポイントを実装するファイル（{endpoint.module}）にある関数</span>
+                  <span className="row-text">{endpoint.root === card.id ? 'このエンドポイントの処理の本体' : `このエンドポイントを実装するファイル（${endpoint.module}）にある関数`}</span>
                 </button>
               </li>
             ))}
@@ -124,103 +109,106 @@ function Callers({ data, framework, flow, card, below, onOpenFunction, onOpenSte
           <p className="note">ほかの関数からは呼ばれません。エンドポイントのステップやフレームワークから直接呼ばれる関数です。</p>
         )}
       </section>
-    </aside>
+    </div>
   );
 }
 
 /**
- * One function: what it does, the flow inside it as a diagram like the steps
- * of an endpoint (each box a function it calls, a branch, a return or a
- * throw), and who uses it. In the map of a pull request, what the pull
- * request did to it (with what its change notes say and the diff), or the
- * changed functions it calls, and badges on the boxes of the lines it changed
- * and of the calls that lead to a change.
+ * One function as a trace that starts from it: what it does, in the map of
+ * a pull request what the pull request did to it, and the outline of its
+ * tree, each call opening its callee in place. The pane beside adds a tab
+ * of who calls the function the diagram shows (this one until the reader
+ * dives into a call).
  */
 export function FunctionScreen(props: FunctionScreenProps) {
-  const { data, changes, card, checked, onCases, onBack, onOpenFunction, canGoBack } = props;
-  const [code, setCode] = useState(false);
-  const sources = useMemo(() => functionSources(data, card), [data, card]);
-  const diagram = useMemo(() => functionDiagram(card, data), [card, data]);
+  const { data, changes, card, trace, enabled, onTrace, onBack, onOpenFunction, canGoBack } = props;
+  const [code, setCode] = useState<string | null>(null);
+  const sources = useMemo(() => frameSources(data, card.id), [data, card]);
   const change = changes?.byId.get(card.id);
-  const below = useMemo(() => changesBelow(changes, data, card.calls), [changes, data, card]);
-  const marks = useMemo(() => {
-    const byNode = new Map<string, Mark>();
-    for (const node of card.flow?.nodes ?? []) {
-      const mark = nodeMark(changes, change, node, card.line);
-      if (mark !== undefined) byNode.set(node.id, mark);
-    }
-    return byNode;
-  }, [changes, change, card]);
-  const labels = useMemo(() => checked ?? new Set(diagram?.cases.slice(0, 1).map((flowCase) => flowCase.label) ?? []), [checked, diagram]);
-  const active = useMemo(() => {
-    if (diagram === undefined) return { nodes: new Set<string>(), edges: new Set<number>() };
-    const ids = new Set(diagram.cases.filter((flowCase) => labels.has(flowCase.label)).map((flowCase) => flowCase.id));
-    return activeOf(diagram.cases, ids, diagram.edges);
-  }, [diagram, labels]);
-  const [member, setMember] = useState<string | null>(null);
-  const memberDoc = member === null ? undefined : data.members[member];
-  const onSelect = (node: DiagramNode) => {
-    if (node.target === undefined) return;
-    if ('fn' in node.target) onOpenFunction(node.target.fn);
-    else if ('member' in node.target) setMember(node.target.member === member ? null : node.target.member);
-  };
+  const mark = frameMark(changes, card.id);
+  const [hunks, setHunks] = useState<DiffHunk[] | undefined>(undefined);
+  useEffect(() => {
+    if (change === undefined || card.frame === '') return;
+    let live = true;
+    fetchFrame(card.frame)
+      .then((file) => {
+        if (live) setHunks(allHunks(file.change));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [change, card.frame]);
   return (
     <section className="screen" aria-label={`${card.name}()`}>
-      <ScreenHeader title={
-        <>
-          {canGoBack ? (
-            <button type="button" className="back" onClick={onBack}>
-              ← 戻る
-            </button>
-          ) : null}
-          <h2 className="mono">{card.name}()</h2>
-          {change !== undefined ? <Badge mark={markOf(change.kind)} /> : below.length > 0 ? <Badge mark={markOf('inside')} /> : null}
-          {card.source !== undefined ? <button type="button" className="code-button" aria-label="関数のコードを見る" onClick={() => setCode(true)}>コードを見る</button> : null}
-        </>
-      }>
+      <ScreenHeader
+        title={
+          <>
+            {canGoBack ? (
+              <button type="button" className="back" onClick={onBack}>
+                ← 戻る
+              </button>
+            ) : null}
+            <h2 className="mono">{card.name}()</h2>
+            {mark !== undefined ? <Badge mark={mark} /> : null}
+            {card.source !== undefined ? (
+              <button type="button" className="code-button" aria-label="関数のコードを見る" onClick={() => setCode(card.id)}>
+                コードを見る
+              </button>
+            ) : null}
+          </>
+        }
+      >
         <Description summary={card.summary} description={card.description} />
         <div className="facts-row">
           <span className="chip mono">{locationOf(card)}</span>
           {card.exported ? null : <span className="chip">モジュール内の関数</span>}
+          {card.untraceable !== undefined ? <span className="chip">型で引けない呼び出し {card.untraceable}</span> : null}
         </div>
-        {change !== undefined ? <ChangeDetail change={change} /> : null}
-        {card.spec || card.throws ? (
+        {change !== undefined ? <ChangeDetail change={change} hunks={hunks} data={data} framework={props.framework} onOpenFunction={onOpenFunction} /> : mark?.kind === 'inside' ? <p className="note"><Badge mark={markOf('inside')} /> この関数から呼ぶ関数のどこかを、このPRで変えています。「変更まで展開」で開けます。</p> : null}
+        {card.spec || (card.failures ?? []).length > 0 ? (
           <div className="facts-row">
             {card.spec ? (
               <span>
                 仕様 <Chips items={card.spec} />
               </span>
             ) : null}
-            {card.throws ? (
+            {(card.failures ?? []).length > 0 ? (
               <span>
-                失敗するとき <Chips items={card.throws} />
+                失敗するとき <Chips items={[...new Set((card.failures ?? []).map((failure) => failure.error))].slice(0, 12)} />
               </span>
             ) : null}
           </div>
         ) : null}
       </ScreenHeader>
-      {diagram ? <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} /> : null}
-      <div className="work with-panel">
-        <div className="canvas">
-          {diagram ? (
-            <>
-              <FlowDiagram diagram={diagram} active={active} selected={member === null ? null : (diagram.nodes.find((node) => node.target !== undefined && 'member' in node.target && node.target.member === member)?.id ?? null)} label={`${card.name}() の処理の流れ`} marks={marks} onSelect={onSelect} />
-              {memberDoc ? (
-                <DetailDrawer title={`${memberDoc.type}.${memberDoc.member}()`} onClose={() => setMember(null)}>
-                  <p className="lead">{memberDoc.summary}</p>
-                  <p className="where mono">{locationOf(memberDoc)}</p>
-                </DetailDrawer>
-              ) : null}
-            </>
-          ) : (
-            <p className="note pad">この関数の処理の流れは読み取れませんでした。</p>
-          )}
-        </div>
-        <MobileMenuSection section="callers">
-          <Callers {...props} below={below} />
-        </MobileMenuSection>
-      </div>
-      {code ? <CodeDrawer data={data} targets={sources} initial={card.id} onClose={() => setCode(false)} /> : null}
+      {card.frame === '' ? (
+        <p className="note pad">この関数の木は読み取れませんでした。</p>
+      ) : (
+        <Trace
+          key={card.id}
+          data={data}
+          changes={changes}
+          framework={props.framework}
+          rootId={card.id}
+          state={trace}
+          onState={onTrace}
+          enabled={enabled}
+          onOpenFunction={onOpenFunction}
+          onOpenCode={setCode}
+          tabs={[
+            {
+              id: 'callers',
+              label: '呼び出し元',
+              // The callers of the function the diagram shows, which is this page's function until the reader dives into a call.
+              content: (frameId) => {
+                const shown = data.functions[frameId];
+                return shown === undefined ? <p className="note">図に出しているのはエンドポイントの処理の本体です。</p> : <Callers {...props} card={shown} />;
+              },
+            },
+          ]}
+        />
+      )}
+      {code !== null ? <CodeDrawer data={data} changes={changes} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}
     </section>
   );
 }

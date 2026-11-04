@@ -367,10 +367,10 @@ maronn-oidc explain hono --format json -o map.json
 
 explain が表示する関数の情報は**関数カタログ**から来る。CLI のビルド（`pnpm run build`）が `packages/core`、`packages/experimental`、`packages/google-login` の `src` と、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` の関数宣言を読み、1 関数 1 枚のカードにして `templates/functions.catalog.json` に焼く（リポジトリの中では生のソースから読む）。カードには、名前と所在（root、ファイル、行）、kind、JSDoc の 1 行目（要約）と残りの本文、`@spec`、`@throws` と本体が `new` するエラー、本体が呼ぶカタログの関数（import を解決した id、最初に呼ぶ順）、呼び元が入る。ステップの meta と同じく、読み方はテキスト解析で、TypeScript のコンパイラも、モジュールの import も使わない。
 
-カタログは関数の本体から、呼ぶ関数を実行順に並べた処理の流れも読む（`src/extract/function-flow.ts`）。
-分岐の条件は矢印のラベルに、`return` と `throw` は終わりの箱になり、resolver や store のメソッドの呼び出しは、そのインターフェースのメンバーの JSDoc で説明する。
-地図の関数のページは、これをエンドポイントのステップと同じ形の図にする。
-本体の読み取りには文字列、コメント、正規表現リテラル、テンプレートリテラルを見分けるトークナイザーを使い、カタログが関数の範囲と呼び出しを読むときも同じものを使う。
+カタログは関数の中の処理の流れ（分岐、`return` と `throw`）を読まない。
+地図（`apps/map`）は、ビルド時に非公開のパッケージ `packages/map-analysis` が TypeScript のコンパイラで関数とエンドポイントの処理を木に読み、resolver や store のメソッドの呼び出しをそのインターフェースのメンバーの JSDoc で説明する。
+木から求めた呼び先は、カタログの `calls` と呼び元に一致することをそのパッケージのテストで確かめる。
+カタログが関数の範囲と呼び出しを読むときは、文字列、コメント、正規表現リテラル、テンプレートリテラルを見分けるトークナイザー（`src/extract/tokens.ts`）を使う。
 
 ステップの `calls` は手で書かない。ステップの関数のソースから読む（フロー文書 version 2 の `calls` はカードの id、`functionId` がステップの関数のカード）。ソースに呼び出しとして現れないもの（`c.get('consentResolver')` のメソッドなど）だけ、ステップの `meta` の `calls` に `'consentResolver.recordConsent'` の形で書き、フロー文書では `dynamicCalls` になる。機能が `contribute()` で足す `calls` はフック経由の呼び出しなので、これまでどおり名前で書く。
 
@@ -389,10 +389,13 @@ explain が表示する関数の情報は**関数カタログ**から来る。CL
 ### 地図（Provider Map）
 
 同じ地図を、ブラウザでクリックしながらたどるページが `apps/map` にある（React + Vite。Cloudflare Workers に静的アセットとして置く）。
-`pnpm run build:map` が CLI をビルドし、4 フレームワークについて全機能オンの `explain --format json` を、関数カタログの全関数とその処理の流れとともに `apps/map/public/data/map.json` にまとめて、ページをビルドする。
-ページでは、機能を切り替えるとその構成の `generate` のコマンドラインが出来、エンドポイントのステップを箱と矢印で描く。
-図はケース（`authorization_code` や `POST › authenticated` のような道筋）に分かれ、チェックしたケースで通るステップと矢印だけを表示する。
-関数のページは、関数の中の処理の流れを同じ形の図で描き、その関数に届くエンドポイントのステップと、その関数を呼ぶ関数を並べる。
+`pnpm run build:map` が CLI と非公開のパッケージ `packages/map-analysis` をビルドし、4 フレームワークについて全機能オンの `explain --format json` を読んでから、関数とエンドポイントの処理を TypeScript のコンパイラで処理の流れの木に読む。
+出力は、木を含まない索引の `apps/map/public/data/map.json` と、フレーム一つ分の木を持つ `apps/map/public/data/functions/<hash>.json`（PR の地図では変更前の木と差分も）である。
+ページでは、機能を切り替えるとその構成の `generate` のコマンドラインが出来、エンドポイントの処理を字下げした一行ずつの自然言語のアウトラインで読む。
+呼び出しはその場で開けるので、エンドポイントから何段下の関数まででも一つの画面でたどれる。
+分岐ごとに進む側を選ぶと、その道筋で通らない行が灰色になり（行は消えない）、`/token` の「refresh_token グラントを検証する」のような、よく使う選択も並ぶ。
+アウトラインの横には、図が見せているフレーム一つ分の流れの図を置く。
+関数のページは、その関数を根にして同じように処理をたどり、その関数を使うエンドポイントのステップと、その関数を呼ぶ関数を並べる。
 PR ごとのプレビューとデプロイは [apps/map/README.md](../../apps/map/README.md) を参照。
 
 ## Next.js の生成物

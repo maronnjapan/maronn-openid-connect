@@ -88,7 +88,7 @@ RFC 9396 §9.2 の MUST（top-level member）。`active: false` の応答と det
 <!-- 届く先: hono:token -->
 RFC 9396 §7 の MUST。承認された配列をそのまま返し、§7.1 の enrichment はしない。grantId は authorization_code / refresh_token 両グラントを貫通するので、refresh でも同じ details が返る。
 
-## appendAuthorizationDetailsToConsentScreen <!-- hono:oidc-provider/features/rar/steps/describe-authorization-details.ts#appendAuthorizationDetailsToConsentScreen -->
+## describeTransactionAuthorizationDetails <!-- hono:oidc-provider/features/rar/steps/describe-authorization-details.ts#describeTransactionAuthorizationDetails -->
 
 <!-- 自動要約: 関数を足した -->
 <!-- 届く先: hono:consent -->

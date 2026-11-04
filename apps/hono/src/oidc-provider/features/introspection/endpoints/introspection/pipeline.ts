@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { signIntrospectionResponse } from '../../../jwt-introspection-response/steps/sign-response.js';
+import { appendAuthorizationDetailsToIntrospection } from '../../../rar/steps/append-introspection-details.js';
 import { authenticateIntrospectionClient } from './steps/authenticate-client.js';
 import { describeIntrospectedToken } from './steps/build-response.js';
 import { parseIntrospectionRequest } from './steps/parse-request.js';
@@ -35,7 +36,10 @@ introspectionApp.post('/', async (c) => {
     const resolved = await resolveIntrospectedToken(c, params, authenticatedClientId);
 
     // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
-    const introspection = describeIntrospectedToken(resolved);
+    let introspection = describeIntrospectedToken(resolved);
+
+    // [append-introspection-details] (feature: rar) authorization details を introspection 応答へ含める — RFC 9396 §9.2
+    introspection = await appendAuthorizationDetailsToIntrospection(c, introspection, resolved);
 
     // [sign-response] (feature: jwt-introspection-response) 求められたら署名付き JWT で応答する — RFC 9701 §4 / §5
     const signed = await signIntrospectionResponse(c, introspection, authenticatedClientId);

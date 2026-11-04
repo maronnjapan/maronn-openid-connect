@@ -13,6 +13,7 @@ import { registerDevelopmentUsers } from './oidc-provider/development.js';
 import { idJagConfig } from './oidc-provider/features/id-jag/config.js';
 import { rpInitiatedLogoutConfig } from './oidc-provider/features/rp-initiated-logout/config.js';
 import { createOperatorApp } from './operator.js';
+import { demoRarTypes } from './rar-demo.js';
 import {
   createEphemeralSigningKeyProvider,
   echoRequestedAcr,
@@ -56,6 +57,9 @@ export async function createServerApp(env: Environment): Promise<Hono> {
       issuer,
       allowNonPkceAuthorizationCodeFlow: env['OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW'] === '1',
       allowUnsignedRequestObject: env['OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT'] === '1',
+      // EXPERIMENTAL (rar): the demo payment_initiation type, so tests/e2e can
+      // exercise RFC 9396 over the protocol. Generated providers start empty.
+      rarTypes: demoRarTypes,
       // EXTENSION (google-login): the button appears once a Google OAuth
       // client ID is configured.
       ...(googleClientId ? { googleLogin: { clientId: googleClientId } } : {}),

@@ -25,6 +25,7 @@ import { ciba } from './ciba/feature.js';
 import { jwtIntrospectionResponse } from './jwt-introspection-response/feature.js';
 import { rpInitiatedLogout } from './rp-initiated-logout/feature.js';
 import { dynamicClientRegistration } from './dynamic-client-registration/feature.js';
+import { rar } from './rar/feature.js';
 import { googleLogin } from './google-login/feature.js';
 
 export const features: readonly Feature[] = [
@@ -45,5 +46,6 @@ export const features: readonly Feature[] = [
   jwtIntrospectionResponse,
   rpInitiatedLogout,
   dynamicClientRegistration,
+  rar,
   googleLogin,
 ];

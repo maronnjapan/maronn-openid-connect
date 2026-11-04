@@ -32,6 +32,10 @@
       "types": "./dist/par/index.d.ts",
       "import": "./dist/par/index.js"
     },
+    "./rar": {
+      "types": "./dist/rar/index.d.ts",
+      "import": "./dist/rar/index.js"
+    },
     "./rp-initiated-logout": {
       "types": "./dist/rp-initiated-logout/index.d.ts",
       "import": "./dist/rp-initiated-logout/index.js"

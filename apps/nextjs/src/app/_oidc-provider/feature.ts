@@ -73,6 +73,17 @@ export interface Feature {
      */
     readonly responseTypes?: readonly AuthorizationResponseType[];
   };
+  readonly consent?: {
+    /**
+     * Extra display rows the consent page lists next to the scopes of a
+     * transaction (plain strings; the page escapes them as JSX). A feature
+     * returns [] for a transaction it has nothing to show for.
+     */
+    readonly describeTransaction?: (
+      transactionId: string,
+      config: ProviderConfig,
+    ) => Promise<readonly string[]>;
+  };
   /** Ways to sign in that the login page offers next to the password form. */
   readonly loginMethods?: readonly LoginMethod[];
 }
@@ -168,4 +179,25 @@ export function responseTypesOf(features: readonly Feature[]): AuthorizationResp
  */
 export function loginMethodsOf(features: readonly Feature[]): LoginMethod[] {
   return features.flatMap((feature) => feature.loginMethods ?? []);
+}
+
+/**
+ * 機能が同意画面に加える表示行を、機能の順に集めて返す。
+ *
+ * 各機能の `consent.describeTransaction` をトランザクション ID と設定で呼び、
+ * 返った行をつなげる。表示する内容を持たない機能は空配列を返すので、
+ * どの機能も無ければ結果も空配列になる。
+ */
+export async function consentRowsOf(
+  features: readonly Feature[],
+  transactionId: string,
+  config: ProviderConfig,
+): Promise<string[]> {
+  const rows: string[] = [];
+  for (const feature of features) {
+    const describe = feature.consent?.describeTransaction;
+    if (describe === undefined) continue;
+    rows.push(...(await describe(transactionId, config)));
+  }
+  return rows;
 }

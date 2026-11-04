@@ -40,6 +40,10 @@ import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';
 import { dispatchDeviceCode } from '../_oidc-provider/features/device-authorization-grant/grant';
 import { dispatchIdJagIssuance, dispatchIdJagRedemption } from '../_oidc-provider/features/id-jag/grant';
 import {
+  appendAuthorizationDetailsToTokenResponse,
+  rejectTokenRequestAuthorizationDetails,
+} from '../_oidc-provider/features/rar/token';
+import {
   decideRefreshTokenIssuance,
   issueRefreshToken,
   revokeRotatedRefreshToken,
@@ -180,6 +184,10 @@ async function token(request: Request): Promise<Response> {
     // [dispatch-ciba] (feature: ciba) auth_req_id を引き換える（CIBA） — CIBA Core 1.0 §10.1 / §11
     const cibaGrantResponse = await dispatchCiba(params, tokenClient, keys);
     if (cibaGrantResponse) return cibaGrantResponse;
+
+    // [reject-token-request-details] (feature: rar) トークンリクエストの authorization_details を拒否する — RFC 9396 §6
+    const rarRejection = rejectTokenRequestAuthorizationDetails(params);
+    if (rarRejection) return rarRejection;
 
     // [validate-grant-type] grant_type を検証する — RFC 6749 §5.2
     // `grant_type` がこの OP の扱う値かどうかを確かめ、扱わない値なら `unsupported_grant_type` にする（RFC 6749 §5.2）。
@@ -381,7 +389,7 @@ async function token(request: Request): Promise<Response> {
     await revokeRotatedRefreshToken(params, validatedRequest);
 
     // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
-    const tokenResponse = {
+    let tokenResponse = {
       access_token: accessToken,
       token_type: 'Bearer' as const,
       expires_in: config.accessTokenExpiresIn,
@@ -389,6 +397,9 @@ async function token(request: Request): Promise<Response> {
       scope: validatedRequest.scope.join(' '),
       refresh_token: refreshToken,
     };
+
+    // [append-token-response-details] (feature: rar) 承認済みの authorization details を応答へ含める — RFC 9396 §7
+    tokenResponse = await appendAuthorizationDetailsToTokenResponse(tokenResponse, validatedRequest.grantId);
 
     // [respond] 応答する（no-store） — RFC 6749 §5.1
     return noStoreJson(tokenResponse);

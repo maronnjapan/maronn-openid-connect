@@ -1,10 +1,10 @@
 {
   "base": {
     "ref": "origin/main",
-    "commit": "70959cd0f7d53bdd197e12928b8effacb6f8c49c"
+    "commit": "b52c1348ec2defcfcfd7790d69fb61db36a68995"
   },
   "head": {
-    "commit": "8a010e25b4b72cce52008319697208c8e1cb3382",
+    "commit": "ff95364ffebadec0bb2fca89d849a74804416208",
     "dirty": false
   },
   "changedFrames": 87,
@@ -12,8 +12,8 @@
   "unknown": [],
   "ambiguous": [],
   "coverage": {
-    "outside-map-roots": 651,
-    "traced": 307,
-    "untraceable": 419
+    "outside-map-roots": 659,
+    "traced": 312,
+    "untraceable": 442
   }
 }

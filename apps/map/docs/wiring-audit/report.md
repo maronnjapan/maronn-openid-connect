@@ -98,3 +98,14 @@ cache までの型の橋は、ParseRequestObjectOptions.loadJwks → ResolveRequ
 instance 単位の値の provenance、middleware の正確な route/mount 順序、外部コード・動的 key・任意 callback の実装推定は行っていない。interface 単位の保守的な結び付けを保ち、不確実なところは診断とする。生成 OP の入力外のアプリ入口や CLI/解析ツール自身を OP の endpoint と混同していない。
 
 配線修正の追加分では core の実行時 API と公開 callback の戻り値型を保ち、core/CLI の patch changeset を追加した。main との差分全体には、背景ブランチから継承した `jwks` オプションと `DEFAULT_REQUEST_OBJECT_SIGNING_ALGS` の削除などの破壊的変更も含む。移行方法は既存の core minor changeset と `client-jwks-uri.md` に記載済みであり、追加の patch だけで PR 全体のバージョン変更を表していない。Hono 内部 context の旧既定 callback を直接差し替える利用と、Next.js の素の clientKeyResolver の利用は新しい helper を通す形へ移る。ブラウザ E2E と外部 OIDF 実環境テストは今回指定されたパッケージ検査とは別であり実行していない。公開・デプロイ・マージは行っていない。
+
+
+## main の RAR 対応を取り込んだ後の確認
+
+`main` の `b52c134` を `ff95364` で取り込み、RAR と `jwks_uri` の両方の設定・E2E クライアントのルートを保持して競合を解消した。地図の検査は、配線の理由・場所の検査と、main の関数終端行の回帰検査を両方保持した。samples は取り込み後の CLI で4種類とも再生成した。
+
+各 skill の Codex / Claude Code の `SKILL.md` は、同じ正本への相対 symlink にした。編集用の正本は skill ごとに1ファイルで、本文・名前・説明を含めて両方へ反映される。4リンクの `samefile` と、一度の正本編集が両クライアントの参照に反映されることを一時コピーで確認した。
+
+取り込み後の root build、lint、全 workspace typecheck、全 package/app tests、CLI matrix（116構成）、main 基準の build:map と全候補照合は通過した。package tests は core 1536 / experimental 833 / google-login 130 / CLI 268 / map-analysis 136、app tests は Hono 1733 / Next.js 715 / map 237。E2E クライアントは構文と両方のルートの保持を確認し、ブラウザ E2E は実行していない。
+
+最新の地図は1111フレーム、4220選択、1041配線診断。570ファイルの1413候補のうち、生成 OP 範囲内754箇所は312追跡可能・442理由付き未解決・無表示0、範囲外659箇所。main 基準の変更87フレームで説明不足・変更行のノード外・無効な診断は0。[main-base-check.json](main-base-check.json) はこの検証時の base/head と照合結果に更新した。前掲の before/after JSON と表は初回の配線調査のスナップショットとして残す。

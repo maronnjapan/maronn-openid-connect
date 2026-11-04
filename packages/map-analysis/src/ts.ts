@@ -11,10 +11,10 @@
  */
 import { readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { API, SymbolFlags, type Checker, type Project, type Symbol as TsSymbol, type Type as TsType } from 'typescript/unstable/sync';
+import { API, SignatureKind, SymbolFlags, type Checker, type Project, type Symbol as TsSymbol, type Type as TsType } from 'typescript/unstable/sync';
 import { SyntaxKind, getLeadingCommentRanges, type Node, type SourceFile } from 'typescript/unstable/ast';
 
-export { SyntaxKind, SymbolFlags, getLeadingCommentRanges };
+export { SyntaxKind, SignatureKind, SymbolFlags, getLeadingCommentRanges };
 export type { Checker, Node, Project, SourceFile, TsSymbol, TsType };
 
 /**

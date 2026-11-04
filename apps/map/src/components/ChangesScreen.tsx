@@ -52,7 +52,7 @@ function LazyDiff({ data, id }: { data: MapData; id: string }) {
 function Ways({ data, entry, framework, onOpenWay }: { data: MapData; entry: FrameChangeEntry; framework: string; onOpenWay: (way: Reach) => void }) {
   if (entry.reach.length === 0) {
     if (entry.body === true) return <p className="note">エンドポイントの処理そのものです。</p>;
-    return <p className="note">{(entry.untraceableCallers ?? []).length > 0 ? `型で引ける呼び出しからは、どのエンドポイントにも届きません（上の追えない呼び出し ${(entry.untraceableCallers ?? []).length} 箇所からは届くかもしれません）。` : 'どのエンドポイントからも届きません。'}</p>;
+    return <p className="note">{(entry.untraceableCallers ?? []).length > 0 ? `型で引ける呼び出しからは、どのエンドポイントにも届きません（上の追えない呼び出し ${(entry.untraceableCallers ?? []).length} 箇所からは届くかもしれません）。` : '型で辿れる経路ではエンドポイントへの到達を確認できません。登録や初期化は「追えない配線」でも確認できます。'}</p>;
   }
   const ordered = [...entry.reach].sort((a, b) => Number(!a.frameworks.includes(framework)) - Number(!b.frameworks.includes(framework)));
   const groups = wayGroups(ordered);
@@ -149,6 +149,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
   const endpoints = new Map<string, number>();
   for (const entry of changes.frames) for (const way of entry.reach) if (way.frameworks.includes(framework)) endpoints.set(way.endpoint, (endpoints.get(way.endpoint) ?? 0) + 1);
   const flow = data.flows[framework];
+  const outsideWiring = (data.wiring ?? []).filter((entry) => changes.outside.some((file) => file.file === entry.file && file.lines.some((line) => line >= entry.lines[0] && line <= entry.lines[1])));
   return (
     <section className="screen changes-screen" aria-label="このPRの変更">
       <header className="screen-head">
@@ -187,6 +188,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
                   <ChangeRow key={entry.id} data={data} entry={entry} framework={framework} onOpenFunction={onOpenFunction} onOpenWay={onOpenWay} />
                 ))}
               </ul>
+
             </section>
           ) : null}
           <section className="pr-notes" aria-label="変更メモ">
@@ -257,7 +259,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
           {changes.outside.length > 0 ? (
             <section>
               <h3>関数の外の変更</h3>
-              <p className="note">import、型、定数など、どのフレームにも属さない行です。</p>
+              <p className="note">import、型、定数、起動時の初期化など、どのフレームにも属さない行です。</p>
               <ul className="plain">
                 {changes.outside.map((file) => (
                   <li key={file.file} className="mono">
@@ -265,6 +267,14 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
                   </li>
                 ))}
               </ul>
+              {outsideWiring.length > 0 ? (
+                <details>
+                  <summary>変更した行の追えない配線（{outsideWiring.length}）</summary>
+                  <ul className="change-list">
+                    {outsideWiring.map((entry) => <li className="change-row" key={entry.id}><span className="mono">{data.sources[entry.file]?.path ?? entry.file}:{entry.lines[0]}</span><code>{entry.code}</code><p className="note">追えない理由: {entry.why}</p></li>)}
+                  </ul>
+                </details>
+              ) : null}
             </section>
           ) : null}
         </div>

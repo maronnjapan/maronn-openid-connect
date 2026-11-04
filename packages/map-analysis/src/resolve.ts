@@ -28,6 +28,10 @@ export interface FileResolution {
   implementations: Map<Node, string>;
   /** A call of a function the frame defines itself (`const encode = (value) => ...`) → that function. */
   locals: Map<Node, Node>;
+  /** Callable values wired by reference, rather than called at their declaration site. */
+  references: Map<Node, { target?: CallTarget; definition?: Node }>;
+  /** Calls of standard collection iteration APIs, whose callback invocation is known. */
+  iterations: Set<Node>;
 }
 
 export interface ResolverOptions {
@@ -211,9 +215,125 @@ export class Resolver {
     return undefined;
   }
 
+  /** Resolve the identity of a callable reference without claiming it executes where it is passed. */
+  reference(node: Node, seen: Set<number> = new Set()): CallTarget | undefined {
+    const value = unwrap(node);
+    const symbol = is(value.parent, SyntaxKind.ShorthandPropertyAssignment)
+      ? this.checker.getShorthandAssignmentValueSymbol(value.parent)
+      : this.checker.getSymbolAtLocation(is(value, SyntaxKind.PropertyAccessExpression) ? value['name'] as Node : value);
+    if (symbol === undefined) return undefined;
+    const target = this.target(symbol);
+    if (seen.has(target.id)) return undefined;
+    seen.add(target.id);
+    const fn = this.functionOf(target);
+    if (fn !== undefined) return { kind: 'function', id: fn };
+    const member = this.memberOf(target);
+    if (member !== undefined) return { kind: 'member', id: member };
+    const declaration = target.valueDeclaration?.resolve(this.project);
+    if (is(declaration, SyntaxKind.VariableDeclaration) && declaration['initializer'] !== undefined) {
+      const initializer = unwrap(declaration['initializer'] as Node);
+      if (is(initializer, SyntaxKind.Identifier) || is(initializer, SyntaxKind.PropertyAccessExpression)) return this.reference(initializer, seen);
+    }
+    return undefined;
+  }
+
+  /**
+   * Whether a declaration or its type describes a callback. Follow symbols and
+   * type aliases instead of serializing arbitrary value types: TypeScript 7's
+   * synchronous API cannot serialize some inferred tuple references.
+   */
+  callable(node: Node, seen: Set<number> = new Set()): boolean {
+    const value = unwrap(node);
+    if (isFunctionLike(value) || is(value, SyntaxKind.FunctionType) || is(value, SyntaxKind.CallSignature)) return true;
+    if (is(value, SyntaxKind.UnionType) || is(value, SyntaxKind.IntersectionType)) return (value['types'] as Node[]).some((type) => this.callable(type, seen));
+    if (is(value, SyntaxKind.TypeLiteral) || is(value, SyntaxKind.InterfaceDeclaration)) return (value['members'] as Node[]).some((member) => is(member, SyntaxKind.CallSignature));
+    const name = is(value, SyntaxKind.TypeReference) ? value['typeName'] as Node : is(value, SyntaxKind.PropertyAccessExpression) ? value['name'] as Node : value;
+    if (!is(name, SyntaxKind.Identifier) && !is(name, SyntaxKind.QualifiedName)) return false;
+    const symbol = is(value.parent, SyntaxKind.ShorthandPropertyAssignment) ? this.checker.getShorthandAssignmentValueSymbol(value.parent) : this.checker.getSymbolAtLocation(name);
+    if (symbol === undefined) return false;
+    const target = this.target(symbol);
+    if (seen.has(target.id)) return false;
+    seen.add(target.id);
+    for (const declaration of target.declarations) {
+      const declared = declaration.resolve(this.project);
+      if (declared === undefined) continue;
+      if (isFunctionLike(declared) || is(declared, SyntaxKind.MethodSignature) || is(declared, SyntaxKind.CallSignature)) return true;
+      const type = any(declared)['type'] as Node | undefined;
+      if (type !== undefined && this.callable(type, seen)) return true;
+      const initializer = any(declared)['initializer'] as Node | undefined;
+      if (initializer !== undefined && this.callable(initializer, seen)) return true;
+      if (is(declared, SyntaxKind.InterfaceDeclaration) && this.callable(declared, seen)) return true;
+    }
+    return false;
+  }
+
+  /** Whether a callback belongs to a standard collection operation rather than an arbitrary registration method with the same name. */
+  iterates(call: Node): boolean {
+    const callee = unwrap(any(call)['expression'] as Node);
+    if (!is(callee, SyntaxKind.PropertyAccessExpression)) return false;
+    const method = nameOf(callee['name']);
+    if (!['map', 'forEach', 'filter', 'flatMap', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'reduce', 'reduceRight', 'sort', 'toSorted'].includes(method ?? '')) return false;
+    const symbol = this.checker.getSymbolAtLocation(callee['name'] as Node);
+    return symbol?.declarations.some((declaration) => {
+      if (!/(?:^|\/)lib\.[^/]+\.d\.ts$/.test(declaration.path)) return false;
+      const owner = declaration.resolve(this.project)?.parent;
+      if (!is(owner, SyntaxKind.InterfaceDeclaration)) return false;
+      const name = nameOf(owner['name']);
+      return ['Array', 'ReadonlyArray'].includes(name ?? '') || (method === 'forEach' && ['Map', 'ReadonlyMap', 'Set', 'ReadonlySet'].includes(name ?? ''));
+    }) ?? false;
+  }
+
+  /** A callable parameter can retain the signature of an indexed interface property through aliases such as NonNullable<Options['load']>. */
+  private signatureTarget(call: Node): CallTarget | undefined {
+    const signature = this.checker.getResolvedSignature(call);
+    let declaration = signature?.declaration?.resolve(this.project);
+    while (declaration !== undefined && !is(declaration, SyntaxKind.SourceFile)) {
+      if (is(declaration, SyntaxKind.PropertySignature) || is(declaration, SyntaxKind.MethodSignature)) {
+        const symbol = this.checker.getSymbolAtLocation(declaration['name'] as Node);
+        const member = this.memberOf(symbol);
+        if (member !== undefined) return { kind: 'member', id: member };
+      }
+      if (is(declaration, SyntaxKind.FunctionDeclaration) || is(declaration, SyntaxKind.Parameter)) break;
+      declaration = declaration.parent;
+    }
+    return undefined;
+  }
+
+  /** A nested spread/conditional object inherits the callable contract of the receiving outer object. */
+  private contextualMember(literal: Node, name: string): string | undefined {
+    for (let current: Node | undefined = literal; current !== undefined; current = current.parent) {
+      if (current !== literal && isFunctionLike(current)) break;
+      // Only a spread forwards the outer object's contract. A nested property
+      // or a call argument is a different value, even when its method has the
+      // same name as an outer member.
+      if (current !== literal && (is(current, SyntaxKind.PropertyAssignment) || is(current, SyntaxKind.CallExpression) || is(current, SyntaxKind.VariableDeclaration) || is(current, SyntaxKind.ReturnStatement))) break;
+      if (!is(current, SyntaxKind.ObjectLiteralExpression)) continue;
+      const type = this.checker.getContextualType(current as Parameters<Checker['getContextualType']>[0]);
+      if (type === undefined) continue;
+      const member = this.memberOf(this.checker.getPropertyOfType(this.checker.getNonNullableType(type) ?? type, name));
+      if (member !== undefined) return member;
+    }
+    return undefined;
+  }
+
+  /** Why a callable in the analyzed sources has no traceable contract; external library operations are ordinary actions. */
+  private missingTarget(node: Node): CallTarget | undefined {
+    const value = unwrap(node);
+    const read = this.contextRead(value);
+    if (read !== undefined) return { kind: 'untraceable', why: `c.get('${read.key}') から取り出した関数の実装を特定できない` };
+    const name = is(value, SyntaxKind.PropertyAccessExpression) ? value['name'] as Node : value;
+    const symbol = this.checker.getSymbolAtLocation(name);
+    const target = symbol === undefined ? undefined : this.target(symbol);
+    if (target?.declarations.some((declaration) => this.moduleOfPath(declaration.path) !== undefined) !== true) return undefined;
+    const declaration = target.valueDeclaration?.resolve(this.project);
+    if (is(declaration, SyntaxKind.Parameter)) return { kind: 'untraceable', why: '関数引数の実装は呼び出し側から渡されるため特定できない' };
+    if (this.callable(value)) return { kind: 'untraceable', why: '呼び出す関数値に、カタログの関数か名前のある型のメンバーへの接続がない', ...(is(value, SyntaxKind.PropertyAccessExpression) ? { method: nameOf(value['name']) } : {}) };
+    return undefined;
+  }
+
   /** Resolve the calls, the enum constants of the errors thrown and the implementations of members inside some bodies of a file. */
   resolve(bodies: readonly Node[]): FileResolution {
-    const result: FileResolution = { targets: new Map(), constants: new Map(), implementations: new Map(), locals: new Map() };
+    const result: FileResolution = { targets: new Map(), constants: new Map(), implementations: new Map(), locals: new Map(), references: new Map(), iterations: new Set() };
     const calls: Array<{ call: Node; name: Node | undefined; receiver: Node | undefined; method: string | undefined }> = [];
     const literals: Node[] = [];
     const thrown: Node[] = [];
@@ -224,6 +344,7 @@ export class Resolver {
           if (is(callee, SyntaxKind.Identifier)) calls.push({ call: node, name: callee, receiver: undefined, method: undefined });
           else if (is(callee, SyntaxKind.PropertyAccessExpression)) calls.push({ call: node, name: callee['name'] as Node, receiver: callee['expression'] as Node, method: nameOf(callee['name']) });
           else if (is(callee, SyntaxKind.ElementAccessExpression)) calls.push({ call: node, name: undefined, receiver: callee['expression'] as Node, method: undefined });
+          else calls.push({ call: node, name: undefined, receiver: undefined, method: undefined });
         } else if (is(node, SyntaxKind.ObjectLiteralExpression)) {
           literals.push(node);
         } else if (is(node, SyntaxKind.ThrowStatement)) {
@@ -254,8 +375,10 @@ export class Resolver {
         }
         if (entry.receiver === undefined) {
           const local = this.localFunction(target, entry.call);
-          if (local !== undefined) result.locals.set(entry.call, local);
-          return;
+          if (local !== undefined) {
+            result.locals.set(entry.call, local);
+            return;
+          }
         }
       }
       // A method of a value the types do not know (any): one read from the request context by a key.
@@ -263,11 +386,32 @@ export class Resolver {
         const member = this.contextMember(entry.receiver, entry.method);
         if (member !== undefined) result.targets.set(entry.call, member);
       }
+      if (!result.targets.has(entry.call)) {
+        const callee = unwrap(any(entry.call)['expression'] as Node);
+        const reference = this.reference(callee);
+        const missing = reference ?? this.signatureTarget(entry.call) ?? this.missingTarget(callee);
+        if (missing !== undefined) result.targets.set(entry.call, missing);
+      }
     });
     for (const entry of calls) {
-      if (entry.name !== undefined || entry.receiver === undefined) continue;
-      const read = this.contextRead(entry.receiver);
-      if (read !== undefined) result.targets.set(entry.call, { kind: 'untraceable', why: 'キーで取り出した関数を呼ぶ' });
+      if (entry.name !== undefined) continue;
+      const callee = unwrap(any(entry.call)['expression'] as Node);
+      const read = this.contextRead(callee) ?? (entry.receiver === undefined ? undefined : this.contextRead(entry.receiver));
+      if (read !== undefined) result.targets.set(entry.call, { kind: 'untraceable', why: `c.get('${read.key}') から取り出した関数の実装を特定できない` });
+      else if (this.callable(callee)) result.targets.set(entry.call, { kind: 'untraceable', why: '式から得た関数値の実装を特定できない' });
+    }
+
+    // Passing a named function is a registration, not an invocation. Keep its identity separately.
+    for (const { call } of calls) {
+      if (this.iterates(call)) result.iterations.add(call);
+      for (const argument of any(call)['arguments'] as Node[]) {
+        const value = unwrap(argument);
+        if (isFunctionLike(value) || !this.callable(value)) continue;
+        const reference = this.reference(value);
+        const symbol = this.checker.getSymbolAtLocation(is(value, SyntaxKind.PropertyAccessExpression) ? value['name'] as Node : value);
+        const definition = symbol === undefined ? undefined : this.localFunction(this.target(symbol), call);
+        result.references.set(value, { ...(reference === undefined ? {} : { target: reference }), ...(definition === undefined ? {} : { definition }) });
+      }
     }
     // The code of an error: an enum member, or a property of a `const` object whose type is a literal.
     const types = thrown.length === 0 ? [] : this.checker.getTypeAtLocation(thrown);
@@ -283,17 +427,28 @@ export class Resolver {
     for (const literal of literals) {
       const properties = (any(literal)['properties'] as Node[]).filter((property) => {
         if (property.kind === SyntaxKind.MethodDeclaration) return true;
+        if (is(property, SyntaxKind.ShorthandPropertyAssignment)) return this.callable(property['name'] as Node);
         if (property.kind !== SyntaxKind.PropertyAssignment) return false;
-        return isFunctionLike(unwrap(any(property)['initializer'] as Node));
+        const value = unwrap(any(property)['initializer'] as Node);
+        return isFunctionLike(value) || this.callable(value);
       });
       if (properties.length === 0) continue;
-      const type = this.checker.getContextualType(literal as Parameters<Checker['getContextualType']>[0]);
-      if (type === undefined) continue;
       for (const property of properties) {
         const name = nameOf(any(property)['name']);
         if (name === undefined) continue;
-        const member = this.memberOf(this.checker.getPropertyOfType(type, name));
-        if (member !== undefined) result.implementations.set(property, member);
+        const member = this.contextualMember(literal, name);
+        if (member !== undefined) {
+          result.implementations.set(property, member);
+          if (is(property, SyntaxKind.PropertyAssignment) || is(property, SyntaxKind.ShorthandPropertyAssignment)) {
+            const value = unwrap((property['initializer'] ?? property['name']) as Node);
+            if (!isFunctionLike(value)) {
+              const reference = this.reference(value);
+              const symbol = this.checker.getSymbolAtLocation(value);
+              const definition = symbol === undefined ? undefined : this.localFunction(this.target(symbol), value);
+              result.references.set(value, { ...(reference === undefined ? {} : { target: reference }), ...(definition === undefined ? {} : { definition }) });
+            }
+          }
+        }
       }
     }
     return result;

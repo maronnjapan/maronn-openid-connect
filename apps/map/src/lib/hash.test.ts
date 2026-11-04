@@ -60,4 +60,11 @@ describe('the view in a hash', () => {
     expect(parseHash('#hono--nope', data, defaults)).toEqual({ ...defaults, framework: 'hono' });
     expect(parseHash('#fn--nope', data, defaults)).toEqual(defaults);
   });
+
+  it('should link the unresolved wiring inventory independently of a PR and an endpoint', () => {
+    const wiring = { ...defaults, framework: 'nextjs', wiring: true };
+    expect(buildHash(wiring, data)).toBe('nextjs--wiring');
+    expect(parseHash('#nextjs--wiring', data, defaults)).toEqual(wiring);
+    expect(parseHash('#wiring', data, defaults)).toEqual({ ...defaults, wiring: true });
+  });
 });

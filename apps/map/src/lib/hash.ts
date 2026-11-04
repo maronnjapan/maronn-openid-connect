@@ -27,6 +27,8 @@ export interface View {
   fn: string | null;
   /** The page of the changes of the pull request is open (when no function is). */
   changes?: boolean;
+  /** The inventory of wiring whose endpoint destination the analysis cannot establish. */
+  wiring?: boolean;
   trace: TraceState;
   /** A node the trace selects once it shows, keyed like a decision (the changed node a way leads to); not in the hash. */
   target?: string;
@@ -95,6 +97,7 @@ export function buildHash(view: View, data: MapData): string {
     return `${view.framework}--fn--${card.name}${unique ? '' : `--${card.package}--${encodeURIComponent(card.module)}`}${trace}`;
   }
   if (view.changes === true) return `${view.framework}--${CHANGES}`;
+  if (view.wiring === true) return `${view.framework}--wiring`;
   if (view.endpoint !== null) return `${view.framework}--${view.endpoint}${view.step === null ? '' : `--${view.step}`}${trace}`;
   return '';
 }
@@ -119,6 +122,7 @@ export function parseHash(hash: string, data: MapData, defaults: View): View {
   const trace = cut === -1 ? EMPTY_TRACE : parseTrace(text.slice(cut));
   const parts = head.split('--').map(decode);
   if (parts[0] === CHANGES && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, changes: true, trace: EMPTY_TRACE };
+  if (parts[0] === 'wiring' && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, wiring: true, trace: EMPTY_TRACE };
   if (parts[0] === 'fn') {
     const fn = functionOf(data, parts.slice(1));
     return fn === undefined ? defaults : { ...defaults, fn, trace };
@@ -132,7 +136,7 @@ export function parseHash(hash: string, data: MapData, defaults: View): View {
   const view: View = { framework, endpoint: null, step: null, fn: null, trace };
   const flow = data.flows[framework];
   const endpoint = flow?.endpoints.find((candidate) => candidate.id === parts[1]);
-  if (endpoint === undefined) return parts[1] === CHANGES ? { ...view, changes: true, trace: EMPTY_TRACE } : { ...view, trace: EMPTY_TRACE };
+  if (endpoint === undefined) return parts[1] === CHANGES ? { ...view, changes: true, trace: EMPTY_TRACE } : parts[1] === 'wiring' ? { ...view, wiring: true, trace: EMPTY_TRACE } : { ...view, trace: EMPTY_TRACE };
   view.endpoint = endpoint.id;
   if (parts[2] && endpoint.steps.some((step) => step.id === parts[2])) view.step = parts[2];
   return view;

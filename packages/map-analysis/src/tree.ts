@@ -852,10 +852,12 @@ class Builder {
         for (const property of any(node)['properties'] as Node[]) {
           if (is(property, SyntaxKind.PropertyAssignment)) {
             const value = unwrap(property['initializer'] as Node);
-            if (isFunctionLike(value)) this.implementation(property, value);
+            if (isFunctionLike(value) || this.context.resolution.implementations.has(property)) this.implementation(property, value);
             else this.collect(property['initializer'] as Node, mode, out);
           } else if (is(property, SyntaxKind.SpreadAssignment)) {
             this.collect(property['expression'] as Node, mode, out);
+          } else if (is(property, SyntaxKind.ShorthandPropertyAssignment) && this.context.resolution.implementations.has(property)) {
+            this.implementation(property, property['name'] as Node);
           } else if (is(property, SyntaxKind.MethodDeclaration) || is(property, SyntaxKind.GetAccessor) || is(property, SyntaxKind.SetAccessor)) {
             this.implementation(property, property);
           }
@@ -885,7 +887,11 @@ class Builder {
     this.defer(value);
     const member = this.context.resolution.implementations.get(property);
     if (member === undefined) return;
-    const calls = this.callsIn(value);
+    const reference = this.context.resolution.references.get(value);
+    const calls = reference?.target !== undefined && reference.target.kind !== 'untraceable'
+      ? [reference.target.id]
+      : this.callsIn(reference?.definition ?? value);
+    for (const callee of calls) this.deferred.add(callee);
     this.implementations.push({ member, lines: [this.start(property), this.end(property)], ...(calls.length > 0 ? { calls } : {}) });
   }
 
@@ -901,11 +907,21 @@ class Builder {
     };
     seen.add(definition);
     walk(definition, (inner) => {
+      if (inner !== definition && isFunctionLike(inner)) return false;
       if (!is(inner, SyntaxKind.CallExpression)) return true;
       const target = this.context.resolution.targets.get(inner);
       if (target !== undefined && target.kind !== 'untraceable') add(target.id);
       const local = this.context.resolution.locals.get(inner);
       if (local !== undefined && !seen.has(local)) for (const id of this.callsIn(local, seen)) add(id);
+      if (this.context.resolution.iterations.has(inner)) {
+        for (const argument of any(inner)['arguments'] as Node[]) {
+          const value = unwrap(argument);
+          const reference = this.context.resolution.references.get(value);
+          if (reference?.target !== undefined && reference.target.kind !== 'untraceable') add(reference.target.id);
+          const callback = reference?.definition ?? (isFunctionLike(value) ? value : undefined);
+          if (callback !== undefined && !seen.has(callback)) for (const id of this.callsIn(callback, seen)) add(id);
+        }
+      }
       return true;
     });
     return calls;
@@ -949,14 +965,35 @@ class Builder {
       this.collect(inner['argumentExpression'] as Node, mode, out);
     } else if (!is(inner, SyntaxKind.Identifier)) this.collect(callee, mode, out);
     const callbacks: Node[] = [];
+    const callbackTargets: Array<{ value: Node; target: CallTarget }> = [];
     for (const argument of any(node)['arguments'] as Node[]) {
       const value = unwrap(argument);
       if (is(value, SyntaxKind.ArrowFunction) || is(value, SyntaxKind.FunctionExpression)) callbacks.push(value);
-      else this.collect(argument, mode, out);
+      else {
+        const reference = this.context.resolution.references.get(value);
+        if (reference?.target !== undefined && reference.target.kind !== 'untraceable') {
+          if (this.context.resolution.iterations.has(node)) callbackTargets.push({ value, target: reference.target });
+          else this.deferred.add(reference.target.id);
+        }
+        if (reference?.definition !== undefined) {
+          if (this.context.resolution.iterations.has(node)) callbacks.push(reference.definition);
+          else this.defer(reference.definition);
+        }
+        this.collect(argument, mode, out);
+      }
     }
     for (const callback of callbacks) {
       const loop = this.callback(node, callback);
       if (loop !== undefined) out.push(loop);
+    }
+    for (const { value, target } of callbackTargets) {
+      const call: TreeNode = { id: '', kind: 'call', lines: [this.start(value), this.end(value)], code: `${this.compact(value)}(…)`, target };
+      const summary = this.context.summaryOf(target);
+      if (summary !== undefined && summary !== '') { call.text = summary; call.from = 'doc'; }
+      const loop: TreeNode = { id: '', kind: 'loop', lines: [this.start(node), this.end(node)], code: shorten(this.compact(node), 80), text: '各要素で', from: 'code', branches: [{ key: 'body', label: '各要素で', nodes: [call] }, { key: 'skip', label: '要素がない', nodes: [] }] };
+      this.own.set(call, this.code(value));
+      this.own.set(loop, this.code(callee));
+      out.push(loop);
     }
     const target = this.context.resolution.targets.get(node);
     if (target === undefined) {
@@ -1018,6 +1055,14 @@ class Builder {
 
   /** The callback a call runs, as a loop over its body; undefined when the body calls nothing of the catalog and throws nothing. */
   private callback(call: Node, fn: Node): TreeNode | undefined {
+    const callee = unwrap(any(call)['expression'] as Node);
+    const method = is(callee, SyntaxKind.PropertyAccessExpression) ? nameOf(callee['name']) : undefined;
+    // A registration may invoke its callback much later, or never. Only the known
+    // iteration operations justify execution here; other wiring has its own diagnostics.
+    if (method === undefined || !ITERATION.has(method) || !this.context.resolution.iterations.has(call)) {
+      this.defer(fn);
+      return undefined;
+    }
     const body = any(fn)['body'] as Node;
     this.callbackDepth += 1;
     const nodes = is(body, SyntaxKind.Block)
@@ -1028,8 +1073,6 @@ class Builder {
       this.defer(fn);
       return undefined;
     }
-    const callee = unwrap(any(call)['expression'] as Node);
-    const method = is(callee, SyntaxKind.PropertyAccessExpression) ? nameOf(callee['name']) : undefined;
     const iterates = method !== undefined && ITERATION.has(method);
     const head = shorten(`${this.compact(callee)}(…)`, 60);
     const loop: TreeNode = {

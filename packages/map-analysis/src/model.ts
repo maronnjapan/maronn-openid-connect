@@ -348,6 +348,21 @@ export interface SourceDocument {
   tokens: Array<Array<{ content: string; color: string }>>;
 }
 
+/** A registration or a constructed value whose endpoint destination needs its own evidence, rather than an invented call edge. */
+export interface WiringEntry {
+  id: string;
+  /** The source module, also a key of MapData.sources. */
+  file: string;
+  lines: [number, number];
+  kind: 'middleware' | 'context' | 'callback' | 'initialization';
+  code: string;
+  /** Whether its endpoint destination is known; knowing only the callback's identity is insufficient. */
+  status: 'resolved' | 'untraceable';
+  target?: string;
+  destinations?: string[];
+  why?: string;
+}
+
 export interface MapData {
   version: 4;
   frameworks: string[];
@@ -357,6 +372,8 @@ export interface MapData {
   functions: Record<string, FunctionEntry>;
   bodies: Record<string, BodyEntry>;
   members: Record<string, MemberDoc>;
+  /** Registrations and initialization outside ordinary call paths, including modules with no catalog function. */
+  wiring?: WiringEntry[];
   /** Source files fetched only when the code drawer opens; shared across functions and frameworks. */
   sources: Record<string, { path: string; url: string }>;
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */

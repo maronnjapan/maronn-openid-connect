@@ -246,6 +246,10 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   }
 
   // The code, highlighted, one file each.
+  for (const entry of head.wiring) {
+    const colon = entry.file.indexOf(':');
+    sourceOf(entry.file.slice(0, colon), entry.file.slice(colon + 1));
+  }
   const highlighter = await createSourceHighlighter();
   const sources: MapData['sources'] = {};
   for (const [id, source] of [...sourceFiles].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
@@ -265,6 +269,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     functions,
     bodies,
     members,
+    wiring: head.wiring,
     sources,
     ...(changes === undefined ? {} : { changes: changes.changes }),
   };
@@ -277,7 +282,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   const untraceable = [...Object.values(functions), ...Object.values(bodies)].reduce((count, entry) => count + (entry.untraceable ?? 0), 0);
   log.push(
     `${cli.frameworks.length} frameworks, ${steps} steps, ${Object.keys(functions).length} functions, ${Object.keys(bodies).length} endpoint bodies, ` +
-      `${Object.keys(members).length} interface members, ${untraceable} untraceable calls, ${Object.keys(sources).length} source files`,
+      `${Object.keys(members).length} interface members, ${untraceable} untraceable calls, ${head.wiring.length} wiring diagnostics, ${Object.keys(sources).length} source files`,
   );
   return { data, repository, ...(changes === undefined ? {} : { changes }), log };
 }

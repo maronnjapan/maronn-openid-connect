@@ -3,6 +3,8 @@ import { redeemCibaRequest } from '../../features/ciba/steps/dispatch-ciba.js';
 import { redeemDeviceCode } from '../../features/device-authorization-grant/steps/dispatch-device-code.js';
 import { issueIdJag } from '../../features/id-jag/steps/dispatch-id-jag-issuance.js';
 import { redeemIdJag } from '../../features/id-jag/steps/dispatch-id-jag-redemption.js';
+import { appendAuthorizationDetailsToTokenResponse } from '../../features/rar/steps/append-token-response-details.js';
+import { rejectTokenRequestAuthorizationDetails } from '../../features/rar/steps/reject-token-request-details.js';
 import { decideRefreshTokenIssuance } from '../../features/refresh-token/steps/decide-refresh-token-issuance.js';
 import { issueRefreshToken } from '../../features/refresh-token/steps/issue-refresh-token.js';
 import { revokeRotatedRefreshToken } from '../../features/refresh-token/steps/revoke-rotated-refresh-token.js';
@@ -65,6 +67,9 @@ tokenApp.post('/', async (c) => {
     const cibaGrantResponse = await redeemCibaRequest(c, params, tokenClient, authenticatedClientId);
     if (cibaGrantResponse) return cibaGrantResponse;
 
+    // [reject-token-request-details] (feature: rar) トークンリクエストの authorization_details を拒否する — RFC 9396 §6
+    rejectTokenRequestAuthorizationDetails(params);
+
     // [validate-grant-type] grant_type を検証する — RFC 6749 §5.2
     const grantType = validateTokenGrantType(params, tokenClient);
 
@@ -116,7 +121,10 @@ tokenApp.post('/', async (c) => {
     await revokeRotatedRefreshToken(c, params, validatedRequest);
 
     // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
-    const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
+    let tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
+
+    // [append-token-response-details] (feature: rar) 承認済みの authorization details を応答へ含める — RFC 9396 §7
+    tokenResponse = await appendAuthorizationDetailsToTokenResponse(c, tokenResponse, validatedRequest);
 
     // [respond] 応答する（no-store） — RFC 6749 §5.1
     return respondToken(c, tokenResponse);

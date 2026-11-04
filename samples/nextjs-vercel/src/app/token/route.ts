@@ -367,7 +367,7 @@ async function token(request: Request): Promise<Response> {
     await revokeRotatedRefreshToken(params, validatedRequest);
 
     // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
-    const tokenResponse = {
+    let tokenResponse = {
       access_token: accessToken,
       token_type: 'Bearer' as const,
       expires_in: config.accessTokenExpiresIn,

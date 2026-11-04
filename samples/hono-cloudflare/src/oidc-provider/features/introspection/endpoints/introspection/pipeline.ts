@@ -35,7 +35,7 @@ introspectionApp.post('/', async (c) => {
     const resolved = await resolveIntrospectedToken(c, params, authenticatedClientId);
 
     // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
-    const introspection = describeIntrospectedToken(resolved);
+    let introspection = describeIntrospectedToken(resolved);
 
     // [sign-response] (feature: jwt-introspection-response) 求められたら署名付き JWT で応答する — RFC 9701 §4 / §5
     const signed = await signIntrospectionResponse(c, introspection, authenticatedClientId);

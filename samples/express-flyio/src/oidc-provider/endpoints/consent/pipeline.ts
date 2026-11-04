@@ -45,8 +45,11 @@ export async function prepareConsent(c: any): Promise<ConsentScreen | ConsentErr
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
+  const authorizationDetails = undefined;
+
   // [describe-consent-screen] 同意画面の表示内容を組み立てる
-  return describeConsentScreen(c, transactionId, transaction);
+  const screen = await describeConsentScreen(c, transactionId, transaction);
+  return { ...screen, authorizationDetails };
 }
 
 /**

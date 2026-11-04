@@ -19,6 +19,7 @@
     "jwtIntrospectionResponse": false,
     "rpInitiatedLogout": false,
     "dynamicClientRegistration": false,
+    "rar": false,
     "googleLogin": true
   },
   "scopes": [],

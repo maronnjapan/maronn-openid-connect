@@ -11,7 +11,9 @@ import { createDatabase, createProviderStores, registerClient } from './app/_oid
 import { registerDevelopmentUsers } from './app/_oidc-provider/development';
 import { extendDynamicClientRegistrationConfig } from './app/_oidc-provider/features/dynamic-client-registration/config';
 import { idJagConfig } from './app/_oidc-provider/features/id-jag/config';
+import { rarConfig } from './app/_oidc-provider/features/rar/config';
 import { rpInitiatedLogoutConfig } from './app/_oidc-provider/features/rp-initiated-logout/config';
+import { demoRarTypes } from './rar-demo';
 import {
   readCrossAppAccess,
   readDynamicClientRegistration,
@@ -43,6 +45,9 @@ export function applyFeatureSettings(env: Environment, db: ReturnType<typeof cre
     rpInitiatedLogoutConfig.postLogoutRedirectUris = postLogoutRedirectUris;
   }
   extendDynamicClientRegistrationConfig(readDynamicClientRegistration(env));
+  // EXPERIMENTAL (rar): the demo payment_initiation type, so tests/e2e can
+  // exercise RFC 9396 over the protocol. Generated providers start empty.
+  rarConfig.types = demoRarTypes;
 
   const crossAppAccess = readCrossAppAccess(env);
   if (crossAppAccess.allowedAudiences.length > 0) {

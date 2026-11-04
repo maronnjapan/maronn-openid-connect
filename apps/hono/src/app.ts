@@ -13,6 +13,7 @@ import { registerDevelopmentUsers } from './oidc-provider/development.js';
 import { idJagConfig } from './oidc-provider/features/id-jag/config.js';
 import { rpInitiatedLogoutConfig } from './oidc-provider/features/rp-initiated-logout/config.js';
 import { createOperatorApp } from './operator.js';
+import { demoRarTypes } from './rar-demo.js';
 import {
   createEphemeralSigningKeyProvider,
   echoRequestedAcr,
@@ -59,6 +60,9 @@ export async function createServerApp(env: Environment): Promise<Hono> {
       allowUnsignedRequestObject: env['OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT'] === '1',
       // The jwks_uri of the clients (RFC 7591 §2): tests/e2e serves its keys over http on 127.0.0.1.
       ...readClientJwksUri(env),
+      // EXPERIMENTAL (rar): the demo payment_initiation type, so tests/e2e can
+      // exercise RFC 9396 over the protocol. Generated providers start empty.
+      rarTypes: demoRarTypes,
       // EXTENSION (google-login): the button appears once a Google OAuth
       // client ID is configured.
       ...(googleClientId ? { googleLogin: { clientId: googleClientId } } : {}),

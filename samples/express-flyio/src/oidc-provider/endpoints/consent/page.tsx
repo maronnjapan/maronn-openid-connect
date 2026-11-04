@@ -46,6 +46,7 @@ consentPage.get('/', async (c) => {
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
+    authorizationDetails: screen.authorizationDetails,
   });
 });
 

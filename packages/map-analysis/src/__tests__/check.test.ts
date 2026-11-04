@@ -23,6 +23,33 @@ function mapOf(names: readonly string[]): { data: MapData; frame: FrameFile } {
   return { data, frame };
 }
 
+/** A map of one function whose tree ends on a closing line no node holds (the brace that closes the body). */
+function mapWithClosingLine(last: number, nodeEnd: number): { data: MapData; frame: FrameFile } {
+  const frame: FrameFile = {
+    version: 4,
+    tree: { id: 'core:a.ts#f', name: 'f', signature: 'f()', file: 'core:a.ts', lines: [1, last], head: [1, 1], nodes: [{ id: 's0', kind: 'return', lines: [2, nodeEnd], code: 'return x' }] },
+    selections: [],
+  };
+  const { data } = mapOf([]);
+  return { data, frame };
+}
+
+/** The changes of a map whose one frame `core:a.ts#f` was added with these changed lines. */
+function changesOf(changedLines: number[]): MapChanges {
+  return {
+    base: { ref: 'origin/main', commit: 'base' },
+    head: { commit: 'head', dirty: false },
+    notes: [],
+    frames: [{ id: 'core:a.ts#f', name: 'f', package: 'core', module: 'a.ts', line: 1, kind: 'added', summary: ['関数を足した'], counts: {}, changedLines, reach: [] }],
+    unmatched: [],
+    unknown: [],
+    ambiguous: [],
+    undocumented: [],
+    outside: [],
+    otherFiles: 0,
+  };
+}
+
 describe('checkMap', () => {
   it('should count two choices told apart by a number only as one name repeated', async () => {
     const { data, frame } = mapOf(['例外が起きたとき → return null', '例外が起きたとき → return null (2)']);
@@ -88,39 +115,18 @@ describe('checkMap', () => {
     expect((await checkMap(data, async () => frame, async () => undefined)).failures).toEqual(['core:a.ts#f:s0i0b0: an untraceable call has no reason']);
   });
 
-  // A body that ends in a return has no node on the brace that closes it, and
-  // every line of an added function is a changed line, that brace included.
-  it('should hold the closing brace of an added function that ends in a return inside its frame', async () => {
-    const frame: FrameFile = {
-      version: 4,
-      tree: {
-        id: 'core:a.ts#f',
-        name: 'f',
-        signature: 'f()',
-        file: 'core:a.ts',
-        lines: [1, 5],
-        head: [2, 2],
-        nodes: [
-          { id: 's0', kind: 'action', lines: [3, 3], code: 'const x = 1' },
-          { id: 's1', kind: 'return', lines: [4, 4], code: 'return x' },
-        ],
-      },
-      selections: [],
-    };
-    const { data } = mapOf([]);
-    const changes: MapChanges = {
-      base: { ref: 'origin/main', commit: 'base' },
-      head: { commit: 'head', dirty: false },
-      notes: [],
-      frames: [{ id: 'core:a.ts#f', name: 'f', package: 'core', module: 'a.ts', line: 2, kind: 'added', summary: ['関数を足した'], counts: {}, changedLines: [1, 2, 3, 4, 5], reach: [] }],
-      unmatched: [],
-      unknown: [],
-      ambiguous: [],
-      undocumented: [],
-      outside: [],
-      otherFiles: 0,
-    };
-    const { metrics, failures } = await checkMap({ ...data, changes }, async () => frame, async () => undefined);
+  it('should not count the closing line of an added function as a changed line in no node', async () => {
+    const { data, frame } = mapWithClosingLine(3, 2);
+    data.changes = changesOf([1, 2, 3]);
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined);
     expect([metrics.changedOutside, failures]).toEqual([[], []]);
+  });
+
+  it('should count a changed line between the last node and the closing line as outside every node', async () => {
+    const { data, frame } = mapWithClosingLine(4, 2);
+    data.changes = changesOf([3]);
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined);
+    expect(metrics.changedOutside).toEqual([{ frame: 'core:a.ts#f', lines: [3] }]);
+    expect(failures).toEqual(['core:a.ts#f: changed lines 3 are in no node']);
   });
 });

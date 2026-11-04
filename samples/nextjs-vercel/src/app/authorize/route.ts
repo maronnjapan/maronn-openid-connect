@@ -207,7 +207,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
 
     // `prompt` の各値が `none`、`login`、`consent`、`select_account` のどれかであることを確かめる（OIDC Core 1.0 §3.1.2.1）。
     // `none` とほかの値の併用も、`invalid_request` で拒否する。
-    const prompt = validatePromptParameter(requestParams, redirectUri, state);
+    let prompt = validatePromptParameter(requestParams, redirectUri, state);
 
     // `offline_access` は、次の二つの条件を両方満たしたときだけスコープに残す。
     // - エンドユーザーが同意する（`prompt=consent`、OIDC Core 1.0 §11）。

@@ -542,6 +542,11 @@ describe('activeOf', () => {
     expect(activeOf(drawn, nested, '', [{ s0: 'false' }]).groups.has('g:s0t0')).toBe(false);
   });
 
+  // The two tests below lay the diagram out for every side of every decision,
+  // in both directions: about 3 s each alone, and longer than the default 5 s
+  // while the suites of the other apps run beside them (pnpm run test:ci).
+  const LAYOUT_EVERY_SIDE_TIMEOUT_MS = 30_000;
+
   it('should place every box and region the same for no choice and for each side of each decision', () => {
     const folded = frameDiagram(mixed, '');
     const choices = everySide(mixed);
@@ -550,7 +555,7 @@ describe('activeOf', () => {
     expect(choices.map((choice) => placed(folded, mixed, choice, 'TB'))).toEqual(choices.map(() => placed(folded, mixed, [], 'TB')));
     expect(choices.map((choice) => placed(folded, mixed, choice, 'LR'))).toEqual(choices.map(() => placed(folded, mixed, [], 'LR')));
     expect(placed(folded, mixed, [], 'TB').boxWidth).toBe(200);
-  });
+  }, LAYOUT_EVERY_SIDE_TIMEOUT_MS);
 
   it('should place every box and region of nested tries the same for no choice and for each side of each decision', () => {
     const drawn = frameDiagram(nested, '');
@@ -558,7 +563,7 @@ describe('activeOf', () => {
     expect(choices.length).toBe(8);
     expect(choices.map((choice) => placed(drawn, nested, choice, 'TB'))).toEqual(choices.map(() => placed(drawn, nested, [], 'TB')));
     expect(choices.map((choice) => placed(drawn, nested, choice, 'LR'))).toEqual(choices.map(() => placed(drawn, nested, [], 'LR')));
-  });
+  }, LAYOUT_EVERY_SIDE_TIMEOUT_MS);
 });
 
 describe('layoutDiagram', () => {

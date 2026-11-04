@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TreeNode } from '../types';
-import { calleeSummary, firstSentence, nodeWords, sideWords, splitPre, type WordSource } from './words';
+import { boundNames, calleeSummary, firstSentence, nodeWords, returnedWords, runWords, sideWords, splitPre, type WordSource } from './words';
 
 const source = {
   functions: {
@@ -34,6 +34,7 @@ describe('the words of a row', () => {
     const returned: TreeNode = { id: 's3', kind: 'return', lines: [1, 1], code: 'return respond(c, body)' };
     expect(nodeWords(returned, source, call('s3i0', { kind: 'function', id: 'core:a.ts#respond' }))).toEqual({ text: 'トークンレスポンスを返す。', code: false, tag: '終わり' });
     expect(nodeWords(returned, source)).toEqual({ text: 'return respond(c, body)', code: true, tag: '終わり' });
+    expect(nodeWords({ id: 's3b', kind: 'return', lines: [1, 1], code: 'return { params, authorization }' }, source)).toEqual({ text: '`params`、`authorization` を返す', code: false, tag: '終わり' });
     expect(nodeWords({ id: 's4', kind: 'throw', lines: [1, 1], code: 'throw new TokenError(…)', error: 'TokenError(invalid_client)' }, source)).toEqual({ text: '`TokenError(invalid_client)` を投げる', code: false, tag: '失敗' });
   });
 
@@ -63,7 +64,35 @@ describe('the words of a side', () => {
   it('should read what a side does after an arrow: its calls, then how it ends', () => {
     const exit: TreeNode = { id: 't1', kind: 'return', lines: [1, 1], code: 'return respond()', pre: [call('t1i0', { kind: 'function', id: 'core:a.ts#respond' })] };
     expect(sideWords([call('t0', { kind: 'function', id: 'core:a.ts#authenticate' }), exit], source)).toBe('クライアントを認証し、認証したクライアントを返す、終わり: トークンレスポンスを返す');
-    expect(sideWords([{ id: 't2', kind: 'return', lines: [1, 1], code: 'return exchanged' }], source)).toBe('終わり: `return exchanged`');
+    expect(sideWords([{ id: 't2', kind: 'return', lines: [1, 1], code: 'return exchanged' }], source)).toBe('終わり: `exchanged` を返す');
+    expect(sideWords([{ id: 't3', kind: 'return', lines: [1, 1], code: 'return a + b' }], source)).toBe('終わり: `return a + b`');
     expect(sideWords([], source)).toBe('何もしない');
+  });
+});
+
+describe('the words made from simple code', () => {
+  it('should find the names a declaration binds and the target an assignment sets', () => {
+    expect(boundNames('const { a, b: c, ...d } = x')).toEqual({ declared: ['a', 'c', 'd'], assigned: [] });
+    expect(boundNames('const [first, { second }] = pairs')).toEqual({ declared: ['first', 'second'], assigned: [] });
+    expect(boundNames('let duplicateKey')).toEqual({ declared: ['duplicateKey'], assigned: [] });
+    expect(boundNames('const issuedAt: number = Math.floor(Date.now() / 1000)')).toEqual({ declared: ['issuedAt'], assigned: [] });
+    expect(boundNames('rawParams[key] = value')).toEqual({ declared: [], assigned: ['rawParams[key]'] });
+    expect(boundNames('seen.add(key)')).toEqual({ declared: [], assigned: [] });
+    expect(boundNames('if (a === b)')).toEqual({ declared: [], assigned: [] });
+  });
+
+  it('should say what a return returns when its code is a name or an object of names, and nothing for anything else', () => {
+    expect(returnedWords('return { tokenClient, authenticatedClientId }')).toBe('`tokenClient`、`authenticatedClientId` を返す');
+    expect(returnedWords('return { ...params, scope: granted }')).toBe('`...params`、`scope` を返す');
+    expect(returnedWords('return exchanged')).toBe('`exchanged` を返す');
+    expect(returnedWords('return')).toBe('ここで終わる');
+    expect(returnedWords('return a + b')).toBeUndefined();
+  });
+
+  it('should read a run of statements as what they bind, what they set, or both with the rest as code', () => {
+    const action = (id: string, code: string): TreeNode => ({ id, kind: 'action', lines: [1, 1], code });
+    expect(runWords([action('a', 'const config = c.get("config")'), action('b', 'const { a, b } = input')])).toEqual({ text: '`config`、`a`、`b` を用意する', code: false });
+    expect(runWords([action('c', 'target.y = x')])).toEqual({ text: '`target.y` に入れる', code: false });
+    expect(runWords([action('d', 'seen.add(key)'), action('e', 'rawParams[key] = value')])).toEqual({ text: '処理: `rawParams[key]`、`seen.add(key)`', code: false });
   });
 });

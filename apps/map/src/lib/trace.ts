@@ -326,6 +326,16 @@ export type Row =
       /** A side that ends at once (a catch that answers with an error) or does nothing, read on its own row. */
       exit?: { nodes: TreeNode[]; on: boolean };
     }
+  | {
+      kind: 'run';
+      key: string;
+      frame: string;
+      /** Statements in a row that say nothing in words (variables, settings), read as one line until the reader opens them. */
+      nodes: TreeNode[];
+      depth: number;
+      on: boolean;
+      open: boolean;
+    }
   | { kind: 'removed'; key: string; frame: string; node: TreeNode; depth: number }
   | { kind: 'loading'; key: string; frame: string; depth: number };
 
@@ -339,8 +349,15 @@ export interface RowOptions {
   changes?: ReadonlyMap<string, FrameChange>;
   state: TraceState;
   enabled?: ReadonlySet<string>;
-  /** The steps the reader opened or folded, by row key: each flips its step's default (folded, unless it holds a change, an opened frame or a choice). */
+  /** The steps the reader opened or folded, by row key: each flips its step's default (folded, unless it holds a change, an opened frame or a choice). A run of statements (see foldCode) the reader opened is in it too. */
   toggled?: ReadonlySet<string>;
+  /** Read two or more statements in a row that say nothing in words (variables, settings) as one line (a 'run' row), as an outline of words does. */
+  foldCode?: boolean;
+}
+
+/** Whether a statement says nothing in words: an action with no comment above it, whose code is all the outline could show. */
+function silent(node: TreeNode): boolean {
+  return node.kind === 'action' && node.branches === undefined && (node.pre ?? []).length === 0 && !(node.text !== undefined && (node.from === 'comment' || node.from === 'doc'));
 }
 
 /** Whether a key or an id is below another: it starts with it and goes on with a new segment (`s0b2s0` below `s0b2`, not `s0b21`). */
@@ -401,7 +418,26 @@ export function traceRows(options: RowOptions): Row[] {
     };
     const list = (nodes: readonly TreeNode[], depth: number, parent: string, branchKey: string) => {
       removedRows(`${parent}|${branchKey}|start`, depth);
-      for (const node of nodesOn(nodes, enabled)) {
+      const visible = nodesOn(nodes, enabled);
+      for (let index = 0; index < visible.length; index += 1) {
+        const node = visible[index] as TreeNode;
+        // Statements in a row that say nothing in words read as one line, unless the pull request changed one of them.
+        if (options.foldCode === true && silent(node) && !changedIds.includes(node.id)) {
+          let end = index;
+          while (end + 1 < visible.length && silent(visible[end + 1] as TreeNode) && !changedIds.includes((visible[end + 1] as TreeNode).id) && removedAfter.get((visible[end] as TreeNode).id) === undefined) end += 1;
+          if (end > index) {
+            const run = visible.slice(index, end + 1);
+            const runKey = `${key}|run|${node.id}`;
+            const open = toggled.has(runKey);
+            rows.push({ kind: 'run', key: runKey, frame: key, nodes: run, depth, on: run.some((item) => on.has(item.id)), open });
+            for (const item of run) {
+              if (open) one(item, depth + 1);
+              removedRows(item.id, open ? depth + 1 : depth);
+            }
+            index = end;
+            continue;
+          }
+        }
         one(node, depth);
         removedRows(node.id, depth);
       }
@@ -486,7 +522,7 @@ export function traceRows(options: RowOptions): Row[] {
  * not show.
  */
 export function rowFor(rows: readonly Row[], frame: string, node: string): string | undefined {
-  const row = rows.find((candidate) => candidate.frame === frame && candidate.kind === 'node' && (candidate.node.id === node || candidate.call?.id === node));
+  const row = rows.find((candidate) => candidate.frame === frame && ((candidate.kind === 'node' && (candidate.node.id === node || candidate.call?.id === node)) || (candidate.kind === 'run' && !candidate.open && candidate.nodes.some((item) => item.id === node))));
   if (row !== undefined) return row.key;
   // An id is the id of the node it is under and its place there (`s0b1n0` under `s0b1`, `s5c1s0` under `s5`): trimming a segment at a time reaches every ancestor.
   const parent = node.replace(/[a-z]+[0-9]+$/, '');

@@ -1,7 +1,8 @@
 /**
  * The diagram of a frame as automatically arranged boxes and arrows (Dagre):
- * where each box goes and the route of each arrow, and the text helpers that
- * fit code into a box. Which boxes the chosen way runs through is the
+ * where each box goes, the rectangle of each region (a group of boxes, such
+ * as the ones a `try` guards), the route of each arrow, and the text helpers
+ * that fit code into a box. Which boxes the chosen way runs through is the
  * trace's business (trace.ts); every box and arrow takes part in the
  * placement, so a choice never moves a box. Nothing here touches the DOM.
  */
@@ -13,18 +14,38 @@ export interface GraphNode {
   id: string;
 }
 
-/** An arrow between two boxes: the flow, a side of a decision, or the way an error takes. */
+/** An arrow between two boxes, or from or to a region: the flow, a side of a decision, or the way an error takes. */
 export interface GraphEdge {
+  /** A box, or a region (GraphGroup): the arrow then leaves from its border. */
   from: string;
+  /** A box, or a region: the arrow then ends at its border. */
   to: string;
   label?: string;
   kind: 'flow' | 'branch' | 'error';
+}
+
+/** A region: boxes laid out together as one cluster and drawn inside one rectangle, with room for a label at its top. */
+export interface GraphGroup {
+  id: string;
+  /** The region it is inside, by id. */
+  parent?: string;
+  /** Every box it encloses, by id, those of the regions inside it included, in the order they read. */
+  members: readonly string[];
 }
 
 // ---- layout
 
 /** A placed box: its top-left corner and its size. */
 export interface LayoutBox {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** A placed region: the rectangle that encloses its boxes with a margin, the room of its label at the top included. */
+export interface LayoutGroup {
   id: string;
   x: number;
   y: number;
@@ -43,11 +64,13 @@ export interface LayoutArrow {
   label?: { text: string; x: number; y: number; width: number; height: number };
 }
 
-/** The placed boxes and the arrows to draw, on a canvas of width × height. */
+/** The placed boxes and regions and the arrows to draw, on a canvas of width × height. */
 export interface Layout {
   width: number;
   height: number;
   boxes: LayoutBox[];
+  /** The regions that enclose boxes, in the order of LayoutOptions.groups; a region with no box is left out. */
+  groups: LayoutGroup[];
   arrows: LayoutArrow[];
 }
 
@@ -75,10 +98,17 @@ const RANK_SEP = 20;
 /** The columns of an arrow's label; a longer label is cut. */
 export const EDGE_LABEL_COLUMNS = 48;
 
-/** How layoutGraph sizes the boxes. */
+/** The least room between the border of a region and the boxes it encloses. */
+const GROUP_PAD = 12;
+
+/** How layoutGraph sizes the boxes, and the regions it draws around them. */
 export interface LayoutOptions {
   /** The height of a box at a width; every box is BOX_HEIGHT high without it. It is asked again when the width changes. */
   height?: (id: string, width: number) => number;
+  /** The regions: each encloses its members; a region inside another lies inside it. */
+  groups?: readonly GraphGroup[];
+  /** The room the label of a region takes at its top, from its border to its first box (GROUP_PAD without it). */
+  header?: (id: string) => number;
 }
 
 /** Whether a character takes two columns (CJK and full-width forms). */
@@ -101,6 +131,33 @@ export function truncateColumns(text: string, columns: number): string {
   for (const char of text) {
     const width = isWide(char) ? 2 : 1;
     if (used + width > columns - 1) break;
+    out += char;
+    used += width;
+  }
+  return `${out}…`;
+}
+
+/** How wide the characters of a font draw: a wide character (CJK, full-width) and, on average, any other, in pixels. */
+export interface FontWidths {
+  wide: number;
+  narrow: number;
+}
+
+/** The pixels a text takes in a font (see FontWidths). */
+export function textPixels(text: string, font: FontWidths): number {
+  let pixels = 0;
+  for (const char of text) pixels += isWide(char) ? font.wide : font.narrow;
+  return pixels;
+}
+
+/** Cut a text to the pixels it may take in a font, with an ellipsis (as wide as a narrow character) that the room includes. */
+export function truncatePixels(text: string, room: number, font: FontWidths): string {
+  if (textPixels(text, font) <= room) return text;
+  let used = font.narrow;
+  let out = '';
+  for (const char of text) {
+    const width = isWide(char) ? font.wide : font.narrow;
+    if (used + width > room) break;
     out += char;
     used += width;
   }
@@ -341,7 +398,41 @@ function selfLoopPoints(box: LayoutBox, label: LayoutPoint & { width: number; he
   return [{ x: left, y: side }, { x: left, y: outside }, { x: right, y: outside }, { x: right, y: side }];
 }
 
-/** Lay out all valid nodes and edges with one alignment, boxes of one width and their own heights, reserving space for the displayed labels. */
+/** A region of a graph as the layout takes it: its boxes (only those the graph has, in order) and its parent, when that is a region the graph has too. */
+interface Cluster {
+  id: string;
+  parent: string | undefined;
+  members: string[];
+  /** How many regions it is inside. */
+  depth: number;
+}
+
+/** The regions that enclose at least one box of the graph, in the order given; a region whose id is a box's is left out, and so is a parent that loops. */
+function clustersOf(nodes: readonly GraphNode[], groups: readonly GraphGroup[]): Cluster[] {
+  const boxes = new Set(nodes.map((node) => node.id));
+  const valid = groups.filter((group) => !boxes.has(group.id) && group.members.some((id) => boxes.has(id)));
+  const byId = new Map(valid.map((group) => [group.id, group]));
+  const depthOf = (group: GraphGroup, seen: ReadonlySet<string>): number => {
+    const parent = group.parent === undefined ? undefined : byId.get(group.parent);
+    return parent === undefined || seen.has(parent.id) ? 0 : 1 + depthOf(parent, new Set([...seen, group.id]));
+  };
+  return valid
+    .map((group) => ({ id: group.id, parent: group.parent !== undefined && byId.has(group.parent) && group.parent !== group.id ? group.parent : undefined, members: group.members.filter((id) => boxes.has(id)), depth: depthOf(group, new Set([group.id])) }));
+}
+
+/** The regions, outer ones before the ones inside them. */
+function outerFirst(clusters: readonly Cluster[]): Cluster[] {
+  return [...clusters].sort((a, b) => a.depth - b.depth);
+}
+
+/** The box an arrow is laid out from or to: the box itself, or for a region its last box (an arrow from it) or its first (an arrow to it); undefined when there is none. */
+function endpointOf(id: string, boxes: ReadonlySet<string>, clusters: ReadonlyMap<string, Cluster>, end: 'from' | 'to'): string | undefined {
+  if (boxes.has(id)) return id;
+  const members = clusters.get(id)?.members ?? [];
+  return end === 'from' ? members[members.length - 1] : members[0];
+}
+
+/** Lay out all valid nodes and edges with one alignment, boxes of one width and their own heights, each region a cluster around its boxes, reserving space for the displayed labels. */
 function arrangeGraph(
   nodes: readonly GraphNode[],
   edges: readonly GraphEdge[],
@@ -349,8 +440,9 @@ function arrangeGraph(
   align: 'UL' | 'UR' | 'DL' | 'DR',
   width: number,
   heights: ReadonlyMap<string, number>,
+  clusters: readonly Cluster[],
 ) {
-  const graph = new graphlib.Graph({ multigraph: true });
+  const graph = new graphlib.Graph({ compound: true, multigraph: true });
   graph.setGraph({
     rankdir: direction,
     align,
@@ -360,11 +452,19 @@ function arrangeGraph(
     marginx: PAD,
     marginy: PAD,
   });
+  const boxes = new Set(nodes.map((node) => node.id));
+  const byCluster = new Map(clusters.map((cluster) => [cluster.id, cluster]));
   for (const node of nodes) graph.setNode(node.id, { width, height: heights.get(node.id) ?? BOX_HEIGHT });
+  for (const cluster of clusters) graph.setNode(cluster.id, {});
+  for (const cluster of clusters) if (cluster.parent !== undefined) graph.setParent(cluster.id, cluster.parent);
+  // A box goes in the deepest region that encloses it: the last of the outer-first order to name it.
+  for (const cluster of outerFirst(clusters)) for (const member of cluster.members) graph.setParent(member, cluster.id);
   edges.forEach((edge, index) => {
-    if (!graph.hasNode(edge.from) || !graph.hasNode(edge.to)) return;
+    const from = endpointOf(edge.from, boxes, byCluster, 'from');
+    const to = endpointOf(edge.to, boxes, byCluster, 'to');
+    if (from === undefined || to === undefined) return;
     const text = truncateColumns(edge.label ?? '', EDGE_LABEL_COLUMNS);
-    graph.setEdge(edge.from, edge.to, {
+    graph.setEdge(from, to, {
       width: text === '' ? 0 : labelWidth(text),
       height: text === '' ? 0 : 22,
       labelpos: 'c',
@@ -382,6 +482,110 @@ function sharesRank(graph: graphlib.Graph, nodes: readonly GraphNode[]): boolean
   return centres.some((centre, index) => index > 0 && centre - (centres[index - 1] as number) < 1);
 }
 
+/** A route from its start drawn from where it leaves a rectangle: the part of it inside is dropped. A route that starts outside, or never leaves, stays whole. */
+function leaving(points: readonly LayoutPoint[], rect: LayoutGroup): LayoutPoint[] {
+  const inside = (point: LayoutPoint) => point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+  const at = points.findIndex((point, index) => index > 0 && !inside(point));
+  if (at <= 0 || !inside(points[0] as LayoutPoint)) return [...points];
+  const a = points[at - 1] as LayoutPoint;
+  const b = points[at] as LayoutPoint;
+  // The share of the segment a → b at which it crosses a side of the rectangle.
+  const exit = (from: number, to: number, low: number, high: number) => (to > high ? (high - from) / (to - from) : to < low ? (low - from) / (to - from) : Infinity);
+  const t = Math.max(0, Math.min(1, exit(a.x, b.x, rect.x, rect.x + rect.width), exit(a.y, b.y, rect.y, rect.y + rect.height)));
+  return [{ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, ...points.slice(at)];
+}
+
+/** A route as Dagre gives it, before it is attached to its boxes: its points, and the place of its label (a self loop's too). */
+interface Route {
+  from: string;
+  to: string;
+  points: LayoutPoint[];
+  label: { x: number; y: number; width: number; height: number };
+}
+
+/**
+ * Where an arranged graph puts the boxes, the regions and every arrow. A
+ * region is the rectangle Dagre gives its cluster, grown to keep 8px around
+ * its boxes and the regions inside it; then, from the top down, the room its
+ * label takes (options.header) is made at its top by moving down everything
+ * below its top border, which no box crosses. An arrow from or to a region
+ * starts or ends at its border.
+ */
+function place(graph: graphlib.Graph, nodes: readonly GraphNode[], edges: readonly GraphEdge[], clusters: readonly Cluster[], direction: LayoutDirection, header: (id: string) => number): Layout {
+  const boxes: LayoutBox[] = nodes.map((node) => {
+    const box = graph.node(node.id);
+    return { id: node.id, x: box.x - box.width / 2, y: box.y - box.height / 2, width: box.width, height: box.height };
+  });
+  const byId = new Map(boxes.map((box) => [box.id, box]));
+  const below = (cluster: Cluster): Cluster[] => clusters.filter((other) => other.parent === cluster.id);
+  // The rectangles, the regions inside a region before it.
+  const rects = new Map<string, LayoutGroup>();
+  for (const cluster of outerFirst(clusters).reverse()) {
+    const node = graph.node(cluster.id);
+    const parts = [
+      { x: node.x - node.width / 2, y: node.y - node.height / 2, width: node.width, height: node.height },
+      ...cluster.members.map((id) => byId.get(id) as LayoutBox).map((box) => ({ x: box.x - 8, y: box.y - 8, width: box.width + 16, height: box.height + 16 })),
+      ...below(cluster).map((child) => rects.get(child.id) as LayoutGroup).map((rect) => ({ x: rect.x - 8, y: rect.y - 8, width: rect.width + 16, height: rect.height + 16 })),
+    ];
+    const left = Math.min(...parts.map((part) => part.x));
+    const top = Math.min(...parts.map((part) => part.y));
+    const right = Math.max(...parts.map((part) => part.x + part.width));
+    const bottom = Math.max(...parts.map((part) => part.y + part.height));
+    rects.set(cluster.id, { id: cluster.id, x: left, y: top, width: right - left, height: bottom - top });
+  }
+  const groups = clusters.map((cluster) => rects.get(cluster.id) as LayoutGroup);
+  const boxSet = new Set(boxes.map((box) => box.id));
+  const byCluster = new Map(clusters.map((cluster) => [cluster.id, cluster]));
+  const routes: Array<Route | undefined> = edges.map((edge, index) => {
+    const from = endpointOf(edge.from, boxSet, byCluster, 'from');
+    const to = endpointOf(edge.to, boxSet, byCluster, 'to');
+    if (from === undefined || to === undefined || !graph.hasEdge(from, to, String(index))) return undefined;
+    const route = graph.edge(from, to, String(index));
+    return { from, to, points: (route.points as LayoutPoint[]).map((point) => ({ x: point.x, y: point.y })), label: { x: route.x, y: route.y, width: route.width, height: route.height } };
+  });
+  let width = graph.graph().width ?? PAD * 2;
+  let height = graph.graph().height ?? PAD * 2;
+  // Make the room of each label, outer regions first: everything at or below the line just under its top border moves down.
+  const descendants = (cluster: Cluster): Cluster[] => below(cluster).flatMap((child) => [child, ...descendants(child)]);
+  const order = [...clusters].sort((a, b) => (rects.get(a.id) as LayoutGroup).y - (rects.get(b.id) as LayoutGroup).y || a.depth - b.depth);
+  for (const cluster of order) {
+    const rect = rects.get(cluster.id) as LayoutGroup;
+    const tops = [...cluster.members.map((id) => (byId.get(id) as LayoutBox).y), ...descendants(cluster).map((child) => (rects.get(child.id) as LayoutGroup).y)];
+    const by = header(cluster.id) - (Math.min(...tops) - rect.y);
+    if (by <= 0) continue;
+    const at = rect.y + 0.5;
+    for (const box of boxes) if (box.y >= at) box.y += by;
+    for (const other of groups) {
+      if (other.y >= at) other.y += by;
+      else if (other.y + other.height >= at) other.height += by;
+    }
+    for (const route of routes) {
+      if (route === undefined) continue;
+      for (const point of route.points) if (point.y >= at) point.y += by;
+      if (route.label.y - route.label.height / 2 >= at) route.label.y += by;
+    }
+    height += by;
+  }
+  width = Math.max(width, ...groups.map((group) => group.x + group.width + PAD));
+  height = Math.max(height, ...groups.map((group) => group.y + group.height + PAD));
+  const arrows: LayoutArrow[] = [];
+  routes.forEach((route, index) => {
+    const edge = edges[index] as GraphEdge;
+    if (route === undefined) return;
+    let points = route.from === route.to
+      ? selfLoopPoints(byId.get(route.from) as LayoutBox, route.label, direction)
+      : attachRoute(route.points, byId.get(route.from) as LayoutBox, byId.get(route.to) as LayoutBox, direction);
+    const source = rects.get(edge.from);
+    const target = rects.get(edge.to);
+    if (source !== undefined) points = leaving(points, source);
+    if (target !== undefined) points = leaving([...points].reverse(), target).reverse();
+    const arrow: LayoutArrow = { index, kind: edge.kind, d: arrowPath(points), points };
+    if (edge.label) arrow.label = { text: edge.label, ...route.label };
+    arrows.push(arrow);
+  });
+  return { width, height, boxes, groups, arrows };
+}
+
 /**
  * Arrange the complete graph in layers, placing sibling branches alongside
  * one another and reserving lanes for skips, loops and error paths. All edges
@@ -393,6 +597,13 @@ function sharesRank(graph: graphlib.Graph, nodes: readonly GraphNode[]): boolean
  * rank holds two boxes, so the width follows from the graph alone, never
  * from the room it is shown in; boxWidth tells which. Each box is as high as
  * options.height says for that width.
+ *
+ * Each region of options.groups is a cluster of Dagre's compound layout: its
+ * boxes stay together, no other box comes between them, and its rectangle
+ * encloses them with the room of its label (options.header) at the top. An
+ * edge from or to a region is laid out from its last box or to its first,
+ * and drawn from or to its border. Of the four alignments the most compact
+ * across the flow is kept.
  */
 export function layoutGraph(
   nodes: readonly GraphNode[],
@@ -401,41 +612,28 @@ export function layoutGraph(
   direction: LayoutDirection = 'TB',
   options: LayoutOptions = {},
 ): Layout & { boxWidth: number } {
-  if (nodes.length === 0) return { width: PAD * 2, height: PAD * 2, boxes: [], arrows: [], boxWidth: BOX_WIDE };
+  if (nodes.length === 0) return { width: PAD * 2, height: PAD * 2, boxes: [], groups: [], arrows: [], boxWidth: BOX_WIDE };
+  const clusters = clustersOf(nodes, options.groups ?? []);
+  const header = (id: string) => options.header?.(id) ?? GROUP_PAD;
   const heightsAt = (width: number): Map<string, number> =>
     new Map(nodes.map((node) => [node.id, options.height === undefined ? BOX_HEIGHT : options.height(node.id, width)]));
   let boxWidth = BOX_WIDE;
   let heights = heightsAt(boxWidth);
-  let graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights);
+  let graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights, clusters);
   // The ranks depend neither on the sizes nor on the alignment, so the first
   // arrangement already tells whether a rank holds two boxes.
   if (direction === 'TB' && sharesRank(graph, nodes)) {
     boxWidth = BOX_NARROW;
     heights = heightsAt(boxWidth);
-    graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights);
+    graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights, clusters);
   }
   const crossAxis = direction === 'TB' ? 'width' : 'height';
   // Choose the most compact alignment. Averaging the alignments lets shared
   // error paths pull a straight sequence into a wide staircase.
+  let best = place(graph, nodes, edges, clusters, direction, header);
   for (const align of ['UR', 'DL', 'DR'] as const) {
-    const candidate = arrangeGraph(nodes, edges, direction, align, boxWidth, heights);
-    if ((candidate.graph()[crossAxis] ?? Infinity) < (graph.graph()[crossAxis] ?? Infinity)) graph = candidate;
+    const candidate = place(arrangeGraph(nodes, edges, direction, align, boxWidth, heights, clusters), nodes, edges, clusters, direction, header);
+    if (candidate[crossAxis] < best[crossAxis]) best = candidate;
   }
-  const boxes = nodes.map((node) => {
-    const box = graph.node(node.id);
-    return { id: node.id, x: box.x - box.width / 2, y: box.y - box.height / 2, width: box.width, height: box.height };
-  });
-  const byId = new Map(boxes.map((box) => [box.id, box]));
-  const arrows: LayoutArrow[] = [];
-  edges.forEach((edge, index) => {
-    if (!shown.has(index) || !graph.hasEdge(edge.from, edge.to, String(index))) return;
-    const route = graph.edge(edge.from, edge.to, String(index));
-    const points = edge.from === edge.to
-      ? selfLoopPoints(byId.get(edge.from) as LayoutBox, route, direction)
-      : attachRoute(route.points, byId.get(edge.from) as LayoutBox, byId.get(edge.to) as LayoutBox, direction);
-    const arrow: LayoutArrow = { index, kind: edge.kind, d: arrowPath(points), points };
-    if (edge.label) arrow.label = { text: edge.label, x: route.x, y: route.y, width: route.width, height: route.height };
-    arrows.push(arrow);
-  });
-  return { width: graph.graph().width ?? PAD * 2, height: graph.graph().height ?? PAD * 2, boxes, arrows, boxWidth };
+  return { ...best, arrows: best.arrows.filter((arrow) => shown.has(arrow.index)), boxWidth };
 }

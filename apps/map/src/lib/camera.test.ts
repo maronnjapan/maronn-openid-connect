@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEGIBLE_SCALE, openingCamera, revealCamera, type Camera, type Rect, type Size } from './camera';
+import { cardPlace, LEGIBLE_SCALE, openingCamera, revealCamera, type Camera, type Rect, type Size } from './camera';
 
 /** The diagram's gesture box in the 1440x900 pane and in the 1280x800 one, with the one-row toolbar. */
 const pane1440: Size = { width: 472, height: 631 };
@@ -91,5 +91,35 @@ describe('revealCamera', () => {
       y: expect.closeTo(631 / 3 - 800 * LEGIBLE_SCALE, 9),
       scale: LEGIBLE_SCALE,
     });
+  });
+});
+
+describe('cardPlace', () => {
+  const card: Size = { width: 300, height: 180 };
+  const covers = (at: { x: number; y: number }, rect: Rect) => at.x < rect.x + rect.width && rect.x < at.x + card.width && at.y < rect.y + rect.height && rect.y < at.y + card.height;
+
+  it('should put a card to the right of a box, lined up with its top, when it fits there', () => {
+    expect(cardPlace({ width: 900, height: 600 }, box(40, 100), card)).toEqual({ x: 368, y: 100 });
+  });
+
+  it('should put a card to the left of a box at the right of the view', () => {
+    expect(cardPlace({ width: 900, height: 600 }, box(560, 100), card)).toEqual({ x: 252, y: 100 });
+  });
+
+  it('should put a card below a box in a narrow view, and above it at the bottom of the view', () => {
+    const phone: Size = { width: 389, height: 640 };
+    expect(cardPlace(phone, box(20, 100), card)).toEqual({ x: 20, y: 156 });
+    expect(cardPlace(phone, box(20, 500), card)).toEqual({ x: 20, y: 312 });
+    expect([covers(cardPlace(phone, box(20, 100), card), box(20, 100)), covers(cardPlace(phone, box(20, 500), card), box(20, 500))]).toEqual([false, false]);
+  });
+
+  it('should keep a card inside the view when its box is cut by an edge', () => {
+    expect(cardPlace({ width: 900, height: 600 }, box(-100, -20), card)).toEqual({ x: 228, y: 8 });
+    expect(cardPlace({ width: 389, height: 640 }, box(200, 300), card)).toEqual({ x: 81, y: 356 });
+  });
+
+  it('should keep a card that fits nowhere whole inside the view, on the side with more room', () => {
+    expect(cardPlace({ width: 389, height: 300 }, box(20, 100, 320, 48), card)).toEqual({ x: 20, y: 112 });
+    expect(cardPlace({ width: 389, height: 300 }, box(20, 130, 320, 48), card)).toEqual({ x: 20, y: 8 });
   });
 });

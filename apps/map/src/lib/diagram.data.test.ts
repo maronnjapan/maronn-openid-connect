@@ -1,12 +1,13 @@
 // This test reads the built map from the disk: tsconfig.node.json checks it with Node's types, which the page's tsconfig leaves out.
 /**
  * The diagram of every frame of the built map (public/data, which
- * `pnpm run data` writes), every feature on. It checks what holds whatever
- * code contributors write: no decision and no way to end a frame is lost
- * from the diagram, and the frames stay legible when the diagram fits the
- * pane (a coarse floor that only a broken fold crosses). The rest it prints,
- * as scripts/check-map.mjs prints its metrics. Without the built map (the
- * unit tests of CI) it is skipped.
+ * `pnpm run data` writes), every feature on, its words read from the map. It
+ * checks what holds whatever code contributors write: no decision and no way
+ * to end a frame is lost from the diagram, every region (the boxes a `try`
+ * guards) encloses its boxes and no other, and the frames stay legible when
+ * the diagram fits the pane (a coarse floor that only a broken fold crosses).
+ * The rest it prints, as scripts/check-map.mjs prints its metrics. Without the
+ * built map (the unit tests of CI) it is skipped.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -14,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { FlowTree, FrameFile, MapData, TreeNode } from '../types';
 import { LEGIBLE_SCALE } from './camera';
-import { boxHeight, frameDiagram, type Diagram } from './diagram';
-import { BOX_HEIGHT, compactArguments, layoutGraph, textColumns, wrapColumns } from './graph';
+import { boxLine, frameDiagram, layoutDiagram, type Diagram } from './diagram';
+import type { LayoutBox, LayoutGroup } from './graph';
 import { branchesOf, entryOf, isDecision, nodesOn } from './trace';
 
 const DATA = join(dirname(fileURLToPath(import.meta.url)), '../../public/data');
@@ -30,21 +31,19 @@ const ROOMS = [
 const DESKTOP_FIT = ROOMS[0].width - 24;
 /** The height of the gesture area at 1440x900, the unit the length of a root is measured in. */
 const PANE_HEIGHT = 631;
-/** The pixels a column of a title and of a row takes, as FlowDiagram draws them (12.5px and 12px text). */
-const TITLE_COLUMN = 7;
-const ROW_COLUMN = 6.7;
 
-/** A frame laid out: its size, what the diagram lost of it, and how many of its titles and rows show whole. */
+/** A frame laid out: its size, what the diagram lost of it, how its regions sit, and how many of its titles show whole on their one line. */
 interface Measured {
   id: string;
   width: number;
   height: number;
   boxWidth: number;
   lost: string[];
+  /** The regions that leave out a box of theirs or take in another, in words. */
+  misplaced: string[];
+  regions: number;
   titles: number;
-  titlesWhole: number;
-  rows: number;
-  rowsWhole: number;
+  titlesCut: number;
 }
 
 /** Whether a node ends the frame: a return outside a callback, or a throw. */
@@ -52,10 +51,10 @@ function isExit(node: TreeNode): boolean {
   return (node.kind === 'return' && node.local !== true) || node.kind === 'throw';
 }
 
-/** The decisions and the exits of a frame the diagram shows nowhere: neither a box, nor a row (its side, its ends), nor inside a folded step. */
+/** The decisions and the exits of a frame the diagram shows nowhere: neither a box, nor a region (a try), nor a row of either (its side, its ends), nor inside a folded step. */
 function lostOf(tree: FlowTree, diagram: Diagram): string[] {
-  const boxes = new Set(diagram.nodes.flatMap((box) => (box.node === undefined ? [] : [box.node])));
-  const rows = diagram.nodes.flatMap((box) => box.rows);
+  const boxes = new Set([...diagram.nodes.flatMap((box) => (box.node === undefined ? [] : [box.node])), ...diagram.groups.map((group) => group.node)]);
+  const rows = [...diagram.nodes, ...diagram.groups].flatMap((shape) => shape.rows);
   const sides = new Set(rows.flatMap((row) => (row.side === undefined ? [] : [row.side.node])));
   const ends = new Set(rows.flatMap((row) => row.ends));
   const folded = new Set([...diagram.nodes.flatMap((box) => (box.step !== undefined && !box.step.open ? [box.step.id] : [])), ...rows.flatMap((row) => (row.step === undefined ? [] : [row.step]))]);
@@ -73,31 +72,39 @@ function lostOf(tree: FlowTree, diagram: Diagram): string[] {
   return lost;
 }
 
+/** Whether two rectangles overlap (touching edges do not). */
+function overlaps(a: LayoutBox | LayoutGroup, b: LayoutBox | LayoutGroup): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/** Whether a rectangle lies inside another with at least a margin around it. */
+function encloses(outer: LayoutBox | LayoutGroup, inner: LayoutBox | LayoutGroup, margin: number): boolean {
+  return inner.x - outer.x >= margin && inner.y - outer.y >= margin && outer.x + outer.width - (inner.x + inner.width) >= margin && outer.y + outer.height - (inner.y + inner.height) >= margin;
+}
+
 /** Lay out the diagram of a frame as the page opens it (the start of a trace, nothing chosen) and measure it. */
-function measure(id: string, tree: FlowTree, hasFrame: (fn: string) => boolean): Measured {
-  const diagram = frameDiagram(tree, '', undefined, { hasFrame });
-  const byId = new Map(diagram.nodes.map((node) => [node.id, node]));
-  const layout = layoutGraph(diagram.nodes, diagram.edges, new Set(diagram.edges.map((_, index) => index)), 'TB', {
-    height: (box, width) => {
-      const node = byId.get(box);
-      return node === undefined ? BOX_HEIGHT : boxHeight(node, width);
-    },
+function measure(id: string, tree: FlowTree, data: MapData, hasFrame: (fn: string) => boolean): Measured {
+  const diagram = frameDiagram(tree, '', undefined, { hasFrame, words: data });
+  const layout = layoutDiagram(diagram, new Set(diagram.edges.map((_, index) => index)), 'TB');
+  const rect = new Map<string, LayoutBox | LayoutGroup>([...layout.boxes, ...layout.groups].map((placed) => [placed.id, placed]));
+  const misplaced = diagram.groups.flatMap((group) => {
+    const region = rect.get(group.id);
+    if (region === undefined) return [`${id} ${group.id}: no rectangle`];
+    const out = group.members.filter((member) => !encloses(region, rect.get(member) as LayoutBox, 8));
+    const inside = diagram.nodes.filter((node) => !group.members.includes(node.id) && overlaps(region, rect.get(node.id) as LayoutBox));
+    return [...out.map((member) => `${id} ${group.id}: ${member} outside`), ...inside.map((node) => `${id} ${group.id}: ${node.id} inside`)];
   });
-  const titleColumns = Math.floor((layout.boxWidth - 24) / TITLE_COLUMN);
-  const rowColumns = Math.floor((layout.boxWidth - 24) / ROW_COLUMN);
   const boxes = diagram.nodes.filter((node) => node.tone !== 'start');
-  const rows = boxes.flatMap((node) => node.rows);
-  const bare = (text: string) => text.replace(/\s/g, '');
   return {
     id,
     width: layout.width,
     height: layout.height,
     boxWidth: layout.boxWidth,
     lost: lostOf(tree, diagram),
+    misplaced,
+    regions: diagram.groups.length,
     titles: boxes.length,
-    titlesWhole: boxes.filter((node) => bare(wrapColumns(node.title, titleColumns, 2).join('')) === bare(node.title)).length,
-    rows: rows.length,
-    rowsWhole: rows.filter((row) => textColumns(row.text) <= rowColumns || textColumns(compactArguments(row.text)) <= rowColumns).length,
+    titlesCut: boxes.filter((node) => boxLine(node, layout.boxWidth).cut).length,
   };
 }
 
@@ -142,7 +149,8 @@ function report(frames: readonly Measured[], roots: ReadonlySet<string>): string
         `at 100% ${count((frame) => fitScale(frame, width - 24) >= 1)}; wider than the ${width}px area at the opening scale ${count((frame) => frame.width * openingScale(frame, width) > width + 0.5)}`,
     ),
     `  endpoint roots at 11px or more at ${DESKTOP_FIT}px: ${rootFrames.filter((frame) => legibleAt(frame, DESKTOP_FIT)).length}/${rootFrames.length}; the tallest ${tallest === undefined ? '-' : `${tallest.id}, ${panes(tallest).toFixed(2)} panes of ${PANE_HEIGHT}px`}`,
-    `  titles whole in two lines ${share(sum((frame) => frame.titlesWhole), sum((frame) => frame.titles))}; rows whole (calls' arguments left out where needed) ${share(sum((frame) => frame.rowsWhole), sum((frame) => frame.rows))}`,
+    `  titles cut by the ellipsis on their one line ${share(sum((frame) => frame.titlesCut), sum((frame) => frame.titles))}, at 320px ${share(sum((frame) => (frame.boxWidth === 320 ? frame.titlesCut : 0)), sum((frame) => (frame.boxWidth === 320 ? frame.titles : 0)))}, at 200px ${share(sum((frame) => (frame.boxWidth === 200 ? frame.titlesCut : 0)), sum((frame) => (frame.boxWidth === 200 ? frame.titles : 0)))}`,
+    `  regions (tries) ${sum((frame) => frame.regions)} in ${frames.filter((frame) => frame.regions > 0).length} frames; misplaced ${sum((frame) => frame.misplaced.length)}`,
   ].join('\n');
 }
 
@@ -157,15 +165,20 @@ describe.skipIf(!existsSync(join(DATA, 'map.json')))('the diagram of every frame
       .filter((entry) => entry.frame !== '')
       .map((entry) => {
         const file = JSON.parse(readFileSync(join(DATA, entry.frame.replace(/^\.\/data\//, '')), 'utf8')) as FrameFile;
-        return measure(entry.id, file.tree, hasFrame);
+        return measure(entry.id, file.tree, data, hasFrame);
       });
     const roots = new Set(Object.values(data.flows).flatMap((flow) => flow.endpoints.map((endpoint) => endpoint.root)).filter((root) => root !== ''));
     console.log(report(frames, roots));
   }, 300_000);
 
-  it('should show every decision and every way to end a frame as a box, a row or inside a folded step', () => {
+  it('should show every decision and every way to end a frame as a box, a region, a row or inside a folded step', () => {
     expect(frames.length).toBeGreaterThan(0);
     expect(frames.flatMap((frame) => frame.lost)).toEqual([]);
+  });
+
+  it('should enclose the boxes of every region, and no other box, in its rectangle', () => {
+    expect(frames.reduce((count, frame) => count + frame.regions, 0)).toBeGreaterThan(0);
+    expect(frames.flatMap((frame) => frame.misplaced)).toEqual([]);
   });
 
   it('should keep box titles at 11px or more in at least 90% of the frames when the diagram fits the pane at 1440x900', () => {

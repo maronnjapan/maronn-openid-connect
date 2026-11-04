@@ -1,6 +1,7 @@
 /**
  * Where the diagram's view looks: the scale and position a diagram opens at,
- * and the pan that brings a box into view. Box titles are drawn at 12.5px, so
+ * the pan that brings a box into view, and where the card of a box goes on
+ * the screen. Box titles are drawn at 12.5px, so
  * a diagram never opens at a scale where they read under 11px; a layout too
  * wide for its view at that scale is panned sideways instead of shrunk. A
  * camera is the transform DiagramViewport hands to react-zoom-pan-pinch.
@@ -87,4 +88,38 @@ export function revealCamera(view: Size, camera: Camera, box: Rect): Camera | un
     y: down ? camera.y : thirdDown(view, box, camera.scale),
     scale: camera.scale,
   };
+}
+
+/** The room kept between a card and the box it describes, and between a card and the view's edges. */
+const CARD_GAP = 8;
+
+/** A value kept between two bounds (the lower one wins when they cross). */
+function clamp(value: number, low: number, high: number): number {
+  return Math.max(low, Math.min(high, value));
+}
+
+/**
+ * Where a card goes beside a box, in the pixels of the view: to the right of
+ * the box, else to its left, else below it, else above it, the first place
+ * where it fits whole inside the view without covering the box. Beside the
+ * box it lines up with the box's top, below or above it with the box's left
+ * edge, moved as little as keeps it inside the view. When it fits nowhere
+ * whole it goes below or above the box, where there is more room, kept
+ * inside the view even if it then covers part of the box.
+ */
+export function cardPlace(view: Size, box: Rect, card: Size): { x: number; y: number } {
+  const across = clamp(box.x, CARD_GAP, view.width - CARD_GAP - card.width);
+  const down = clamp(box.y, CARD_GAP, view.height - CARD_GAP - card.height);
+  const right = box.x + box.width + CARD_GAP;
+  const left = box.x - CARD_GAP - card.width;
+  const below = box.y + box.height + CARD_GAP;
+  const above = box.y - CARD_GAP - card.height;
+  const tallEnough = card.height <= view.height - 2 * CARD_GAP;
+  const wideEnough = card.width <= view.width - 2 * CARD_GAP;
+  if (tallEnough && right + card.width <= view.width - CARD_GAP) return { x: right, y: down };
+  if (tallEnough && left >= CARD_GAP) return { x: left, y: down };
+  if (wideEnough && below + card.height <= view.height - CARD_GAP) return { x: across, y: below };
+  if (wideEnough && above >= CARD_GAP) return { x: across, y: above };
+  const roomBelow = view.height - (box.y + box.height);
+  return { x: across, y: roomBelow >= box.y ? clamp(below, CARD_GAP, view.height - CARD_GAP - card.height) : clamp(above, CARD_GAP, view.height - CARD_GAP - card.height) };
 }

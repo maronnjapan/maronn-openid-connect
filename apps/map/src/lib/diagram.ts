@@ -5,37 +5,46 @@
  * and draws the shape alone: where the flow splits and joins, where it ends,
  * and the way the choices take in blue. Nothing here touches the DOM.
  *
+ * - Every box is one line, read at a glance: what it does in words (the
+ *   label of a step, the JSDoc of what a call reaches, the comment above a
+ *   statement; see words.ts), else its code, and at its end how it ends the
+ *   flow there (`→ 終わり`, `→ 失敗 ×2`). The code, the whole text and every
+ *   row in full are the box's card.
  * - A guard or an optional item is one box. The side of a guard, and any side
- *   that ends at once (a `catch` included), is a row inside the box of its
- *   decision: `成立 → return oauthError(…)`.
+ *   that ends at once, is a row of the box of its decision: a tag of its line.
  * - The plain calls evaluated before a decision, a return or a throw are part
- *   of its box; a loop of one statement is one box; a run of actions is one.
- * - A step (the block a marker opens) is one box with its exits in a row,
+ *   of its box; a loop of one statement is one box; statements in a row that
+ *   say nothing in words (variables, settings) are one box, read as the
+ *   outline reads them (`a、b を用意する`, see runWords).
+ * - A step (the block a marker opens) is one box with its exits as tags,
  *   until the reader opens it in place. A step that holds a node the pull
  *   request changed is open until the reader folds it, and a changed node
  *   never folds into another box.
+ * - A `try` is no box: the boxes of its body stand inside a region, whose
+ *   label says what an exception does there. A catch that ends at once, or
+ *   does nothing, is a row of the region (`→ 例外: 失敗`); any other catch is
+ *   drawn after the region, entered by a red dashed arrow that leaves it.
  * - The folds read the tree, the features that are on, the marks of the pull
  *   request and the steps the reader opened, never the choices, so a choice
  *   never moves a box.
  */
 import type { Decisions, FlowTree, FrameChange, TreeNode } from '../types';
 import { frameMark, nodeMark, strongest, type ChangeIndex, type Mark } from './changes';
-import { compactArguments, wrapColumns, type GraphEdge, type GraphNode } from './graph';
+import { layoutGraph, textPixels, truncatePixels, type FontWidths, type GraphEdge, type GraphGroup, type GraphNode, type LayoutDirection } from './graph';
 import { branchesOf, chosenSide, decisionKey, findNode, forcedSide, nodesOn, nodesRun } from './trace';
+import { firstSentence, nodeWords, runWords, sideWords, splitPre, type WordSource, type Words } from './words';
 
-/** A line inside a box below its title: a side of its decision that ends at once, or the exits of a folded step. */
+/** A way a box or a region ends the flow, or lets it go on: a side of its decision that ends at once, the exits of a folded step, or a catch that does nothing. */
 export interface DiagramRow {
-  /** The row as the box shows it: `→ return x`, `成立 → throw TokenError(…)`, `例外 → <the label of a step>`. */
-  text: string;
-  /** The row in full, for the tooltip: every exit a summary stands for. */
+  /** The row in full, for the card: the side, then what it does and how it ends, in words (`成立 → 終わり: トークンを返す`). */
   full: string;
-  /** end: the frame returns there; error: it throws there, or a catch takes it. */
-  tone: 'end' | 'error';
+  /** end: the frame returns there; error: it throws there; pass: the flow goes on past the decision (a catch that ignores the exception). */
+  tone: 'end' | 'error' | 'pass';
   /** The decision and the side the row is; absent for the exits of a step. */
   side?: { node: string; side: string };
   /** The returns and throws the row ends with, by node: the row is on the chosen way when one of them runs. */
   ends: string[];
-  /** The step the row names, by id: choosing the row opens the step in place. */
+  /** The step the row names, by id: the card offers to open it in place. */
   step?: string;
 }
 
@@ -45,55 +54,90 @@ export interface DiagramStep {
   id: string;
   /** Drawn open: a heading box (`▾ <label>`) followed by the boxes of its body. */
   open: boolean;
-  /** Choosing the box opens or folds the step in place; false for a folded step whose box opens the frame of its one call instead. */
+  /** The card offers to open or fold the step in place; false for a folded step that stands for its one call, whose card opens that call's frame instead. */
   toggles: boolean;
 }
 
 /** A box of the diagram. */
 export interface DiagramNode extends GraphNode {
-  /** The first line of the box: a short name (`callee()`, the label of a step), else the code. */
+  /** The words of the box's one line: what it does (the label of a step, the JSDoc sentence of what a call reaches, the comment above it), else its code; a step the card can open or fold starts with ▸ or ▾. */
   title: string;
-  /** The second line: what the box does. */
-  subtitle: string;
-  /** The code of the box in full, for its tooltip. */
+  /** The title is code, not words: it is drawn in the code font. */
+  titleCode: boolean;
+  /** The code of the box in full, for its card; '' for the heading of an open step. */
   code: string;
+  /** What the box does in full, for its card: the whole JSDoc or comment its title is the first sentence of; absent when the title is code. */
+  text?: string;
   tone: 'normal' | 'start' | 'end' | 'error';
   /** The node of the tree the box is (absent for the start). */
   node?: string;
-  /** The rows inside the box, below its title. */
+  /** How the box ends the flow besides its own exit, drawn as tags at the end of its line. */
   rows: DiagramRow[];
   /** Every node of the tree the box stands for: its own, the calls and the sides folded into it, the inside of a folded step. */
   holds: string[];
   /** The function ids of the calls of the catalog among the nodes it holds. */
   calls: string[];
-  /** The call whose frame choosing the box opens (the box of a call, a step that stands for one call), when the callee has a frame. */
+  /** The call whose frame the card offers to open (the box of a call, a step that stands for one call), when the callee has a frame. */
   opens?: { node: string; fn: string };
   /** For the box of a step: how it is drawn. */
   step?: DiagramStep;
+  /** The region (DiagramGroup) the box is directly inside, by id. */
+  group?: string;
 }
 
-/** The boxes and arrows of a frame. */
+/** A region: the boxes of the body of a `try`, drawn inside a dashed border with a one-line label at its top that says what an exception does. */
+export interface DiagramGroup extends GraphGroup {
+  /** `g:<the try's node id>`. */
+  id: string;
+  /** The `try`, by its id in the tree. */
+  node: string;
+  /** The region it is inside, by id. */
+  parent?: string;
+  /** Every box it encloses, by id, those of the regions inside it included, in the order they are drawn. */
+  members: string[];
+  /** The words its label starts with: 例外を捕まえる範囲. */
+  title: string;
+  /** What its catch does when the label says it: it ends at once (`例外 → 終わり: …`), or it ignores the exception (tone pass). */
+  rows: DiagramRow[];
+  /** What happens to an exception, in full, for its card. */
+  outcome: string;
+  /** The code of the `try`, for its card. */
+  code: string;
+  /** Every node it stands for besides its boxes: the `try`, and the nodes of a catch that is a row. */
+  holds: string[];
+  /** The function ids of the calls of the catalog among the nodes it holds. */
+  calls: string[];
+}
+
+/** The boxes, regions and arrows of a frame. */
 export interface Diagram {
   /** Names the diagram (its frame), so the view resets when it changes; the same for every fold of the frame. */
   key: string;
   nodes: DiagramNode[];
+  /** The arrows between boxes; the red arrow into a catch leaves from its region (an edge from a DiagramGroup's id). */
   edges: GraphEdge[];
   /** For an arrow out of a decision: the decision and its side, by the index of the arrow. */
   sides: Map<number, { node: string; side: string }>;
+  /** The regions of the tries, each before the regions inside it. */
+  groups: DiagramGroup[];
 }
 
 /** What else the diagram of a frame folds by (see frameDiagram). */
 export interface DiagramOptions {
   /** Whether the pull request changed a node (FrameChange.marks holds its id): such a node never folds into another box. */
   changed?: (id: string) => boolean;
-  /** Whether a function has a frame the page can open: the box of a call of it opens that frame. */
+  /** Whether a function has a frame the page can open: the card of a box that calls it offers to open that frame. */
   hasFrame?: (fn: string) => boolean;
   /** The steps the reader opened or folded, by id: each flips the default of its step (open when it holds a changed node, else folded). */
   toggled?: ReadonlySet<string>;
+  /** What the words of the boxes come from (the JSDoc of the functions and members of the map, MapData); without it a box reads the words its node keeps, else its code. */
+  words?: WordSource;
 }
 
-/** What choosing a box does: open the frame of its call, open or fold its step in place, select its row of the outline, or nothing (the start). */
-export type BoxAction = 'open' | 'toggle' | 'select' | 'none';
+/** What the card of a box or a region offers besides selecting it: look inside the function a box calls, or open or fold a step in place (the box's own, or one a row names). */
+export type CardAction =
+  | { kind: 'open'; node: string; fn: string; name: string }
+  | { kind: 'toggle'; step: string; open: boolean; row?: number };
 
 interface Pending {
   from: string;
@@ -104,6 +148,9 @@ interface Pending {
 
 /** The kinds of node that branch. */
 const DECISION_KINDS: ReadonlySet<string> = new Set(['if', 'switch', 'loop', 'try', 'cond-expr']);
+
+/** No words to read beyond what the tree keeps. */
+const NO_WORDS: WordSource = { functions: {}, members: {} };
 
 /** Whether a node ends the frame: a return outside a callback, or a throw. */
 function isExit(node: TreeNode): boolean {
@@ -135,33 +182,45 @@ function endsNode(node: TreeNode, enabled: ReadonlySet<string> | undefined): boo
   return attempt !== undefined && ends(attempt.nodes, enabled) && (handler === undefined || ends(handler.nodes, enabled));
 }
 
-/** The short name of a node for the title of its box: `callee()` for a call of a function or a member, the label for a step, else the code. */
-function shortName(node: TreeNode): string {
-  const target = node.target;
-  if (node.kind === 'call' && (target?.kind === 'function' || target?.kind === 'member')) return `${target.id.slice(target.id.indexOf('#') + 1)}()`;
-  if (node.kind === 'block' && node.step !== undefined) return node.step.label;
-  return node.code;
-}
-
 /** Every node of a list and below it (its calls evaluated before, the sides of its decisions), the features ignored. */
 function everyNode(nodes: readonly TreeNode[]): TreeNode[] {
   return nodes.flatMap((node) => [node, ...everyNode(node.pre ?? []), ...(node.branches ?? []).flatMap((branch) => everyNode(branch.nodes))]);
 }
 
+/** Words as a line of the diagram draws them: the code marks (`…`) left out, and the full stop at the end, which a cut line has no room for. */
+function plain(text: string): string {
+  return text.replace(/`/g, '').replace(/。$/, '');
+}
+
+/** Whether a statement says nothing in words: an action with no comment above it, whose code is all its box could show (the outline's rule, trace.ts). */
+function silent(node: TreeNode): boolean {
+  return node.kind === 'action' && node.branches === undefined && (node.pre ?? []).length === 0 && !(node.text !== undefined && (node.from === 'comment' || node.from === 'doc'));
+}
+
+/** The lines of code a card shows for the statements of a list: at most six, then how many more. */
+function codeLines(nodes: readonly TreeNode[]): string {
+  const lines = nodes.map((node) => node.code);
+  return lines.length <= 6 ? lines.join('\n') : `${lines.slice(0, 6).join('\n')}\n…（ほか ${lines.length - 6} 行）`;
+}
+
 /**
  * The diagram of a frame (see the module comment): `enabled` narrows it to the
  * features that are on, and the options name the nodes the pull request
- * changed, the functions that have a frame and the steps the reader opened or
- * folded. A box is `n:<node>` (the first node of a run of actions); the start
- * is `start`.
+ * changed, the functions that have a frame, the steps the reader opened or
+ * folded and where the words come from. A box is `n:<node>` (the first node
+ * of a run of actions); the start is `start`; a region is `g:<the try>`.
  */
 export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySet<string>, options: DiagramOptions = {}): Diagram {
   const changed = options.changed ?? (() => false);
   const hasFrame = options.hasFrame ?? (() => false);
   const toggled = options.toggled ?? new Set<string>();
+  const source = options.words ?? NO_WORDS;
   const nodes: DiagramNode[] = [];
   const edges: GraphEdge[] = [];
   const sides = new Map<number, { node: string; side: string }>();
+  const groups: DiagramGroup[] = [];
+  // The regions being drawn, the innermost last.
+  const regions: DiagramGroup[] = [];
 
   const shown = (list: readonly TreeNode[]): TreeNode[] => nodesOn(list, enabled);
   /** The nodes of a list that are on, each followed by every node below it that is on. */
@@ -196,33 +255,26 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
   };
   /** Whether a side ends at once (the analysis's rule for a guard: it ends, in at most three nodes) and can be a row: nothing in it changed. */
   const endsAtOnce = (list: readonly TreeNode[]): boolean => list.length > 0 && list.length <= 3 && ends(list, enabled) && !holdsChange(list) && foldable(list);
-  /** What a side does, in order: its calls (`callee()`), the steps it goes through, and how it ends (`return x`). */
-  const sideParts = (list: readonly TreeNode[]): string[] =>
-    shown(list).flatMap((node) => {
-      if (node.kind === 'call' || isStep(node)) return [shortName(node)];
-      if (isExit(node)) return [node.code];
-      return node.kind === 'block' ? sideParts(node.branches?.[0]?.nodes ?? []) : [];
-    });
-  /**
-   * The row of a side that ends at once, naming the step it holds: a guard's
-   * reads `→ <its calls>、<how it ends>`, any other `<label> → <how it ends>`
-   * (a step's label when it ends in one); the full text names the calls too.
-   */
-  const sideRow = (node: TreeNode, side: string, list: readonly TreeNode[], label?: string): DiagramRow => {
+  /** The words of a side, as a line of the diagram draws them. */
+  const sideLine = (list: readonly TreeNode[]): string => plain(sideWords(shown(list), source));
+  /** The row of a side that ends at once (`成立 → 終わり: …`), naming the step it holds: red when it throws. */
+  const sideRow = (node: TreeNode, side: string, list: readonly TreeNode[], label: string): DiagramRow => {
     const exits = below(list).filter(isExit);
     const step = drawable(list).find(isStep);
-    const parts = sideParts(list);
-    const full = `${label === undefined ? '' : `${label} `}→ ${parts.join('、')}`;
-    const text = label === undefined ? full : `${label} → ${parts[parts.length - 1] ?? ''}`;
-    return { text, full, tone: exits.some((exit) => exit.kind === 'throw') ? 'error' : 'end', side: { node: node.id, side }, ends: exits.map((exit) => exit.id), ...(step === undefined ? {} : { step: step.id }) };
+    return { full: `${label} → ${sideWords(shown(list), source)}`, tone: exits.some((exit) => exit.kind === 'throw') ? 'error' : 'end', side: { node: node.id, side }, ends: exits.map((exit) => exit.id), ...(step === undefined ? {} : { step: step.id }) };
   };
-  /** The row of a folded step: its exit, its exits `×n` when they read the same with the arguments left out, else how many ways it ends. */
-  const exitsRow = (exits: readonly TreeNode[]): DiagramRow => {
-    const codes = exits.map((exit) => exit.code);
-    const compact = [...new Set(codes.map(compactArguments))];
-    const text = codes.length === 1 ? `→ ${codes[0]}` : compact.length === 1 ? `→ ${compact[0]} ×${codes.length}` : `→ ${codes.length} 通りで終わる`;
-    return { text, full: `→ ${codes.join('、')}`, tone: exits.every((exit) => exit.kind === 'throw') ? 'error' : 'end', ends: exits.map((exit) => exit.id) };
-  };
+  /** The rows of the exits of a folded step: its returns, then its throws, each in words, `×n` for several that read the same. */
+  const exitRows = (exits: readonly TreeNode[]): DiagramRow[] =>
+    (['return', 'throw'] as const).flatMap((kind) => {
+      const some = exits.filter((exit) => exit.kind === kind);
+      if (some.length === 0) return [];
+      const said = some.map((exit) => sideWords([exit], source));
+      const counted = [...new Set(said)].map((words) => {
+        const count = said.filter((other) => other === words).length;
+        return count === 1 ? words : `${words} ×${count}`;
+      });
+      return [{ full: `→ ${counted.join('、')}`, tone: kind === 'throw' ? ('error' as const) : ('end' as const), ends: some.map((exit) => exit.id) }];
+    });
   /**
    * The call a step stands for (a step of a Hono pipeline): the only call in
    * it, of a function, with no decision but guards and optional items that
@@ -235,6 +287,13 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     const onSides = new Set(inside.filter((node) => node.kind === 'if').flatMap((node) => branchesOf(node, enabled).flatMap((branch) => ids(branch.nodes))));
     return calls.find((call) => !onSides.has(call.id));
   };
+  /** The whole text the words of a node are the first sentence of: the JSDoc of what it (or the call its box folds in) reaches, or the comment above it; undefined for code. */
+  const wholeText = (node: TreeNode, said: Words, call: TreeNode | undefined): string | undefined => {
+    if (said.code) return undefined;
+    const target = (node.kind === 'call' ? node : call)?.target;
+    const summary = target?.kind === 'function' ? source.functions[target.id]?.summary : target?.kind === 'member' ? source.members[target.id]?.summary : undefined;
+    return [node.text, summary].find((text) => text !== undefined && firstSentence(text) === said.text) ?? said.text;
+  };
 
   const connect = (entries: readonly Pending[], to: string) => {
     for (const entry of entries) {
@@ -244,18 +303,25 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       edges.push(edge);
     }
   };
-  /** Add the box of a node, holding the calls folded into it, with the arrows that lead to it. */
+  /** Add the box of a node, holding the calls folded into it, with the arrows that lead to it; its words speak for the call evaluated last before it when that is folded in. */
   const box = (node: TreeNode, entries: readonly Pending[], folded: readonly TreeNode[] = [], override: Partial<DiagramNode> = {}): DiagramNode => {
+    const last = splitPre(node).call;
+    const call = last !== undefined && folded.includes(last) ? last : undefined;
+    const said = nodeWords(node, source, call);
+    const text = wholeText(node, said, call);
+    const region = regions[regions.length - 1];
     const made: DiagramNode = {
       id: `n:${node.id}`,
       node: node.id,
-      title: shortName(node),
-      subtitle: node.text ?? '',
+      title: said.code ? said.text : plain(said.text),
+      titleCode: said.code,
       code: node.code,
+      ...(text === undefined ? {} : { text }),
       tone: node.kind === 'throw' ? 'error' : node.kind === 'return' || node.kind === 'end' ? 'end' : 'normal',
       rows: [],
-      holds: [node.id, ...folded.map((call) => call.id)],
+      holds: [node.id, ...folded.map((item) => item.id)],
       calls: [],
+      ...(region === undefined ? {} : { group: region.id }),
       ...override,
     };
     if (node.kind === 'call' && node.target?.kind === 'function' && hasFrame(node.target.id)) made.opens = { node: node.id, fn: node.target.id };
@@ -267,15 +333,16 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
   const list = (items: readonly TreeNode[], entries: Pending[]): Pending[] => {
     let open = entries;
     const visible = shown(items);
-    // A run of actions is one box; a changed action breaks it, as in the outline.
-    const runs = (node: TreeNode | undefined): boolean => node !== undefined && node.kind === 'action' && node.pre === undefined && !changed(node.id);
+    // Statements in a row that say nothing in words are one box, read in words; a changed one breaks the run, as in the outline.
+    const runs = (node: TreeNode | undefined): boolean => node !== undefined && silent(node) && !changed(node.id);
     for (let index = 0; index < visible.length; index += 1) {
       const node = visible[index] as TreeNode;
       let end = index;
       while (runs(node) && runs(visible[end + 1])) end += 1;
       if (end > index) {
         const run = visible.slice(index, end + 1);
-        const made = box(node, open, run.slice(1), { title: `処理 ×${run.length}`, subtitle: run.map((item) => item.code).join(' / '), code: run.map((item) => item.code).join('\n') });
+        const said = runWords(run);
+        const made = box(node, open, run.slice(1), { title: plain(said.text), titleCode: said.code, code: run.map((item) => item.code).join('\n'), text: said.text });
         open = [{ from: made.id, kind: 'flow' }];
         index = end;
         continue;
@@ -290,7 +357,8 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     const folded: TreeNode[] = [];
     // A plain call in the condition of a decision, in a return or in a throw is part of its box. The
     // arguments of that call, the arguments of any other call and a branching expression are boxes before it.
-    const absorbs = DECISION_KINDS.has(node.kind) || node.kind === 'return' || node.kind === 'throw';
+    // A try has no condition: what is evaluated before it goes before its region.
+    const absorbs = (DECISION_KINDS.has(node.kind) && node.kind !== 'try') || node.kind === 'return' || node.kind === 'throw';
     for (const before of shown(node.pre ?? [])) {
       if (absorbs && before.kind === 'call' && before.branches === undefined && !changed(before.id)) {
         for (const argument of shown(before.pre ?? [])) open = one(argument, open);
@@ -307,7 +375,7 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
         if (node.step !== undefined) return step(node, open);
         return list(node.branches?.[0]?.nodes ?? [], [{ from: box(node, open).id, kind: 'flow' }]);
       case 'try':
-        return attempt(node, open, folded);
+        return attempt(node, open);
       case 'loop':
         return loop(node, open, folded);
       case 'if':
@@ -321,36 +389,76 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     }
   };
   const step = (node: TreeNode, entries: Pending[]): Pending[] => {
-    const label = node.step?.label ?? node.code;
+    const label = nodeWords(node, source).text;
     const body = node.branches?.[0]?.nodes ?? [];
     if (isOpen(node)) {
-      const made = box(node, entries, [], { title: `▾ ${label}`, subtitle: '', step: { id: node.id, open: true, toggles: true } });
+      const made = box(node, entries, [], { title: `▾ ${label}`, titleCode: false, code: '', step: { id: node.id, open: true, toggles: true } });
       return list(body, [{ from: made.id, kind: 'flow' }]);
     }
     const inside = below(body);
     // A step that holds a change opens in place, so the reader who folded it can open it again.
     const call = holdsChange([node]) ? undefined : oneCall(inside);
     const opens = call?.target?.kind === 'function' && hasFrame(call.target.id) ? { node: call.id, fn: call.target.id } : undefined;
-    const made = box(node, entries, inside, { title: opens === undefined ? `▸ ${label}` : label, subtitle: '', step: { id: node.id, open: false, toggles: opens === undefined } });
+    const made = box(node, entries, inside, { title: opens === undefined ? `▸ ${label}` : label, titleCode: false, code: call?.code ?? codeLines(shown(body)), step: { id: node.id, open: false, toggles: opens === undefined } });
     if (opens !== undefined) made.opens = opens;
-    const exits = inside.filter(isExit);
-    if (exits.length > 0) made.rows.push(exitsRow(exits));
+    made.rows.push(...exitRows(inside.filter(isExit)));
     return ends(body, enabled) ? [] : [{ from: made.id, kind: 'flow' }];
   };
-  const attempt = (node: TreeNode, entries: Pending[], folded: readonly TreeNode[]): Pending[] => {
-    const made = box(node, entries, folded, { title: 'try', subtitle: '例外を捕まえる範囲' });
+  /**
+   * A `try`: the boxes of its body inside its region, and what an exception
+   * does: a row of the region when the catch ends at once or does nothing,
+   * else the boxes of the catch after the region, entered by a red arrow from
+   * it. A `finally` follows. A body with nothing in it has no region: the try
+   * is a box of its own, with the same row or arrow.
+   */
+  const attempt = (node: TreeNode, entries: Pending[]): Pending[] => {
     const branches = branchesOf(node, enabled);
-    const body = branches.find((branch) => branch.key === 'try');
+    const body = shown(branches.find((branch) => branch.key === 'try')?.nodes ?? []);
     const handler = branches.find((branch) => branch.key === 'catch');
     const final = branches.find((branch) => branch.key === 'finally');
-    let out = list(body?.nodes ?? [], [{ from: made.id, kind: 'flow' }]);
-    if (handler !== undefined) {
-      const caught = shown(handler.nodes);
-      if (endsAtOnce(caught)) {
-        // A catch that ends at once is a row, red as the arrow of the error it stands for.
-        made.rows.push({ ...sideRow(node, handler.key, caught, '例外'), tone: 'error' });
-        made.holds.push(...ids(caught));
-      } else out = [...out, ...list(handler.nodes, [{ from: made.id, kind: 'error', label: '例外が起きたとき', side: { node: node.id, side: 'catch' } }])];
+    const caught = handler === undefined ? undefined : shown(handler.nodes);
+    const row: DiagramRow | undefined =
+      caught === undefined ? undefined
+      : caught.length === 0 ? { full: '例外 → 無視して先へ進む', tone: 'pass', side: { node: node.id, side: 'catch' }, ends: [] }
+      : endsAtOnce(caught) ? sideRow(node, 'catch', caught, '例外')
+      : undefined;
+    const held = row === undefined || caught === undefined ? [] : ids(caught);
+    let out: Pending[];
+    let from: string;
+    let region: DiagramGroup | undefined;
+    if (body.length === 0) {
+      const made = box(node, entries);
+      if (row !== undefined) made.rows.push(row);
+      made.holds.push(...held);
+      out = [{ from: made.id, kind: 'flow' }];
+      from = made.id;
+    } else {
+      const parent = regions[regions.length - 1];
+      region = {
+        id: `g:${node.id}`,
+        node: node.id,
+        ...(parent === undefined ? {} : { parent: parent.id }),
+        members: [],
+        title: '例外を捕まえる範囲',
+        rows: row === undefined ? [] : [row],
+        outcome: row?.full ?? (caught === undefined ? '例外は捕まえずに、finally のあと呼び出し元へ投げ直す' : ''),
+        code: node.code,
+        holds: [node.id, ...held],
+        calls: [],
+      };
+      groups.push(region);
+      const first = nodes.length;
+      regions.push(region);
+      out = list(body, entries);
+      regions.pop();
+      region.members = nodes.slice(first).map((made) => made.id);
+      from = region.id;
+    }
+    if (handler !== undefined && row === undefined) {
+      const first = nodes.length;
+      out = [...out, ...list(handler.nodes, [{ from, kind: 'error', label: '例外が起きたとき', side: { node: node.id, side: 'catch' } }])];
+      const into = nodes[first];
+      if (region !== undefined) region.outcome = `例外 → 赤い破線の矢印の先へ進む${into === undefined ? '' : `（${into.title.replace(/^[▸▾] /, '')}）`}`;
     }
     if (final !== undefined) out = list(final.nodes, out);
     return out;
@@ -360,9 +468,10 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     const body = branches.find((branch) => branch.key === 'body');
     const inside = shown(body?.nodes ?? []);
     const only = inside[0];
-    // A loop of one call or one action that decides nothing is one box, unless the pull request changed it.
+    // A loop of one call or one action that decides nothing is one box, unless the pull request changed it: its line says what it repeats.
     if (inside.length === 1 && only !== undefined && (only.kind === 'call' || only.kind === 'action') && only.branches === undefined && !below(inside).some((child) => DECISION_KINDS.has(child.kind)) && !changed(node.id) && !holdsChange(inside)) {
-      const made = box(node, entries, folded, { subtitle: shortName(only), code: `${node.code}\n${only.code}` });
+      const made = box(node, entries, folded, { code: `${node.code}\n${only.code}` });
+      made.title = `${made.title} → ${sideLine(inside)}`;
       made.holds.push(...ids(inside));
       return [{ from: made.id, kind: 'flow' }];
     }
@@ -378,8 +487,12 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       const made = box(node, entries, folded);
       made.holds.push(...ids(yes));
       const exits = node.form === 'guard' && ends(yes, enabled);
-      if (exits) made.rows.push(sideRow(node, 'true', yes));
-      else if (yes.length > 0) made.subtitle = `→ ${yes.map((child) => child.code).join('、')}`;
+      if (exits) made.rows.push(sideRow(node, 'true', yes, branches.find((branch) => branch.key === 'true')?.label ?? '成立'));
+      else if (yes.length > 0) {
+        // An optional item says what it does on its line, as the outline does.
+        made.title = `${made.title} → ${sideLine(yes)}`;
+        made.code = `${made.code}\n→ ${yes.map((child) => child.code).join('、')}`;
+      }
       // With its other side gone (a feature that is off), a guard ends here.
       return exits && branches.every((branch) => branch.key === 'true') ? [] : [{ from: made.id, kind: 'flow' }];
     }
@@ -399,73 +512,167 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     return out;
   };
 
-  nodes.push({ id: 'start', title: tree.signature || tree.name, subtitle: '', code: tree.signature || tree.name, tone: 'start', rows: [], holds: [], calls: [] });
+  const signature = tree.signature || tree.name;
+  nodes.push({ id: 'start', title: signature, titleCode: false, code: signature, tone: 'start', rows: [], holds: [], calls: [] });
   list(tree.nodes, [{ from: 'start', kind: 'flow' }]);
   const byId = new Map(everyNode(tree.nodes).map((node) => [node.id, node]));
   const callee = (id: string): string[] => {
     const held = byId.get(id);
     return held?.kind === 'call' && held.target?.kind === 'function' ? [held.target.id] : [];
   };
-  for (const made of nodes) made.calls = [...new Set(made.holds.flatMap(callee))];
-  return { key: `frame:${tree.id}:${frame}`, nodes, edges, sides };
+  for (const made of [...nodes, ...groups]) made.calls = [...new Set(made.holds.flatMap(callee))];
+  return { key: `frame:${tree.id}:${frame}`, nodes, edges, sides, groups };
+}
+
+/** Whether a shape of the diagram is a region rather than a box. */
+export function isRegion(shape: DiagramNode | DiagramGroup): shape is DiagramGroup {
+  return 'members' in shape;
 }
 
 /**
- * The boxes, arrows and rows the choices run through: a box whose node runs,
- * an arrow between two such boxes on the chosen side, and a row
- * (`<box>|<index>`) one of whose exits runs.
+ * The boxes, regions, arrows and rows the choices run through: a box whose
+ * node runs, a region whose `try` runs, an arrow between two of those on the
+ * chosen side, and a row (`<box or region>|<index>`) one of whose exits runs;
+ * a row that ends nothing (a catch that ignores the exception) is on when its
+ * decision runs and the choices take its side or none.
  */
-export function activeOf(diagram: Diagram, tree: FlowTree, frame: string, choices: readonly Decisions[], enabled?: ReadonlySet<string>): { nodes: Set<string>; edges: Set<number>; rows: Set<string> } {
+export function activeOf(diagram: Diagram, tree: FlowTree, frame: string, choices: readonly Decisions[], enabled?: ReadonlySet<string>): { nodes: Set<string>; edges: Set<number>; rows: Set<string>; groups: Set<string> } {
   const run = nodesRun(tree, frame, choices, enabled);
   const nodes = new Set<string>(['start']);
   for (const node of diagram.nodes) if (node.node !== undefined && run.has(node.node)) nodes.add(node.id);
+  const groups = new Set(diagram.groups.filter((group) => run.has(group.node)).map((group) => group.id));
+  /** The side the choices (or a feature that is off) take at a decision; undefined for none. */
+  const taken = (side: { node: string; side: string }): string | undefined => {
+    const treeNode = findNode(tree.nodes, side.node);
+    return (treeNode === undefined ? undefined : forcedSide(treeNode, enabled)) ?? chosenSide(choices, decisionKey(frame, side.node));
+  };
+  const live = (id: string) => nodes.has(id) || groups.has(id);
   const edges = new Set<number>();
   diagram.edges.forEach((edge, index) => {
-    if (!nodes.has(edge.from) || !nodes.has(edge.to)) return;
+    if (!live(edge.from) || !live(edge.to)) return;
     const side = diagram.sides.get(index);
-    if (side !== undefined) {
-      const treeNode = findNode(tree.nodes, side.node);
-      const chosen = (treeNode === undefined ? undefined : forcedSide(treeNode, enabled)) ?? chosenSide(choices, decisionKey(frame, side.node));
-      if (chosen !== undefined && chosen !== side.side) return;
-    }
+    const chosen = side === undefined ? undefined : taken(side);
+    if (side !== undefined && chosen !== undefined && chosen !== side.side) return;
     edges.add(index);
   });
   const rows = new Set<string>();
-  for (const node of diagram.nodes) {
-    node.rows.forEach((row, index) => {
-      if (row.ends.some((id) => run.has(id))) rows.add(`${node.id}|${index}`);
+  for (const shape of [...diagram.nodes, ...diagram.groups]) {
+    shape.rows.forEach((row, index) => {
+      const side = row.side;
+      const on = row.ends.length > 0 ? row.ends.some((id) => run.has(id)) : side !== undefined && run.has(side.node) && [undefined, side.side].includes(taken(side));
+      if (on) rows.add(`${shape.id}|${index}`);
     });
   }
-  return { nodes, edges, rows };
+  return { nodes, edges, rows, groups };
 }
 
-/** The box that shows a node of the tree: the box that holds it, else the box of its nearest ancestor that one holds; undefined when none does. */
-export function boxOf(diagram: Diagram, node: string): DiagramNode | undefined {
-  const box = diagram.nodes.find((candidate) => candidate.holds.includes(node));
-  if (box !== undefined) return box;
+/** The box or the region that shows a node of the tree: the box that holds it, else the region of a `try` (the try itself, a catch that is a row), else what shows its nearest ancestor; undefined when nothing does. */
+export function boxOf(diagram: Diagram, node: string): DiagramNode | DiagramGroup | undefined {
+  const shape = diagram.nodes.find((candidate) => candidate.holds.includes(node)) ?? diagram.groups.find((candidate) => candidate.holds.includes(node));
+  if (shape !== undefined) return shape;
   // An id is the id of the node it is under and its place there (`s0b1s0` under `s0b1`, `s5i0` under `s5`).
   const parent = node.replace(/[a-z]+[0-9]+$/, '');
   return parent === node || parent === '' ? undefined : boxOf(diagram, parent);
 }
 
-/**
- * The height of a box at a width, with a badge of `badgeWidth` at the right
- * of its first line: its title in at most two lines (7px a column), the
- * subtitle when the title takes one line, and 16px a row; at least 36px. The
- * start is 36px.
- */
-export function boxHeight(node: DiagramNode, width: number, badgeWidth = 0): number {
-  if (node.tone === 'start') return 36;
-  const lines = wrapColumns(node.title, Math.floor((width - 24 - badgeWidth) / 7), 2).length;
-  const subtitle = lines === 1 && node.subtitle !== '' ? 15 : 0;
-  return Math.max(36, 16 + 17 * lines + subtitle + 16 * node.rows.length);
+/** The height of every box: one line (34px). */
+export function boxHeight(): number {
+  return 34;
 }
 
-/** What choosing a box does (see BoxAction): a box that opens a frame opens it, a step that toggles or is open toggles, any other box of a node selects its row. */
-export function boxAction(box: DiagramNode): BoxAction {
-  if (box.opens !== undefined) return 'open';
-  if (box.step !== undefined && (box.step.open || box.step.toggles)) return 'toggle';
-  return box.node === undefined ? 'none' : 'select';
+/** The room the label of a region takes at its top, from its border to its first box: one line and the space below it. */
+export const REGION_HEADER = 28;
+
+/** How wide the text of a line draws (see FontWidths): a title (12.5px, semibold), a title that is code (12px, the code font), a tag (12px, semibold), the label of a region and its tags (11px, as the labels of the arrows). */
+const TITLE_FONT: FontWidths = { wide: 12.5, narrow: 7 };
+const CODE_FONT: FontWidths = { wide: 12, narrow: 7.25 };
+const TAG_FONT: FontWidths = { wide: 12, narrow: 6.8 };
+const LABEL_FONT: FontWidths = { wide: 11, narrow: 6.1 };
+/** The room between the edges of a box and its line. */
+export const BOX_INSET = 12;
+/** The room between the edges of a region and its label. */
+export const REGION_INSET = 10;
+/** The room between the parts of the line of a box. */
+const GAP = 8;
+
+/** A tag at the end of a line: how a box ends the flow there (`→ 終わり`, `→ 失敗 ×2`), or what a region does with an exception (`→ 例外: 失敗`). */
+export interface ExitTag {
+  tone: DiagramRow['tone'];
+  text: string;
+  /** The rows it stands for, by index: it is on the chosen way when one of them is; none for a box's own exit (a return, a throw), which is on with its box. */
+  rows: number[];
+  /** The pixels it takes in its font. */
+  width: number;
+}
+
+/** A line as a box or the label of a region draws it: its title, cut with an ellipsis to the room its tags and its badge leave, and its tags. */
+export interface ShapeLine {
+  title: string;
+  /** Whether the title was cut. */
+  cut: boolean;
+  /** The pixels the title may take. */
+  room: number;
+  tags: ExitTag[];
+}
+
+/** A tag of a text and its rows, measured in a font. */
+function tag(tone: DiagramRow['tone'], text: string, rows: number[], font: FontWidths = TAG_FONT): ExitTag {
+  return { tone, text, rows, width: Math.ceil(textPixels(text, font)) };
+}
+
+/**
+ * The tags at the end of the line of a box: its own exit (`→ 終わり` for a
+ * return, `→ 失敗` for a throw), then its rows by how they end, the returns
+ * before the throws, `×n` when they end several ways (an exit a row stands
+ * for counts once).
+ */
+export function exitTags(box: DiagramNode): ExitTag[] {
+  const own = box.node === undefined ? [] : box.tone === 'end' ? [tag('end', '→ 終わり', [])] : box.tone === 'error' ? [tag('error', '→ 失敗', [])] : [];
+  const byTone = (['end', 'error', 'pass'] as const).flatMap((tone) => {
+    const rows = box.rows.flatMap((row, index) => (row.tone === tone ? [index] : []));
+    if (rows.length === 0) return [];
+    const count = rows.reduce((sum, index) => sum + Math.max(1, (box.rows[index] as DiagramRow).ends.length), 0);
+    const words = tone === 'error' ? '→ 失敗' : tone === 'end' ? '→ 終わり' : '→ 先へ進む';
+    return [tag(tone, count === 1 ? words : `${words} ×${count}`, rows)];
+  });
+  return [...own, ...byTone];
+}
+
+/** The tags of the label of a region: what each of its rows does with an exception (`→ 例外: 失敗`, `→ 例外: 終わり`, `→ 例外は無視して先へ`). */
+export function regionTags(group: DiagramGroup): ExitTag[] {
+  return group.rows.map((row, index) => tag(row.tone, row.tone === 'pass' ? '→ 例外は無視して先へ' : row.tone === 'error' ? '→ 例外: 失敗' : '→ 例外: 終わり', [index], LABEL_FONT));
+}
+
+/** The line of a box at a width, with a badge `badgeWidth` wide (its gap included) at its right: the title gets the room the tags and the badge leave. */
+export function boxLine(box: DiagramNode, width: number, badgeWidth = 0): ShapeLine {
+  const tags = box.tone === 'start' ? [] : exitTags(box);
+  const room = width - 2 * BOX_INSET - badgeWidth - tags.reduce((sum, item) => sum + item.width + GAP, 0);
+  const title = truncatePixels(box.title, room, box.titleCode ? CODE_FONT : TITLE_FONT);
+  return { title, cut: title !== box.title, room, tags };
+}
+
+/** The line of the label of a region as wide as `width`, with a badge `badgeWidth` wide (its gap included) at its right: its tags stand at the end, 6px apart. */
+export function regionLine(group: DiagramGroup, width: number, badgeWidth = 0): ShapeLine {
+  const tags = regionTags(group);
+  const room = width - 2 * REGION_INSET - badgeWidth - tags.reduce((sum, item) => sum + item.width + 6, 0);
+  const title = truncatePixels(group.title, room, LABEL_FONT);
+  return { title, cut: title !== group.title, room, tags };
+}
+
+/** Lay out a diagram as FlowDiagram draws it (see layoutGraph): every box one line high, every region with the room of its label. */
+export function layoutDiagram(diagram: Diagram, shown: ReadonlySet<number>, direction: LayoutDirection = 'TB') {
+  return layoutGraph(diagram.nodes, diagram.edges, shown, direction, { height: () => boxHeight(), groups: diagram.groups, header: () => REGION_HEADER });
+}
+
+/** What the card of a box or a region offers (see CardAction): to look inside the call a box opens, to open or fold its step, and to open the step each of its rows names. */
+export function boxActions(shape: DiagramNode | DiagramGroup): CardAction[] {
+  const actions: CardAction[] = [];
+  if (!isRegion(shape) && shape.opens !== undefined) actions.push({ kind: 'open', node: shape.opens.node, fn: shape.opens.fn, name: `${shape.opens.fn.slice(shape.opens.fn.indexOf('#') + 1)}()` });
+  if (!isRegion(shape) && shape.step !== undefined && (shape.step.open || shape.step.toggles)) actions.push({ kind: 'toggle', step: shape.step.id, open: shape.step.open });
+  shape.rows.forEach((row, index) => {
+    if (row.step !== undefined) actions.push({ kind: 'toggle', step: row.step, open: false, row: index });
+  });
+  return actions;
 }
 
 /** The lines that describe a box or a row read as one label (its aria-label): a sentence a line, joined with '。', the full stop a line ends with (`。`, `.`) taking the place of the one between. */
@@ -473,7 +680,7 @@ export function spokenLabel(lines: readonly string[]): string {
   return lines.map((line) => line.replace(/[。．.]$/, '')).join('。');
 }
 
-/** The badge of a box: the strongest of the badges of the nodes it holds (the change of the frame) and of the frames its calls lead to. */
-export function markOfBox(box: DiagramNode, change: FrameChange | undefined, changes: ChangeIndex | undefined): Mark | undefined {
+/** The badge of a box or a region: the strongest of the badges of the nodes it holds (the change of the frame) and of the frames its calls lead to. */
+export function markOfBox(box: Pick<DiagramNode, 'holds' | 'calls'>, change: FrameChange | undefined, changes: ChangeIndex | undefined): Mark | undefined {
   return strongest([...box.holds.map((id) => nodeMark(change, id)), ...box.calls.map((fn) => frameMark(changes, fn))]);
 }

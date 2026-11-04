@@ -342,29 +342,41 @@ h1, h2, h3, h4 { margin: 0; }
 .diagram-zoom button:nth-child(2) { min-width: 56px; font-variant-numeric: tabular-nums; }
 .diagram-gestures { flex: 1; min-height: 0; cursor: grab; touch-action: none; overscroll-behavior: contain; }
 .diagram-gestures:active { cursor: grabbing; }
+/* The area of the diagram and, over it at the screen's scale, the layer of the card of a box. */
+.diagram-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.diagram-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .diagram { display: block; flex: none; max-width: none; font-family: var(--font-ui); }
 .diagram .box .frame { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 .diagram .box .title { font-size: 12.5px; font-weight: 600; fill: var(--fg); }
-.diagram .box .sub { font-size: 11.5px; fill: var(--muted); }
-/* A row inside a box: a side that ends at once, or how a folded step ends. On the chosen way it is the accent, or red when it throws or catches; off it, grey. */
-.diagram .box-row { font-size: 12px; fill: var(--faint); }
-.diagram .box-row.on.tone-end { fill: var(--accent); }
-.diagram .box-row.on.tone-error { fill: var(--danger); }
-.diagram .box-row.off { fill: var(--faint); }
-/* A row that names a step opens it in place. */
-.diagram .box-row.step { text-decoration: underline dotted; text-underline-offset: 3px; }
-.diagram .box-step { cursor: pointer; }
-.diagram .box-step .hit { fill: transparent; }
-.diagram .box-step:hover .hit { fill: var(--accent-soft); }
-.diagram .box-step:focus { outline: none; }
-.diagram .box-step:focus-visible .hit { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
-.diagram .box-step text { pointer-events: none; }
+.diagram .box .title.code { font-family: var(--font-code); font-size: 12px; font-weight: 500; }
+/* How a box ends the flow, at the end of its line: the accent on the chosen way, red where it fails, grey off it. */
+.diagram .box-tag { font-size: 12px; font-weight: 600; fill: var(--faint); }
+.diagram .box-tag.on.tone-end, .diagram .box-tag.on.tone-pass { fill: var(--accent); }
+.diagram .box-tag.on.tone-error { fill: var(--danger); }
+/* A region: the boxes a try guards, inside a dashed border on a faint ground, with its one-line label at the top. */
+.diagram .region .area { fill: var(--bg); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 6 4; }
+.diagram .region.selected .area { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: none; }
+.diagram .region-label { cursor: pointer; }
+.diagram .region-label .hit { fill: transparent; }
+.diagram .region-label:hover .hit, .diagram .region-label.selected .hit { fill: var(--accent-soft); }
+.diagram .region-label:focus { outline: none; }
+.diagram .region-label:focus-visible .hit { stroke: var(--accent); stroke-width: 2; }
+.diagram .region-label text { pointer-events: none; }
+.diagram .region-text { font-size: 11px; font-weight: 600; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+.diagram .region-label:hover .region-text, .diagram .region-label.selected .region-text { stroke: var(--accent-soft); }
+.diagram .region-title { fill: var(--muted); }
+.diagram .region-tag { fill: var(--faint); }
+.diagram .region-tag.on.tone-end, .diagram .region-tag.on.tone-pass { fill: var(--accent); }
+.diagram .region-tag.on.tone-error { fill: var(--danger); }
+/* The selected box or region: a thick accent outline and a soft halo around it, on or off the chosen way. */
+.diagram .halo { fill: none; stroke: var(--accent); stroke-opacity: 0.28; stroke-width: 6; }
 .diagram .box.off .frame { fill: var(--bg); stroke: var(--line); stroke-dasharray: 3 3; }
-.diagram .box.off .title, .diagram .box.off .sub { fill: var(--faint); }
+.diagram .box.off .title { fill: var(--faint); }
 .diagram .box.on .frame { stroke: var(--accent); stroke-width: 1.6; }
 .diagram .box.on.tone-error .frame { stroke: var(--danger); }
 .diagram .box.on.tone-error .title { fill: var(--danger); }
-.diagram .box.selected .frame { stroke-width: 3; fill: var(--accent-soft); }
+.diagram .box.selected .frame { stroke: var(--accent); stroke-width: 3; stroke-dasharray: none; fill: var(--accent-soft); }
+.diagram .box.selected .title { fill: var(--fg); }
 .diagram .box.clickable { cursor: pointer; }
 .diagram .box:focus { outline: none; }
 .diagram .box:focus-visible .frame { stroke: var(--accent); stroke-width: 3; }
@@ -377,6 +389,21 @@ h1, h2, h3, h4 { margin: 0; }
 .diagram .head.error { fill: var(--danger); }
 .diagram .edge-label { font-size: 11px; fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
 @media (prefers-reduced-motion: no-preference) { .diagram .box .frame { transition: stroke-width 120ms; } }
+/* The card of a box: the rest of the box in full, beside it over the diagram, and the buttons that go further. */
+.diagram-card { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: auto; width: max-content; max-width: min(360px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.diagram-card .card-code { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 4px; white-space: pre-wrap; font-size: 12px; }
+.diagram-card .card-text { margin: 0; }
+.diagram-card .card-text .tag { margin-right: 6px; }
+.diagram-card .card-rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.diagram-card .card-rows li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.diagram-card .card-rows li.off { color: var(--faint); }
+.diagram-card .card-rows li.on.tone-error { color: var(--danger); }
+.diagram-card .card-mark, .diagram-card .card-off { margin: 0; color: var(--muted); font-size: 12px; }
+.diagram-card .card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.diagram-card .card-action { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: var(--radius); padding: 3px 10px; cursor: pointer; font-size: 12.5px; }
+.diagram-card .card-action.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.diagram-card .card-action:hover { background: var(--accent-soft); }
+@media (max-width: 899px) { .diagram-card .card-action { min-height: 44px; } }
 
 /* ---- the changes of a pull request */
 .badge { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11px; line-height: 16px; font-weight: 600; white-space: nowrap; vertical-align: 1px; border: 1px solid var(--fg); background: var(--fg); color: var(--surface); }

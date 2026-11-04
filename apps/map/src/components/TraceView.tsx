@@ -18,7 +18,7 @@ import {
   type Row,
   type TraceState,
 } from '../lib/trace';
-import { firstSentence, nodeWords, sideWords } from '../lib/words';
+import { firstSentence, nodeWords, runWords, sideWords } from '../lib/words';
 import { Badge, DiffView, Inline } from './ChangeParts';
 
 export interface TraceViewProps {
@@ -119,8 +119,8 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
   const [openDiffs, setOpenDiffs] = useState<Set<string>>(() => new Set());
   const [showCode, setShowCode] = useState(readShowCode);
   const rows = useMemo(
-    () => traceRows({ rootId, hasFrame: (id) => (entryOf(data, id)?.frame ?? '') !== '', trees, changes: diffs, state, enabled, toggled }),
-    [rootId, data, trees, diffs, state, enabled, toggled],
+    () => traceRows({ rootId, hasFrame: (id) => (entryOf(data, id)?.frame ?? '') !== '', trees, changes: diffs, state, enabled, toggled, foldCode: !showCode }),
+    [rootId, data, trees, diffs, state, enabled, toggled, showCode],
   );
   const ids = useMemo(() => frameIds(rootId, state.open, trees), [rootId, state.open, trees]);
   const highlighted = selected === null ? undefined : rowFor(rows, selected.frame, selected.node);
@@ -349,6 +349,32 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
               return nodeRow(row);
             case 'branch':
               return branchRow(row);
+            case 'run': {
+              const said = runWords(row.nodes);
+              return (
+                <li key={row.key} data-row={row.key} className={`trace-row kind-run${row.on ? ' on' : ' off'}${highlighted === row.key ? ' selected' : ''}`} style={indent(row.depth)}>
+                  <div className="trace-line">
+                    <button type="button" className="twisty" aria-expanded={row.open} aria-label={row.open ? 'まとめて読む' : `${row.nodes.length} 行のコードを開く`} onClick={() => setToggled(flip(toggled, row.key))}>
+                      {row.open ? '▾' : '▸'}
+                    </button>
+                    <span className="kind">コード {row.nodes.length} 行</span>
+                    <button
+                      type="button"
+                      className="row-words"
+                      title={row.nodes.map((item) => item.code).join('\n')}
+                      onClick={() => {
+                        const first = row.nodes[0];
+                        if (first !== undefined) onSelect(selected?.frame === row.frame && selected.node === first.id ? null : { frame: row.frame, node: first, frameId: ids.get(row.frame) ?? rootId });
+                      }}
+                    >
+                      <span className="words-text">
+                        <Inline text={said.text} />
+                      </span>
+                    </button>
+                  </div>
+                </li>
+              );
+            }
             case 'removed':
               return (
                 <li key={row.key} data-row={row.key} className="trace-row removed" style={indent(row.depth)}>

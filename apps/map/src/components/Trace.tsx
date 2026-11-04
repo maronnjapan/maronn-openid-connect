@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, markOf, type ChangeIndex, type Mark } from '../lib/changes';
-import { activeOf, frameDiagram, markOfBox, type DiagramNode } from '../lib/diagram';
+import { activeOf, frameDiagram, markOfBox, type DiagramGroup, type DiagramNode } from '../lib/diagram';
 import { childFrame, entryOf, findNode, frameIds, framesToChanges, type TraceState } from '../lib/trace';
 import { locationOf } from '../lib/model';
 import { Badge, DiffView } from './ChangeParts';
@@ -115,6 +115,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
         : frameDiagram(focusTree, focusKey, enabled, {
             changed: (id) => focusChange?.marks[id] !== undefined,
             hasFrame: (id) => (entryOf(data, id)?.frame ?? '') !== '',
+            words: data,
             toggled: toggledIds,
           }),
     [focusTree, focusKey, enabled, focusChange, data, toggledIds],
@@ -122,7 +123,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, state.choices, enabled)), [diagram, focusTree, focusKey, state.choices, enabled]);
   const marks = useMemo(() => {
     const byBox = new Map<string, Mark>();
-    for (const box of diagram?.nodes ?? []) {
+    for (const box of [...(diagram?.nodes ?? []), ...(diagram?.groups ?? [])]) {
       const mark = markOfBox(box, focusChange, changes);
       if (mark !== undefined) byBox.set(box.id, mark);
     }
@@ -150,7 +151,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     if (keyboard) setFocusRequest({ frame: focusKey, node: step });
   };
   /** Choosing a box of the diagram selects it: its outline row is highlighted and scrolled into view, and the diagram stays where it is. */
-  const selectBox = (box: DiagramNode) => {
+  const selectBox = (box: DiagramNode | DiagramGroup) => {
     const node = box.node === undefined || focusTree === undefined ? undefined : findNode(focusTree.nodes, box.node);
     if (node !== undefined) select({ frame: focusKey, node, frameId: focusId, from: 'diagram' });
   };
@@ -289,7 +290,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
                   )}
                 </span>
               ))}
-              <span className="note crumb-hint">青が選んだ道筋。箱に重ねると詳しく見られます。</span>
+              <span className="note crumb-hint">青が選んだ道筋。箱に重ねる（タップする）と詳しく見られ、そこから中へ潜れます。</span>
             </nav>
             <FlowDiagram
               diagram={diagram}
@@ -299,7 +300,8 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               focus={focusRequest?.frame === focusKey ? focusRequest : null}
               label="フレームの図"
               marks={marks}
-              onSelect={(box, keyboard) => (box.opens !== undefined ? openBox(box, keyboard) : box.step !== undefined && (box.step.open || box.step.toggles) ? toggleStep(box.step.id) : selectBox(box))}
+              onSelect={selectBox}
+              onOpen={openBox}
               onToggleStep={toggleStepFromRow}
               onFocused={() => setFocusRequest(null)}
             />

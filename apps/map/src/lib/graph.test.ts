@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactArguments, layoutGraph, textColumns, truncateColumns, wrapColumns, type GraphEdge, type GraphNode } from './graph';
+import { compactArguments, layoutGraph, textColumns, truncateColumns, wrapColumns, type GraphEdge, type GraphGroup, type GraphNode, type LayoutBox, type LayoutGroup } from './graph';
 
 const nodes = (...ids: string[]): GraphNode[] => ids.map((id) => ({ id }));
 
@@ -167,6 +167,90 @@ describe('layoutGraph', () => {
     expect(placements[0]!.boxWidth).toBe(200);
     expect(placements[0]!.boxes.map((box) => box.height)).toEqual([52, 96, 64, 80, 64, 52]);
     expect(layouts.map((layout) => layout.arrows.map((arrow) => arrow.index))).toEqual(subsets);
+  });
+});
+
+/**
+ * A try in small: a region around three boxes with a region around the middle one, its error arrow to a
+ * handler, and beside it the other side of a fork before it.
+ */
+const regionNodes = nodes('start', 'a', 'b', 'c', 'other', 'handler', 'end');
+const regionEdges: GraphEdge[] = [
+  { from: 'start', to: 'a', kind: 'branch', label: '成立' },
+  { from: 'a', to: 'b', kind: 'flow' },
+  { from: 'b', to: 'c', kind: 'flow' },
+  { from: 'c', to: 'end', kind: 'flow' },
+  { from: 'start', to: 'other', kind: 'branch', label: '不成立' },
+  { from: 'other', to: 'end', kind: 'flow' },
+  { from: 'outer', to: 'handler', kind: 'error', label: '例外が起きたとき' },
+  { from: 'handler', to: 'end', kind: 'flow' },
+];
+const regionGroups: GraphGroup[] = [
+  { id: 'outer', members: ['a', 'b', 'c'] },
+  { id: 'inner', parent: 'outer', members: ['b'] },
+];
+const headers: Record<string, number> = { outer: 30, inner: 30 };
+
+/** Whether two rectangles overlap (touching edges do not). */
+const overlaps = (a: LayoutBox | LayoutGroup, b: LayoutBox | LayoutGroup) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+/** Whether a rectangle lies inside another with at least a margin around it. */
+const encloses = (outer: LayoutBox | LayoutGroup, inner: LayoutBox | LayoutGroup, margin: number) =>
+  inner.x - outer.x >= margin && inner.y - outer.y >= margin && outer.x + outer.width - (inner.x + inner.width) >= margin && outer.y + outer.height - (inner.y + inner.height) >= margin;
+
+describe('layoutGraph with regions', () => {
+  const layoutOf = (direction: 'TB' | 'LR', shown: ReadonlySet<number> = new Set(regionEdges.map((_, index) => index))) =>
+    layoutGraph(regionNodes, regionEdges, shown, direction, { height: () => 34, groups: regionGroups, header: (id) => headers[id] as number });
+
+  it.each(['TB', 'LR'] as const)('should enclose the boxes of each region and the region inside it, keep every other box outside, and make the room of its label at the top in %s', (direction) => {
+    const layout = layoutOf(direction);
+    const box = (id: string) => layout.boxes.find((candidate) => candidate.id === id) as LayoutBox;
+    const [outer, inner] = layout.groups as [LayoutGroup, LayoutGroup];
+    expect(layout.groups.map((group) => group.id)).toEqual(['outer', 'inner']);
+    expect(['a', 'b', 'c'].map((id) => encloses(outer, box(id), 8))).toEqual([true, true, true]);
+    expect(encloses(outer, inner, 8)).toBe(true);
+    expect(encloses(inner, box('b'), 8)).toBe(true);
+    expect(['start', 'other', 'handler', 'end'].filter((id) => overlaps(outer, box(id)))).toEqual([]);
+    expect(['a', 'c'].filter((id) => overlaps(inner, box(id)))).toEqual([]);
+    expect(Math.min(box('a').y, inner.y) - outer.y).toBeGreaterThanOrEqual(30);
+    expect(box('b').y - inner.y).toBeGreaterThanOrEqual(30);
+    expect([...layout.boxes, ...layout.groups].every((rect) => rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= layout.width && rect.y + rect.height <= layout.height)).toBe(true);
+  });
+
+  it.each(['TB', 'LR'] as const)('should draw an arrow from a region from its border, laid out from its last box, in %s', (direction) => {
+    const layout = layoutOf(direction);
+    const outer = layout.groups[0] as LayoutGroup;
+    const error = layout.arrows.find((arrow) => arrow.index === 6)!;
+    const first = error.points[0]!;
+    const label = error.label!;
+    const distances = [first.x - outer.x, outer.x + outer.width - first.x, first.y - outer.y, outer.y + outer.height - first.y];
+    expect(Math.min(...distances.map(Math.abs))).toBeLessThan(0.5);
+    expect(Math.min(...distances)).toBeGreaterThan(-0.5);
+    expect(label.text).toBe('例外が起きたとき');
+    expect(overlaps(outer, { id: 'label', x: label.x - label.width / 2, y: label.y - label.height / 2, width: label.width, height: label.height })).toBe(false);
+  });
+
+  it.each(['TB', 'LR'] as const)('should keep boxes, regions, width and height identical whichever arrows are shown in %s', (direction) => {
+    const subsets = [[], regionEdges.map((_, index) => index), ...regionEdges.map((_, index) => [index])];
+    const placements = subsets.map((shown) => {
+      const { boxes, groups, width, height, boxWidth } = layoutOf(direction, new Set(shown));
+      return { boxes, groups, width, height, boxWidth };
+    });
+    expect(placements).toEqual(placements.map(() => placements[0]));
+    expect(subsets.map((shown) => layoutOf(direction, new Set(shown)).arrows.map((arrow) => arrow.index))).toEqual(subsets);
+  });
+
+  it('should keep 200px boxes when the sides of a fork share a rank, and leave a graph without regions as it was', () => {
+    expect(layoutOf('TB').boxWidth).toBe(200);
+    const plain = layoutGraph(regionNodes, regionEdges.slice(0, 6), new Set([0, 1, 2]), 'TB', { height: () => 34 });
+    const grouped = layoutGraph(regionNodes, regionEdges.slice(0, 6), new Set([0, 1, 2]), 'TB', { height: () => 34, groups: [] });
+    expect(grouped).toEqual(plain);
+    expect(plain.groups).toEqual([]);
+  });
+
+  it('should leave out a region that encloses no box and lay out an arrow to it nowhere', () => {
+    const layout = layoutGraph(nodes('a', 'b'), [{ from: 'a', to: 'b', kind: 'flow' }, { from: 'empty', to: 'b', kind: 'error' }], new Set([0, 1]), 'TB', { groups: [{ id: 'empty', members: ['missing'] }] });
+    expect(layout.groups).toEqual([]);
+    expect(layout.arrows.map((arrow) => arrow.index)).toEqual([0]);
   });
 });
 

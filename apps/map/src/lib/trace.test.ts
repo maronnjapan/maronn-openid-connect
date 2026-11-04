@@ -166,6 +166,14 @@ describe('the rows of the outline', () => {
     expect(rows([], [{ s0b0s1: 'true' }], undefined, ['|s0b0'])[1]).toBe('  [dispatch] {step folded}');
   });
 
+  it('should read two statements in a row that say nothing in words as one line when asked, and each once the reader opens them', () => {
+    const fold = (toggled: string[]) => traceRows({ rootId: 'endpoint:token', hasFrame: (id) => id === 'code' || id === 'check', trees, state: EMPTY_TRACE, foldCode: true, toggled: new Set(toggled) });
+    expect(fold([]).map(shown).slice(6)).toEqual(['  run', '  return respond()', '└ 例外が起きたとき → return respondError()']);
+    expect(fold(['|run|s0b2']).map(shown).slice(6, 9)).toEqual(['  run', '    const a = 1', '    const b = 2']);
+    expect(rowFor(fold([]), '', 's0b3')).toBe('|run|s0b2');
+    expect(rowFor(fold(['|run|s0b2']), '', 's0b3')).toBe('|s0b3');
+  });
+
   it('should read a step of one call as that call, opening its frame below the step', () => {
     const single: FlowTree = { ...code, id: 'single', nodes: [{ id: 's0', kind: 'block', lines: [1, 2], code: '[issue]', step: { id: 'issue', label: '発行する' }, branches: [{ key: 'body', label: '発行する', nodes: [call('s0s0', 'code')] }] }] };
     const lines = traceRows({ rootId: 'single', hasFrame: (id) => id === 'code' || id === 'check', trees: new Map([...trees, ['single', single]]), state: { ...EMPTY_TRACE, open: ['s0s0'] } }).map(shown);

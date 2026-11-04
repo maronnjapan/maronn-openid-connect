@@ -69,6 +69,12 @@ export interface ConsentPageParams {
   scopes: string[];
   /** Client ID requesting authorization */
   clientId: string;
+  /**
+   * Display lines of the requested authorization details (RFC 9396 §3.1),
+   * listed next to the scopes. Absent unless the rar feature put them on the
+   * consent screen.
+   */
+  authorizationDetails?: readonly string[];
 }
 
 /**
@@ -333,6 +339,16 @@ function defaultConsentPage(params: ConsentPageParams): JSX.Element {
       <h1>Authorize Application</h1>
       <p>Client <strong>{params.clientId}</strong> is requesting access to the following scopes:</p>
       <ScopeList scopes={params.scopes} />
+      {params.authorizationDetails && params.authorizationDetails.length > 0 ? (
+        <>
+          <p>The client also requests the following authorization details:</p>
+          <ul>
+            {params.authorizationDetails.map((line) => (
+              <li>{line}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <form method="post" action="/consent">
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <button type="submit" name="action" value="approve">Approve</button>

@@ -23,6 +23,7 @@ export const endpoint = defineEndpoint({
     { id: 'issue-implicit-response', feature: 'implicit-flow', consumes: ['transactionId', 'transaction', 'session', 'responseMode'], produces: [] },
     { id: 'issue-hybrid-response', feature: 'hybrid-flow', consumes: ['transactionId', 'transaction', 'session', 'responseMode'], produces: [] },
     { id: 'issue-authorization-code', consumes: ['transactionId', 'transaction', 'session'], produces: ['responseParams', 'grantedScope', 'authCodeData'] },
+    { id: 'record-granted-details', feature: 'rar', consumes: ['transactionId', 'authCodeData'], produces: [] },
     { id: 'record-consent', consumes: ['transactionId', 'transaction', 'session', 'grantedScope', 'authCodeData'], produces: [] },
     { id: 'build-authorization-response', consumes: ['transaction', 'responseParams', 'authCodeData', 'responseMode'], produces: [] },
   ],

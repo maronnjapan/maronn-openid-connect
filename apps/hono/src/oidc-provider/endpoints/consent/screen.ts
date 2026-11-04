@@ -23,6 +23,12 @@ export interface ConsentScreen {
   scopes: string[];
   /** Client requesting the authorization. */
   clientId: string;
+  /**
+   * Display lines of the requested authorization details (RFC 9396 §3.1),
+   * shown next to the scopes. Set by the rar feature; absent without it or
+   * when the request carried no authorization_details.
+   */
+  authorizationDetails?: readonly string[];
 }
 
 /** A failure the OP shows on its own error page (never redirected to the client). */

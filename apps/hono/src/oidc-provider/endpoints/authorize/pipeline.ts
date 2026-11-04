@@ -4,6 +4,8 @@ import { resolveFragmentResponseContext } from '../../features/implicit-flow/ste
 import { validateImplicitRequest } from '../../features/implicit-flow/steps/validate-implicit-request.js';
 import { resolveJarmResponseContext } from '../../features/jarm/steps/resolve-jarm-response-mode.js';
 import { resolvePushedAuthorizationRequest } from '../../features/par/steps/resolve-pushed-request.js';
+import { recordAuthorizationDetails } from '../../features/rar/steps/record-authorization-details.js';
+import { validateAuthorizationDetailsRequest } from '../../features/rar/steps/validate-authorization-details.js';
 import { resolveRequestObject } from '../../features/request-object/steps/resolve-request-object.js';
 import type { AuthorizationOutcome } from './outcome.js';
 import type { AuthorizationResponseMode } from './response-mode.js';
@@ -80,8 +82,14 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
     // [validate-hybrid-request] (feature: hybrid-flow) ハイブリッドフローのリクエストを検証する — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
     validateHybridRequest(validatedRequest, effectiveParams ?? params, responseMode);
 
+    // [validate-authorization-details] (feature: rar) authorization_details を検証し、同意を必須にする — RFC 9396 §3 / §5
+    const authorizationDetails = validateAuthorizationDetailsRequest(c, { params, requestObjectClaims, validatedRequest });
+
     // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     const { transactionId, transaction, transactionTtlSeconds } = await createAuthorizationTransaction(c, validatedRequest, responseMode);
+
+    // [record-authorization-details] (feature: rar) authorization details をトランザクションへ保持する — RFC 9396 §3
+    await recordAuthorizationDetails(c, { transactionId, transactionTtlSeconds, authorizationDetails });
 
     // [validate-prompt-combination] ほかの値と併用された prompt=none を拒否する — OIDC Core 1.0 §3.1.2.1
     // `prompt` は空白で区切った値の並びなので、空白で分けて配列にする（OIDC Core 1.0 §3.1.2.1）。

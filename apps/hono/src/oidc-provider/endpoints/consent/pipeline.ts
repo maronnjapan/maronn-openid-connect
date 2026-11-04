@@ -1,5 +1,7 @@
 import { issueHybridConsentResponse } from '../../features/hybrid-flow/steps/issue-hybrid-response.js';
 import { issueImplicitConsentResponse } from '../../features/implicit-flow/steps/issue-implicit-response.js';
+import { describeTransactionAuthorizationDetails } from '../../features/rar/steps/describe-authorization-details.js';
+import { recordGrantedAuthorizationDetails } from '../../features/rar/steps/record-granted-details.js';
 import type { ConsentError, ConsentOutcome, ConsentScreen, ConsentSubmission } from './screen.js';
 import { buildConsentRedirect } from './steps/build-authorization-response.js';
 import { denyAuthorizationRequest } from './steps/deny-authorization.js';
@@ -45,8 +47,12 @@ export async function prepareConsent(c: any): Promise<ConsentScreen | ConsentErr
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
+  // [describe-authorization-details] (feature: rar) 同意画面に出す authorization details の表示行を作る — RFC 9396 §3.1
+  const authorizationDetails = await describeTransactionAuthorizationDetails(c, transactionId);
+
   // [describe-consent-screen] 同意画面の表示内容を組み立てる
-  return describeConsentScreen(c, transactionId, transaction);
+  const screen = await describeConsentScreen(c, transactionId, transaction);
+  return { ...screen, authorizationDetails };
 }
 
 /**
@@ -115,6 +121,9 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
     transaction,
     session,
   );
+
+  // [record-granted-details] (feature: rar) 承認された authorization details をグラントへ紐付ける — RFC 9396 §7
+  await recordGrantedAuthorizationDetails(c, transactionId, authCodeData);
 
   // [record-consent] 同意とグラントを記録する — OIDC Core 1.0 §3.1.2.4
   await recordConsentDecision(c, transactionId, transaction, session, authCodeData, grantedScope);

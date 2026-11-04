@@ -65,6 +65,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'jwt-introspection-response', tier: 'experimental', requires: ['introspection'], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'JWT 形式のイントロスペクションレスポンス（RFC 9701）', requiresReason: 'the RFC 9701 JWT response is returned by the RFC 7662 introspection endpoint, which is not generated when introspection is disabled' },
   { id: 'rp-initiated-logout', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'RP 起点のログアウト（RP-Initiated Logout 1.0、end_session_endpoint）' },
   { id: 'dynamic-client-registration', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: '動的クライアント登録（RFC 7591）' },
+  { id: 'rar', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'OAuth 2.0 Rich Authorization Requests (RFC 9396)' },
   { id: 'google-login', tier: 'extension', requires: [], packages: ['@maronn-openid-connect/google-login', 'google-auth-library'], frameworks: ALL_FRAMEWORKS, runtimes: ['node'], summary: 'ログイン方法に「Google でログイン」を加える（Node.js 22 以上）' },
 ];
 
@@ -157,6 +158,12 @@ export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
  *   single initial access token) and resolves the issued clients alongside the
  *   statically registered ones. Registration management (RFC 7592) is not
  *   implemented.
+ * - rar: OAuth 2.0 Rich Authorization Requests (RFC 9396) — the authorization
+ *   endpoint validates the authorization_details parameter against the type
+ *   definitions of ProviderConfig.rarTypes (empty by default: every RAR
+ *   request is refused until the operator registers types), the consent
+ *   screen lists the requested details, and the approved details are returned
+ *   on the token response (§7) and introspection (§9.2).
  */
 export const EXPERIMENTAL_FEATURES = [
   'par',
@@ -168,6 +175,7 @@ export const EXPERIMENTAL_FEATURES = [
   'jwt-introspection-response',
   'rp-initiated-logout',
   'dynamic-client-registration',
+  'rar',
 ] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
@@ -284,6 +292,14 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   resolves the registered clients from an in-memory store consulted after
  *   the configured client resolver. Every other endpoint is generated exactly
  *   as before.
+ * - rar: experimental, disabled by default. When true, the authorization
+ *   endpoint validates the authorization_details parameter (RFC 9396) against
+ *   the type definitions of ProviderConfig.rarTypes via
+ *   @maronn-openid-connect/experimental/rar, the consent screen lists the
+ *   requested details, and the approved details are returned on the token
+ *   response and introspection. A request without the parameter, and every
+ *   request while no types are registered (they are rejected), is answered
+ *   exactly as before.
  * - googleLogin: extension, disabled by default. When true, the login page
  *   renders a "Sign in with Google" button (redirect mode) and the OP serves
  *   POST /login/google, which verifies the ID token Google posts there with
@@ -311,6 +327,7 @@ export interface OidcFeatureConfig {
   jwtIntrospectionResponse: boolean;
   rpInitiatedLogout: boolean;
   dynamicClientRegistration: boolean;
+  rar: boolean;
   googleLogin: boolean;
 }
 
@@ -337,6 +354,7 @@ const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatu
   'jwt-introspection-response': 'jwtIntrospectionResponse',
   'rp-initiated-logout': 'rpInitiatedLogout',
   'dynamic-client-registration': 'dynamicClientRegistration',
+  rar: 'rar',
 };
 
 /** Mapping from CLI extension feature names to OidcFeatureConfig keys. */
@@ -366,6 +384,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   jwtIntrospectionResponse: false,
   rpInitiatedLogout: false,
   dynamicClientRegistration: false,
+  rar: false,
   googleLogin: false,
 };
 

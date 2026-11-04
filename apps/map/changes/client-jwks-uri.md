@@ -1,133 +1,137 @@
 # クライアントの jwks_uri と request_object_signing_alg
 
-静的に登録したクライアントにも動的に登録したクライアントにも、`jwks_uri`（RFC 7591 §2）と `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）を登録できるようにする。
-OP は署名付きのリクエストオブジェクトを検証するときに、`jwks_uri` から鍵を取得してキャッシュし、見慣れない `kid` では取り直す（OIDC Core 1.0 §10.1.1）。
-クライアントが `request_object_signing_alg` を登録していれば、その alg で署名したリクエストオブジェクトだけを受け付ける（OIDC Core 1.0 §6.3.2）。
-あわせて、リクエストオブジェクトの署名の検証で、鍵ごとに使える alg を一つに決め、ヘッダーの `alg` と一致する鍵だけを使うようにした（RFC 8725 §3.1）。
+クライアントが鍵を入れ替えるたびに OP の登録を書き換えなくて済むよう、静的に登録したクライアントにも動的に登録したクライアントにも `jwks_uri`（RFC 7591 §2）を登録できるようにする。
+OP は署名付きのリクエストオブジェクトを検証するときに `jwks_uri` から鍵を取得してキャッシュし、見慣れない `kid` では取り直す（OIDC Core 1.0 §10.1.1）。
+クライアントが `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）を登録していれば、その alg で署名したリクエストオブジェクトだけを受け付ける（OIDC Core 1.0 §6.3.2）。
+あわせて、リクエストオブジェクトの検証で鍵ごとに使える alg を一つに決め、ヘッダーの `alg` と一致する鍵だけを使う（RFC 8725 §3.1）。
 
-## parseRequestObject, loadVerificationKeys
+`jwks_uri` から鍵を取る関数（取得、期限、キャッシュ、生成コードのリゾルバ）は、地図では届く先が無いと出る。
+鍵は `ClientKeyResolver.findClientKeys()`（型で追えない呼び出し）の先で読むからで、実際には /authorize のリクエストオブジェクトの検証から呼ばれる。
 
-鍵は `loadJwks` だけで受け取るようにし、値で鍵を渡す `jwks` のオプションを削除した。
-`loadJwks` は、登録した alg との不一致、`none`、受け付けない alg を拒否した後でだけ呼ぶ。
-そのため、受け付けないリクエストオブジェクトが `jwks_uri` への通信を起こすことはない。
-値で持つ鍵は `loadJwks: async () => jwks` で渡す。
+## parseRequestObject, loadVerificationKeys <!-- core:request-object.ts#parseRequestObject core:request-object.ts#loadVerificationKeys -->
 
-`requiredSigningAlg`（クライアントが登録した alg）と違う `alg` を、`none` も含めて、ほかのどの検査よりも先に拒否する。
-署名の検証には、`use` がないか `sig` で、`resolveJwkSigningAlg()` がヘッダーの `alg` を返す鍵だけを使い、`importJwkForJwsVerification()` でインポートする。
-2048 ビット未満の RSA の鍵は使わない。
-候補の鍵はあるのに、ヘッダーの `alg` で使える鍵がないときは、`no signing JWK matched the request object header (alg)` で拒否する。
+鍵を読むのを、登録した alg、`none`、受け付けない alg を確かめた後に移した。
+受け付けないリクエストオブジェクトのために `jwks_uri` へ通信しないためで、値で鍵を受け取る `jwks` のオプションは、検査の前に鍵を用意させる経路が残るので削除した。
+登録した alg の検査を最初に置くのは、OIDC Core 1.0 §6.3.2 が、登録した alg 以外（`none` を含む）を拒否することを求めるからである。
 
-`loadJwks` が `jwks_uri` の取得の失敗（`ClientJwksUriError`）を投げたときは、理由を含まない固定の文言（`the client jwks_uri could not be retrieved`）の `RequestObjectError` にする（`loadVerificationKeys`）。
-失敗の理由は OP の内側のネットワークを探る手がかりになるので、応答に出さない。
+気をつけること:
+- `use` が `sig` 以外の鍵と 2048 ビット未満の RSA の鍵は、検証に使わなくなる。`alg` の無い RSA の鍵は RS256 の検証にだけ使う。これまで通っていたリクエストオブジェクトが拒否されることがある
+- `jwks_uri` の取得の失敗は、理由を含まない固定の文言にする（`loadVerificationKeys`）。理由は OP の内側のネットワークを探る手がかりになるので、生成コードが `console.warn` に書くログで見る
 
-## resolveRequestObjectParams
+## resolveRequestObjectParams <!-- core:authorization-request.ts#resolveRequestObjectParams -->
 
-`loadJwks` と `requestObjectSigningAlg` を受け取り、`parseRequestObject()` に渡すようにした。
-受け付ける alg（`supportedSigningAlgs`）の既定値を、RS256 だけから、core が検証できるすべての alg（`SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS`。RS256、RS384、RS512、ES256、ES384、ES512）にした。
-`DEFAULT_REQUEST_OBJECT_SIGNING_ALGS` は削除した。
-鍵ごとに使える alg を一つに決めて検証するので、受け付ける alg を広げても alg の取り違えは起きない。
+受け付ける alg の既定を RS256 だけにしていたのは、互換を保つためだった。
+鍵と alg を一対一に固定したので、core が検証できるすべての alg（`SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS`）を既定にしても alg の取り違えは起きず、生成コードの既定とも揃う。
 
-## resolveJwkSigningAlg, importJwkForJwsVerification, rsaSigningHashOf, ecSigningCurveOf, ecSigningAlgOfCurve
+気をつけること: RS256 だけを受け付けたい呼び出し側は `supportedSigningAlgs: ['RS256']` を渡す。値で持つ鍵は `loadJwks: async () => jwks` で渡す。
 
-鍵と alg を一対一に対応させる関数を足した。
-`resolveJwkSigningAlg()` は、RSA の鍵には `alg`（なければ RS256）を、EC の鍵には `crv` から決まる ES の alg を返す。
-`importJwkForJwsVerification()` は、その alg がヘッダーの `alg` と一致する鍵だけを、公開鍵のメンバーだけでインポートする。
+## resolveJwkSigningAlg, importJwkForJwsVerification, rsaSigningHashOf, ecSigningCurveOf, ecSigningAlgOfCurve <!-- core:crypto-utils.ts#resolveJwkSigningAlg core:crypto-utils.ts#importJwkForJwsVerification core:crypto-utils.ts#rsaSigningHashOf core:crypto-utils.ts#ecSigningCurveOf core:crypto-utils.ts#ecSigningAlgOfCurve -->
 
-## validateClientJwksUri, isBlockedHost, isBlockedIpv4, isBlockedIpv6, parseIpv4Octets, parseIpv6Groups, authorityOf
+鍵は一つの alg でだけ使い、それを確かめる（RFC 8725 §3.1）という規則を、鍵の種類と alg の対応の一か所にまとめた。
+`alg` の無い RSA の鍵を RS256 とみなすのは、DCR の `validateJwks()` の正規化と同じ規則にそろえるためである。
 
-`jwks_uri` の宛先を検査する関数を足した。
-`https` で、フラグメントと userinfo がなく、`localhost` やループバック・私設・リンクローカルの IP リテラルでない宛先だけを通す（SSRF の対策。RFC 8725 §3.10、RFC 9101 §10.4.1）。
-ホストは WHATWG URL の解析後の値で見るので、`0x7f.1` のような別の表記も拒否する。
-開発用に、`allowInsecure` で `http` とそれらのアドレスを通せる。
+気をつけること: RSA-PSS（PS256 など）は検証できないので、その alg を持つ鍵は使わない。
 
-## fetchClientJwkSet, readBodyWithin, discardBody, errorNameOf, parseClientJwkSet, toSigningJwk, hasRsaModulusOfAtLeast, isJsonObject
+## validateClientJwksUri, isBlockedHost, isBlockedIpv4, isBlockedIpv6, parseIpv4Octets, parseIpv6Groups, authorityOf <!-- core:client-jwks-uri.ts#validateClientJwksUri core:client-jwks-uri.ts#isBlockedHost core:client-jwks-uri.ts#isBlockedIpv4 core:client-jwks-uri.ts#isBlockedIpv6 core:client-jwks-uri.ts#parseIpv4Octets core:client-jwks-uri.ts#parseIpv6Groups core:client-jwks-uri.ts#authorityOf -->
 
-`jwks_uri` から鍵を 1 回取得する関数を足した。
-タイムアウト（既定 3 秒）、本文の上限（既定 64 KiB）、鍵の数の上限（既定 32）を持ち、リダイレクトには従わない。
-取得した JWK Set に秘密鍵か対称鍵があれば、全体を拒否する。
-署名に使えない鍵は捨て、残りを `use: "sig"` と `alg` を補った形に正規化する。
+`jwks_uri` はクライアントが決める URL で、OP がそこへ取りに行く。
+そのため、OP の内側のネットワーク（ループバック、私設、リンクローカル、クラウドのメタデータ）へ届かせる SSRF の踏み台になりうる（RFC 8725 §3.10、RFC 9101 §10.4.1）。
+地図では DCR の登録にだけ届くと出るが、鍵を取るたびに、キャッシュと取得の関数もこの検査を通す。
 
-## resolveClientJwksTtlSeconds, parseCacheControl, parseDeltaSeconds, unquote
+気をつけること:
+- 見るのはホスト名で、DNS の解決先は見ない（Web 標準の API では解決先を得られない）。解決先まで縛るときは、egress プロキシを通る fetch を注入する（生成コードの `clientJwksFetch`）
+- `allowInsecure`（生成コードの `allowInsecureClientJwksUri`）は開発用で、本番では有効にしない
 
-取得した鍵を使ってよい期限を、応答の `Cache-Control: max-age` から決める関数を足した。
-期限は、既定では下限 30 秒と上限 300 秒の範囲に丸める。
-`no-store` と `no-cache` でも下限のあいだは使い、1 リクエストごとに外部へ取得しに行かないようにする。
+## fetchClientJwkSet, readBodyWithin, discardBody, errorNameOf, parseClientJwkSet, toSigningJwk, hasRsaModulusOfAtLeast, isJsonObject <!-- core:client-jwks-uri.ts#fetchClientJwkSet core:client-jwks-uri.ts#readBodyWithin core:client-jwks-uri.ts#discardBody core:client-jwks-uri.ts#errorNameOf core:client-jwks-uri.ts#parseClientJwkSet core:client-jwks-uri.ts#toSigningJwk core:client-jwks-uri.ts#hasRsaModulusOfAtLeast core:client-jwks-uri.ts#isJsonObject -->
 
-## createClientJwksUriCache, copyOf, withClientJwksUriKeys, isClientJwksUriError
+外部への取得なので、時間（タイムアウト）、大きさ（本文と鍵の数）、行き先（リダイレクトに従わない。リダイレクト先は宛先の検査を通っていない）を限った。
+秘密鍵か対称鍵を含む JWK Set を全体で拒否するのは、OIDC Dynamic Client Registration 1.0 §2 が禁じており、秘密鍵を公開してしまった RP に気づかせるためである。
+エラーのメッセージに元のエラーの名前だけを載せる（`errorNameOf`）のは、宛先から返った内容をログに流し込まないためである。
 
-`jwks_uri` ごとに鍵を覚えるキャッシュと、それを `ClientKeyResolver` に組み込む関数を足した。
-期限内でも、手がかりの `kid` がキャッシュになく、前回の取得から `refetchIntervalSeconds`（既定 30 秒）が過ぎていれば取り直す（OIDC Core 1.0 §10.1.1）。
-期限切れの鍵の取得に失敗したときは、その失敗を `refetchIntervalSeconds` のあいだ覚え、期限切れの鍵は使わない。
-既定値は `DEFAULT_CLIENT_JWKS_URI_OPTIONS` にまとめ、どれも引数で 1 項目ずつ上書きできる。
-`ClientKeyResolver.findClientKeys()` は、手がかり（`hint`。検証する JWS の `kid`）を任意の第 3 引数で受け取る。
+気をつけること: `redirect: 'error'` を受け付けない実行環境（Cloudflare Workers）があるので、`redirect: 'manual'` にして 3xx を拒否している。
 
-`isClientJwksUriError()` は、クラスではなく形でエラーを見分ける。
-Next.js は core を 2 度読み込むことがあり、`instanceof` が偽になるからである。
+## resolveClientJwksTtlSeconds, parseCacheControl, parseDeltaSeconds, unquote <!-- core:client-jwks-uri.ts#resolveClientJwksTtlSeconds core:client-jwks-uri.ts#parseCacheControl core:client-jwks-uri.ts#parseDeltaSeconds core:client-jwks-uri.ts#unquote -->
 
-## validateClientMetadata, validateJwksUri, validateRequestObjectSigningAlg, buildRegisteredClient
+RP が `Cache-Control` で知らせる期限で、鍵の入れ替えを反映するため（RFC 9111）。
+下限は 1 リクエストごとに外部へ取りに行くのを防ぎ、上限は失効した鍵を使い続ける最長の時間を決める。
 
-動的クライアント登録で、`jwks_uri` を既定で登録するようにした（`acceptJwksUri: false` で無視する）。
-宛先は core の `validateClientJwksUri()` で検査し、登録の時点では取得しない。
-`jwks` と `jwks_uri` を両方含む登録は、設定によらず拒否する。
+気をつけること: `no-store` と `no-cache` でも、下限（既定 30 秒）のあいだは使う。仕様どおりにするには下限を 0 にする。
 
-`request_object_signing_alg` は、`requestObjectSigningAlgValuesSupported` を渡したときだけ検証して登録し、渡さない OP では無視する。
-`jwks` も登録するときは、その alg で使える鍵が `jwks` にあることを確かめる。
-`buildRegisteredClient()` は、`jwksUri` と `requestObjectSigningAlg` を登録レコードに写す。
+## createClientJwksUriCache, copyOf, withClientJwksUriKeys, isClientJwksUriError <!-- core:client-jwks-uri.ts#createClientJwksUriCache core:client-jwks-uri.ts#copyOf core:client-jwks-uri.ts#withClientJwksUriKeys core:client-jwks-uri.ts#isClientJwksUriError -->
 
-## withRegisteredClientJwksUri, clientJwksUriLoadOptionsOf, hostOf
+リクエストオブジェクトのたびに `jwks_uri` へ取りに行かないため、`jwks_uri` ごとに鍵を覚える。
+見慣れない `kid` で取り直すのは、RP が鍵を足して入れ替えたことに追いつくためである（OIDC Core 1.0 §10.1.1）。
+期限切れの鍵を使わないのは、失効させた鍵を受け付けないためである。
+`isClientJwksUriError` がクラスではなく形でエラーを見分けるのは、Next.js が core を 2 度読み込むと `instanceof` が偽になるからである。
 
-生成コードの base に、クライアントの鍵のリゾルバを `jwks_uri` に対応させる関数を足した（`client-jwks-uri.ts`）。
-`jwksUri` を持つクライアントには、`config.clientJwksUriPurposes` の用途で `jwks_uri` の鍵だけを返し、ほかのクライアントと用途は元のリゾルバに任せる。
-キャッシュはプロセスで共有し、設定は `ProviderConfig` の平たい項目（`allowInsecureClientJwksUri`、`clientJwksUri*`）で 1 項目ずつ上書きできる。
-使えない `jwks_uri` は、ホストと理由を `console.warn` に書く。
+気をつけること:
+- キャッシュはプロセスごとにあり、複数のインスタンスでは別々に取得する
+- 取り直しの間隔（既定 30 秒）のあいだは、見慣れない `kid` のリクエストオブジェクトは拒否される
 
-## setRequestContext
+## validateClientMetadata, validateJwksUri, validateRequestObjectSigningAlg, buildRegisteredClient <!-- experimental:dynamic-client-registration/registration-request.ts#validateClientMetadata experimental:dynamic-client-registration/metadata-values.ts#validateJwksUri experimental:dynamic-client-registration/metadata-values.ts#validateRequestObjectSigningAlg experimental:dynamic-client-registration/registered-client.ts#buildRegisteredClient -->
 
-`clientKeyResolver` を、db/ のリゾルバも `createApp()` / `applyOidc()` に渡したリゾルバも、`withRegisteredClientJwksUri()` で包むようにした。
-渡したリゾルバも包むので、リゾルバを差し替えても `jwks_uri` は効く。
-取得に使う fetch は、オプションの `clientJwksFetch` で差し替えられる（egress プロキシ）。
+RFC 7591 §2 は `jwks` より `jwks_uri` を勧めるので、`jwks_uri` を既定で受け付ける。
+登録の時点で取得しないのは、オープン登録の受け口をそのまま外部への取得の引き金にしないためである。
+`request_object_signing_alg` は、リクエストオブジェクトを扱う OP（`requestObjectSigningAlgValuesSupported` を渡した OP）でだけ理解する。
+扱わない OP では、理解しないメタデータとして無視する（RFC 7591 §2 の MUST）。
 
-## secondsFromEnvironment
+気をつけること:
+- これまで無視していた正しくない `jwks_uri` は、`invalid_client_metadata` で拒否される。`jwks_uri` を取得しない OP は `acceptJwksUri: false` を渡す
+- `jwks` と `request_object_signing_alg` を両方登録するときは、その alg で使える鍵が `jwks` に要る。登録はできるのに検証できないクライアントを作らないためである
 
-Next.js の provider.ts で、環境変数 `OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS` と `OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS` を設定に写すための関数を足した。
-Next.js も、Hono と同じく `withRegisteredClientJwksUri()` で、機能のフックが組み立てたリゾルバを包む。
+## withRegisteredClientJwksUri, clientJwksUriLoadOptionsOf, hostOf, setRequestContext, secondsFromEnvironment <!-- hono:oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri nextjs:app/_oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri hono:oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf nextjs:app/_oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf hono:oidc-provider/client-jwks-uri.ts#hostOf nextjs:app/_oidc-provider/client-jwks-uri.ts#hostOf hono:oidc-provider/app.ts#setRequestContext nextjs:app/_oidc-provider/provider.ts#secondsFromEnvironment -->
 
-## clients.ts#registerClient, assertClientJwksUriRegistration
+生成コードで、`jwksUri` を持つクライアントの鍵の出どころを `jwks_uri` だけにし、ほかのクライアントは今までどおり db/ か渡したリゾルバに任せるため。
+`createApp()` / `applyOidc()` に渡したリゾルバも包む（`setRequestContext`）のは、リゾルバを差し替えても `jwks_uri` が効くようにするためである。
+Next.js の provider.ts は、取得とキャッシュの設定の一部を環境変数（`OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS`、`OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS`）から読む（`secondsFromEnvironment`）。
 
-`registerClient()` が `jwksUri` と `requestObjectSigningAlg` を保存するようにした。
-SQL は `client_jwks_uris` と `client_request_object_signing_algs` のテーブル、KV はクライアントのレコードの `jwks_uri` と `request_object_signing_alg` に書く。
-`jwksUri` と `keys` を両方持つクライアントと、`http` か `https` の絶対 URL でない `jwksUri` は、何も書き込まずに拒否する（`assertClientJwksUriRegistration`）。
+気をつけること: 使えない `jwks_uri` は、ホストと理由を `console.warn` に書き、応答には出さない。ログにはクライアントが決めたホスト名が載る。
 
-## clients.ts#createClientResolver
+## registerClient, assertClientJwksUriRegistration <!-- hono:oidc-provider/db/kv/clients.ts#registerClient hono:oidc-provider/db/memory/clients.ts#registerClient hono:oidc-provider/db/sql/clients.ts#registerClient nextjs:app/_oidc-provider/db/kv/clients.ts#registerClient nextjs:app/_oidc-provider/db/memory/clients.ts#registerClient nextjs:app/_oidc-provider/db/sql/clients.ts#registerClient hono:oidc-provider/client-jwks-uri.ts#assertClientJwksUriRegistration nextjs:app/_oidc-provider/client-jwks-uri.ts#assertClientJwksUriRegistration -->
 
-KV と SQL のクライアントのリゾルバが、保存した `jwksUri` と `requestObjectSigningAlg` を読み出すようにした。
+RFC 7591 §2 は `jwks` と `jwks_uri` を同時に使うことを禁じる。
+鍵の出どころをクライアントごとに一つにするため、`jwksUri` と `keys` を両方持つクライアントを、何も書き込む前に拒否する。
+`jwksUri` の宛先がよいかは、登録の時点ではなく取得するときに `allowInsecureClientJwksUri` で決める（開発と本番で同じ登録を使えるようにするため）。
 
-## resolveRequestObject
+気をつけること:
+- SQL は新しいテーブル（`client_jwks_uris`、`client_request_object_signing_algs`）に書く。`schema.sql` は `CREATE TABLE IF NOT EXISTS` なので、実行し直せば既存の DB にも足される
+- `jwksUri` や `requestObjectSigningAlg` を持たない登録は、登録済みの値を消す
 
-Request Object のステップが、`loadJwks` で鍵を読むようにした。
-鍵は、ヘッダーの `alg` の確認を通った後でだけ、ヘッダーの `kid` を手がかりに読む。
-受け付ける alg は設定の `requestObjectSigningAlgValuesSupported`（既定は 6 種類で、ディスカバリーの `request_object_signing_alg_values_supported` に公開する）で、クライアントが登録した `requestObjectSigningAlg` も渡す。
+## createClientResolver <!-- hono:oidc-provider/db/kv/clients.ts#createClientResolver hono:oidc-provider/db/sql/clients.ts#createClientResolver nextjs:app/_oidc-provider/db/kv/clients.ts#createClientResolver nextjs:app/_oidc-provider/db/sql/clients.ts#createClientResolver -->
 
-## validateRegistrationMetadata, registrableRequestObjectSigningAlgs, route.ts#registerClient
+保存した `jwksUri` と `requestObjectSigningAlg` を、リクエストオブジェクトの検証と鍵のリゾルバに渡すため。
 
-登録エンドポイントが、`jwks_uri` の設定（`acceptJwksUri`、`allowInsecureClientJwksUri`）と、ディスカバリーが公開する `request_object_signing_alg` の一覧（`registrableRequestObjectSigningAlgs`）を `validateClientMetadata()` に渡すようにした。
-request-object の機能のない OP では、`request_object_signing_alg` を無視する。
+気をつけること: 地図は `findClient()` を使うすべてのエンドポイント（/authorize、/consent、/token、/userinfo、/par）に届くと出すが、増えるのは返すクライアントの 2 つのフィールドだけで、ほかのフィールドと判定は変わらない。
 
-## toClientRegistration, withDynamicallyRegisteredClientKeys
+## resolveRequestObject <!-- hono:oidc-provider/features/request-object/steps/resolve-request-object.ts#resolveRequestObject nextjs:app/_oidc-provider/features/request-object/authorize.ts#resolveRequestObject -->
 
-動的に登録したクライアントの保存用のレコードに、`jwksUri` と `requestObjectSigningAlg` を入れるようにした。
-鍵のリゾルバは、手がかり（`hint`）をそのまま元のリゾルバに渡す。
+鍵を読むのをヘッダーの検査の後にし（`loadJwks`）、`kid` を手がかりに渡して、`jwks_uri` を登録したクライアントの鍵の入れ替えに追いつくため。
+クライアントが登録した alg を渡すのは、OIDC Core 1.0 §6.3.2 のためである。
+
+気をつけること: 受け付ける alg の既定は RS256 だけから 6 種類になり、ディスカバリーの `request_object_signing_alg_values_supported` も同じになる。RS256 だけに戻すには、設定の `requestObjectSigningAlgValuesSupported` を `['RS256']` にする。
+
+## validateRegistrationMetadata, registrableRequestObjectSigningAlgs, registerClient <!-- hono:oidc-provider/features/dynamic-client-registration/endpoints/register/steps/validate-metadata.ts#validateRegistrationMetadata hono:oidc-provider/features/dynamic-client-registration/endpoints/register/steps/validate-metadata.ts#registrableRequestObjectSigningAlgs nextjs:app/(dynamic-client-registration)/register/route.ts#registrableRequestObjectSigningAlgs nextjs:app/(dynamic-client-registration)/register/route.ts#registerClient -->
+
+登録で受け付ける `request_object_signing_alg` を、ディスカバリーが公開する一覧と同じにして、登録できるのに使えない alg を作らないため。
+`jwks_uri` の宛先の方針を、取得するときと同じ `allowInsecureClientJwksUri` にそろえるためでもある。
+
+気をつけること: request-object の機能を外した OP は、`request_object_signing_alg` を理解しないメタデータとして無視する。
+
+## toClientRegistration, withDynamicallyRegisteredClientKeys <!-- hono:oidc-provider/features/dynamic-client-registration/store.ts#toClientRegistration nextjs:app/_oidc-provider/features/dynamic-client-registration/store.ts#toClientRegistration hono:oidc-provider/features/dynamic-client-registration/store.ts#withDynamicallyRegisteredClientKeys nextjs:app/_oidc-provider/features/dynamic-client-registration/store.ts#withDynamicallyRegisteredClientKeys -->
+
+動的に登録したクライアントも、静的なクライアントと同じく `jwks_uri` と登録した alg を使えるようにするため。
+鍵のリゾルバが手がかり（`hint`）を元のリゾルバへそのまま渡すのは、`jwks_uri` を取り直す合図（`kid`）を落とさないためである。
 
 ## 破壊的変更
 
 - core の `parseRequestObject()` と `resolveRequestObjectParams()` の `jwks` オプションを削除した。値で持つ鍵は `loadJwks: async () => jwks` で渡す
 - core の `DEFAULT_REQUEST_OBJECT_SIGNING_ALGS` を削除し、`resolveRequestObjectParams()` の受け付ける alg の既定値を `SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS` にした。RS256 だけに絞るときは `supportedSigningAlgs: ['RS256']` を渡す
-- core のリクエストオブジェクトの検証は、`use` が `sig` 以外の鍵と、2048 ビット未満の RSA の鍵を使わない。`alg` のない RSA の鍵は、RS256 の検証にだけ使う
+- core のリクエストオブジェクトの検証は、`use` が `sig` 以外の鍵と、2048 ビット未満の RSA の鍵を使わない。`alg` の無い RSA の鍵は、RS256 の検証にだけ使う
 - experimental の `validateClientMetadata()` は、`jwks_uri` を既定で検査して登録する（これまでは無視していた）。取得しない OP は `acceptJwksUri: false` を渡す
 
 ## 背景
 
-クライアントが鍵を入れ替えるたびに OP の登録を書き換えなくて済むよう、RFC 7591 §2 は `jwks` より `jwks_uri` を勧めている。
+RFC 7591 §2 は、鍵を入れ替えられるよう `jwks` より `jwks_uri` を勧めている。
 `request_object_signing_alg` を登録したクライアントのリクエストオブジェクトは、その alg で署名されていなければ拒否しなければならない（OIDC Core 1.0 §6.3.2）。
 また、これまでの検証は、`alg` を持たない鍵をヘッダーの `alg` のとおりに試していた。
 RFC 8725 §3.1 は、鍵を一つの alg でだけ使い、それを確かめることを求める。

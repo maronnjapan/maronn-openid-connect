@@ -2,11 +2,12 @@ import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type 
 import type { MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, markOf, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, frameDiagram, markOfBox, type DiagramGroup, type DiagramNode } from '../lib/diagram';
-import { childFrame, entryOf, findNode, frameIds, framesToChanges, type TraceState } from '../lib/trace';
+import { childFrame, entryOf, findNode, frameIds, framesToChanges, withinFrame, type TraceState } from '../lib/trace';
 import { locationOf } from '../lib/model';
-import { Badge, DiffView } from './ChangeParts';
+import { Badge, ChangeDetail, DiffView } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
 import { FlowDiagram } from './FlowDiagram';
+import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
 import { SelectionBar } from './SelectionBar';
 import { TraceView } from './TraceView';
@@ -28,8 +29,8 @@ export interface TraceProps {
   onOpenCode: (id: string) => void;
   /** The detail of a step a block row is (the endpoint screen gives the step's facts). */
   renderStep?: (step: StepMark) => ReactNode;
-  /** Tabs of the side panel beside the diagram, the path diff and the detail. */
-  tabs?: ReadonlyArray<{ id: string; label: string; content: ReactNode }>;
+  /** Tabs of the pane beside the diagram, the diff and the detail: each is drawn for the frame the diagram shows (its id), so the pane speaks of one thing. */
+  tabs?: ReadonlyArray<{ id: string; label: string; content: (frameId: string) => ReactNode }>;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -76,7 +77,7 @@ function writePaneWidth(value: number): void {
  */
 export function Trace({ data, changes, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [] }: TraceProps) {
   const { mobile } = useMobileMenu();
-  const [tab, setTab] = useState<Tab>(tabs[0]?.id ?? 'diagram');
+  const [tab, setTab] = useState<Tab>('diagram');
   const [overlay, setOverlay] = useState(false);
   // The share of the width the pane takes, set by dragging the splitter (or its keys) and kept for this browser.
   const [paneWidth, setPaneWidth] = useState(readPaneWidth);
@@ -208,8 +209,8 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     return [{ key: '', label: nameOf(rootId) }, ...keys.map((key) => ({ key, label: nameOf(known.get(key)) }))];
   }, [focusKey, known, data, rootId]);
 
-  // The diff of the frames open, in the order the trace runs them.
-  const pathDiff = [...known].filter(([, id], index, list) => list.findIndex(([, other]) => other === id) === index).flatMap(([key, id]) => {
+  // The diff of the frame the diagram shows and of the frames open below it, in the order the trace runs them.
+  const pathDiff = [...known].filter(([key]) => withinFrame(key, focusKey)).filter(([, id], index, list) => list.findIndex(([, other]) => other === id) === index).flatMap(([key, id]) => {
     const change = frames.changes.get(id);
     const hunks = allHunks(change);
     if (change === undefined || hunks.length === 0) return [];
@@ -217,19 +218,17 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     return [{ key, id, change, hunks, entry }];
   });
 
-  const detail = (): ReactNode => {
-    if (selected === null) return <p className="note">アウトラインの行を選ぶと、ここに詳細を出します。</p>;
-    const { node } = selected;
+  /** What the pane says about a node of the frame the diagram shows: its code and words, and what it calls. */
+  const nodeDetail = (node: TreeNode): ReactNode => {
     if (node.kind === 'block' && node.step !== undefined && renderStep !== undefined) return renderStep(node.step);
     const callee = node.target?.kind === 'function' ? entryOf(data, node.target.id) : undefined;
     const member = node.target?.kind === 'member' ? data.members[node.target.id] : undefined;
     return (
-      <section className="node-detail">
+      <section className="node-detail" aria-label="選んだ行">
+        <h4>選んだ行</h4>
         <p className="mono">{node.code}</p>
         {node.text !== undefined ? <p>{node.text}</p> : null}
-        <p className="where mono">
-          {entryOf(data, selected.frameId)?.name ?? selected.frameId} · {node.lines[0]}–{node.lines[1]} 行目
-        </p>
+        <p className="where mono">{node.lines[0]}–{node.lines[1]} 行目</p>
         {callee !== undefined ? (
           <>
             <h4>{callee.name}()</h4>
@@ -252,25 +251,59 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
             </h4>
             <p>{member.summary || 'インターフェースのメンバー'}</p>
             <p className="where mono">{locationOf(member)}</p>
-            {member.implementedBy !== undefined ? (
-              <p className="note">
-                実装: {member.implementedBy.map((id) => entryOf(data, id)?.name ?? id).join('、')}
-              </p>
-            ) : null}
+            {member.implementedBy !== undefined ? <p className="note">実装: {member.implementedBy.map((id) => entryOf(data, id)?.name ?? id).join('、')}</p> : null}
           </>
         ) : null}
         {node.target?.kind === 'untraceable' ? <p className="note">型で呼び先を引けない呼び出しです（{node.target.why}）。</p> : null}
-        {callee === undefined ? (
-          <button type="button" className="code-button" onClick={() => onOpenCode(selected.frameId)}>
-            このフレームのコードを見る
-          </button>
-        ) : null}
       </section>
     );
   };
 
+  /**
+   * The detail of what the diagram shows: the frame (what it does, where it
+   * is, how it fails, what the pull request did to it), and the node selected
+   * in it, if any. It needs no selection: the pane always speaks of the frame
+   * in the diagram.
+   */
+  const detail = (): ReactNode => {
+    const entry = entryOf(data, focusId);
+    const card = data.functions[focusId];
+    const change = changes?.byId.get(focusId);
+    const failures = [...new Set((entry?.failures ?? []).map((failure) => failure.error))];
+    const picked = selected !== null && selected.frame === focusKey ? selected.node : undefined;
+    return (
+      <div className="frame-detail">
+        <section aria-label="図のフレーム">
+          <h4>{entry === undefined ? focusId : 'endpoint' in entry ? entry.name : `${entry.name}()`}</h4>
+          {card !== undefined ? <Description summary={card.summary} description={card.description} /> : entry?.summary ? <p>{entry.summary}</p> : null}
+          <div className="facts-row">
+            {entry !== undefined ? <span className="chip mono">{locationOf(entry)}</span> : null}
+            {card?.spec ? <Chips items={card.spec} /> : null}
+          </div>
+          {failures.length > 0 ? (
+            <p className="facts-row">
+              失敗するとき <Chips items={failures.slice(0, 12)} />
+            </p>
+          ) : null}
+          {change !== undefined ? <ChangeDetail change={change} hunks={allHunks(focusChange)} /> : null}
+          <div className="detail-actions">
+            <button type="button" className="code-button" onClick={() => onOpenCode(focusId)}>
+              コードを見る
+            </button>
+            {card !== undefined && focusId !== rootId ? (
+              <button type="button" className="code-button" onClick={() => onOpenFunction(focusId)}>
+                この関数を根にして開く
+              </button>
+            ) : null}
+          </div>
+        </section>
+        {picked !== undefined ? nodeDetail(picked) : <p className="note">アウトラインの行か図の箱を選ぶと、その行の詳細もここに出ます。</p>}
+      </div>
+    );
+  };
+
   const panes: Array<{ id: Tab; label: string; content: ReactNode }> = [
-    ...tabs,
+    ...tabs.map((extra) => ({ id: extra.id, label: extra.label, content: extra.content(focusId) })),
     {
       id: 'diagram',
       label: '図',
@@ -312,10 +345,10 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     },
     {
       id: 'diff',
-      label: `経路の差分${pathDiff.length > 0 ? `（${pathDiff.length}）` : ''}`,
+      label: `差分${pathDiff.length > 0 ? `（${pathDiff.length}）` : ''}`,
       content:
         pathDiff.length === 0 ? (
-          <p className="note">開いているフレームに、このPRの差分はありません。{below > 0 ? '「変更まで展開」で、変わった関数まで開けます。' : ''}</p>
+          <p className="note">図のフレームと、その下に開いているフレームに、このPRの差分はありません。{below > 0 ? '「変更まで展開」で、変わった関数まで開けます。' : ''}</p>
         ) : (
           <div className="path-diff">
             {pathDiff.map(({ key, id, hunks, entry }) => (
@@ -358,9 +391,8 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
                   return;
                 }
                 select({ ...row, from: 'outline' });
-                // The diagram follows the frame of the row selected, and shows where it is: the pane turns to the diagram.
+                // The pane follows the frame of the row selected: the diagram shows where it is, the detail and the diff speak of it.
                 if (row.frame !== focusKey && known.has(row.frame)) onState({ ...state, focus: row.frame });
-                setTab('diagram');
               }}
               onOpenFunction={onOpenFunction}
             />

@@ -192,7 +192,17 @@ export function FunctionScreen(props: FunctionScreenProps) {
           enabled={enabled}
           onOpenFunction={onOpenFunction}
           onOpenCode={setCode}
-          tabs={[{ id: 'callers', label: '呼び出し元', content: <Callers {...props} /> }]}
+          tabs={[
+            {
+              id: 'callers',
+              label: '呼び出し元',
+              // The callers of the function the diagram shows, which is this page's function until the reader dives into a call.
+              content: (frameId) => {
+                const shown = data.functions[frameId];
+                return shown === undefined ? <p className="note">図に出しているのはエンドポイントの処理の本体です。</p> : <Callers {...props} card={shown} />;
+              },
+            },
+          ]}
         />
       )}
       {code !== null ? <CodeDrawer data={data} changes={changes} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}

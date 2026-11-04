@@ -306,7 +306,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 
 上の「追えない配線」は、ミドルウェア登録、コンテキストへの書込み、コールバック、モジュール初期化を場所と理由付きで一覧する。届く先を証明できないものを、実行トレースに混ぜず残す。ファイル、コード、理由で絞り込み、型で分かる参照先は関数のページへ開ける。`#hono--wiring` / `#nextjs--wiring` で共有できる。機能をオフにしたときの配線除去までは確定しない。
 
-`map.json.wiring` は索引の関数を持たないモジュールも読む。動的なキー・外部 callback の呼び先・middleware の mount や実行順を推測しない。設計と調査の根拠は [配線の設計](docs/design-traceable-wiring.md)、再現可能な全件棚卸しは [監査記録](docs/wiring-audit/README.md)、今後の作業手順は [provider-map-traceability skill](../../skills/provider-map-traceability/SKILL.md) にある。
+`map.json.wiring` は索引の関数を持たないモジュールも読む。動的なキー・外部 callback の呼び先・middleware の mount や実行順を推測しない。設計と調査の根拠は [配線の設計](docs/design-traceable-wiring.md)、再現可能な全件棚卸しは [監査記録](docs/wiring-audit/README.md)、今後の作業手順は [実装用・レビュー用 skills](../../skills/README.md) にある。
 
 ## 構成
 

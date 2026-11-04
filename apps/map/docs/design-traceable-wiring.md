@@ -43,4 +43,4 @@ object literal の callable property は contextual type のメンバーの実�
 
 既存の function 宣言規則を AST lint で検査する。新しい middleware や callback を一律禁止したり、`affectsEndpoints` のような到達先の注釈を要求したりしない。地図の検査は、未解決の呼び出しと配線に理由・場所があり、解決済みとするなら根拠を持つことを確かめる。解析の regression test は登録と実行、callable alias、typed object と型を失った object を区別する。
 
-持続用の手順は `skills/provider-map-traceability/SKILL.md` に置く。PR ごとに build 出力をスクリプトで読み、before/after と未解決の一覧を残す。変更メモには意図を書き、到達先は地図が計算する。
+持続用の手順は `skills/provider-map-implementation/SKILL.md` と `skills/provider-map-review/SKILL.md` に分ける。Codex と Claude Code の標準配置には、正本を読む自動発見用の入口を置く。PR ごとに build 出力をスクリプトで読み、before/after と未解決の一覧を残す。変更メモには意図を書き、到達先は地図が計算する。

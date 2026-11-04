@@ -91,7 +91,7 @@ cache までの型の橋は、ParseRequestObjectOptions.loadJwks → ResolveRequ
 
 ## 継続用 skill と行わなかったこと
 
-[provider-map-traceability skill](../../../../skills/provider-map-traceability/SKILL.md) を追加した。修正前出力の保存、形による全件探索、設計選択、別コミット、両アプリと生成器の検査、PR の reach と未解決の証拠まで手順化している。既存 function 宣言規則の lint、map 出力の理由・場所検査、build:map の全候補照合が継続を機械的に支える。
+[実装用・レビュー用 skills](../../../../skills/README.md) を追加し、Codex の `.agents/skills` と Claude Code の `.claude/skills` にそれぞれ自動発見用の入口を置いた。修正前出力の保存、形による全件探索、設計選択、別コミット、両アプリと生成器の検査、PR の reach と未解決の証拠まで手順化している。既存 function 宣言規則の lint、map 出力の理由・場所検査、build:map の全候補照合が継続を機械的に支える。
 
 配布 CLI に TypeScript 解析器を同梱する変更は行っていない。厳密な型の解決は従来どおり地図ビルド側で行う。
 

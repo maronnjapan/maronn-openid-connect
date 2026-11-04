@@ -99,11 +99,13 @@ function Sides({ node, frame, state, enabled, onState }: { node: TreeNode; frame
 }
 
 /**
- * The trace as an outline: one line of natural language per row, in the
- * order the code runs (lib/words.ts), with the code only where there are no
- * words, under a row the reader opens, or everywhere when 「コードも表示」 is
- * on. Below a call the reader opens, the rows of its callee, indented one
- * more; a step folds to its label until it is opened.
+ * The trace as an outline, one line per row so a reader can skim it: the
+ * natural language of each node in the order the code runs (lib/words.ts),
+ * with the code only where there are no words, or the code of every row when
+ * the reader switches to コード. What does not fit (the rest of the words, the
+ * code, the whole text, every change) opens under a row with </>. Below a
+ * call the reader opens, the rows of its callee, indented one more; a step
+ * folds to its label until it is opened.
  *
  * A decision keeps every side: choosing one (its chip, or its side row)
  * turns the rows of the other sides grey, so nothing goes away. In the map
@@ -178,6 +180,12 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
         <span className="twisty-space" aria-hidden="true" />
       );
     const classes = ['trace-row', `kind-${node.kind}`, row.on ? 'on' : 'off', row.before ? 'before' : '', row.step !== undefined ? 'step-row' : '', highlighted === row.key ? 'selected' : '', mark !== undefined ? 'changed' : ''].filter((name) => name !== '').join(' ');
+    // The line shows the words, or the code when the reader asked for code (a step keeps its label: its code is only its marker).
+    const asCode = showCode && !(row.step !== undefined && !row.step.merged);
+    const exitWords = row.exit === undefined ? undefined : asCode ? exitCode : sideWords(row.exit.nodes, data);
+    const changeLine = exprs.length === 0 ? undefined : `${exprs[0]?.text ?? ''}${exprs.length > 1 ? ` ほか ${exprs.length - 1}` : ''}`;
+    const failureLine = state.errors && opens !== undefined && opens.kind === 'call' ? `失敗 → ${catcher === undefined ? '外へ出る' : `${entryOf(data, catcher.id)?.name ?? catcher.id} の catch`}` : undefined;
+    const failureList = failures.map((failure) => `${failure.error}${failure.from === callee ? '' : `（${entryOf(data, failure.from)?.name ?? failure.from} から）`}`).join('、');
     return (
       <li key={row.key} data-row={row.key} className={classes} style={indent(row.depth)}>
         <div className="trace-line">
@@ -185,16 +193,21 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
           {row.before ? <span className="kind">先に</span> : null}
           {KIND_WORDS[node.kind] !== undefined ? <span className="kind">{KIND_WORDS[node.kind]}</span> : null}
           {words.tag !== undefined ? <span className={`tag tag-${words.tag === '失敗' ? 'error' : 'end'}`}>{words.tag}</span> : null}
-          <button type="button" className="row-words" onClick={select} title={[full ?? node.text ?? '', code].filter((part) => part !== '').join('\n')}>
-            {line(words.text, words.code)}
-            {row.exit !== undefined ? (
-              <span className={`row-exit${row.exit.on ? ' on' : ' off'}`}>
+          <button type="button" className="row-words" onClick={select} title={[asCode ? words.text : code, full ?? (asCode ? '' : node.text ?? '')].filter((part) => part !== '').join('\n')}>
+            {asCode ? line(code, true) : line(words.text, words.code)}
+            {exitWords !== undefined ? (
+              <span className={`row-exit${row.exit?.on === true ? ' on' : ' off'}`}>
                 {' → '}
-                <Inline text={sideWords(row.exit.nodes, data)} />
+                {asCode ? <span className="mono">{exitWords}</span> : <Inline text={exitWords} />}
               </span>
             ) : null}
           </button>
           {mark !== undefined ? <Badge mark={mark} /> : null}
+          {changeLine !== undefined ? (
+            <span className="row-change" title={exprs.map((expr) => expr.text).join('\n')}>
+              <Inline text={changeLine} />
+            </span>
+          ) : null}
           {below !== undefined && below.frames.length > 0 ? (
             <span className="below" title={below.frames.map((id) => entryOf(data, id)?.name ?? id).join('、')}>
               <Badge mark={markOf('inside')} /> {below.frames.length}
@@ -203,13 +216,18 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
           ) : null}
           {row.frameState === 'recursion' ? <span className="chip">再帰（ここで止める）</span> : null}
           {opens?.target?.kind === 'untraceable' ? <span className="chip" title={opens.target.why}>追えない呼び出し</span> : null}
+          {failureLine !== undefined ? (
+            <span className="row-failure" title={failureList === '' ? failureLine : `${failureLine}\n${failureList}`}>
+              {failureLine}
+            </span>
+          ) : null}
           {isDecision(node) ? <Sides node={node} frame={frame} state={state} enabled={enabled} onState={onState} /> : null}
           {callee !== undefined ? (
             <button type="button" className="open-page" onClick={() => onOpenFunction(callee)} title="この関数を根にしたトレース（関数のページ）を開く" aria-label={`${callee.slice(callee.indexOf('#') + 1)}() のページを開く`}>
               ↗
             </button>
           ) : null}
-          <button type="button" className="row-more" aria-expanded={open} aria-label={open ? 'コードと詳しい説明を閉じる' : 'コードと詳しい説明を見る'} title={open ? 'コードと詳しい説明を閉じる' : 'コードと詳しい説明を見る'} onClick={() => setDetails(flip(details, row.key))}>
+          <button type="button" className="row-more" aria-expanded={open} aria-label={open ? '詳しい説明を閉じる' : '詳しい説明を見る'} title={open ? '詳しい説明を閉じる' : asCode ? '言葉と詳しい説明を見る' : 'コードと詳しい説明を見る'} onClick={() => setDetails(flip(details, row.key))}>
             {'</>'}
           </button>
           {hunks.length > 0 ? (
@@ -218,43 +236,40 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
             </button>
           ) : null}
         </div>
-        {(showCode || open) && !(words.code && exitCode === '' && !open) ? (
-          <div className="row-code-line mono">
-            {code}
-            {exitCode === '' ? '' : ` → ${exitCode}`}
-          </div>
-        ) : null}
-        {open && full !== undefined ? <div className="trace-words">{full}</div> : null}
-        {open && member !== undefined ? (
-          <div className="trace-words">
-            {member.type}.{member.member}: {member.summary}
-          </div>
-        ) : null}
-        {exprs.length > 0 ? (
-          <ul className="exprs">
-            {exprs.map((expr, index) => (
-              <li key={index}>
-                <Inline text={expr.text} />
-                {expr.before !== undefined && expr.after !== undefined && expr.text === '式を書き換えた' ? (
-                  <span className="mono">
-                    {' '}
-                    <del>{expr.before}</del> → <ins>{expr.after}</ins>
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {state.errors && opens !== undefined && opens.kind === 'call' ? (
-          <div className="trace-failure">
-            失敗すると → {catcher === undefined ? '捕まらずに外へ出る' : `${entryOf(data, catcher.id)?.name ?? catcher.id} の catch（${catcher.node.lines[0]} 行目〜）で捕まる`}
-            {failures.length > 0 ? (
-              <span className="muted">
-                {' '}
-                （{failures.slice(0, 4).map((failure) => `${failure.error}${failure.from === callee ? '' : `（${entryOf(data, failure.from)?.name ?? failure.from} から）`}`).join('、')}
-                {failures.length > 4 ? ` ほか ${failures.length - 4}` : ''}）
-              </span>
+        {open ? (
+          <div className="row-details">
+            {asCode ? (
+              <div className="trace-words">
+                <Inline text={words.text} />
+              </div>
+            ) : (
+              <div className="row-code-line mono">
+                {code}
+                {exitCode === '' ? '' : ` → ${exitCode}`}
+              </div>
+            )}
+            {full !== undefined ? <div className="trace-words">{full}</div> : null}
+            {member !== undefined ? (
+              <div className="trace-words">
+                {member.type}.{member.member}: {member.summary}
+              </div>
             ) : null}
+            {exprs.length > 0 ? (
+              <ul className="exprs">
+                {exprs.map((expr, index) => (
+                  <li key={index}>
+                    <Inline text={expr.text} />
+                    {expr.before !== undefined && expr.after !== undefined && expr.text === '式を書き換えた' ? (
+                      <span className="mono">
+                        {' '}
+                        <del>{expr.before}</del> → <ins>{expr.after}</ins>
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {failureLine !== undefined && failureList !== '' ? <div className="trace-failure">{failureList}</div> : null}
           </div>
         ) : null}
         {openDiffs.has(row.key) ? <DiffView hunks={hunks} /> : null}
@@ -268,14 +283,16 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
     const label = row.branch.key === 'catch' ? '例外が起きたとき' : row.branch.key === 'finally' ? '最後に必ず' : row.branch.label;
     const choosable = forced === undefined && row.branch.always !== true && branchesOf(row.node, enabled).filter((branch) => branch.always !== true).length > 1;
     const toward = row.branch.toward;
+    const exit = row.exit === undefined ? undefined : row.exit.nodes.length === 0 ? '無視して先へ進む' : showCode ? row.exit.nodes.map((node) => node.code).join(' / ') : sideWords(row.exit.nodes, data);
+    const whole = [label, toward === undefined ? '' : `→ ${toward}`, exit === undefined ? '' : `→ ${exit}`].filter((part) => part !== '').join(' ');
     const content = (
       <>
         <span className="branch-label">{label}</span>
-        {toward !== undefined ? <span className="toward">→ {toward}</span> : null}
-        {row.exit !== undefined ? (
-          <span className={`row-exit${row.exit.on ? ' on' : ' off'}`}>
+        {toward !== undefined ? <span className="toward"> → {toward}</span> : null}
+        {exit !== undefined ? (
+          <span className={`row-exit${row.exit?.on === true ? ' on' : ' off'}`}>
             {' → '}
-            {row.exit.nodes.length === 0 ? '無視して先へ進む' : <Inline text={sideWords(row.exit.nodes, data)} />}
+            {showCode && row.exit !== undefined && row.exit.nodes.length > 0 ? <span className="mono">{exit}</span> : <Inline text={exit} />}
           </span>
         ) : null}
       </>
@@ -288,13 +305,15 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
               type="button"
               className="branch-choose"
               aria-pressed={row.chosen}
-              title={row.chosen ? '選択を外す（すべての側を活性に戻す）' : 'この側だけを活性にする'}
+              title={`${whole}\n${row.chosen ? '押すと選択を外す（すべての側を活性に戻す）' : '押すとこの側だけを活性にする'}`}
               onClick={() => onState({ ...state, choices: choose(state.choices, key, row.chosen ? undefined : row.branch.key) })}
             >
               {content}
             </button>
           ) : (
-            <span className="branch-static">{content}</span>
+            <span className="branch-static" title={whole}>
+              {content}
+            </span>
           )}
         </div>
       </li>
@@ -304,18 +323,24 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
   return (
     <div className="trace-outline">
       <div className="outline-tools">
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={showCode}
-            onChange={(event) => {
-              setShowCode(event.target.checked);
-              writeShowCode(event.target.checked);
-            }}
-          />{' '}
-          コードも表示
-        </label>
-        <span className="note">行を押すと右の図でその場所を示します。&lt;/&gt; でその行のコードと詳しい説明を開きます。</span>
+        <span className="seg outline-mode" role="group" aria-label="行の表示">
+          {(['words', 'code'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={(mode === 'code') === showCode}
+              onClick={() => {
+                setShowCode(mode === 'code');
+                writeShowCode(mode === 'code');
+              }}
+            >
+              {mode === 'words' ? '言葉' : 'コード'}
+            </button>
+          ))}
+        </span>
+        <span className="note outline-hint" title="行を押すと右の図でその場所を示します。</> でその行の詳しい説明を開きます。">
+          行を押すと図でその場所を示す · &lt;/&gt; で詳しく
+        </span>
       </div>
       <ol className="trace" aria-label="処理の流れ" ref={list}>
         {rows.map((row) => {

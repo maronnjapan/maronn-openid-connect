@@ -6,7 +6,7 @@ PR の地図（`map-preview.yml` が PR ごとに出す OIDC Provider Map）は�
 | 問い | 答えるもの |
 |---|---|
 | 何を変えたか | 地図。処理の流れの木の差分から作る要約（「条件 `expiresAt <= now`: `<` を `<=` に変えた」）と差分 |
-| どこに効くか | 地図。届くエンドポイント、そこまでの経路と決定、要る機能、外へ出る失敗の変化 |
+| どこに効くか | 地図。届くエンドポイント、そこまでの経路と決定、要る機能、外へ出る失敗の変化とそれを捕まえる場所、型で追えない呼び出し |
 | なぜ変えたか、何に気をつけるか | 変更メモ |
 
 ## いつ書くか
@@ -15,7 +15,8 @@ PR の地図（`map-preview.yml` が PR ごとに出す OIDC Provider Map）は�
 
 地図のビルドは、コードを変えた関数で節の無いものを「説明の無い変更」として、PR のコメントと地図の「このPRの変更」の先頭に並べる。
 そのうち、エンドポイントに届く関数とエンドポイントの処理本体に節が無いと、地図のビルド（CI）が落ちる。
-どのエンドポイントにも届かない関数は一覧に出るだけで、ビルドは落ちない。
+store や resolver の実装は、そのメンバーを呼ぶところを通ってエンドポイントに届く（`apps/hono` の実装は Hono・Express・Fastify、`apps/nextjs` の実装は Next.js のエンドポイントにだけ届く）。
+どのエンドポイントにも届かない関数、コメントや書き方だけを変えた関数（処理の流れの木が同じもの）、型で追えない呼び出しのほかからは届かない関数は、一覧に出るだけで、ビルドは落ちない。
 節の本文の質は検査しない。
 
 ## 雛形を作る
@@ -72,7 +73,7 @@ UserInfo とイントロスペクションで、期限の時刻ちょうどの�
 
 - `##` 見出しには関数の名前を書き、複数の関数はカンマで並べる。名前に続く `()`、バッククォート、名前の後ろの言葉は読み飛ばす
 - 見出しに `<!-- id -->` があれば、その id の関数（またはエンドポイントの処理本体）だけに付く。エンドポイントの処理本体の id は `endpoint:<エンドポイント>`（`## token <!-- endpoint:token -->`）、Next.js の Route Handler は関数と同じ id（`nextjs:app/token/route.ts#token`）である
-- 名前だけの見出しは、その PR が変えた同じ名前の関数すべてに付く。二つ以上に当たるときはビルドが警告するので、`core:verifyClientSecret` のようにルート（core、experimental、google-login、hono、nextjs）を付けるか、id を書いて絞り込む
+- 名前だけの見出しは、その PR が変えた同じ名前の関数すべてに付く。二つ以上に当たるときはビルドが警告し、当たった id を並べる。当たった関数のルート（core、experimental、google-login、hono、nextjs）が違えば `core:verifyClientSecret` のようにルートを付けて絞り込める。同じルートにあるときは、見出しに `<!-- id -->` で id を書いて絞り込む
 - 関数の名前でない見出し（`背景` など）は、PR 全体の説明として表示する
 - 英字で始まる見出しの名前に合う関数が無いときは、ビルドが警告する（`"<名前>" names no function of the catalog`）
 - コードを変えていない関数の名前を書くと、その関数は「メモ」の札で一覧に加わる。呼び方を変えた関数の説明を、呼ばれる側に残したいときに使う
@@ -92,3 +93,5 @@ pnpm --filter @maronn-openid-connect/map-analysis build
 MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map dev
 MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map build
 ```
+
+メモを書き足したあとは、開発サーバーを動かしたまま `MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map data` でデータだけを作り直し、ページを読み込み直せば載る。

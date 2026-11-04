@@ -78,6 +78,12 @@ export function featuresToShow(
   return [...new Set(needed)];
 }
 
+/** The features of some marker ids (the features a way to a change needs, Reach.features) that are off: their ids, each once. */
+export function featuresMissing(features: readonly MapFeature[], enabled: ReadonlySet<string>, needed: readonly string[]): string[] {
+  const missing = needed.map((key) => featureOf(features, key)).filter((feature): feature is MapFeature => feature !== undefined && !enabled.has(feature.id));
+  return [...new Set(missing.map((feature) => feature.id))];
+}
+
 /** The `maronn-oidc generate` command line of a configuration. */
 export function commandLine(framework: string, features: readonly MapFeature[], enabled: ReadonlySet<string>): string {
   const parts = [`maronn-oidc generate ${framework}`];

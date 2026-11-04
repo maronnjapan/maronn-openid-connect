@@ -28,7 +28,7 @@ export interface FlowDiagramProps {
   marks?: ReadonlyMap<string, Mark> | undefined;
   /** A box or the label of a region is clicked or tapped, or Enter or Space is pressed on it (keyboard): select its row of the outline, nothing else. */
   onSelect: (shape: DiagramNode | DiagramGroup, keyboard: boolean) => void;
-  /** The card's 中の流れを見る: look inside the function a box calls (box.opens), from the keyboard or not. */
+  /** The card's 中の流れを見る: look inside a function the box calls, from the keyboard or not; `box.opens` names the call the button names (its own, or one of box.alsoOpens). The card closes first. */
   onOpen?: (box: DiagramNode, keyboard: boolean) => void;
   /** The card's その場で開く or その場で畳む: open or fold a step in place (the box's own, or the step a row names). */
   onToggleStep: (step: string, keyboard: boolean) => void;
@@ -91,9 +91,11 @@ function tagOn(id: string, tag: ExitTag, boxOn: boolean, rows: ReadonlySet<strin
  * region with a dashed border, whose label says what an exception does.
  * Choosing a box (or a region's label) only selects it. Its card, shown when
  * the pointer rests on it, when it takes the keyboard focus or when it is
- * tapped, says the rest in full and offers to look inside the function it
+ * tapped, says the rest in full and offers to look inside each function it
  * calls or to open its step in place; Tab goes from a box into its card,
- * Escape or a press elsewhere closes it, and moving the view hides it.
+ * Escape or a press elsewhere closes it, and moving the view hides it. A card
+ * belongs to its frame: looking inside a call closes it, and no card follows
+ * the reader into another frame.
  */
 export function FlowDiagram({ diagram, active, selected, reveal, focus, label, marks, onSelect, onOpen, onToggleStep, onFocused }: FlowDiagramProps) {
   const [direction, setDirection] = useState<LayoutDirection>('TB');
@@ -102,8 +104,11 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
   const svg = useRef<SVGSVGElement>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const follow = useRef<(() => void) | null>(null);
-  // The shape whose card shows, and how it came: the pointer resting on it, the keyboard focus, or pinned (a tap, a button of the card).
-  const [card, setCard] = useState<{ id: string; via: 'hover' | 'focus' | 'pin' } | null>(null);
+  // The shape whose card shows, how it came (the pointer resting on it, the keyboard focus, or pinned: a tap, a button of the card), and the
+  // diagram it belongs to: box ids repeat across frames, so a card shown (or about to show) in one frame never shows in another.
+  const frame = diagram.key;
+  const [shownCard, setCard] = useState<{ id: string; via: 'hover' | 'focus' | 'pin'; frame: string } | null>(null);
+  const card = shownCard !== null && shownCard.frame === frame ? shownCard : null;
   const showTimer = useRef<number | undefined>(undefined);
   const hideTimer = useRef<number | undefined>(undefined);
   // The pointer of the last press (a tap shows the card), a shape whose next focus must not show it (Escape gave the focus back),
@@ -134,7 +139,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
   const anchor = rects.get(selectedShape?.id ?? 'start') ?? rects.get('start');
   const revealShape = reveal == null ? undefined : boxOf(diagram, reveal.node);
   const focusShape = focus == null || focus.node === null ? undefined : boxOf(diagram, focus.node)?.id;
-  const cardGone = card !== null && !byId.has(card.id) && !groupById.has(card.id);
+  const cardGone = shownCard !== null && (card === null || (!byId.has(card.id) && !groupById.has(card.id)));
 
   // Give the focus asked for once its element is drawn, without scrolling: a reveal brings a box into view.
   useLayoutEffect(() => {
@@ -158,10 +163,20 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
       live = false;
     };
   }, [placed, marks]);
-  // A card whose box went away (another frame, a step opened or folded) closes.
+  // A card whose box went away (another frame, a step opened or folded) closes; leaving a frame stops a timer to show or hide a card
+  // there and forgets what its cards remembered.
   useEffect(() => {
     if (cardGone) setCard(null);
   }, [cardGone]);
+  useEffect(
+    () => () => {
+      window.clearTimeout(showTimer.current);
+      window.clearTimeout(hideTimer.current);
+      quiet.current = null;
+      pinnedAt.current = null;
+    },
+    [frame],
+  );
   // While a card shows, a press elsewhere closes it, and so does Escape, which gives the focus back to its box from inside it.
   useEffect(() => {
     if (card === null) return;
@@ -220,7 +235,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
       if (card?.via === 'pin' && still !== null && Math.abs(event.clientX - still.x) + Math.abs(event.clientY - still.y) < 4) return;
       window.clearTimeout(hideTimer.current);
       window.clearTimeout(showTimer.current);
-      showTimer.current = window.setTimeout(() => setCard((current) => (current?.id === shape.id ? current : { id: shape.id, via: 'hover' })), SHOW_DELAY);
+      showTimer.current = window.setTimeout(() => setCard((current) => (current?.id === shape.id && current.frame === frame ? current : { id: shape.id, via: 'hover', frame })), SHOW_DELAY);
     },
     onPointerLeave: (event: PointerEvent<SVGGElement>) => {
       if (event.pointerType !== 'mouse') return;
@@ -236,7 +251,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
           if (pointer.current === 'mouse') return;
           window.clearTimeout(showTimer.current);
           pinnedAt.current = null;
-          setCard({ id: shape.id, via: 'pin' });
+          setCard({ id: shape.id, via: 'pin', frame });
         }
       : undefined,
     onKeyDown: selectable
@@ -260,26 +275,31 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
       }
       if (!event.currentTarget.matches(':focus-visible')) return;
       window.clearTimeout(showTimer.current);
-      setCard({ id: shape.id, via: 'focus' });
+      setCard({ id: shape.id, via: 'focus', frame });
     },
     onBlur: (event: FocusEvent<SVGGElement>) => {
       const next = event.relatedTarget;
       if (next instanceof Node && cardRef.current?.contains(next) === true) return;
-      setCard((current) => (current?.id === shape.id && current.via === 'focus' ? null : current));
+      setCard((current) => (current?.id === shape.id && current.via === 'focus' && current.frame === frame ? null : current));
     },
   });
-  /** Do what a button of a card says, pressed where the pointer is (`at`): a step opened or folded keeps its card, pinned to the step's box. */
+  /**
+   * Do what a button of a card says, pressed where the pointer is (`at`): a
+   * step opened or folded keeps its card, pinned to the step's box; looking
+   * inside a call closes the card, which speaks of a box of this frame only.
+   */
   const act = (id: string, action: CardAction, keyboard: boolean, at: { x: number; y: number }) => {
     if (action.kind === 'toggle') {
       onToggleStep(action.step, keyboard);
       window.clearTimeout(showTimer.current);
       window.clearTimeout(hideTimer.current);
       pinnedAt.current = at;
-      setCard({ id: `n:${action.step}`, via: 'pin' });
+      setCard({ id: `n:${action.step}`, via: 'pin', frame });
       return;
     }
     const box = byId.get(id);
-    if (box !== undefined) onOpen?.(box, keyboard);
+    closeCard();
+    if (box !== undefined) onOpen?.({ ...box, opens: { node: action.node, fn: action.fn } }, keyboard);
   };
   /** Everything a card says about a box or a region (see CardContent). */
   const contentOf = (id: string): CardContent | undefined => {

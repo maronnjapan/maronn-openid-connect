@@ -28,7 +28,7 @@ export interface CardContent {
   mark?: Mark;
   /** The chosen way does not run it. */
   off: boolean;
-  /** The buttons: a toggle of a step a row names goes with its row, the others at the end. */
+  /** The buttons: one that names a row (a step it opens in place, a call of its side to look inside) goes with that row, the others at the end. */
   actions: CardAction[];
 }
 
@@ -59,7 +59,7 @@ function actionWords(action: CardAction): string {
 
 /** The aria-label of a button: what it does, and to what. */
 function actionLabel(action: CardAction, name: string, row: CardRow | undefined): string {
-  if (action.kind === 'open') return `${action.name} の中の流れを見る（図がその関数に移る）`;
+  if (action.kind === 'open') return `${row === undefined ? '' : `${row.full} の `}${action.name} の中の流れを見る（図がその関数に移る）`;
   if (row !== undefined) return `${row.full} の中をその場で開く`;
   return `${name} を${action.open ? 'その場で畳む' : 'その場で開く'}`;
 }
@@ -68,7 +68,7 @@ function actionLabel(action: CardAction, name: string, row: CardRow | undefined)
  * The card of a box or of the label of a region: everything the one line of
  * the box leaves out, in full (its code first, then its whole text, every
  * row, the badge and what it means), and the buttons that go further: look
- * inside the function it calls, open or fold a step in place. It is drawn
+ * inside each function it calls, open or fold a step in place. It is drawn
  * over the diagram's area at the screen's scale, beside its box without
  * covering it and inside the area (see cardPlace), and follows the box when
  * the view moves.
@@ -103,11 +103,11 @@ export function DiagramCard({ id, content, anchor, follow, cardRef, onAction, on
   };
   const press = (action: CardAction) => (event: MouseEvent<HTMLButtonElement>) => onAction(action, event.detail === 0, { x: event.clientX, y: event.clientY });
   const button = (action: CardAction, row?: CardRow) => (
-    <button key={`${action.kind}-${action.kind === 'toggle' ? `${action.step}-${action.row ?? ''}` : action.node}`} type="button" className={action.kind === 'open' ? 'card-action primary' : 'card-action'} aria-label={actionLabel(action, content.name, row)} onClick={press(action)}>
+    <button key={`${action.kind}-${action.kind === 'toggle' ? `${action.step}-${action.row ?? ''}` : action.node}`} type="button" className={action.kind === 'open' && action.row === undefined ? 'card-action primary' : 'card-action'} aria-label={actionLabel(action, content.name, row)} onClick={press(action)}>
       {actionWords(action)}
     </button>
   );
-  const atEnd = content.actions.filter((action) => action.kind === 'open' || action.row === undefined);
+  const atEnd = content.actions.filter((action) => action.row === undefined);
   return (
     <div
       ref={(element) => {
@@ -134,7 +134,7 @@ export function DiagramCard({ id, content, anchor, follow, cardRef, onAction, on
           {content.rows.map((row, index) => (
             <li key={index} className={`tone-${row.tone} ${row.on ? 'on' : 'off'}`}>
               <Inline text={row.full} />
-              {content.actions.filter((action) => action.kind === 'toggle' && action.row === index).map((action) => button(action, row))}
+              {content.actions.filter((action) => action.row === index).map((action) => button(action, row))}
             </li>
           ))}
         </ul>

@@ -8,9 +8,11 @@
  * A frame is the chain of call nodes that opened it, joined with dots
  * (`/s0b1s0/s0b1s0.s2`); a decision is keyed by its frame and node the same
  * way (`d=s0b8s0:nullish,s0b1s0.s1:true`), and each `;d=` is one choice (several
- * are their union). `;e` shows where failures are caught; `;f=` names the
- * frame the diagram shows. Ids and names are letters, digits and hyphens, so
- * `--` separates them; a module is written URI-encoded.
+ * are their union). A call keyed the same way with the side `fails`
+ * (`d=s0b1s0:fails`) fails there. `;e` shows where failures are caught;
+ * `;f=` names the frame the diagram shows. Ids and names are letters,
+ * digits and hyphens, so `--` separates them; a module is written
+ * URI-encoded.
  */
 import type { Decisions, MapData } from '../types';
 import { cardsNamed } from './model';
@@ -19,13 +21,22 @@ import { EMPTY_TRACE, type TraceState } from './trace';
 export interface View {
   framework: string;
   endpoint: string | null;
-  /** The step of the endpoint whose detail is open. */
+  /** A step of the endpoint the hash names (`#hono--token--select-signing-keys`): the trace selects its row and shows it, and the page turns on the feature that adds it. */
   step: string | null;
   /** The id of the function whose page is open; null on the page of an endpoint. */
   fn: string | null;
   /** The page of the changes of the pull request is open (when no function is). */
   changes?: boolean;
   trace: TraceState;
+  /** A node the trace selects once it shows, keyed like a decision (the changed node a way leads to); not in the hash. */
+  target?: string;
+}
+
+/** A view without the node it asked its trace to select (View.target): what a view another page opens starts from. */
+export function plainView(view: View): View {
+  const next = { ...view };
+  delete next.target;
+  return next;
 }
 
 /** The part of a hash that names the page of the changes of the pull request. */

@@ -1,23 +1,25 @@
 // This test reads the built map from the disk: tsconfig.node.json checks it with Node's types, which the page's tsconfig leaves out.
 /**
  * The diagram of every frame of the built map (public/data, which
- * `pnpm run data` writes), every feature on, its words read from the map. It
- * checks what holds whatever code contributors write: no decision and no way
- * to end a frame is lost from the diagram, every region (the boxes a `try`
- * guards) encloses its boxes and no other, and the frames stay legible when
- * the diagram fits the pane (a coarse floor that only a broken fold crosses).
- * The rest it prints, as scripts/check-map.mjs prints its metrics. Without the
- * built map (the unit tests of CI) it is skipped.
+ * `pnpm run data` writes), every feature on, its words read from the map,
+ * folded by the outline's rules as the trace draws it. It checks what holds
+ * whatever code contributors write: no decision and no way to end a frame is
+ * lost from the diagram, every region (the boxes a `try` guards) encloses its
+ * boxes and no other, the diagram folds every step and every guard the way
+ * the outline does, and the frames stay legible when the diagram fits the
+ * pane (a coarse floor that only a broken fold crosses). The rest it prints,
+ * as scripts/check-map.mjs prints its metrics. Without the built map (the
+ * unit tests of CI) it is skipped.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { FlowTree, FrameFile, MapData, TreeNode } from '../types';
+import type { FlowTree, FrameChange, FrameFile, MapData, TreeNode } from '../types';
 import { LEGIBLE_SCALE } from './camera';
-import { boxLine, frameDiagram, layoutDiagram, type Diagram } from './diagram';
+import { boxLine, frameDiagram, layoutDiagram, type Diagram, type DiagramOptions } from './diagram';
 import type { LayoutBox, LayoutGroup } from './graph';
-import { branchesOf, entryOf, isDecision, nodesOn } from './trace';
+import { branchesOf, changedIdsOf, EMPTY_TRACE, entryOf, findNode, foldsGuard, isDecision, nodesOn, stepCall, stepHolds, traceRows, type Row } from './trace';
 
 const DATA = join(dirname(fileURLToPath(import.meta.url)), '../../public/data');
 
@@ -41,6 +43,8 @@ interface Measured {
   lost: string[];
   /** The regions that leave out a box of theirs or take in another, in words. */
   misplaced: string[];
+  /** The steps and guards the diagram folds otherwise than the outline, in words: as the page opens the frame, and with a change at every ninth node. */
+  unlike: string[];
   regions: number;
   titles: number;
   titlesCut: number;
@@ -82,9 +86,70 @@ function encloses(outer: LayoutBox | LayoutGroup, inner: LayoutBox | LayoutGroup
   return inner.x - outer.x >= margin && inner.y - outer.y >= margin && outer.x + outer.width - (inner.x + inner.width) >= margin && outer.y + outer.height - (inner.y + inner.height) >= margin;
 }
 
-/** Lay out the diagram of a frame as the page opens it (the start of a trace, nothing chosen) and measure it. */
+/** The options the trace gives the diagram of its root frame with nothing chosen, nothing opened and nothing toggled (Trace.tsx): the outline's rules. */
+function outlineOptions(data: MapData, hasFrame: (fn: string) => boolean, change: FrameChange | undefined): DiagramOptions {
+  const changedIds = changedIdsOf(change);
+  return {
+    changed: (node) => change?.marks[node] !== undefined,
+    hasFrame,
+    words: data,
+    stepOpen: (node) => stepHolds('', node, EMPTY_TRACE, changedIds),
+    stepCall: (node) => stepCall(node, undefined, hasFrame),
+    foldsGuard: (node) => foldsGuard(node, undefined, hasFrame, (changed) => changedIds.includes(changed)),
+  };
+}
+
+/** Whether a node is a guard or an optional item. */
+function isGuard(node: TreeNode): boolean {
+  return node.kind === 'if' && (node.form === 'guard' || node.form === 'optional');
+}
+
+/** How the outline and the diagram fold each step and each guard of the root frame: merged with its one call, open or folded; a guard on one line (folded) or in full. */
+function folds(tree: FlowTree, rows: readonly Row[], diagram: Diagram): { outline: Map<string, string>; diagram: Map<string, string> } {
+  const outline = new Map<string, string>();
+  for (const row of rows) {
+    if (row.kind !== 'node' || row.frame !== '') continue;
+    if (row.step !== undefined) outline.set(row.node.id, row.step.merged ? 'merged' : row.step.open ? 'open' : 'folded');
+    else if (isGuard(row.node)) outline.set(row.node.id, row.exit !== undefined ? 'folded' : 'full');
+  }
+  const drawn = new Map<string, string>();
+  for (const box of diagram.nodes) {
+    const node = box.node === undefined ? undefined : findNode(tree.nodes, box.node);
+    if (node === undefined) continue;
+    if (box.step !== undefined) drawn.set(node.id, box.step.open ? 'open' : box.step.toggles ? 'folded' : 'merged');
+    else if (isGuard(node)) drawn.set(node.id, (node.branches?.find((branch) => branch.key === 'true')?.nodes ?? []).every((child) => box.holds.includes(child.id)) ? 'folded' : 'full');
+  }
+  return { outline, diagram: drawn };
+}
+
+/** The steps and guards of a frame the diagram folds otherwise than the outline, given the diff of the frame. */
+function unlikeOutline(tree: FlowTree, data: MapData, hasFrame: (fn: string) => boolean, change: FrameChange | undefined, diagram = frameDiagram(tree, '', undefined, outlineOptions(data, hasFrame, change))): string[] {
+  const rows = traceRows({ rootId: tree.id, hasFrame, trees: new Map([[tree.id, tree]]), changes: new Map(change === undefined ? [] : [[tree.id, change]]), state: EMPTY_TRACE });
+  const both = folds(tree, rows, diagram);
+  return [...new Set([...both.outline.keys(), ...both.diagram.keys()])]
+    .filter((node) => both.outline.get(node) !== both.diagram.get(node))
+    .map((node) => `${tree.id} ${node}${change === undefined ? '' : ' (changed)'}: outline ${both.outline.get(node) ?? 'none'}, diagram ${both.diagram.get(node) ?? 'none'}`);
+}
+
+/** A diff that marks every ninth node of a frame modified: what a pull request might change, to fold by. */
+function everyNinth(tree: FlowTree): FrameChange {
+  const marks: FrameChange['marks'] = {};
+  let count = 0;
+  const walk = (nodes: readonly TreeNode[]) => {
+    for (const node of nodes) {
+      count += 1;
+      if (count % 9 === 0) marks[node.id] = 'modified';
+      walk(node.pre ?? []);
+      for (const branch of node.branches ?? []) walk(branch.nodes);
+    }
+  };
+  walk(tree.nodes);
+  return { kind: 'modified', marks, removed: [], exprs: {}, hunks: {}, summary: [] };
+}
+
+/** Lay out the diagram of a frame as the page opens it (the start of a trace, nothing chosen, the outline's rules) and measure it. */
 function measure(id: string, tree: FlowTree, data: MapData, hasFrame: (fn: string) => boolean): Measured {
-  const diagram = frameDiagram(tree, '', undefined, { hasFrame, words: data });
+  const diagram = frameDiagram(tree, '', undefined, outlineOptions(data, hasFrame, undefined));
   const layout = layoutDiagram(diagram, new Set(diagram.edges.map((_, index) => index)), 'TB');
   const rect = new Map<string, LayoutBox | LayoutGroup>([...layout.boxes, ...layout.groups].map((placed) => [placed.id, placed]));
   const misplaced = diagram.groups.flatMap((group) => {
@@ -102,6 +167,7 @@ function measure(id: string, tree: FlowTree, data: MapData, hasFrame: (fn: strin
     boxWidth: layout.boxWidth,
     lost: lostOf(tree, diagram),
     misplaced,
+    unlike: [...unlikeOutline(tree, data, hasFrame, undefined, diagram), ...unlikeOutline(tree, data, hasFrame, everyNinth(tree))],
     regions: diagram.groups.length,
     titles: boxes.length,
     titlesCut: boxes.filter((node) => boxLine(node, layout.boxWidth).cut).length,
@@ -174,6 +240,10 @@ describe.skipIf(!existsSync(join(DATA, 'map.json')))('the diagram of every frame
   it('should show every decision and every way to end a frame as a box, a region, a row or inside a folded step', () => {
     expect(frames.length).toBeGreaterThan(0);
     expect(frames.flatMap((frame) => frame.lost)).toEqual([]);
+  });
+
+  it('should fold every step and every guard the way the outline does, as the page opens a frame and where a pull request changed it', () => {
+    expect(frames.flatMap((frame) => frame.unlike)).toEqual([]);
   });
 
   it('should enclose the boxes of every region, and no other box, in its rectangle', () => {

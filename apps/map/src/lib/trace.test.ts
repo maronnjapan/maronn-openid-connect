@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowTree, MapData, TreeNode } from '../types';
-import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, frameIds, framesToChanges, nodesRun, rowFor, traceRows, wayTo, withinFrame, type Row } from './trace';
+import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, FAILS, foldsGuard, frameIds, frameOrder, framesToChanges, nodesRun, rowFor, runsFor, shownFrame, sourceOf, stepCall, stepHolds, traceRows, wayTo, withinFrame, type Row } from './trace';
+import type { FrameChange } from '../types';
 
 const call = (id: string, callee: string, extra: Partial<TreeNode> = {}): TreeNode => ({ id, kind: 'call', lines: [2, 2], code: `${callee}()`, target: { kind: 'function', id: callee }, ...extra });
 const returned = (id: string, code: string): TreeNode => ({ id, kind: 'return', lines: [3, 3], code });
@@ -79,6 +80,33 @@ describe('the nodes a choice runs', () => {
   });
 });
 
+describe('a call the choice makes fail', () => {
+  it('should run the call, turn the rest of its list off, and run the catch of the try around it, after which the frame ends with the catch', () => {
+    const failed = nodesRun(root, '', [{ s0b1: 'nullish', s0b1n0: FAILS }], undefined);
+    expect(['s0b1n0', 's0b2', 's0b4', 's0h0'].map((id) => failed.has(id))).toEqual([true, false, false, true]);
+  });
+
+  it('should run the catch even when the choice takes the try side, since the call fails whatever it chooses', () => {
+    const failed = nodesRun(root, '', [{ s0: 'try', s0b1: 'nullish', s0b1n0: FAILS }], undefined);
+    expect(['s0b2', 's0h0'].map((id) => failed.has(id))).toEqual([false, true]);
+  });
+
+  it('should end the frame at the call when no try catches it there', () => {
+    const failed = nodesRun(code, 's0b1n0', [{ 's0b1n0.s0': FAILS }], undefined);
+    expect(['s0', 's1'].map((id) => failed.has(id))).toEqual([true, false]);
+  });
+
+  it('should stop a statement whose condition calls the call that fails', () => {
+    const guarded: FlowTree = {
+      ...code,
+      id: 'guarded',
+      nodes: [{ id: 's0', kind: 'if', lines: [2, 2], code: 'if (!isX(y(z)))', form: 'guard', pre: [call('s0i0', 'y'), call('s0i1', 'code')], branches: [{ key: 'true', label: '成立', nodes: [returned('s0t0', 'return no')] }, { key: 'false', label: '不成立', nodes: [] }] }, returned('s1', 'return yes')],
+    };
+    const failed = nodesRun(guarded, '', [{ s0i1: FAILS }], undefined);
+    expect(['s0i0', 's0i1', 's0', 's0t0', 's1'].map((id) => failed.has(id))).toEqual([true, true, true, false, false]);
+  });
+});
+
 describe('the frames of a trace', () => {
   const data = {
     functions: {
@@ -102,6 +130,44 @@ describe('the frames of a trace', () => {
     const reach = changeReach(data);
     expect(reach?.below('endpoint:token')).toEqual(new Set(['check']));
     expect(framesToChanges(data, reach!, 'endpoint:token')).toEqual(['s0b1n0', 's0b1n0.s0']);
+  });
+
+  it('should reach the changed implementation of a member through what the implementations of another member call, for the source shown alone', () => {
+    const members = {
+      functions: { 'core:a.ts#top': { id: 'core:a.ts#top', name: 'top', sites: [['s0', 'core:r.ts#Resolver.revoke']], frame: 'x', calls: [] } },
+      bodies: {},
+      members: { 'core:r.ts#Resolver.revoke': { id: 'core:r.ts#Resolver.revoke', calls: ['core:s.ts#Store.consume'] }, 'core:s.ts#Store.consume': { id: 'core:s.ts#Store.consume' } },
+      changes: {
+        frames: [
+          { id: 'hono:stores.ts#createStores', kind: 'modified', counts: { 'call+': 1 }, reach: [], members: ['core:s.ts#Store.consume'] },
+          { id: 'nextjs:stores.ts#createStores', kind: 'modified', counts: { 'call+': 1 }, reach: [], members: ['core:s.ts#Store.consume'] },
+        ],
+      },
+    } as unknown as MapData;
+    expect([...(changeReach(members, 'hono')?.below('core:a.ts#top') ?? [])]).toEqual(['hono:stores.ts#createStores']);
+    expect([...(changeReach(members, 'nextjs')?.below('core:r.ts#Resolver.revoke') ?? [])]).toEqual(['nextjs:stores.ts#createStores']);
+    expect(changeReach(members)?.below('core:a.ts#top').size).toBe(2);
+    expect(changeReach(members, 'hono')?.implementers('core:s.ts#Store.consume')).toEqual(['hono:stores.ts#createStores']);
+  });
+
+  it('should say which members an implementation is reached through, and reach a frame a call reaches whole', () => {
+    const members = {
+      functions: {
+        'core:a.ts#top': { id: 'core:a.ts#top', name: 'top', sites: [['s0', 'core:r.ts#Resolver.revoke'], ['s1', 'hono:stores.ts#createStores']], frame: 'x', calls: [] },
+        'core:a.ts#mid': { id: 'core:a.ts#mid', name: 'mid', sites: [['s0', 'core:r.ts#Resolver.revoke']], frame: 'y', calls: [] },
+      },
+      bodies: {},
+      members: { 'core:r.ts#Resolver.revoke': { id: 'core:r.ts#Resolver.revoke', calls: ['core:s.ts#Store.consume'] }, 'core:s.ts#Store.consume': { id: 'core:s.ts#Store.consume' } },
+      changes: { frames: [{ id: 'hono:stores.ts#createStores', kind: 'modified', counts: { 'call+': 1 }, reach: [], members: ['core:s.ts#Store.consume'] }] },
+    } as unknown as MapData;
+    const reach = changeReach(members, 'hono');
+    expect([...(reach?.parts('core:a.ts#mid') ?? [])]).toEqual([['hono:stores.ts#createStores', new Set(['core:s.ts#Store.consume'])]]);
+    expect([...(reach?.parts('core:a.ts#top') ?? [])]).toEqual([['hono:stores.ts#createStores', undefined]]);
+  });
+
+  it('should run the code of an app root for its own source alone, and that of a package for every source', () => {
+    expect([runsFor('hono:a.ts#f', 'hono'), runsFor('hono:a.ts#f', 'nextjs'), runsFor('nextjs:a.ts#f', 'nextjs'), runsFor('core:a.ts#f', 'nextjs'), runsFor('google-login:a.ts#f', 'hono'), runsFor('hono:a.ts#f', undefined)]).toEqual([true, false, true, true, true, true]);
+    expect(['hono', 'express', 'fastify', 'nextjs'].map(sourceOf)).toEqual(['hono', 'hono', 'hono', 'nextjs']);
   });
 
   it('should find the catch a failure of a call is caught by, up through the frames', () => {
@@ -221,5 +287,102 @@ describe('the row that shows a node', () => {
     expect(rowFor(outline([]), 'nowhere', 's0')).toBeUndefined();
     expect(rowFor(outline([]), 's0b1n0', 's1')).toBeUndefined();
     expect(rowFor(outline(['s0b1n0'], [{ s0: 'catch' }]), 's0b1n0', 's1')).toBe('s0b1n0|s1');
+  });
+});
+
+describe('the rules the outline and the diagram fold by', () => {
+  const step = (body: TreeNode[]): TreeNode => ({ id: 's0', kind: 'block', lines: [1, 3], code: '[issue]', step: { id: 'issue', label: '発行する' }, branches: [{ key: 'body', label: '発行する', nodes: body }] });
+  const framed = (id: string) => id === 'code';
+
+  it('should read a step as its call only when its body is exactly one call of a function with a frame', () => {
+    expect(stepCall(step([call('s0s0', 'code')]), undefined, framed)?.id).toBe('s0s0');
+    expect([
+      stepCall(step([call('s0s0', 'other')]), undefined, framed),
+      stepCall(step([call('s0s0', 'code', { pre: [call('s0s0i0', 'code')] })]), undefined, framed),
+      stepCall(step([call('s0s0', 'code'), returned('s0s1', 'return x')]), undefined, framed),
+    ]).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('should hold a step open for a change, a frame opened below it or a choice inside it, and for nothing else', () => {
+    const block = root.nodes[0]?.branches?.[0]?.nodes[0] as TreeNode;
+    expect([
+      stepHolds('', block, { open: ['s0b0s0'], choices: [] }, []),
+      stepHolds('', block, { open: [], choices: [{ s0b0s1: 'true' }] }, []),
+      stepHolds('', block, { open: [], choices: [] }, ['s0b0s1t0']),
+      stepHolds('', block, { open: ['s0b1n0'], choices: [{ s0b1: 'nullish' }] }, ['s0b1']),
+      stepHolds('k', block, { open: ['s0b0s0'], choices: [] }, []),
+    ]).toEqual([true, true, true, false, false]);
+  });
+
+  it('should fold a guard that calls no function with a frame and changed nowhere, and unfold one that does', () => {
+    const guard = (side: TreeNode[]): TreeNode => ({ id: 's1', kind: 'if', lines: [2, 2], code: 'if (!x)', form: 'guard', branches: [{ key: 'true', label: '成立', nodes: side }, { key: 'false', label: '不成立', nodes: [] }] });
+    const answers = guard([returned('s1t0', 'return respond(c)')]);
+    const calls = guard([{ ...returned('s1t0', 'return code(c)'), pre: [call('s1t0i0', 'code')] }]);
+    expect([
+      foldsGuard(answers, undefined, framed, () => false),
+      foldsGuard(calls, undefined, framed, () => false),
+      foldsGuard(calls, undefined, () => false, () => false),
+      foldsGuard(answers, undefined, framed, (id) => id === 's1t0'),
+    ]).toEqual([true, false, true, false]);
+  });
+});
+
+describe('the rows of the outline in a trace with failures and changes', () => {
+  const options = { rootId: 'endpoint:token', hasFrame: (id: string) => id === 'code' || id === 'check', trees };
+
+  it('should unfold a guard whose true side calls a function with a frame, so the call has its own row that opens it', () => {
+    const calling: FlowTree = { ...code, id: 'calling', nodes: [{ id: 's0', kind: 'if', lines: [2, 2], code: 'if (!x)', form: 'guard', branches: [{ key: 'true', label: '成立', nodes: [call('s0t0', 'code')] }, { key: 'false', label: '不成立', nodes: [] }] }] };
+    const lines = traceRows({ ...options, rootId: 'calling', trees: new Map([...trees, ['calling', calling]]), state: { ...EMPTY_TRACE, open: ['s0t0'] } });
+    expect(lines.map((row) => [row.kind, row.key, (row as { frameState?: string }).frameState])).toEqual([
+      ['node', '|s0', undefined],
+      ['branch', '|s0|true', undefined],
+      ['node', '|s0t0', 'open'],
+      ['node', 's0t0|s0', 'closed'],
+      ['node', 's0t0|s1', undefined],
+    ]);
+  });
+
+  it('should give a folded step what it holds and how it ends, and an open one its own node alone', () => {
+    const lines = traceRows({ ...options, state: EMPTY_TRACE });
+    const folded = lines.find((row) => row.key === '|s0b0') as Extract<Row, { kind: 'node' }>;
+    const opened = traceRows({ ...options, state: EMPTY_TRACE, toggled: new Set(['|s0b0']) }).find((row) => row.key === '|s0b0') as Extract<Row, { kind: 'node' }>;
+    expect([folded.holds, folded.calls, folded.step?.exits.map((exit) => exit.node.id)]).toEqual([['s0b0', 's0b0s0', 's0b0s1', 's0b0s1t0'], ['exchange'], ['s0b0s1t0']]);
+    expect([opened.holds, opened.step?.exits]).toEqual([['s0b0'], []]);
+  });
+
+  it('should say on its row that the choice makes a call fail, and turn the rows after it off', () => {
+    const lines = traceRows({ ...options, state: { ...EMPTY_TRACE, choices: [{ s0b1: 'nullish', s0b1n0: FAILS }] } });
+    const nodes = lines.filter((row): row is Extract<Row, { kind: 'node' }> => row.kind === 'node');
+    expect(nodes.filter((row) => row.fails === true).map((row) => row.key)).toEqual(['|s0b1n0']);
+    expect(nodes.filter((row) => !row.on).map((row) => row.key)).toEqual(['|s0b2', '|s0b3', '|s0b4']);
+  });
+
+  it('should read a catch that ends at once on one line naming the step it holds, and show its rows once the step opens, as the diagram does', () => {
+    const answer: TreeNode = { id: 's1h0', kind: 'block', lines: [6, 8], code: '[respond-error]', step: { id: 'respond-error', label: 'Answer the error' }, branches: [{ key: 'body', label: 'Answer the error', nodes: [{ id: 's1h0s0', kind: 'action', lines: [7, 7], code: 'const body = toBody(error)' }, returned('s1h0s1', 'return respondError(body)')] }] };
+    const guarded: FlowTree = { ...code, id: 'guarded', nodes: [call('s0', 'check'), { id: 's1', kind: 'try', lines: [3, 8], code: 'try … catch', branches: [{ key: 'try', label: '例外なし', nodes: [returned('s1b0', 'return x')] }, { key: 'catch', label: '例外が起きたとき', nodes: [answer] }] }] };
+    const build = (toggled: string[]) => traceRows({ ...options, rootId: 'guarded', trees: new Map([...trees, ['guarded', guarded]]), state: EMPTY_TRACE, toggled: new Set(toggled) });
+    const folded = build([]).find((row) => row.key === '|s1|catch') as Extract<Row, { kind: 'branch' }>;
+    expect([folded.exit?.nodes.map((node) => node.id), folded.step]).toEqual([['s1h0'], 's1h0']);
+    expect(build(['|s1h0']).map((row) => [row.key, row.kind === 'branch' ? row.exit : undefined])).toEqual([
+      ['|s0', undefined],
+      ['|s1', undefined],
+      ['|s1b0', undefined],
+      ['|s1|catch', undefined],
+      ['|s1h0', undefined],
+      ['|s1h0s0', undefined],
+      ['|s1h0s1', undefined],
+    ]);
+  });
+
+  it('should head the root with its start when the pull request changed its declaration', () => {
+    const changed = { marks: { '': 'modified' }, removed: [], exprs: {}, hunks: { '': [{ base: 1, head: 1, lines: ['-a', '+b'] }] }, summary: [] } as unknown as FrameChange;
+    const lines = traceRows({ ...options, state: EMPTY_TRACE, changes: new Map([['endpoint:token', changed]]) });
+    expect(lines[0]).toEqual({ kind: 'start', key: '|start', frame: '', depth: 0, holds: [''], calls: [] });
+  });
+
+  it('should know the frames the outline shows in the order they run, and fall back to the nearest one it shows', () => {
+    const order = frameOrder(traceRows({ ...options, state: { ...EMPTY_TRACE, open: ['s0b1n0', 's0b1n0.s0'] } }));
+    expect([...order.keys()]).toEqual(['', 's0b1n0', 's0b1n0.s0']);
+    expect([shownFrame('s0b1n0.s0', order), shownFrame('s0b1n0.s9', order), shownFrame('s7.s1', order)]).toEqual(['s0b1n0.s0', 's0b1n0', '']);
   });
 });

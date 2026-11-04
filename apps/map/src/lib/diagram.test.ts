@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Decisions, FlowTree, FrameChange, FrameChangeEntry, MapData, TreeNode } from '../types';
-import { indexChanges } from './changes';
+import { heldMarks, indexChanges } from './changes';
 import { activeOf, boxActions, boxHeight, boxLine, boxOf, exitTags, frameDiagram, isRegion, layoutDiagram, markOfBox, REGION_HEADER, regionLine, regionTags, spokenLabel, type Diagram, type DiagramGroup, type DiagramNode } from './diagram';
 import type { LayoutBox, LayoutDirection, LayoutGroup } from './graph';
-import { branchesOf, isDecision, nodesOn } from './trace';
+import { branchesOf, changedIdsOf, EMPTY_TRACE, findNode, foldsGuard, isDecision, nodesOn, stepCall, stepHolds, traceRows, type Row, type TraceState } from './trace';
 import type { WordSource } from './words';
 
 const fn = (name: string) => `core:f.ts#${name}`;
@@ -238,7 +238,7 @@ describe('frameDiagram', () => {
     expect([box(drawn, 'n:s3').holds, box(drawn, 'n:s3').text, box(drawn, 'n:s2').text]).toEqual([['s3', 's4'], '`x.z`、`x.w` に入れる', '既定の値を入れる。']);
   });
 
-  it('should fold a guard into one box with its calls, a row for its side, and one arrow out', () => {
+  it('should fold a guard into one box with its calls, a row for its side, and one arrow out, its card opening the call of its condition and each call of its side with its row', () => {
     const folded = frameDiagram(checks, '');
     expect(boxes(folded)).toEqual([
       ['start', 'f(x)', 'start'],
@@ -254,7 +254,10 @@ describe('frameDiagram', () => {
     expect(box(folded, 'n:s0').calls).toEqual([fn('isX')]);
     expect(box(folded, 'n:s0').rows[0]?.side).toEqual({ node: 's0', side: 'true' });
     expect(box(folded, 'n:s2').holds).toEqual(['s2', 's2t0', 's2t0i0']);
-    expect(box(frameDiagram(checks, '', undefined, { hasFrame }), 'n:s0').opens).toBeUndefined();
+    const reachable = frameDiagram(checks, '', undefined, { hasFrame });
+    expect(boxActions(box(reachable, 'n:s0'))).toEqual([{ kind: 'open', node: 's0i0', fn: fn('isX'), name: 'isX()' }]);
+    expect(boxActions(box(reachable, 'n:s2'))).toEqual([{ kind: 'open', node: 's2t0i0', fn: fn('invalid'), name: 'invalid()', row: 0 }]);
+    expect(box(frameDiagram(checks, ''), 'n:s0').opens).toBeUndefined();
   });
 
   it('should say in full what a side calls before it ends, in words where the JSDoc has them', () => {
@@ -459,6 +462,36 @@ describe('frameDiagram', () => {
     expect(box(drawn, 'n:s2').holds).toEqual(['s2', 's2l0']);
   });
 
+  it('should draw a return inside a callback as no end: no end tone, no tag, and the flow goes on past it', () => {
+    const mapped = frameOf([loop('s0', 'keys.map(async (key) => …)', [returned('s0l0', 'return exportJwk(key)', [call('s0l0i0', 'exportJwk')])].map((node) => ({ ...node, local: true }))), returned('s1', 'return keys')]);
+    const drawn = frameDiagram(mapped, '');
+    expect(boxes(drawn)).toEqual([
+      ['start', 'f(x)', 'start'],
+      ['n:s0', 'keys.map(async (key) => …)', 'normal'],
+      ['n:s0l0', 'return exportJwk(key)', 'normal'],
+      ['n:s1', 'keys を返す', 'end'],
+    ]);
+    expect([exitTags(box(drawn, 'n:s0l0')), exitTags(box(drawn, 'n:s1')).map((tag) => tag.text)]).toEqual([[], ['→ 終わり']]);
+    expect(arrows(drawn)).toEqual(['start→n:s0 (flow)', 'n:s0→n:s0l0 繰り返す (branch)', 'n:s0l0→n:s1 (flow)', 'n:s0→n:s1 繰り返さない (branch)']);
+    expect([...activeOf(drawn, mapped, '', []).nodes]).toEqual(['start', 'n:s0', 'n:s0l0', 'n:s1']);
+  });
+
+  it('should let the card of a decision look inside each call of a side that ends at once, with its row, and the card of a loop of one call inside that call', () => {
+    const forked = frameOf([
+      decide('s0', 'if (x)', 'fork', [returned('s0t0', 'return respondError(c)', [call('s0t0i0', 'respondError')])], [call('s0e0', 'b')]),
+      loop('s1', 'for (const x of xs)', [call('s1l0', 'each')]),
+    ]);
+    const drawn = frameDiagram(forked, '', undefined, { hasFrame, words: source });
+    expect(boxActions(box(drawn, 'n:s0'))).toEqual([{ kind: 'open', node: 's0t0i0', fn: fn('respondError'), name: 'respondError()', row: 0 }]);
+    expect(boxActions(box(drawn, 'n:s1'))).toEqual([{ kind: 'open', node: 's1l0', fn: fn('each'), name: 'each()' }]);
+    expect(boxActions(box(frameDiagram(forked, ''), 'n:s0'))).toEqual([]);
+  });
+
+  it('should let the card of a box look inside the other calls evaluated before its node, after the call it speaks for', () => {
+    const building = frameOf([returned('s0', 'return build(make(), make())', [call('s0i0', 'make'), call('s0i1', 'make'), call('s0i2', 'build')])]);
+    expect(boxActions(box(frameDiagram(building, '', undefined, { hasFrame }), 'n:s0')).map((action) => (action.kind === 'open' ? action.node : action.step))).toEqual(['s0i2', 's0i0', 's0i1']);
+  });
+
   it('should show every decision and every exit of a frame as a box, a region, a row or inside a folded step', () => {
     expect(lost(tree, diagram)).toEqual([]);
     expect(lost(checks, frameDiagram(checks, ''))).toEqual([]);
@@ -576,9 +609,9 @@ describe('the steps of an endpoint', () => {
     expect(boxes(diagram)).toEqual([
       ['start', 'POST /token', 'start'],
       ['n:s0b0', 'リクエストを解析する', 'normal'],
-      ['n:s0b1', 'トークン交換', 'normal'],
+      ['n:s0b1', '▸ トークン交換', 'normal'],
       ['n:s0b2', '▸ 認可コードを検証する', 'normal'],
-      ['n:s0b3', '応答する', 'normal'],
+      ['n:s0b3', '▸ 応答する', 'normal'],
     ]);
     expect(rows(diagram)).toEqual(['n:s0b1: → 終わり: `exchanged` を返す (end)', 'n:s0b3: → 終わり: `return respond(c)` (end)', 'g:s0: 例外 → 終わり: `return respondError(c, error)` (end)']);
     expect(arrows(diagram)).toEqual(['start→n:s0b0 (flow)', 'n:s0b0→n:s0b1 (flow)', 'n:s0b1→n:s0b2 (flow)', 'n:s0b2→n:s0b3 (flow)']);
@@ -600,19 +633,21 @@ describe('the steps of an endpoint', () => {
     expect(boxActions(box(diagram, 'n:s0b2'))).toEqual([{ kind: 'toggle', step: 's0b2', open: false }]);
   });
 
-  it('should let a step whose only call is on the way out of its guard toggle, and a step whose call is the condition of its guard open it', () => {
+  it('should let a step whose only call is on the way out of its guard toggle, and a step whose call is the condition of its guard open it and open in place', () => {
     const exiting = frameOf([step('s0', '明示的な承認を求める', [decide('s0s0', "if (action !== 'approve')", 'guard', [returned('s0s0t0', 'return redirectToErrorPage(…)', [call('s0s0t0i0', 'redirectToErrorPage')])])]), call('s1', 'approve')]);
     const exit = box(frameDiagram(exiting, '', undefined, { hasFrame }), 'n:s0');
     expect([exit.title, exit.opens, boxActions(exit).map((action) => action.kind), exit.rows.map((row) => row.full)]).toEqual(['▸ 明示的な承認を求める', undefined, ['toggle'], ['→ 終わり: `return redirectToErrorPage(…)`']]);
     const checking = frameOf([step('s0', '確かめる', [decide('s0s0', 'if (!(await verify(x)))', 'guard', [returned('s0s0t0', 'return null')], [], { pre: [call('s0s0i0', 'verify')] })])]);
     const check = box(frameDiagram(checking, '', undefined, { hasFrame }), 'n:s0');
-    expect([check.title, check.opens, boxActions(check)]).toEqual(['確かめる', { node: 's0s0i0', fn: fn('verify') }, [{ kind: 'open', node: 's0s0i0', fn: fn('verify'), name: 'verify()' }]]);
+    expect([check.title, check.opens, boxActions(check)]).toEqual(['▸ 確かめる', { node: 's0s0i0', fn: fn('verify') }, [{ kind: 'open', node: 's0s0i0', fn: fn('verify'), name: 'verify()' }, { kind: 'toggle', step: 's0', open: false }]]);
+    const opened = frameDiagram(checking, '', undefined, { hasFrame, toggled: new Set(['s0']) });
+    expect(boxes(opened).map(([id, title]) => `${id} ${title}`)).toEqual(['start f(x)', 'n:s0 ▾ 確かめる', 'n:s0s0 if (!(await verify(x)))']);
   });
 
-  it('should let a step that calls a member besides its function toggle, not open the function', () => {
+  it('should let a step that calls a member besides its function toggle, not open the function, and count the member among what its calls reach', () => {
     const issue: TreeNode = { id: 's0s1', kind: 'call', lines: [3, 3], code: 'await issuer.issue(payload)', target: { kind: 'member', id: 'core:issuer.ts#Issuer.issue' } };
     const issuing = frameDiagram(frameOf([step('s0', 'アクセストークンを発行する', [call('s0s0', 'build'), issue])]), '', undefined, { hasFrame });
-    expect([box(issuing, 'n:s0').title, box(issuing, 'n:s0').opens, box(issuing, 'n:s0').calls, box(issuing, 'n:s0').code]).toEqual(['▸ アクセストークンを発行する', undefined, [fn('build')], 'build()\nawait issuer.issue(payload)']);
+    expect([box(issuing, 'n:s0').title, box(issuing, 'n:s0').opens, box(issuing, 'n:s0').calls, box(issuing, 'n:s0').code]).toEqual(['▸ アクセストークンを発行する', undefined, [fn('build'), 'core:issuer.ts#Issuer.issue'], 'build()\nawait issuer.issue(payload)']);
   });
 
   it('should draw no arrow out of a step that ends in a try or a switch', () => {
@@ -705,6 +740,122 @@ describe('the steps of an endpoint', () => {
     ]);
     expect(boxActions(region(catching, 'g:s1'))).toEqual([{ kind: 'toggle', step: 's1h0', open: false, row: 0 }]);
     expect(boxActions(box(frameDiagram(token, '', undefined, { toggled: new Set(['s0b2']) }), 'n:s0b0'))).toEqual([{ kind: 'toggle', step: 's0b0', open: false }]);
+  });
+});
+
+/** How the outline folds each step and each guard of the root frame it lists: a step merged with its one call, open or folded; a guard or an optional item on one line (folded) or in full. */
+function outlineFolds(rows: readonly Row[]): Record<string, string> {
+  const folds: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.kind !== 'node' || row.frame !== '') continue;
+    if (row.step !== undefined) folds[row.node.id] = row.step.merged ? 'merged' : row.step.open ? 'open' : 'folded';
+    else if (row.node.kind === 'if' && (row.node.form === 'guard' || row.node.form === 'optional')) folds[row.node.id] = row.exit !== undefined ? 'folded' : 'full';
+  }
+  return folds;
+}
+
+/** How the diagram folds each step and each guard it draws a box for, in the words of outlineFolds: a guard is folded when its box holds its true side. */
+function diagramFolds(drawn: Diagram, frame: FlowTree): Record<string, string> {
+  const folds: Record<string, string> = {};
+  for (const made of drawn.nodes) {
+    const node = made.node === undefined ? undefined : findNode(frame.nodes, made.node);
+    if (node === undefined) continue;
+    if (made.step !== undefined) folds[node.id] = made.step.open ? 'open' : made.step.toggles ? 'folded' : 'merged';
+    else if (node.kind === 'if' && (node.form === 'guard' || node.form === 'optional')) {
+      const yes = node.branches?.find((branch) => branch.key === 'true')?.nodes ?? [];
+      folds[node.id] = yes.every((child) => made.holds.includes(child.id)) ? 'folded' : 'full';
+    }
+  }
+  return folds;
+}
+
+/** The options the trace passes the diagram of its root frame (Trace.tsx): the outline's rules for a state, the steps toggled (by row key) and the diff of the frame. */
+function outlineOptions(state: TraceState, toggled: ReadonlySet<string>, change: FrameChange | undefined) {
+  const changedIds = changedIdsOf(change);
+  return {
+    changed: (id: string) => change?.marks[id] !== undefined,
+    hasFrame,
+    stepOpen: (node: TreeNode) => toggled.has(`|${node.id}`) !== stepHolds('', node, state, changedIds),
+    stepCall: (node: TreeNode) => stepCall(node, undefined, hasFrame),
+    foldsGuard: (node: TreeNode) => foldsGuard(node, undefined, hasFrame, (id) => changedIds.includes(id)),
+  };
+}
+
+/** Every way a step or a guard folds: a step of one call, a step of a call and a guard, a step that holds a decision, a guard whose true side calls a function with a frame, a guard that ends, an optional item. */
+const outlined = frameOf([
+  step('s0', 'リクエストを解析する', [call('s0s0', 'parse')]),
+  step('s1', 'クライアントを認証する', [call('s1s0', 'authenticate'), decide('s1s1', 'if (!client)', 'guard', [thrown('s1s1t0', 'throw invalidClient()')])]),
+  step('s2', 'グラントを検証する', [decide('s2s0', 'if (refresh)', 'fork', [call('s2s0t0', 'refresh')], [call('s2s0e0', 'code')])]),
+  decide('s3', 'if (hashed)', 'guard', [call('s3t0', 'verifyHash'), returned('s3t1', 'return')]),
+  decide('s4', 'if (!ok)', 'guard', [returned('s4t0', 'return null')]),
+  decide('s5', 'if (x)', 'optional', [action('s5t0', 'a.b = x')]),
+  returned('s6', 'return done'),
+]);
+
+describe('the rules of the outline', () => {
+  it('should draw a step open or folded as stepOpen says, in place of the default and the toggles', () => {
+    const drawn = frameDiagram(token, '', undefined, { hasFrame, changed: (id) => id === 's0b1s1', toggled: new Set(['s0b2']), stepOpen: (node) => node.id === 's0b3' });
+    expect(['n:s0b1', 'n:s0b2', 'n:s0b3'].map((id) => box(drawn, id).step?.open)).toEqual([false, false, true]);
+    expect(box(drawn, 'n:s0b3').title).toBe('▾ 応答する');
+  });
+
+  it('should draw as the box of a call only the step stepCall names, whatever stepOpen says of it', () => {
+    const none = frameDiagram(token, '', undefined, { hasFrame, stepCall: () => undefined });
+    expect([box(none, 'n:s0b0').title, box(none, 'n:s0b0').opens, boxActions(box(none, 'n:s0b0'))]).toEqual(['▸ リクエストを解析する', undefined, [{ kind: 'toggle', step: 's0b0', open: false }]]);
+    const outline = frameDiagram(token, '', undefined, { hasFrame, stepCall: (node) => stepCall(node, undefined, hasFrame), stepOpen: (node) => node.id !== 's0b1' });
+    expect([box(outline, 'n:s0b0').title, box(outline, 'n:s0b0').step, boxActions(box(outline, 'n:s0b0'))]).toEqual(['リクエストを解析する', { id: 's0b0', open: false, toggles: false }, [{ kind: 'open', node: 's0b0s0', fn: fn('parse'), name: 'parse()' }]]);
+    expect([box(outline, 'n:s0b1').title, box(outline, 'n:s0b1').opens, boxActions(box(outline, 'n:s0b1'))]).toEqual(['▸ トークン交換', undefined, [{ kind: 'toggle', step: 's0b1', open: false }]]);
+  });
+
+  it('should fold a guard as foldsGuard says, and draw the side of one it does not fold as boxes, its call a box whose card looks inside it', () => {
+    const hashing = frameOf([decide('s0', 'if (hashed)', 'guard', [call('s0t0', 'verifyHash'), returned('s0t1', 'return')]), call('s1', 'compare')]);
+    const full = frameDiagram(hashing, '', undefined, { hasFrame, foldsGuard: (node) => foldsGuard(node, undefined, hasFrame, () => false) });
+    expect(boxes(full).map(([id]) => id)).toEqual(['start', 'n:s0', 'n:s0t0', 'n:s0t1', 'n:s1']);
+    expect(boxActions(box(full, 'n:s0t0'))).toEqual([{ kind: 'open', node: 's0t0', fn: fn('verifyHash'), name: 'verifyHash()' }]);
+    expect(arrows(full)).toEqual(['start→n:s0 (flow)', 'n:s0→n:s0t0 成立 (branch)', 'n:s0t0→n:s0t1 (flow)', 'n:s0→n:s1 不成立 (branch)']);
+    const folded = frameDiagram(hashing, '', undefined, { hasFrame, changed: (id) => id === 's0', foldsGuard: () => true });
+    expect([box(folded, 'n:s0').holds, box(folded, 'n:s0').rows.length, boxActions(box(folded, 'n:s0'))]).toEqual([['s0', 's0t0', 's0t1'], 1, [{ kind: 'open', node: 's0t0', fn: fn('verifyHash'), name: 'verifyHash()', row: 0 }]]);
+  });
+
+  const changedInStep: FrameChange = { kind: 'modified', marks: { s1s1: 'modified' }, removed: [], exprs: {}, hunks: {}, summary: [] };
+  it.each<[string, TraceState, string[], ReadonlyMap<string, FrameChange>]>([
+    ['nothing chosen', EMPTY_TRACE, [], new Map()],
+    ['a change in a step', EMPTY_TRACE, [], new Map([[outlined.id, changedInStep]])],
+    ['a change folded back by the reader', EMPTY_TRACE, ['|s1'], new Map([[outlined.id, changedInStep]])],
+    ['a choice in a step', { ...EMPTY_TRACE, choices: [{ s2s0: 'true' }] }, [], new Map()],
+    ['a frame opened below a call of a step', { ...EMPTY_TRACE, open: ['s1s0'] }, [], new Map()],
+    ['steps the reader opened', EMPTY_TRACE, ['|s0', '|s2'], new Map()],
+  ])('should fold every step and every guard the way the outline does with %s, given the rules the trace passes', (_, state, toggles, changes) => {
+    const toggled = new Set(toggles);
+    const rows = traceRows({ rootId: outlined.id, hasFrame, trees: new Map([[outlined.id, outlined]]), changes, state, toggled });
+    expect(diagramFolds(frameDiagram(outlined, '', undefined, outlineOptions(state, toggled, changes.get(outlined.id))), outlined)).toEqual(outlineFolds(rows));
+  });
+
+  it('should fold the frame as the outline opens it: the step of one call merged, the step of a call and a guard folded, the guard that calls a function with a frame in full', () => {
+    expect(diagramFolds(frameDiagram(outlined, '', undefined, outlineOptions(EMPTY_TRACE, new Set(), undefined)), outlined)).toEqual({ s0: 'merged', s1: 'folded', s2: 'folded', s3: 'full', s4: 'folded', s5: 'folded' });
+  });
+
+  it('should give a box the badge the row of the outline that shows the same nodes gets: a step, a call of a member whose implementation changed, a call whose callee changed', () => {
+    const member = 'core:store.ts#Store.save';
+    const entry = (id: string): FrameChangeEntry => ({ id, name: id.slice(id.indexOf('#') + 1), package: 'core', module: 'f.ts', line: 1, kind: 'modified', summary: [], counts: { 'condition+': 1 }, reach: [], documented: false, required: false });
+    const data = {
+      functions: {
+        [fn('top')]: { id: fn('top'), name: 'top', sites: [['s0', fn('leaf')]], frame: 'f1' },
+        [fn('leaf')]: { id: fn('leaf'), name: 'leaf', sites: [], frame: 'f2' },
+        [fn('impl')]: { id: fn('impl'), name: 'impl', sites: [], frame: 'f3' },
+      },
+      bodies: {},
+      members: { [member]: { id: member, type: 'Store', member: 'save', summary: '保存する。', package: 'core', module: 'store.ts', line: 1, implementedBy: [fn('impl')], calls: [] } },
+      changes: { base: { ref: 'origin/main', commit: 'abc' }, head: { commit: 'def', dirty: false }, notes: [], frames: [entry(fn('leaf')), { ...entry(fn('impl')), members: [member] }], unmatched: [], unknown: [], ambiguous: [], undocumented: [], outside: [], otherFiles: 0 },
+    } as unknown as MapData;
+    const changes = indexChanges(data);
+    const save = (id: string): TreeNode => ({ id, kind: 'call', lines: [3, 3], code: 'await store.save(code)', target: { kind: 'member', id: member } });
+    const storing = frameOf([step('s0', 'ストアに保存する', [save('s0s0'), action('s0s1', 'const a = 1')]), save('s1'), call('s2', 'leaf'), call('s3', 'top'), action('s4', 'const b = 2')]);
+    const change: FrameChange = { kind: 'modified', marks: { s4: 'added' }, removed: [], exprs: {}, hunks: {}, summary: [] };
+    const rows = traceRows({ rootId: storing.id, hasFrame, trees: new Map([[storing.id, storing]]), changes: new Map([[storing.id, change]]), state: EMPTY_TRACE }).filter((row) => row.kind === 'node');
+    const drawn = frameDiagram(storing, '', undefined, { ...outlineOptions(EMPTY_TRACE, new Set(), change), words: data });
+    expect(rows.map((row) => [row.node.id, heldMarks(changes, change, row.holds, row.calls).mark?.label])).toEqual([['s0', '下で変更'], ['s1', '下で変更'], ['s2', '変更'], ['s3', '下で変更'], ['s4', '追加']]);
+    expect(rows.map((row) => [row.node.id, markOfBox(boxOf(drawn, row.node.id) as DiagramNode, change, changes)?.label])).toEqual(rows.map((row) => [row.node.id, heldMarks(changes, change, row.holds, row.calls).mark?.label]));
   });
 });
 

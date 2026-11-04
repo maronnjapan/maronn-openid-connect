@@ -19,17 +19,25 @@
  * - A step (the block a marker opens) is one box with its exits as tags,
  *   until the reader opens it in place. A step that holds a node the pull
  *   request changed is open until the reader folds it, and a changed node
- *   never folds into another box.
+ *   never folds into another box. A trace passes the outline's rules instead
+ *   (DiagramOptions.stepOpen, stepCall, foldsGuard), so the two views fold
+ *   the same steps and guards the same way.
+ * - The card of a box offers to look inside every call it holds that the
+ *   outline can open: its own, the calls evaluated for its condition or its
+ *   return, the calls of a side folded into it; never the inside of a folded
+ *   step, which opens in place first.
  * - A `try` is no box: the boxes of its body stand inside a region, whose
  *   label says what an exception does there. A catch that ends at once, or
  *   does nothing, is a row of the region (`→ 例外: 失敗`); any other catch is
  *   drawn after the region, entered by a red dashed arrow that leaves it.
- * - The folds read the tree, the features that are on, the marks of the pull
- *   request and the steps the reader opened, never the choices, so a choice
- *   never moves a box.
+ * - The folds of the default rules read the tree, the features that are on,
+ *   the marks of the pull request and the steps the reader opened, never the
+ *   choices, so a choice never moves a box; the outline's rules a trace
+ *   passes also open a step that holds a choice or an opened frame, as the
+ *   outline does.
  */
 import type { Decisions, FlowTree, FrameChange, TreeNode } from '../types';
-import { frameMark, nodeMark, strongest, type ChangeIndex, type Mark } from './changes';
+import { heldMarks, type ChangeIndex, type Mark } from './changes';
 import { layoutGraph, textPixels, truncatePixels, type FontWidths, type GraphEdge, type GraphGroup, type GraphNode, type LayoutDirection } from './graph';
 import { branchesOf, chosenSide, decisionKey, findNode, forcedSide, nodesOn, nodesRun } from './trace';
 import { firstSentence, nodeWords, runWords, sideWords, splitPre, type WordSource, type Words } from './words';
@@ -75,10 +83,12 @@ export interface DiagramNode extends GraphNode {
   rows: DiagramRow[];
   /** Every node of the tree the box stands for: its own, the calls and the sides folded into it, the inside of a folded step. */
   holds: string[];
-  /** The function ids of the calls of the catalog among the nodes it holds. */
+  /** What the calls among the nodes it holds reach: functions of the catalog and members of interfaces, by id (its badge reads them, see heldMarks). */
   calls: string[];
-  /** The call whose frame the card offers to open (the box of a call, a step that stands for one call), when the callee has a frame. */
+  /** The call whose frame the card offers to open first, when the callee has a frame: the box of a call, a step that stands for one call, the call its condition or its return speaks for. */
   opens?: { node: string; fn: string };
+  /** The other calls whose frames the card offers to open, in the order they run: the other calls evaluated before its node, the calls of a side folded into it (with the index of the row that side is, when it is one). */
+  alsoOpens?: Array<{ node: string; fn: string; row?: number }>;
   /** For the box of a step: how it is drawn. */
   step?: DiagramStep;
   /** The region (DiagramGroup) the box is directly inside, by id. */
@@ -105,7 +115,7 @@ export interface DiagramGroup extends GraphGroup {
   code: string;
   /** Every node it stands for besides its boxes: the `try`, and the nodes of a catch that is a row. */
   holds: string[];
-  /** The function ids of the calls of the catalog among the nodes it holds. */
+  /** What the calls among the nodes it holds reach: functions of the catalog and members of interfaces, by id. */
   calls: string[];
 }
 
@@ -128,15 +138,37 @@ export interface DiagramOptions {
   changed?: (id: string) => boolean;
   /** Whether a function has a frame the page can open: the card of a box that calls it offers to open that frame. */
   hasFrame?: (fn: string) => boolean;
-  /** The steps the reader opened or folded, by id: each flips the default of its step (open when it holds a changed node, else folded). */
+  /** The steps the reader opened or folded, by id: each flips the default of its step (open when it holds a changed node, else folded); stepOpen, when given, decides instead. */
   toggled?: ReadonlySet<string>;
   /** What the words of the boxes come from (the JSDoc of the functions and members of the map, MapData); without it a box reads the words its node keeps, else its code. */
   words?: WordSource;
+  /**
+   * Whether a step that does not stand for one call (see stepCall) is drawn
+   * open: replaces the default and `toggled` when given. A trace passes the
+   * outline's rule, the reader's toggle included (stepHolds in trace.ts: open
+   * for a change, an opened frame or a choice).
+   */
+  stepOpen?: (step: TreeNode) => boolean;
+  /**
+   * The one call a step stands for, drawn as one box that opens that call's
+   * frame, else undefined: replaces the default (the only call of a folded
+   * step besides guards that fold, see oneCall) when given. A trace passes
+   * the outline's rule (stepCall in trace.ts).
+   */
+  stepCall?: (step: TreeNode) => TreeNode | undefined;
+  /**
+   * Whether a guard or an optional item (an `if` of form guard or optional)
+   * folds into one box: replaces the default (neither it nor a node of its
+   * sides changed) when given. A trace passes the outline's rule (foldsGuard
+   * in trace.ts). A row cannot draw a decision or an open step, so a true
+   * side that holds one is drawn in full whatever it says.
+   */
+  foldsGuard?: (node: TreeNode) => boolean;
 }
 
-/** What the card of a box or a region offers besides selecting it: look inside the function a box calls, or open or fold a step in place (the box's own, or one a row names). */
+/** What the card of a box or a region offers besides selecting it: look inside the function a box calls, or open or fold a step in place (the box's own, or one a row names); an action of a row goes with that row. */
 export type CardAction =
-  | { kind: 'open'; node: string; fn: string; name: string }
+  | { kind: 'open'; node: string; fn: string; name: string; row?: number }
   | { kind: 'toggle'; step: string; open: boolean; row?: number };
 
 interface Pending {
@@ -207,8 +239,10 @@ function codeLines(nodes: readonly TreeNode[]): string {
  * The diagram of a frame (see the module comment): `enabled` narrows it to the
  * features that are on, and the options name the nodes the pull request
  * changed, the functions that have a frame, the steps the reader opened or
- * folded and where the words come from. A box is `n:<node>` (the first node
- * of a run of actions); the start is `start`; a region is `g:<the try>`.
+ * folded, where the words come from, and the rules of the outline to fold
+ * the steps and the guards by (see DiagramOptions). A box is `n:<node>` (the
+ * first node of a run of actions); the start is `start`; a region is
+ * `g:<the try>`.
  */
 export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySet<string>, options: DiagramOptions = {}): Diagram {
   const changed = options.changed ?? (() => false);
@@ -229,14 +263,24 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
   const holdsChange = (list: readonly TreeNode[]): boolean => below(list).some((node) => changed(node.id));
   const isStep = (node: TreeNode): boolean => node.kind === 'block' && node.step !== undefined;
   const openSteps = new Map<string, boolean>();
-  /** A step is open when it holds a changed node, else folded; the reader's toggle flips that. */
-  const isOpen = (node: TreeNode): boolean => {
+  /** Whether a step is open unless it stands for one call: options.stepOpen, else open when it holds a changed node and folded otherwise, the reader's toggle flipping that. */
+  const opensByRule = (node: TreeNode): boolean => {
     const known = openSteps.get(node.id);
     if (known !== undefined) return known;
-    const open = holdsChange([node]) !== toggled.has(node.id);
+    const open = options.stepOpen !== undefined ? options.stepOpen(node) : holdsChange([node]) !== toggled.has(node.id);
     openSteps.set(node.id, open);
     return open;
   };
+  const stepCalls = new Map<string, TreeNode | undefined>();
+  /** The call a step stands for (see DiagramOptions.stepCall): options.stepCall, else the only call of a step that is folded and holds no change (see oneCall); undefined for any other step. */
+  const callOfStep = (node: TreeNode): TreeNode | undefined => {
+    if (stepCalls.has(node.id)) return stepCalls.get(node.id);
+    const call = options.stepCall !== undefined ? options.stepCall(node) : opensByRule(node) || holdsChange([node]) ? undefined : oneCall(below(node.branches?.[0]?.nodes ?? []));
+    stepCalls.set(node.id, call);
+    return call;
+  };
+  /** A step is drawn open by its rule (see opensByRule), unless it stands for one call, whose box it is. */
+  const isOpen = (node: TreeNode): boolean => callOfStep(node) === undefined && opensByRule(node);
   /** The nodes of a list that are on and every node below them, the inside of a folded step left out. */
   const drawable = (list: readonly TreeNode[]): TreeNode[] =>
     shown(list).flatMap((node) => [node, ...(isStep(node) && !isOpen(node) ? [] : [...drawable(node.pre ?? []), ...branchesOf(node, enabled).flatMap((branch) => drawable(branch.nodes))])]);
@@ -247,20 +291,38 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
   };
   /** The nodes of the true side of an `if` that are on. */
   const trueSide = (node: TreeNode): TreeNode[] => shown(branchesOf(node, enabled).find((branch) => branch.key === 'true')?.nodes ?? []);
-  /** Whether an `if` is one box: a guard or an optional item the outline folds (neither it nor a node of its sides changed) whose true side a row can show. */
+  /** Whether an `if` is one box: a guard or an optional item that folds (options.foldsGuard, else neither it nor a node of its sides changed) whose true side a row can show. */
   const foldsIf = (node: TreeNode): boolean => {
     if (node.kind !== 'if' || (node.form !== 'guard' && node.form !== 'optional')) return false;
-    if (changed(node.id) || branchesOf(node, enabled).some((branch) => branch.nodes.some((child) => changed(child.id)))) return false;
+    if (options.foldsGuard !== undefined ? !options.foldsGuard(node) : changed(node.id) || branchesOf(node, enabled).some((branch) => branch.nodes.some((child) => changed(child.id)))) return false;
     return foldable(trueSide(node));
+  };
+  /** Whether a node is a call of a function with a frame: the card of the box that holds it can offer to look inside. */
+  const opensFrame = (node: TreeNode): node is TreeNode & { target: { kind: 'function'; id: string } } => node.kind === 'call' && node.target?.kind === 'function' && hasFrame(node.target.id);
+  /** Whether the card of a folded step opens or folds it in place: any step but one that stands for its call and holds nothing else, whose card opens that call's frame instead. */
+  const stepToggles = (node: TreeNode): boolean => {
+    const call = callOfStep(node);
+    return call === undefined || !opensFrame(call) || below(node.branches?.[0]?.nodes ?? []).some((item) => item !== call);
+  };
+  /** The calls of a list whose frames the outline can open, each a row of its own there or the row of what it is evaluated for: the calls of functions with a frame among its nodes and below them, the call of a step that stands for one, the inside of a folded step left out. */
+  const callsToOpen = (list: readonly TreeNode[], row?: number): NonNullable<DiagramNode['alsoOpens']> =>
+    drawable(list).flatMap((node) => {
+      const call = isStep(node) && !isOpen(node) ? callOfStep(node) : node;
+      return call !== undefined && opensFrame(call) ? [{ node: call.id, fn: call.target.id, ...(row === undefined ? {} : { row }) }] : [];
+    });
+  /** Let the card of a box offer to look inside more calls, each once. */
+  const offer = (made: DiagramNode, more: NonNullable<DiagramNode['alsoOpens']>) => {
+    const fresh = more.filter((item) => item.node !== made.opens?.node && !(made.alsoOpens ?? []).some((known) => known.node === item.node));
+    if (fresh.length > 0) made.alsoOpens = [...(made.alsoOpens ?? []), ...fresh];
   };
   /** Whether a side ends at once (the analysis's rule for a guard: it ends, in at most three nodes) and can be a row: nothing in it changed. */
   const endsAtOnce = (list: readonly TreeNode[]): boolean => list.length > 0 && list.length <= 3 && ends(list, enabled) && !holdsChange(list) && foldable(list);
   /** The words of a side, as a line of the diagram draws them. */
   const sideLine = (list: readonly TreeNode[]): string => plain(sideWords(shown(list), source));
-  /** The row of a side that ends at once (`成立 → 終わり: …`), naming the step it holds: red when it throws. */
+  /** The row of a side that ends at once (`成立 → 終わり: …`), naming the step it holds when the card can open it in place: red when it throws. */
   const sideRow = (node: TreeNode, side: string, list: readonly TreeNode[], label: string): DiagramRow => {
     const exits = below(list).filter(isExit);
-    const step = drawable(list).find(isStep);
+    const step = drawable(list).find((item) => isStep(item) && stepToggles(item));
     return { full: `${label} → ${sideWords(shown(list), source)}`, tone: exits.some((exit) => exit.kind === 'throw') ? 'error' : 'end', side: { node: node.id, side }, ends: exits.map((exit) => exit.id), ...(step === undefined ? {} : { step: step.id }) };
   };
   /** The rows of the exits of a folded step: its returns, then its throws, each in words, `×n` for several that read the same. */
@@ -303,7 +365,14 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       edges.push(edge);
     }
   };
-  /** Add the box of a node, holding the calls folded into it, with the arrows that lead to it; its words speak for the call evaluated last before it when that is folded in. */
+  /**
+   * Add the box of a node, holding the calls folded into it, with the arrows
+   * that lead to it; its words speak for the call evaluated last before it
+   * when that is folded in. Its card opens the frame of its own call, else of
+   * the call it speaks for, and of the other calls folded into it (not the
+   * inside of a step, which it folds whole). A return in a callback ends no
+   * frame: it is no end.
+   */
   const box = (node: TreeNode, entries: readonly Pending[], folded: readonly TreeNode[] = [], override: Partial<DiagramNode> = {}): DiagramNode => {
     const last = splitPre(node).call;
     const call = last !== undefined && folded.includes(last) ? last : undefined;
@@ -317,14 +386,16 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       titleCode: said.code,
       code: node.code,
       ...(text === undefined ? {} : { text }),
-      tone: node.kind === 'throw' ? 'error' : node.kind === 'return' || node.kind === 'end' ? 'end' : 'normal',
+      tone: node.kind === 'throw' ? 'error' : (node.kind === 'return' && node.local !== true) || node.kind === 'end' ? 'end' : 'normal',
       rows: [],
       holds: [node.id, ...folded.map((item) => item.id)],
       calls: [],
       ...(region === undefined ? {} : { group: region.id }),
       ...override,
     };
-    if (node.kind === 'call' && node.target?.kind === 'function' && hasFrame(node.target.id)) made.opens = { node: node.id, fn: node.target.id };
+    const own = node.kind === 'call' ? node : call;
+    if (own !== undefined && opensFrame(own)) made.opens = { node: own.id, fn: own.target.id };
+    if (node.kind !== 'block') offer(made, folded.filter(opensFrame).map((item) => ({ node: item.id, fn: item.target.id })));
     nodes.push(made);
     connect(entries, made.id);
     return made;
@@ -396,10 +467,12 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       return list(body, [{ from: made.id, kind: 'flow' }]);
     }
     const inside = below(body);
-    // A step that holds a change opens in place, so the reader who folded it can open it again.
-    const call = holdsChange([node]) ? undefined : oneCall(inside);
-    const opens = call?.target?.kind === 'function' && hasFrame(call.target.id) ? { node: call.id, fn: call.target.id } : undefined;
-    const made = box(node, entries, inside, { title: opens === undefined ? `▸ ${label}` : label, titleCode: false, code: call?.code ?? codeLines(shown(body)), step: { id: node.id, open: false, toggles: opens === undefined } });
+    // A step that holds a change opens in place, so the reader who folded it can open it again; so does a step of one call
+    // whose box hides more than that call (the default rule, see oneCall), so every row of the outline can have its box.
+    const call = callOfStep(node);
+    const opens = call !== undefined && opensFrame(call) ? { node: call.id, fn: call.target.id } : undefined;
+    const toggles = stepToggles(node);
+    const made = box(node, entries, inside, { title: toggles ? `▸ ${label}` : label, titleCode: false, code: call?.code ?? codeLines(shown(body)), step: { id: node.id, open: false, toggles } });
     if (opens !== undefined) made.opens = opens;
     made.rows.push(...exitRows(inside.filter(isExit)));
     return ends(body, enabled) ? [] : [{ from: made.id, kind: 'flow' }];
@@ -473,6 +546,7 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       const made = box(node, entries, folded, { code: `${node.code}\n${only.code}` });
       made.title = `${made.title} → ${sideLine(inside)}`;
       made.holds.push(...ids(inside));
+      offer(made, callsToOpen(inside));
       return [{ from: made.id, kind: 'flow' }];
     }
     const made = box(node, entries, folded);
@@ -487,6 +561,8 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
       const made = box(node, entries, folded);
       made.holds.push(...ids(yes));
       const exits = node.form === 'guard' && ends(yes, enabled);
+      // The calls of the side folded in stay within reach (the outline's rule folds no side that calls a function with a frame).
+      offer(made, callsToOpen(yes, exits ? made.rows.length : undefined));
       if (exits) made.rows.push(sideRow(node, 'true', yes, branches.find((branch) => branch.key === 'true')?.label ?? '成立'));
       else if (yes.length > 0) {
         // An optional item says what it does on its line, as the outline does.
@@ -503,6 +579,7 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     for (const branch of branches) {
       const side = shown(branch.nodes);
       if (rows && branch.always !== true && endsAtOnce(side)) {
+        offer(made, callsToOpen(side, made.rows.length));
         made.rows.push(sideRow(node, branch.key, side, branch.label));
         made.holds.push(...ids(side));
         continue;
@@ -516,9 +593,10 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
   nodes.push({ id: 'start', title: signature, titleCode: false, code: signature, tone: 'start', rows: [], holds: [], calls: [] });
   list(tree.nodes, [{ from: 'start', kind: 'flow' }]);
   const byId = new Map(everyNode(tree.nodes).map((node) => [node.id, node]));
+  // What a held call reaches, as the outline's rows count it (heldBy in trace.ts): a function, or a member of an interface.
   const callee = (id: string): string[] => {
     const held = byId.get(id);
-    return held?.kind === 'call' && held.target?.kind === 'function' ? [held.target.id] : [];
+    return held?.kind === 'call' && (held.target?.kind === 'function' || held.target?.kind === 'member') ? [held.target.id] : [];
   };
   for (const made of [...nodes, ...groups]) made.calls = [...new Set(made.holds.flatMap(callee))];
   return { key: `frame:${tree.id}:${frame}`, nodes, edges, sides, groups };
@@ -664,10 +742,16 @@ export function layoutDiagram(diagram: Diagram, shown: ReadonlySet<number>, dire
   return layoutGraph(diagram.nodes, diagram.edges, shown, direction, { height: () => boxHeight(), groups: diagram.groups, header: () => REGION_HEADER });
 }
 
-/** What the card of a box or a region offers (see CardAction): to look inside the call a box opens, to open or fold its step, and to open the step each of its rows names. */
+/** The action that looks inside a call, with the row it goes with. */
+function openAction(call: { node: string; fn: string; row?: number }): CardAction {
+  return { kind: 'open', node: call.node, fn: call.fn, name: `${call.fn.slice(call.fn.indexOf('#') + 1)}()`, ...(call.row === undefined ? {} : { row: call.row }) };
+}
+
+/** What the card of a box or a region offers (see CardAction): to look inside the call a box opens and each other call it holds within reach (one of a row with that row), to open or fold its step, and to open the step each of its rows names. */
 export function boxActions(shape: DiagramNode | DiagramGroup): CardAction[] {
   const actions: CardAction[] = [];
-  if (!isRegion(shape) && shape.opens !== undefined) actions.push({ kind: 'open', node: shape.opens.node, fn: shape.opens.fn, name: `${shape.opens.fn.slice(shape.opens.fn.indexOf('#') + 1)}()` });
+  if (!isRegion(shape) && shape.opens !== undefined) actions.push(openAction(shape.opens));
+  if (!isRegion(shape)) actions.push(...(shape.alsoOpens ?? []).map(openAction));
   if (!isRegion(shape) && shape.step !== undefined && (shape.step.open || shape.step.toggles)) actions.push({ kind: 'toggle', step: shape.step.id, open: shape.step.open });
   shape.rows.forEach((row, index) => {
     if (row.step !== undefined) actions.push({ kind: 'toggle', step: row.step, open: false, row: index });
@@ -680,7 +764,12 @@ export function spokenLabel(lines: readonly string[]): string {
   return lines.map((line) => line.replace(/[。．.]$/, '')).join('。');
 }
 
-/** The badge of a box or a region: the strongest of the badges of the nodes it holds (the change of the frame) and of the frames its calls lead to. */
+/**
+ * The badge of a box or a region, by the rule a row of the outline follows
+ * (heldMarks in changes.ts): the strongest of the badges of the nodes it
+ * holds (the change of the frame) and of what its calls reach, the functions
+ * and the members of interfaces whose implementations lead to a change.
+ */
 export function markOfBox(box: Pick<DiagramNode, 'holds' | 'calls'>, change: FrameChange | undefined, changes: ChangeIndex | undefined): Mark | undefined {
-  return strongest([...box.holds.map((id) => nodeMark(change, id)), ...box.calls.map((fn) => frameMark(changes, fn))]);
+  return heldMarks(changes, change, box.holds, box.calls).mark;
 }

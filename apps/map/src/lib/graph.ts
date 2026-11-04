@@ -2,9 +2,11 @@
  * The diagram of a frame as automatically arranged boxes and arrows (Dagre):
  * where each box goes, the rectangle of each region (a group of boxes, such
  * as the ones a `try` guards), the route of each arrow, and the text helpers
- * that fit code into a box. Which boxes the chosen way runs through is the
- * trace's business (trace.ts); every box and arrow takes part in the
- * placement, so a choice never moves a box. Nothing here touches the DOM.
+ * that fit a title onto the one line of a box (and wrapColumns, which wraps
+ * a text into lines; the boxes are one line, so only its tests use it).
+ * Which boxes the chosen way runs through is the trace's business
+ * (trace.ts); every box and arrow takes part in the placement, so a choice
+ * never moves a box. Nothing here touches the DOM.
  */
 
 import { graphlib, layout as arrange } from '@dagrejs/dagre';

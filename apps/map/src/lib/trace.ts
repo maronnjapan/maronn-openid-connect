@@ -13,7 +13,7 @@
  *   that reads a value of such a block keeps only the side where the value
  *   is missing.
  */
-import type { Branch, Decisions, FlowTree, FrameChange, MapData, RemovedNode, TreeNode } from '../types';
+import type { Branch, Decisions, FlowTree, FrameChange, MapData, MemberDoc, RemovedNode, TreeNode } from '../types';
 import { splitPre } from './words';
 
 /** The state of a trace that the hash keeps. */
@@ -53,7 +53,7 @@ export function parentOf(key: string): { frame: string; node: string } | undefin
 }
 
 /** What a frame id names in the index: a function of the catalog or an endpoint body. */
-export function entryOf(data: MapData, id: string): MapData['functions'][string] | MapData['bodies'][string] | undefined {
+export function entryOf(data: Pick<MapData, 'functions' | 'bodies'>, id: string): MapData['functions'][string] | MapData['bodies'][string] | undefined {
   return data.functions[id] ?? data.bodies[id];
 }
 
@@ -110,53 +110,116 @@ export function nodesOn(nodes: readonly TreeNode[], enabled: ReadonlySet<string>
 
 const DECISIONS = new Set(['if', 'switch', 'cond-expr', 'loop', 'try']);
 
+/**
+ * The side a choice gives a call node to say that the call throws there (a
+ * way to a failure): the rest of its list does not run, and the failure goes
+ * up to the innermost `try` with a `catch` around it in the frame, whose
+ * catch runs; with no such `try`, the frame ends there.
+ */
+export const FAILS = 'fails';
+
 /** Whether a node is a decision a reader can choose a side of. */
 export function isDecision(node: TreeNode): boolean {
   return DECISIONS.has(node.kind) && (node.branches ?? []).filter((branch) => branch.always !== true).length > 1;
 }
 
-/**
- * Mark the nodes of a list a choice runs; returns whether the list goes on
- * past its end (false when every way through it returns or throws).
- */
-function run(nodes: readonly TreeNode[], frame: string, choice: Decisions, enabled: ReadonlySet<string> | undefined, running: boolean, on: Set<string>): boolean {
+/** What running a list comes to: whether it goes on past its end, and whether a failure may leave it (a throw, or a call the choice makes fail). */
+interface Outcome {
+  goes: boolean;
+  fails: boolean;
+}
+
+/** Mark the nodes of a list a choice runs (see Outcome for what it returns). */
+function run(nodes: readonly TreeNode[], frame: string, choice: Decisions, enabled: ReadonlySet<string> | undefined, running: boolean, on: Set<string>): Outcome {
   let going = running;
+  let fails = false;
   for (const node of nodesOn(nodes, enabled)) {
     if (!going) continue;
     on.add(node.id);
-    if (node.pre !== undefined) run(node.pre, frame, choice, enabled, true, on);
+    if (node.pre !== undefined) {
+      const before = run(node.pre, frame, choice, enabled, true, on);
+      fails ||= before.fails;
+      // A call evaluated before the node failed: the node does not go on.
+      if (!before.goes) {
+        going = false;
+        continue;
+      }
+    }
+    if (node.kind === 'call' && choice[decisionKey(frame, node.id)] === FAILS) {
+      fails = true;
+      going = false;
+      continue;
+    }
     switch (node.kind) {
       case 'return':
         if (node.local !== true) going = false;
         break;
       case 'throw':
+        fails = true;
         going = false;
         break;
-      case 'block':
-        going = run(node.branches?.[0]?.nodes ?? [], frame, choice, enabled, true, on);
+      case 'block': {
+        const inner = run(node.branches?.[0]?.nodes ?? [], frame, choice, enabled, true, on);
+        fails ||= inner.fails;
+        going = inner.goes;
         break;
+      }
+      case 'try': {
+        const outcome = attempt(node, frame, choice, enabled, on);
+        fails ||= outcome.fails;
+        going = outcome.goes;
+        break;
+      }
       default: {
         if (node.branches === undefined) break;
         const forced = forcedSide(node, enabled);
         const chosen = forced ?? choice[decisionKey(frame, node.id)];
         let anyGoes = false;
         let finallyGoes = true;
+        let bodyEnds = false;
         for (const branch of branchesOf(node, enabled)) {
           if (branch.always === true) {
-            finallyGoes = run(branch.nodes, frame, choice, enabled, true, on);
+            const final = run(branch.nodes, frame, choice, enabled, true, on);
+            finallyGoes = final.goes;
+            fails ||= final.fails;
             continue;
           }
           const taken = chosen === undefined || branch.key === chosen;
-          const goes = run(branch.nodes, frame, choice, enabled, taken, on);
-          if (taken && goes) anyGoes = true;
+          const side = run(branch.nodes, frame, choice, enabled, taken, on);
+          if (taken && side.goes) anyGoes = true;
+          if (taken) fails ||= side.fails;
+          if (taken && branch.key === 'body' && !side.goes && side.fails) bodyEnds = true;
         }
-        if (node.kind === 'loop') anyGoes = true;
+        // A loop may run no time, unless its body fails on the way chosen; a switch with no side chosen may match no case.
+        if (node.kind === 'loop' && !bodyEnds) anyGoes = true;
         if (node.kind === 'switch' && chosen === undefined) anyGoes = true;
         going = anyGoes && finallyGoes;
       }
     }
   }
-  return going;
+  return { goes: going, fails };
+}
+
+/**
+ * A `try`: its body, its catch (when the choice takes it or none, or when
+ * the body fails whatever its decisions choose), then its finally. A failure
+ * in the body goes no further than a catch; one without a catch, or one the
+ * catch throws again, leaves it.
+ */
+function attempt(node: TreeNode, frame: string, choice: Decisions, enabled: ReadonlySet<string> | undefined, on: Set<string>): Outcome {
+  const branches = branchesOf(node, enabled);
+  const chosen = forcedSide(node, enabled) ?? choice[decisionKey(frame, node.id)];
+  const body = branches.find((branch) => branch.key === 'try');
+  const handler = branches.find((branch) => branch.key === 'catch');
+  const final = branches.find((branch) => branch.always === true);
+  const tried = run(body?.nodes ?? [], frame, choice, enabled, body !== undefined && (chosen === undefined || chosen === 'try'), on);
+  const catches = handler !== undefined && (chosen === undefined || chosen === 'catch' || (tried.fails && !tried.goes));
+  const caught = handler === undefined ? { goes: false, fails: false } : run(handler.nodes, frame, choice, enabled, catches, on);
+  const finished = final === undefined ? { goes: true, fails: false } : run(final.nodes, frame, choice, enabled, true, on);
+  return {
+    goes: (tried.goes || (catches && caught.goes)) && finished.goes,
+    fails: (handler === undefined ? tried.fails : catches && caught.fails) || finished.fails,
+  };
 }
 
 /** The nodes of a frame the choices run (their union), by id; every node when there is no choice. */
@@ -238,16 +301,45 @@ export function wayTo(tree: FlowTree, frame: string, id: string): Decisions | un
 
 // ---- changes below
 
-/** The changes of a map by frame id, and what each frame reaches below it. */
+/** The source the endpoints of a framework are generated from: `nextjs`, or `hono` (Hono, Express and Fastify). */
+export function sourceOf(framework: string): string {
+  return framework === 'nextjs' ? 'nextjs' : 'hono';
+}
+
+/** Whether the code of an id runs for a source: an app root (`hono:`, `nextjs:`) only for its own, a package root (`core:`, `experimental:`, `google-login:`) and anything else for every source; every source runs it when none is given. */
+export function runsFor(id: string, source: string | undefined): boolean {
+  if (source === undefined) return true;
+  const root = id.slice(0, Math.max(0, id.indexOf(':')));
+  return (root !== 'hono' && root !== 'nextjs') || root === source;
+}
+
+/** The changes of a map by frame id, and what each frame (or member of an interface) reaches below it. */
 export interface ChangeReach {
   /** The changed frames (their code) by id, with how many changes of each kind. */
   changed: ReadonlyMap<string, Record<string, number>>;
-  /** The changed frames a frame leads to through its calls (itself left out), by id. */
+  /**
+   * The changed frames a frame or a member leads to (itself left out), by
+   * id: through the calls of a frame; for a member, through its changed
+   * implementations and what its implementations call, the source's own.
+   */
   below(id: string): ReadonlySet<string>;
+  /**
+   * The part of each changed frame below a frame or a member (see below)
+   * that matters there: the members whose implementations in it the way
+   * goes through (only the changes inside their lines lead there), or
+   * undefined when the frame is reached by a call of it, whole.
+   */
+  parts(id: string): ReadonlyMap<string, ReadonlySet<string> | undefined>;
+  /** The changed frames that implement a member, the source's own. */
+  implementers(member: string): readonly string[];
 }
 
-/** What reaches the changes of a map (see ChangeReach); undefined for a map without changes. */
-export function changeReach(data: MapData): ChangeReach | undefined {
+/**
+ * What reaches the changes of a map (see ChangeReach), for the endpoints of
+ * a source (`hono` or `nextjs`, see sourceOf): an implementation in an app
+ * root counts only for its own source. Undefined for a map without changes.
+ */
+export function changeReach(data: MapData, source?: string): ChangeReach | undefined {
   const changes = data.changes;
   if (changes === undefined) return undefined;
   const changed = new Map<string, Record<string, number>>();
@@ -256,23 +348,42 @@ export function changeReach(data: MapData): ChangeReach | undefined {
   }
   // A changed implementation of a member counts at every call of the member.
   const members = new Map<string, string[]>();
-  for (const entry of changes.frames) for (const member of entry.members ?? []) members.set(member, [...(members.get(member) ?? []), entry.id]);
-  const memo = new Map<string, Set<string>>();
-  const below = (id: string): Set<string> => {
+  for (const entry of changes.frames) {
+    if (!changed.has(entry.id) || !runsFor(entry.id, source)) continue;
+    for (const member of entry.members ?? []) members.set(member, [...(members.get(member) ?? []), entry.id]);
+  }
+  const memo = new Map<string, Map<string, Set<string> | undefined>>();
+  const partsOf = (id: string): Map<string, Set<string> | undefined> => {
     const known = memo.get(id);
     if (known !== undefined) return known;
-    const found = new Set<string>();
+    const found = new Map<string, Set<string> | undefined>();
     memo.set(id, found);
-    const entry = entryOf(data, id);
-    for (const [, callee] of entry?.sites ?? []) {
-      for (const implementer of members.get(callee) ?? []) found.add(implementer);
-      if (changed.has(callee)) found.add(callee);
-      for (const deeper of below(callee)) found.add(deeper);
+    /** A frame reached whole (no members) or through the implementations of some members: whole wins. */
+    const add = (frame: string, part: ReadonlySet<string> | undefined) => {
+      if (frame === id) return;
+      if (found.has(frame) && found.get(frame) === undefined) return;
+      found.set(frame, part === undefined ? undefined : new Set([...(found.get(frame) ?? []), ...part]));
+    };
+    // A member is no frame: its changed implementations, then what its implementations call (a map without members, none).
+    const member: MemberDoc | undefined = data.members?.[id];
+    for (const implementer of members.get(id) ?? []) add(implementer, new Set([id]));
+    const callees = member === undefined ? (entryOf(data, id)?.sites ?? []).map(([, callee]) => callee) : (member.calls ?? []);
+    for (const callee of callees) {
+      if (!runsFor(callee, source)) continue;
+      if (changed.has(callee)) add(callee, undefined);
+      for (const [deeper, part] of partsOf(callee)) add(deeper, part);
     }
-    found.delete(id);
     return found;
   };
-  return { changed, below };
+  const keys = new Map<string, ReadonlySet<string>>();
+  const below = (id: string): ReadonlySet<string> => {
+    const known = keys.get(id);
+    if (known !== undefined) return known;
+    const found = new Set(partsOf(id).keys());
+    keys.set(id, found);
+    return found;
+  };
+  return { changed, below, parts: partsOf, implementers: (member) => members.get(member) ?? [] };
 }
 
 /** The frames to open from a frame so that every change below it shows: every call node whose callee leads to one, down to the changes, each frame once on a way. */
@@ -293,9 +404,15 @@ export function framesToChanges(data: MapData, reach: ChangeReach, rootId: strin
 
 // ---- the rows of the outline
 
-/** A row of the outline: a node of a tree (a statement, a decision, a step), a side of a decision, a node the pull request removed, or a frame still loading. */
+/** What a row of the outline shows of its frame: the nodes (their marks, hunks and expression changes go on it), and what the calls among them reach (functions and members, by id). */
+export interface Held {
+  holds: string[];
+  calls: string[];
+}
+
+/** A row of the outline: a node of a tree (a statement, a decision, a step), a side of a decision, a run of statements, the start of the root frame when the pull request changed its declaration, a node the pull request removed, or a frame still loading. */
 export type Row =
-  | {
+  | ({
       kind: 'node';
       key: string;
       frame: string;
@@ -308,12 +425,14 @@ export type Row =
       frameState?: 'open' | 'closed' | 'recursion' | 'loading';
       /** A guard or an optional item read on one line: what its true side does, and whether the choices run it. */
       exit?: { nodes: TreeNode[]; on: boolean };
-      /** A step: whether its body shows below it. A step of one call is `merged` with it, and opens the call's frame instead. */
-      step?: { open: boolean; merged: boolean };
+      /** A step: whether its body shows below it, and how a folded one ends the flow (its returns and throws, each with whether the choices run it). A step of one call is `merged` with it, and opens the call's frame instead. */
+      step?: { open: boolean; merged: boolean; exits: Array<{ node: TreeNode; on: boolean }> };
       /** A call evaluated before the statement of the next row (an argument of another call). */
       before: boolean;
-    }
-  | {
+      /** The choices make the call of the row fail here (FAILS). */
+      fails?: boolean;
+    } & Held)
+  | ({
       kind: 'branch';
       key: string;
       frame: string;
@@ -325,8 +444,10 @@ export type Row =
       chosen: boolean;
       /** A side that ends at once (a catch that answers with an error) or does nothing, read on its own row. */
       exit?: { nodes: TreeNode[]; on: boolean };
-    }
-  | {
+      /** The step such a side holds folded, by node id: opening it (its row key `<frame>|<id>`) shows the side's rows, as in the diagram. */
+      step?: string;
+    } & Held)
+  | ({
       kind: 'run';
       key: string;
       frame: string;
@@ -335,10 +456,12 @@ export type Row =
       depth: number;
       on: boolean;
       open: boolean;
-    }
+    } & Held)
+  | ({ kind: 'start'; key: string; frame: string; depth: number } & Held)
   | { kind: 'removed'; key: string; frame: string; node: TreeNode; depth: number }
   | { kind: 'loading'; key: string; frame: string; depth: number };
 
+/** What the rows of the outline of a trace are made from (see traceRows). */
 export interface RowOptions {
   rootId: string;
   /** Whether a function has a frame the page can open (a file of its tree). */
@@ -349,7 +472,7 @@ export interface RowOptions {
   changes?: ReadonlyMap<string, FrameChange>;
   state: TraceState;
   enabled?: ReadonlySet<string>;
-  /** The steps the reader opened or folded, by row key: each flips its step's default (folded, unless it holds a change, an opened frame or a choice). A run of statements (see foldCode) the reader opened is in it too. */
+  /** The steps the reader opened or folded, by row key (`<frame>|<node>`, the key the diagram reads too): each flips its step's default (see stepHolds). A run of statements (see foldCode) the reader opened is in it too. */
   toggled?: ReadonlySet<string>;
   /** Read two or more statements in a row that say nothing in words (variables, settings) as one line (a 'run' row), as an outline of words does. */
   foldCode?: boolean;
@@ -370,22 +493,86 @@ function endsAtOnce(nodes: readonly TreeNode[]): boolean {
   return nodes.length > 0 && nodes.length <= 3 && ends(nodes) && !nodes.some((node) => isDecision(node) || (node.pre ?? []).some((evaluated) => evaluated.branches !== undefined));
 }
 
+/** Every node of a list that is on and every node below it that is on: its calls evaluated before, the sides of its decisions. */
+export function nodesBelow(nodes: readonly TreeNode[], enabled: ReadonlySet<string> | undefined): TreeNode[] {
+  return nodesOn(nodes, enabled).flatMap((node) => [node, ...nodesBelow(node.pre ?? [], enabled), ...branchesOf(node, enabled).flatMap((branch) => nodesBelow(branch.nodes, enabled))]);
+}
+
+/** What some nodes of a frame show (see Held): their ids, and the functions and members their calls reach. */
+export function heldBy(nodes: readonly TreeNode[]): Held {
+  return { holds: nodes.map((node) => node.id), calls: [...new Set(nodes.flatMap((node) => (node.kind === 'call' && (node.target?.kind === 'function' || node.target?.kind === 'member') ? [node.target.id] : [])))] };
+}
+
+/** The ids of the nodes of a frame its diff names: those added or modified (the start, '', among them) and those a removed node stood under. */
+export function changedIdsOf(change: FrameChange | undefined): string[] {
+  return [...Object.keys(change?.marks ?? {}), ...(change?.removed ?? []).map((removed) => removed.parent ?? '')];
+}
+
+/**
+ * The call a step stands for: a step whose body, with the features that are
+ * on, is exactly one call (no argument that is a call of its own) of a
+ * function with a frame. Its row (and its box) is that call's, and opens the
+ * call's frame; undefined for any other step.
+ */
+export function stepCall(node: TreeNode, enabled: ReadonlySet<string> | undefined, hasFrame: (id: string) => boolean): TreeNode | undefined {
+  if (node.kind !== 'block') return undefined;
+  const body = nodesOn(node.branches?.[0]?.nodes ?? [], enabled);
+  const only = body.length === 1 ? body[0] : undefined;
+  if (only === undefined || only.kind !== 'call' || only.branches !== undefined || nodesOn(only.pre ?? [], enabled).length > 0) return undefined;
+  return only.target?.kind === 'function' && hasFrame(only.target.id) ? only : undefined;
+}
+
+/**
+ * Whether a step of a frame holds what opens it without being asked: a node
+ * the pull request changed (`changedIds`, see changedIdsOf), a frame opened
+ * below one of its calls, or a decision the choices choose a side of (a
+ * call they make fail among them). A step that holds none of these is
+ * folded; the reader's toggle flips either.
+ */
+export function stepHolds(frameKey: string, node: TreeNode, state: Pick<TraceState, 'open' | 'choices'>, changedIds: readonly string[]): boolean {
+  const key = decisionKey(frameKey, node.id);
+  return changedIds.some((changed) => below(changed, node.id)) || state.open.some((open) => below(open, key)) || state.choices.some((choice) => Object.keys(choice).some((chosen) => below(chosen, key)));
+}
+
+/**
+ * Whether a guard or an optional item (`if` of form guard or optional) reads
+ * as one line: neither it nor anything below it changed (`changed`), and its
+ * true side, the calls evaluated in it included, holds no call of a function
+ * with a frame (which the reader must be able to open) and no decision
+ * (whose sides the reader must be able to choose).
+ */
+export function foldsGuard(node: TreeNode, enabled: ReadonlySet<string> | undefined, hasFrame: (id: string) => boolean, changed: (id: string) => boolean): boolean {
+  if (node.kind !== 'if' || (node.form !== 'guard' && node.form !== 'optional')) return false;
+  if (changed(node.id) || everyNode(node.pre ?? []).some((child) => changed(child.id)) || (node.branches ?? []).some((branch) => everyNode(branch.nodes).some((child) => changed(child.id)))) return false;
+  const yes = branchesOf(node, enabled).find((branch) => branch.key === 'true');
+  return !nodesBelow(yes?.nodes ?? [], enabled).some((child) => isDecision(child) || (child.kind === 'call' && child.target?.kind === 'function' && hasFrame(child.target.id)));
+}
+
+/** Every node of a list and below it, the features ignored. */
+function everyNode(nodes: readonly TreeNode[]): TreeNode[] {
+  return nodes.flatMap((node) => [node, ...everyNode(node.pre ?? []), ...(node.branches ?? []).flatMap((branch) => everyNode(branch.nodes))]);
+}
+
+/** The returns and throws that end a frame among some nodes: how a folded step ends the flow. */
+function exitsOf(nodes: readonly TreeNode[]): TreeNode[] {
+  return nodes.filter((node) => node.kind === 'throw' || (node.kind === 'return' && node.local !== true));
+}
+
 /**
  * The rows of the outline of a trace (see Row): each frame's tree indented
  * below the call that opened it. Every side of a decision keeps its rows; the
  * choices only turn the rows they do not run off, so nothing goes away. A
- * step folds to its label until the reader opens it (or it holds a change,
- * an opened frame or a choice); a step of one call is that call's row. A
- * guard or an optional item reads on one line, a `try` heads the rows it
- * guards and its catch follows them, and the call evaluated last before a
- * condition or a return shares that row.
+ * step folds to its label until the reader opens it (or it holds what
+ * opens it, see stepHolds); a step of one call is that call's row (see
+ * stepCall). A guard or an optional item reads on one line (see foldsGuard),
+ * a `try` heads the rows it guards and its catch follows them, and the call
+ * evaluated last before a condition or a return shares that row.
  */
 export function traceRows(options: RowOptions): Row[] {
   const { trees, state, enabled } = options;
   const toggled = options.toggled ?? new Set<string>();
   const ids = frameIds(options.rootId, state.open, trees);
   const opened = new Set(state.open);
-  const chosenKeys = state.choices.flatMap((choice) => Object.keys(choice));
   const rows: Row[] = [];
   const frame = (key: string, id: string, depth: number, chain: readonly string[]) => {
     const tree = trees.get(id);
@@ -400,7 +587,19 @@ export function traceRows(options: RowOptions): Row[] {
       const at = removed.after ?? `${removed.parent}|${removed.branch ?? ''}|start`;
       removedAfter.set(at, [...(removedAfter.get(at) ?? []), removed]);
     }
-    const changedIds = [...Object.keys(change?.marks ?? {}), ...(change?.removed ?? []).map((removed) => removed.parent ?? '')];
+    const changedIds = changedIdsOf(change);
+    const changed = (node: string) => changedIds.includes(node);
+    /** Whether a step of the frame shows its body: it is not one call (see stepCall), and it holds what opens it (see stepHolds) unless the reader flipped it. */
+    const stepOpen = (node: TreeNode) => stepCall(node, enabled, options.hasFrame) === undefined && toggled.has(`${key}|${node.id}`) !== stepHolds(key, node, state, changedIds);
+    /** The nodes of a list that are on and every node below them, the inside of a folded step left out. */
+    const drawn = (nodes: readonly TreeNode[]): TreeNode[] => nodesOn(nodes, enabled).flatMap((node) => [node, ...(node.kind === 'block' && !stepOpen(node) ? [] : [...drawn(node.pre ?? []), ...branchesOf(node, enabled).flatMap((branch) => drawn(branch.nodes))])]);
+    /** Whether a side can read on one line, as its row in the diagram does: no decision and no open step among its nodes and below them (inside a folded step aside), and at most one folded step, which the line names. */
+    const rowable = (nodes: readonly TreeNode[]) => {
+      const inside = drawn(nodes);
+      return !inside.some((node) => DECISIONS.has(node.kind) || (node.kind === 'block' && stepOpen(node))) && inside.filter((node) => node.kind === 'block').length <= 1;
+    };
+    // The start of the root frame: its own row when the pull request changed the declaration (a frame opened below a call shows it on that call's row).
+    if (key === '' && change !== undefined && (change.marks[''] !== undefined || (change.hunks[''] ?? []).length > 0)) rows.push({ kind: 'start', key: '|start', frame: key, depth, holds: [''], calls: [] });
     const removedRows = (at: string, depth: number) => {
       for (const removed of removedAfter.get(at) ?? []) rows.push({ kind: 'removed', key: `${key}|removed|${removed.node.id}|${at}`, frame: key, node: removed.node, depth });
     };
@@ -410,6 +609,7 @@ export function traceRows(options: RowOptions): Row[] {
       if (chain.includes(calleeId)) return 'recursion';
       return opened.has(childFrame(key, call.id)) ? (trees.has(calleeId) ? 'open' : 'loading') : 'closed';
     };
+    const failsHere = (call: TreeNode | undefined) => call !== undefined && chosenSide(state.choices, decisionKey(key, call.id)) === FAILS;
     /** The rows of the frame a call opens, below its row. */
     const openBelow = (call: TreeNode, frameState: Extract<Row, { kind: 'node' }>['frameState'], depth: number) => {
       if ((frameState !== 'open' && frameState !== 'loading') || call.target?.kind !== 'function') return;
@@ -422,14 +622,14 @@ export function traceRows(options: RowOptions): Row[] {
       for (let index = 0; index < visible.length; index += 1) {
         const node = visible[index] as TreeNode;
         // Statements in a row that say nothing in words read as one line, unless the pull request changed one of them.
-        if (options.foldCode === true && silent(node) && !changedIds.includes(node.id)) {
+        if (options.foldCode === true && silent(node) && !changed(node.id)) {
           let end = index;
-          while (end + 1 < visible.length && silent(visible[end + 1] as TreeNode) && !changedIds.includes((visible[end + 1] as TreeNode).id) && removedAfter.get((visible[end] as TreeNode).id) === undefined) end += 1;
+          while (end + 1 < visible.length && silent(visible[end + 1] as TreeNode) && !changed((visible[end + 1] as TreeNode).id) && removedAfter.get((visible[end] as TreeNode).id) === undefined) end += 1;
           if (end > index) {
             const run = visible.slice(index, end + 1);
             const runKey = `${key}|run|${node.id}`;
             const open = toggled.has(runKey);
-            rows.push({ kind: 'run', key: runKey, frame: key, nodes: run, depth, on: run.some((item) => on.has(item.id)), open });
+            rows.push({ kind: 'run', key: runKey, frame: key, nodes: run, depth, on: run.some((item) => on.has(item.id)), open, ...(open ? { holds: [], calls: [] } : heldBy(run)) });
             for (const item of run) {
               if (open) one(item, depth + 1);
               removedRows(item.id, open ? depth + 1 : depth);
@@ -450,26 +650,37 @@ export function traceRows(options: RowOptions): Row[] {
         return;
       }
       const isOn = on.has(node.id);
-      const base = { kind: 'node' as const, key: `${key}|${node.id}`, frame: key, node, depth, on: isOn, before };
       const opens = node.kind === 'call' ? node : call;
       const frameState = opens === undefined ? undefined : frameStateOf(opens);
-      const head = { ...base, ...(call === undefined ? {} : { call }), ...(frameState === undefined ? {} : { frameState }) };
+      const head = {
+        kind: 'node' as const,
+        key: `${key}|${node.id}`,
+        frame: key,
+        node,
+        depth,
+        on: isOn,
+        before,
+        ...(call === undefined ? {} : { call }),
+        ...(frameState === undefined ? {} : { frameState }),
+        ...(failsHere(opens) ? { fails: true } : {}),
+      };
+      const own = call === undefined ? [node] : [node, call];
       if (node.branches === undefined || node.kind === 'action' || node.kind === 'call') {
-        rows.push(head);
+        rows.push({ ...head, ...heldBy(own) });
         if (opens !== undefined) openBelow(opens, frameState, depth + 1);
         return;
       }
       const branches = branchesOf(node, enabled);
       const chosen = forcedSide(node, enabled) ?? chosenSide(state.choices, decisionKey(key, node.id));
-      const changedHere = changedIds.some((changed) => changed === node.id || below(changed, node.id));
       // A guard and an optional item read as one line: `if (!keys) → 終わり: …`.
-      if ((node.form === 'guard' || node.form === 'optional') && !changedHere) {
+      if (foldsGuard(node, enabled, options.hasFrame, changed)) {
         const yes = branches.find((branch) => branch.key === 'true');
-        rows.push({ ...head, exit: { nodes: yes === undefined ? [] : nodesOn(yes.nodes, enabled), on: isOn && (chosen === undefined || chosen === 'true') } });
+        const side = yes === undefined ? [] : nodesOn(yes.nodes, enabled);
+        rows.push({ ...head, exit: { nodes: side, on: isOn && (chosen === undefined || chosen === 'true') }, ...heldBy([...own, ...nodesBelow(side, enabled)]) });
         if (opens !== undefined) openBelow(opens, frameState, depth + 1);
         return;
       }
-      rows.push(head);
+      rows.push({ ...head, ...heldBy(own) });
       if (opens !== undefined) openBelow(opens, frameState, depth + 1);
       // A try heads the rows it guards; its catch (and finally) follow them at its own depth.
       const sideDepth = node.kind === 'try' ? depth : depth + 1;
@@ -484,33 +695,51 @@ export function traceRows(options: RowOptions): Row[] {
         const empty = shown.length === 0 && (removedAfter.get(`${node.id}|${branch.key}|start`) ?? []).length === 0;
         // A side with nothing in it needs no row (its chip on the decision chooses it), except a catch, which says that it lets the error go.
         if (empty && node.kind !== 'cond-expr' && node.kind !== 'try') continue;
-        const oneLine = node.kind === 'try' && (empty || (endsAtOnce(shown) && !shown.some((child) => changedIds.some((changed) => changed === child.id || below(changed, child.id)))));
-        rows.push({ kind: 'branch', key: `${key}|${node.id}|${branch.key}`, frame: key, node, branch, depth: sideDepth, on: branchOn, chosen: chosen === branch.key, ...(oneLine ? { exit: { nodes: shown, on: branchOn } } : {}) });
+        // A catch that ends at once reads on one line, as the row of its region in the diagram, until the reader opens a step in it there or here.
+        const oneLine = node.kind === 'try' && (empty || (endsAtOnce(shown) && !shown.some((child) => changedIds.some((id) => id === child.id || below(id, child.id))) && rowable(shown)));
+        const held = oneLine ? heldBy(nodesBelow(shown, enabled)) : { holds: [], calls: [] };
+        const folded = oneLine ? drawn(shown).find((child) => child.kind === 'block' && stepCall(child, enabled, options.hasFrame) === undefined) : undefined;
+        rows.push({ kind: 'branch', key: `${key}|${node.id}|${branch.key}`, frame: key, node, branch, depth: sideDepth, on: branchOn, chosen: chosen === branch.key, ...(oneLine ? { exit: { nodes: shown, on: branchOn } } : {}), ...(folded === undefined ? {} : { step: folded.id }), ...held });
         if (!oneLine) list(branch.nodes, sideDepth + 1, node.id, branch.key);
       }
     };
     const step = (node: TreeNode, depth: number) => {
       const rowKey = `${key}|${node.id}`;
       const isOn = on.has(node.id);
-      const body = nodesOn(node.branches?.[0]?.nodes ?? [], enabled);
-      const only = body.length === 1 ? body[0] : undefined;
+      const body = node.branches?.[0]?.nodes ?? [];
+      const inside = nodesBelow(body, enabled);
       // A step that is one call of a function reads as that call: its row opens the function.
-      if (only !== undefined && only.kind === 'call' && only.target?.kind === 'function' && options.hasFrame(only.target.id)) {
+      const only = stepCall(node, enabled, options.hasFrame);
+      if (only !== undefined) {
         const frameState = frameStateOf(only);
-        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, call: only, ...(frameState === undefined ? {} : { frameState }), step: { open: false, merged: true } });
+        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, call: only, ...(frameState === undefined ? {} : { frameState }), ...(failsHere(only) ? { fails: true } : {}), step: { open: false, merged: true, exits: [] }, ...heldBy([node, ...inside]) });
         openBelow(only, frameState, depth + 1);
         return;
       }
-      const prefix = childFrame(key, node.id);
-      const holds = changedIds.some((changed) => below(changed, node.id)) || state.open.some((open) => below(open, prefix)) || chosenKeys.some((chosen) => below(chosen, decisionKey(key, node.id)));
-      const open = toggled.has(rowKey) ? !holds : holds;
-      rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, step: { open, merged: false } });
-      if (open) list(node.branches?.[0]?.nodes ?? [], depth + 1, node.id, 'body');
+      const open = stepOpen(node);
+      rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, step: { open, merged: false, exits: open ? [] : exitsOf(inside).map((exit) => ({ node: exit, on: on.has(exit.id) })) }, ...heldBy(open ? [node] : [node, ...inside]) });
+      if (open) list(body, depth + 1, node.id, 'body');
     };
     list(tree.nodes, depth, '', '');
   };
   frame('', options.rootId, 0, [options.rootId]);
   return rows;
+}
+
+/** The frames the outline shows (those with a row, a frame still loading among them), each by the index of its first row: the order the trace runs them. */
+export function frameOrder(rows: readonly Row[]): Map<string, number> {
+  const order = new Map<string, number>([['', 0]]);
+  rows.forEach((row, index) => {
+    if (!order.has(row.frame)) order.set(row.frame, index);
+  });
+  return order;
+}
+
+/** The frame a trace can show of the one it asks for: that frame when the outline shows it, else the nearest frame above it that the outline shows. */
+export function shownFrame(key: string, shown: ReadonlyMap<string, number> | ReadonlySet<string>): string {
+  let at: string | undefined = key;
+  while (at !== undefined && at !== '' && !shown.has(at)) at = parentOf(at)?.frame;
+  return at ?? '';
 }
 
 /**

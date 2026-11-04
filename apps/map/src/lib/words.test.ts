@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TreeNode } from '../types';
-import { boundNames, calleeSummary, firstSentence, nodeWords, returnedWords, runWords, sideWords, splitPre, type WordSource } from './words';
+import { boundNames, calleeSummary, firstSentence, nodeWords, returnedWords, returnsCall, runWords, sideLabel, sideWords, splitPre, type WordSource } from './words';
 
 const source = {
   functions: {
@@ -32,10 +32,23 @@ describe('the words of a row', () => {
 
   it('should say how a return and a throw end the flow, with the JSDoc of the call a return answers with', () => {
     const returned: TreeNode = { id: 's3', kind: 'return', lines: [1, 1], code: 'return respond(c, body)' };
-    expect(nodeWords(returned, source, call('s3i0', { kind: 'function', id: 'core:a.ts#respond' }))).toEqual({ text: 'トークンレスポンスを返す。', code: false, tag: '終わり' });
+    expect(nodeWords(returned, source, call('s3i0', { kind: 'function', id: 'core:a.ts#respond' }, { code: 'respond(c, body)' }))).toEqual({ text: 'トークンレスポンスを返す。', code: false, tag: '終わり' });
     expect(nodeWords(returned, source)).toEqual({ text: 'return respond(c, body)', code: true, tag: '終わり' });
     expect(nodeWords({ id: 's3b', kind: 'return', lines: [1, 1], code: 'return { params, authorization }' }, source)).toEqual({ text: '`params`、`authorization` を返す', code: false, tag: '終わり' });
     expect(nodeWords({ id: 's4', kind: 'throw', lines: [1, 1], code: 'throw new TokenError(…)', error: 'TokenError(invalid_client)' }, source)).toEqual({ text: '`TokenError(invalid_client)` を投げる', code: false, tag: '失敗' });
+  });
+
+  it('should read a return of a value that holds a call as what it returns, not as the call', () => {
+    const fromBase64 = call('s3i1', { kind: 'function', id: 'core:a.ts#respond' }, { code: 'fromBase64Url(hash)' });
+    const object: TreeNode = { id: 's3', kind: 'return', lines: [1, 1], code: 'return { iterations, salt, hash }', pre: [fromBase64] };
+    expect(nodeWords(object, source, fromBase64)).toEqual({ text: '`iterations`、`salt`、`hash` を返す', code: false, tag: '終わり' });
+    expect(splitPre(object)).toEqual({ others: [fromBase64] });
+  });
+
+  it('should give a return in a callback no end, since it ends the callback and not the frame', () => {
+    const local: TreeNode = { id: 's0l2', kind: 'return', lines: [1, 1], code: 'return exportPublicJwk(key)', local: true };
+    expect(nodeWords(local, source, call('s0l2i0', { kind: 'function', id: 'core:a.ts#respond' }, { code: 'exportPublicJwk(key)' }))).toEqual({ text: 'トークンレスポンスを返す。', code: false });
+    expect(sideWords([{ id: 's0l3', kind: 'return', lines: [1, 1], code: 'return key', local: true }], source)).toBe('`key` を返す');
   });
 
   it('should name a step by its label and keep the words of a branching expression', () => {
@@ -60,9 +73,36 @@ describe('the calls before a statement', () => {
   });
 });
 
+describe('a return that returns a call', () => {
+  const returning = (code: string) => ({ id: 's0', kind: 'return' as const, lines: [1, 1] as [number, number], code });
+
+  it('should take a return of the call itself, awaited or shortened, as returning it', () => {
+    expect(['return f(x)', 'return await f(x)', 'return f(x, …)', 'return f(`a)b`, c)'].map((code) => returnsCall(returning(code), call('s0i0', undefined, { code: 'f(x)' })))).toEqual([true, true, true, true]);
+  });
+
+  it('should not take a value the call is only a part of as returning it', () => {
+    expect(['return { a: f(x) }', 'return [...f(x)]', 'return f(x).y', 'return g(f(x))'].map((code) => returnsCall(returning(code), call('s0i0', undefined, { code: 'f(x)' })))).toEqual([false, false, false, false]);
+  });
+});
+
+describe('the label of a side', () => {
+  const side = (key: string, label: string, callee?: string) => ({ key, label, nodes: callee === undefined ? [] : [call(`s0${key}s0`, { kind: 'function', id: `nextjs:app/userinfo/route.ts#${callee}` })] });
+
+  it('should keep a label no other side has', () => {
+    const node: TreeNode = { id: 's0', kind: 'if', lines: [1, 1], code: 'if (x)', branches: [side('true', '成立'), side('false', '不成立')] };
+    expect((node.branches ?? []).map((branch) => sideLabel(node, branch))).toEqual(['成立', '不成立']);
+  });
+
+  it('should tell the handlers of a Route Handler apart by their export, and other sides alike by their place', () => {
+    const handlers: TreeNode = { id: 's0', kind: 'switch', lines: [1, 1], code: 'どのリクエストか', branches: [side('c0', 'GET | POST /userinfo', 'GET'), side('c1', 'GET | POST /userinfo', 'POST')] };
+    const plain: TreeNode = { id: 's1', kind: 'switch', lines: [1, 1], code: 'kind', branches: [side('c0', 'case a'), side('c1', 'case a')] };
+    expect([...(handlers.branches ?? []).map((branch) => sideLabel(handlers, branch)), ...(plain.branches ?? []).map((branch) => sideLabel(plain, branch))]).toEqual(['GET /userinfo', 'POST /userinfo', 'case a（1）', 'case a（2）']);
+  });
+});
+
 describe('the words of a side', () => {
   it('should read what a side does after an arrow: its calls, then how it ends', () => {
-    const exit: TreeNode = { id: 't1', kind: 'return', lines: [1, 1], code: 'return respond()', pre: [call('t1i0', { kind: 'function', id: 'core:a.ts#respond' })] };
+    const exit: TreeNode = { id: 't1', kind: 'return', lines: [1, 1], code: 'return respond()', pre: [call('t1i0', { kind: 'function', id: 'core:a.ts#respond' }, { code: 'respond()' })] };
     expect(sideWords([call('t0', { kind: 'function', id: 'core:a.ts#authenticate' }), exit], source)).toBe('クライアントを認証し、認証したクライアントを返す、終わり: トークンレスポンスを返す');
     expect(sideWords([{ id: 't2', kind: 'return', lines: [1, 1], code: 'return exchanged' }], source)).toBe('終わり: `exchanged` を返す');
     expect(sideWords([{ id: 't3', kind: 'return', lines: [1, 1], code: 'return a + b' }], source)).toBe('終わり: `return a + b`');

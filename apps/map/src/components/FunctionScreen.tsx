@@ -116,7 +116,9 @@ function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOp
 /**
  * One function as a trace that starts from it: what it does, in the map of
  * a pull request what the pull request did to it, and the outline of its
- * tree, each call opening its callee in place; who calls it beside.
+ * tree, each call opening its callee in place. The pane beside adds a tab
+ * of who calls the function the diagram shows (this one until the reader
+ * dives into a call).
  */
 export function FunctionScreen(props: FunctionScreenProps) {
   const { data, changes, card, trace, enabled, onTrace, onBack, onOpenFunction, canGoBack } = props;
@@ -163,7 +165,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
           {card.exported ? null : <span className="chip">モジュール内の関数</span>}
           {card.untraceable !== undefined ? <span className="chip">型で引けない呼び出し {card.untraceable}</span> : null}
         </div>
-        {change !== undefined ? <ChangeDetail change={change} hunks={hunks} /> : mark?.kind === 'inside' ? <p className="note"><Badge mark={markOf('inside')} /> この関数から呼ぶ関数のどこかを、このPRで変えています。「変更まで展開」で開けます。</p> : null}
+        {change !== undefined ? <ChangeDetail change={change} hunks={hunks} data={data} framework={props.framework} onOpenFunction={onOpenFunction} /> : mark?.kind === 'inside' ? <p className="note"><Badge mark={markOf('inside')} /> この関数から呼ぶ関数のどこかを、このPRで変えています。「変更まで展開」で開けます。</p> : null}
         {card.spec || (card.failures ?? []).length > 0 ? (
           <div className="facts-row">
             {card.spec ? (
@@ -186,6 +188,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
           key={card.id}
           data={data}
           changes={changes}
+          framework={props.framework}
           rootId={card.id}
           state={trace}
           onState={onTrace}

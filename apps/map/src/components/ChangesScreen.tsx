@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import type { DiffHunk, FrameChangeEntry, MapData, Reach } from '../types';
-import { allHunks, changeName, groupChanges, markOf, type ChangeIndex } from '../lib/changes';
+import { allHunks, catchWords, changeName, groupChanges, markOf, narrowing, wayGroups, wayLabel, type ChangeIndex } from '../lib/changes';
 import { locationOf } from '../lib/model';
 import { entryOf } from '../lib/trace';
-import { Badge, ChangeNotes, ChangeSummary, DiffView, NoteText } from './ChangeParts';
+import { Badge, ChangeNotes, ChangeSummary, DiffView, Inline, NoteText } from './ChangeParts';
 import { fetchFrame } from './useFrames';
 
 export interface ChangesScreenProps {
@@ -43,35 +43,62 @@ function LazyDiff({ data, id }: { data: MapData; id: string }) {
   );
 }
 
-/** The ways a change reaches the endpoints: each a button that opens the trace along it. */
+/**
+ * The ways a change reaches the endpoints: each a button that opens the
+ * trace along it, saying where a new failure of the change is caught on it.
+ * A frame changed in more than one place lists its ways under each change
+ * (Reach.label), so the ways to two changes do not read the same.
+ */
 function Ways({ data, entry, framework, onOpenWay }: { data: MapData; entry: FrameChangeEntry; framework: string; onOpenWay: (way: Reach) => void }) {
-  if (entry.reach.length === 0) return <p className="note">{entry.body === true ? 'エンドポイントの処理そのものです。' : 'どのエンドポイントからも届きません。'}</p>;
+  if (entry.reach.length === 0) {
+    if (entry.body === true) return <p className="note">エンドポイントの処理そのものです。</p>;
+    return <p className="note">{(entry.untraceableCallers ?? []).length > 0 ? `型で引ける呼び出しからは、どのエンドポイントにも届きません（上の追えない呼び出し ${(entry.untraceableCallers ?? []).length} 箇所からは届くかもしれません）。` : 'どのエンドポイントからも届きません。'}</p>;
+  }
   const ordered = [...entry.reach].sort((a, b) => Number(!a.frameworks.includes(framework)) - Number(!b.frameworks.includes(framework)));
-  return (
+  const groups = wayGroups(ordered);
+  const list = (ways: readonly Reach[]) => (
     <ul className="ways">
-      {ordered.map((way, index) => {
+      {ways.map((way, index) => {
         const flow = data.flows[way.frameworks.includes(framework) ? framework : (way.frameworks[0] as string)];
         const endpoint = flow?.endpoints.find((candidate) => candidate.id === way.endpoint);
         const step = endpoint?.steps.find((candidate) => candidate.id === way.step);
-        const via = way.via.slice(0, -1).map((id) => entryOf(data, id)?.name ?? id);
+        const via = wayLabel(data, entry, way);
+        const caught = catchWords(way);
         return (
           <li key={index}>
             <button type="button" className="row" onClick={() => onOpenWay(way)}>
               <span className="row-title">
                 {endpoint?.label ?? way.endpoint}
-                {step !== undefined ? ` › ${step.label}` : ''}
-                {via.length > 0 ? ` › ${via.join(' › ')}` : ''} › {changeName(data, entry)}
+                {step !== undefined ? ` › ${step.label}` : ''} › {via.join(' › ')}
               </span>
               <span className="row-text">
                 {way.source === 'hono' ? 'Hono・Express・Fastify' : 'Next.js'}
                 {Object.keys(way.decisions).length > 0 ? ` · 決定 ${Object.keys(way.decisions).length} 個を選んで開く` : ''}
                 {way.features.length > 0 ? ` · 要る機能: ${way.features.join('、')}` : ''}
               </span>
+              {caught !== undefined ? (
+                <span className={`row-text${way.escapes === true ? ' escapes' : ''}`}>
+                  <Inline text={caught} />
+                </span>
+              ) : null}
             </button>
           </li>
         );
       })}
     </ul>
+  );
+  if (groups.length === 1) return list(groups[0]?.ways ?? []);
+  return (
+    <div className="way-groups">
+      {groups.map((group, index) => (
+        <section key={index} className="way-group">
+          <p className="way-label">
+            {group.label !== undefined ? <Inline text={group.label} /> : group.ways.every((way) => (way.through ?? []).length > 0) ? '変えたところのどれにも届く道筋（インターフェースのメンバーの呼び出しを通る）' : '変えたところのどれにも届く道筋'}（{group.ways.length} 本）
+          </p>
+          {list(group.ways)}
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -94,7 +121,7 @@ function ChangeRow({ data, entry, framework, onOpenFunction, onOpenWay }: { data
         {entry.from !== undefined ? <span className="muted">（{entry.from} から移した）</span> : null}
         {entry.required && !entry.documented ? <span className="badge badge-required">説明なし</span> : null}
       </div>
-      <ChangeSummary change={entry} />
+      <ChangeSummary change={entry} data={data} framework={framework} onOpenFunction={onOpenFunction} />
       <ChangeNotes change={entry} />
       {entry.kind === 'modified' || entry.kind === 'added' || entry.kind === 'docs' ? <LazyDiff data={data} id={entry.id} /> : null}
       {entry.kind === 'modified' || entry.kind === 'added' ? (
@@ -145,7 +172,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
           変えた関数とエンドポイントの処理 {counted} 個 · 地図に載らないファイルの変更 {changes.otherFiles} 個 · 何を変えたかとどこに効くかは地図が計算し、なぜ変えたかは変更メモ（<code>apps/map/changes/*.md</code>）が書きます
         </p>
       </header>
-      <div className="work with-pane changes-work">
+      <div className="work changes-work">
         <div className="changes-body">
           {missing.length > 0 ? (
             <section className="undocumented" aria-label="説明の無い変更">
@@ -181,11 +208,36 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
                 <NoteText text={section.text} />
               </article>
             ))}
-            {changes.ambiguous.map((warning) => (
-              <p key={`${warning.file}/${warning.reference}`} className="note">
-                見出し <code>{warning.reference}</code>（{warning.file}）は {warning.matches.length} 個の変更に当たります。ルート（<code>core:{warning.reference}</code>）か id で絞り込んでください。
-              </p>
-            ))}
+            {changes.ambiguous.map((warning) => {
+              const { roots, ids } = narrowing(warning.reference, warning.matches);
+              return (
+                <div key={`${warning.file}/${warning.reference}`} className="note ambiguous">
+                  <p>
+                    見出し <code>{warning.reference}</code>（{warning.file}）は {warning.matches.length} 個の変更に当たります。
+                    {roots.length > 0 ? (
+                      <>
+                        ルートを付けるか（
+                        {roots.map((root, index) => (
+                          <span key={root}>
+                            {index > 0 ? '、' : ''}
+                            <code>{root}</code>
+                          </span>
+                        ))}
+                        ）、
+                      </>
+                    ) : null}
+                    見出しに <code>{'<!-- id -->'}</code> で次の id のどれかを書いて絞り込んでください。
+                  </p>
+                  <ul className="plain">
+                    {ids.map((id) => (
+                      <li key={id}>
+                        <code>{id}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
           </section>
           {groups.length === 0 ? <p className="note">地図に載る関数とエンドポイントの処理は変えていません。</p> : null}
           {groups.map((group) => (

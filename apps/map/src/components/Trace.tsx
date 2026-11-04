@@ -1,21 +1,43 @@
-import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import type { MapData, Selection, StepMark, TreeNode } from '../types';
-import { allHunks, belowCounts, changeName, markOf, type ChangeIndex, type Mark } from '../lib/changes';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import type { DiffHunk, MapData, Selection, StepMark, TreeNode } from '../types';
+import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, frameDiagram, markOfBox, type DiagramGroup, type DiagramNode } from '../lib/diagram';
-import { childFrame, entryOf, findNode, frameIds, framesToChanges, withinFrame, type TraceState } from '../lib/trace';
+import {
+  changedIdsOf,
+  childFrame,
+  entryOf,
+  findNode,
+  foldsGuard,
+  frameIds,
+  frameOrder,
+  framesToChanges,
+  nodesBelow,
+  parentOf,
+  runsFor,
+  shownFrame,
+  sourceOf,
+  stepCall,
+  stepHolds,
+  traceRows,
+  withinFrame,
+  type TraceState,
+} from '../lib/trace';
 import { locationOf } from '../lib/model';
-import { Badge, ChangeDetail, DiffView } from './ChangeParts';
+import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
 import { FlowDiagram } from './FlowDiagram';
 import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
 import { SelectionBar } from './SelectionBar';
-import { TraceView } from './TraceView';
+import { rootedName, TraceView, type MemberDiff } from './TraceView';
 import { useFrames } from './useFrames';
 
+/** What a trace starts from, what it shows and what it tells the page (see Trace). */
 export interface TraceProps {
   data: MapData;
   changes: ChangeIndex | undefined;
+  /** The framework shown: its source (hono or nextjs) decides which implementations of a member run. */
+  framework: string;
   /** The frame the trace starts from: an endpoint body or a function. */
   rootId: string;
   /** Ready-made choices beyond the root frame's own: the ways to the changes of the pull request. */
@@ -31,6 +53,10 @@ export interface TraceProps {
   renderStep?: (step: StepMark) => ReactNode;
   /** Tabs of the pane beside the diagram, the diff and the detail: each is drawn for the frame the diagram shows (its id), so the pane speaks of one thing. */
   tabs?: ReadonlyArray<{ id: string; label: string; content: (frameId: string) => ReactNode }>;
+  /** A step of the root frame a link names (`#hono--token--select-signing-keys`): selected and shown once the tree loads. */
+  step?: string | null;
+  /** A node a link names, keyed like a decision (`<frame>.<node>`, the root's by the node alone): selected and shown once its frame loads. */
+  target?: string | null;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -43,14 +69,14 @@ interface Selected {
   from: 'outline' | 'diagram';
 }
 
-/** No step opened or folded by the reader. */
-const NO_TOGGLES: ReadonlySet<string> = new Set();
-
 /** The share of the width the pane beside the outline takes (percent): its default, its bounds, and where the reader's own is kept. */
 const PANE_DEFAULT = 42;
 const PANE_MIN = 20;
 const PANE_MAX = 80;
 const PANE_KEY = 'map.paneWidth';
+
+/** Where the reader's choice to show the code of every row is kept (a convenience of this browser only). */
+const CODE_KEY = 'map.outline.code';
 
 function readPaneWidth(): number {
   try {
@@ -69,14 +95,49 @@ function writePaneWidth(value: number): void {
   }
 }
 
+function readShowCode(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(CODE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeShowCode(value: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(CODE_KEY, value ? '1' : '0');
+  } catch {
+    // Storage may be unavailable (a private window); the choice then lasts for this page only.
+  }
+}
+
+/** A section of the diff tab: the diff of a frame, or the part of a changed frame a call of a member leads to, at the row the trace runs it. */
+interface PathDiff {
+  key: string;
+  at: number;
+  title: ReactNode;
+  summary: string[];
+  hunks: DiffHunk[];
+  loading: boolean;
+}
+
 /**
  * A trace (see lib/trace.ts): the ready-made choices, the outline, and
- * beside it the diagram of the frame in focus, the diff of the frames open
- * in the order they run, and the detail of the node selected. A narrow
- * screen shows the outline alone and opens the others over it.
+ * beside it a pane whose tabs all speak of the frame the diagram shows (the
+ * frame in focus): the diagram of that frame, the diff of that frame and of
+ * the frames the outline opens below it in the order they run, the detail
+ * of that frame (with no selection needed) and of the node selected in it,
+ * and the tabs a page adds. The pane starts on the diagram and keeps the tab
+ * the reader picks: selecting a row moves the pane to the row's frame and
+ * keeps the tab. The outline and the diagram fold the same steps the same
+ * way (one set of the steps the reader opened or folded), and the pane
+ * always speaks of a frame the outline shows. A narrow screen shows the
+ * outline alone and opens the others over it.
  */
-export function Trace({ data, changes, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [] }: TraceProps) {
+export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null }: TraceProps) {
   const { mobile } = useMobileMenu();
+  const source = sourceOf(framework);
+  const tabsId = useId();
   const [tab, setTab] = useState<Tab>('diagram');
   const [overlay, setOverlay] = useState(false);
   // The share of the width the pane takes, set by dragging the splitter (or its keys) and kept for this browser.
@@ -84,43 +145,81 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   const work = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   const [selected, setSelected] = useState<Selected | null>(null);
-  // The steps the reader opened or folded in the diagram, for the frame in focus only.
-  const [toggled, setToggled] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: '', ids: NO_TOGGLES });
+  // The steps (and runs of statements) the reader opened or folded, by row key `<frame>|<node>`: the outline and the diagram read the same set.
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set());
+  const [showCode, setShowCode] = useState(readShowCode);
   // The node whose box the diagram brings into view, renewed by every selection and every step opened or folded.
   const [reveal, setReveal] = useState<{ frame: string; node: string; key: number } | null>(null);
   // What takes the keyboard focus once the diagram of a frame draws it, when the element the reader activated from the keyboard
   // went away: the box of a node (the heading of a step a row opened), or null for the diagram itself (a box that opened its call's frame).
   const [focusRequest, setFocusRequest] = useState<{ frame: string; node: string | null } | null>(null);
-  // The trees load level by level: the frames a level opens are known once its tree is.
+  // A node to select once its frame shows: a step or a node a link names, the node a ready-made choice leads to.
+  const [pending, setPending] = useState<{ step?: string; target?: string } | null>(() => (step !== null || target !== null ? { ...(step === null ? {} : { step }), ...(target === null ? {} : { target }) } : null));
+  const asked = useRef(`${step ?? ''}|${target ?? ''}`);
+  if (asked.current !== `${step ?? ''}|${target ?? ''}`) {
+    asked.current = `${step ?? ''}|${target ?? ''}`;
+    setPending(step !== null || target !== null ? { ...(step === null ? {} : { step }), ...(target === null ? {} : { target }) } : null);
+  }
+  // The trees load level by level: the frames a level opens are known once its tree is; the changed implementations of the members called load too.
   const [ids, setIds] = useState<Map<string, string>>(() => new Map([['', rootId]]));
-  const frames = useFrames(data, [...new Set([rootId, ...ids.values()])]);
+  const [implementations, setImplementations] = useState<string>('');
+  const frames = useFrames(data, [...new Set([rootId, ...ids.values(), ...(implementations === '' ? [] : implementations.split('\n'))])]);
   const known = useMemo(() => frameIds(rootId, state.open, frames.trees), [rootId, state.open, frames.trees]);
   if ([...known].some(([key, id]) => ids.get(key) !== id) || ids.size !== known.size) setIds(known);
+  const hasFrame = useMemo(() => (id: string) => (entryOf(data, id)?.frame ?? '') !== '', [data]);
+  const rows = useMemo(
+    () => traceRows({ rootId, hasFrame, trees: frames.trees, changes: frames.changes, state, enabled, toggled, foldCode: !showCode }),
+    [rootId, hasFrame, frames.trees, frames.changes, state, enabled, toggled, showCode],
+  );
+  // The frames the outline shows, by the row each starts at: the order the trace runs them.
+  const order = useMemo(() => frameOrder(rows), [rows]);
+  const loading = rows.some((row) => row.kind === 'loading');
   const root = frames.trees.get(rootId);
   const selections = useMemo(() => [...(frames.selections.get(rootId) ?? []).filter((selection) => selection.kind !== 'change'), ...extraSelections], [frames.selections, rootId, extraSelections]);
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
+  // The members the rows call, and the changed frames below each (an implementation, or what one calls), whose files the diffs of those rows read.
+  const memberCalls = useMemo(() => [...new Set(rows.flatMap((row) => ('calls' in row ? row.calls : [])).filter((id) => data.members[id] !== undefined))], [rows, data]);
+  const reachedByMembers = useMemo(() => new Map(memberCalls.map((member) => [member, memberChanges(changes, member)])), [memberCalls, changes]);
+  const wanted = [...new Set([...reachedByMembers.values()].flatMap((list) => list.map((item) => item.id)))].sort().join('\n');
+  if (wanted !== implementations) setImplementations(wanted);
+  /** The parts of the diffs of the changed frames a call of a member leads to: within the lines of the members implemented on the way, else whole. */
+  const memberDiff = (member: string): MemberDiff[] =>
+    (reachedByMembers.get(member) ?? []).map(({ id, members }) => {
+      const tree = frames.trees.get(id);
+      const all = allHunks(frames.changes.get(id));
+      const lines = (tree?.implements ?? []).filter((item) => members.includes(item.member)).map((item) => item.lines);
+      const within = lines.length === 0 ? all : hunksWithin(all, lines);
+      return { id, name: rootedName(data, id), hunks: within.length === 0 ? all : within, loading: tree === undefined && frames.failed.get(id) === undefined };
+    });
+
   // The frame in focus for the diagram: the one the trace asks for (the frame of the row selected last, a call opened from
-  // the diagram, the end of a ready-made choice), else the root.
-  const focusKey = known.has(state.focus) ? state.focus : '';
+  // the diagram, the end of a ready-made choice) when the outline shows it, else the nearest frame above it that the outline shows.
+  const focusKey = known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order);
+  // Once every frame has loaded, a frame the outline no longer shows (a feature turned off took its call out) gives the focus to the frame above it, in the hash too.
+  useEffect(() => {
+    if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey });
+  }, [loading, root, focusKey, state, onState]);
   const focusId = known.get(focusKey) ?? rootId;
   const focusTree = frames.trees.get(focusId);
   const focusChange = frames.changes.get(focusId);
-  const foldKey = `${focusId} ${focusKey}`;
-  const toggledIds = toggled.key === foldKey ? toggled.ids : NO_TOGGLES;
-  const diagram = useMemo(
-    () =>
-      focusTree === undefined
-        ? undefined
-        : frameDiagram(focusTree, focusKey, enabled, {
-            changed: (id) => focusChange?.marks[id] !== undefined,
-            hasFrame: (id) => (entryOf(data, id)?.frame ?? '') !== '',
-            words: data,
-            toggled: toggledIds,
-          }),
-    [focusTree, focusKey, enabled, focusChange, data, toggledIds],
-  );
+  const focusChangedIds = useMemo(() => changedIdsOf(focusChange), [focusChange]);
+  const diagram = useMemo(() => {
+    if (focusTree === undefined) return undefined;
+    // The diagram folds by the outline's rules (see lib/trace.ts): a step open when it holds a change, an opened frame or a choice, flipped by the reader;
+    // a step of one call drawn as that call; a guard on one line unless its true side calls a function with a frame.
+    const options = {
+      changed: (id: string) => focusChange?.marks[id] !== undefined,
+      hasFrame,
+      words: data,
+      toggled: new Set([...toggled].filter((key) => key.startsWith(`${focusKey}|`)).map((key) => key.slice(focusKey.length + 1))),
+      stepOpen: (node: TreeNode) => toggled.has(`${focusKey}|${node.id}`) !== stepHolds(focusKey, node, state, focusChangedIds),
+      stepCall: (node: TreeNode) => stepCall(node, enabled, hasFrame),
+      foldsGuard: (node: TreeNode) => foldsGuard(node, enabled, hasFrame, (id) => focusChangedIds.includes(id)),
+    };
+    return frameDiagram(focusTree, focusKey, enabled, options);
+  }, [focusTree, focusKey, enabled, focusChange, data, toggled, hasFrame, state, focusChangedIds]);
   const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, state.choices, enabled)), [diagram, focusTree, focusKey, state.choices, enabled]);
   const marks = useMemo(() => {
     const byBox = new Map<string, Mark>();
@@ -130,20 +229,60 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     }
     return byBox;
   }, [diagram, focusChange, changes]);
+
+  // What is selected in the frame in focus: the node selected there, or, when the node is in a frame opened below it, the call
+  // of the frame in focus that leads there (the breadcrumb went up); nothing when the diagram went into a frame below the node's.
+  const shown = useMemo((): Selected | null => {
+    if (selected === null) return null;
+    if (selected.frame === focusKey) return selected;
+    if (focusTree === undefined || !withinFrame(selected.frame, focusKey)) return null;
+    let parent = parentOf(selected.frame);
+    while (parent !== undefined && parent.frame !== focusKey) parent = parentOf(parent.frame);
+    const node = parent === undefined ? undefined : findNode(focusTree.nodes, parent.node);
+    return node === undefined ? null : { frame: focusKey, node, frameId: focusId, from: selected.from };
+  }, [selected, focusKey, focusTree, focusId]);
   // The outline highlights the row that shows the node selected, and scrolls it into view when it was picked in the diagram.
-  const outlineSelection = useMemo(() => (selected === null ? null : { frame: selected.frame, node: selected.node.id, reveal: selected.from === 'diagram' }), [selected]);
+  const outlineSelection = useMemo(() => (shown === null ? null : { frame: shown.frame, node: shown.node.id, reveal: shown.from === 'diagram' }), [shown]);
 
   /** Select a node, and bring its box into view in the diagram. */
   const select = (next: Selected) => {
     setSelected(next);
     setReveal((last) => ({ frame: next.frame, node: next.node.id, key: (last?.key ?? 0) + 1 }));
   };
-  /** Open or fold a step of the frame in focus in place, and bring its box into view. */
+  // Select what a link or a ready-made choice names once its frame shows; give up once everything has loaded without it.
+  useEffect(() => {
+    if (pending === null || root === undefined) return;
+    if (pending.step !== undefined) {
+      const block = nodesBelow(root.nodes, enabled).find((node) => node.kind === 'block' && node.step?.id === pending.step);
+      if (block !== undefined) select({ frame: '', node: block, frameId: rootId, from: 'diagram' });
+      setPending(pending.target === undefined ? null : { target: pending.target });
+      return;
+    }
+    if (pending.target === undefined) {
+      setPending(null);
+      return;
+    }
+    const at = parentOf(pending.target);
+    const frameKey = at?.frame ?? '';
+    const tree = order.has(frameKey) ? frames.trees.get(known.get(frameKey) ?? '') : undefined;
+    const node = tree === undefined || at === undefined ? undefined : findNode(tree.nodes, at.node);
+    if (node !== undefined && tree !== undefined) {
+      select({ frame: frameKey, node, frameId: tree.id, from: 'diagram' });
+      setPending(null);
+    } else if (!loading) setPending(null);
+  }, [pending, root, enabled, order, frames.trees, known, loading, rootId]);
+
+  /** Open or fold a step (or a run of statements) of a frame, by its row key, in the outline and the diagram at once. */
+  const toggle = (key: string) =>
+    setToggled((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  /** Open or fold a step of the frame in focus from the diagram, and bring its box into view. */
   const toggleStep = (step: string) => {
-    const ids = new Set(toggledIds);
-    if (ids.has(step)) ids.delete(step);
-    else ids.add(step);
-    setToggled({ key: foldKey, ids });
+    toggle(`${focusKey}|${step}`);
     setReveal((last) => ({ frame: focusKey, node: step, key: (last?.key ?? 0) + 1 }));
   };
   /** Open a step from a row of the diagram that names it: the row goes away as the step opens, so the step's heading takes the keyboard focus. */
@@ -208,21 +347,92 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     };
     return [{ key: '', label: nameOf(rootId) }, ...keys.map((key) => ({ key, label: nameOf(known.get(key)) }))];
   }, [focusKey, known, data, rootId]);
+  // The crumbs between the root and the frame in focus fold into one `…` when they would not fit: all of them on a phone, all but the frame above the focus on a screen four deep or more.
+  const keep = mobile ? 2 : 3;
+  const folded = crumbs.length > keep ? crumbs.slice(1, mobile ? -1 : -2) : [];
+  const more = useRef<HTMLDetailsElement>(null);
+  const goTo = (key: string) => {
+    if (more.current !== null) more.current.open = false;
+    onState({ ...state, focus: key });
+  };
+  const crumb = (item: { key: string; label: string }, index: number, last: boolean) => (
+    <span key={item.key || 'root'} className={`crumb${last ? ' current' : ''}${index === 0 ? ' root' : ''}`}>
+      {index > 0 ? (
+        <span className="crumb-sep" aria-hidden="true">
+          ›
+        </span>
+      ) : null}
+      {last ? (
+        <strong aria-current="location" title={item.label}>
+          {item.label}
+        </strong>
+      ) : (
+        <button type="button" className="link" onClick={() => goTo(item.key)} title={`${item.label} の図に戻る`}>
+          {item.label}
+        </button>
+      )}
+    </span>
+  );
 
-  // The diff of the frame the diagram shows and of the frames open below it, in the order the trace runs them.
-  const pathDiff = [...known].filter(([key]) => withinFrame(key, focusKey)).filter(([, id], index, list) => list.findIndex(([, other]) => other === id) === index).flatMap(([key, id]) => {
-    const change = frames.changes.get(id);
-    const hunks = allHunks(change);
-    if (change === undefined || hunks.length === 0) return [];
-    const entry = changes?.byId.get(id);
-    return [{ key, id, change, hunks, entry }];
-  });
+  // The diff of the frame the diagram shows and of the frames the outline shows below it, in the order the trace runs them,
+  // with the parts of the changed frames the calls of members lead to at the row of each call.
+  const pathDiff: PathDiff[] = (() => {
+    const sections: PathDiff[] = [];
+    const seen = new Set<string>();
+    for (const [key, at] of order) {
+      const id = known.get(key);
+      if (id === undefined || !withinFrame(key, focusKey) || seen.has(id)) continue;
+      seen.add(id);
+      const change = frames.changes.get(id);
+      const hunks = allHunks(change);
+      if (change === undefined || hunks.length === 0) continue;
+      const entry = changes?.byId.get(id);
+      sections.push({
+        key,
+        at,
+        title: (
+          <>
+            {entry !== undefined ? <Badge mark={markOf(entry.kind)} /> : null} {entry !== undefined ? changeName(data, entry) : (entryOf(data, id)?.name ?? id)}
+          </>
+        ),
+        summary: entry?.summary ?? change.summary,
+        hunks,
+        loading: false,
+      });
+    }
+    rows.forEach((row, at) => {
+      if (row.kind !== 'node' || !withinFrame(row.frame, focusKey)) return;
+      for (const member of row.calls.filter((id) => data.members[id] !== undefined)) {
+        const doc = data.members[member];
+        for (const diff of memberDiff(member)) {
+          if (seen.has(`${member}>${diff.id}`)) continue;
+          seen.add(`${member}>${diff.id}`);
+          const entry = changes?.byId.get(diff.id);
+          sections.push({
+            key: `${row.key}>${diff.id}`,
+            at,
+            title: (
+              <>
+                {entry !== undefined ? <Badge mark={markOf(entry.kind)} /> : null} {doc === undefined ? '' : `${doc.type}.${doc.member} の実装の先: `}
+                {diff.name}
+              </>
+            ),
+            summary: entry?.summary ?? [],
+            hunks: diff.hunks,
+            loading: diff.loading,
+          });
+        }
+      }
+    });
+    return sections.sort((a, b) => a.at - b.at);
+  })();
 
   /** What the pane says about a node of the frame the diagram shows: its code and words, and what it calls. */
   const nodeDetail = (node: TreeNode): ReactNode => {
     if (node.kind === 'block' && node.step !== undefined && renderStep !== undefined) return renderStep(node.step);
     const callee = node.target?.kind === 'function' ? entryOf(data, node.target.id) : undefined;
     const member = node.target?.kind === 'member' ? data.members[node.target.id] : undefined;
+    const implementers = (member?.implementedBy ?? []).filter((id) => runsFor(id, source));
     return (
       <section className="node-detail" aria-label="選んだ行">
         <h4>選んだ行</h4>
@@ -247,11 +457,37 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
         {member !== undefined ? (
           <>
             <h4>
-              {member.type}.{member.member}()
+              {member.type}.{member.member}() {frameMark(changes, member.id) !== undefined ? <Badge mark={frameMark(changes, member.id) as Mark} /> : null}
             </h4>
             <p>{member.summary || 'インターフェースのメンバー'}</p>
             <p className="where mono">{locationOf(member)}</p>
-            {member.implementedBy !== undefined ? <p className="note">実装: {member.implementedBy.map((id) => entryOf(data, id)?.name ?? id).join('、')}</p> : null}
+            {implementers.length > 0 ? (
+              <ul className="plain implementers">
+                {implementers.map((id) => {
+                  const mark = frameMark(changes, id);
+                  return (
+                    <li key={id}>
+                      実装: {data.functions[id] !== undefined ? (
+                        <button type="button" className="link" onClick={() => onOpenFunction(id)}>
+                          {rootedName(data, id)}
+                        </button>
+                      ) : (
+                        rootedName(data, id)
+                      )}{' '}
+                      {mark !== undefined ? <Badge mark={mark} /> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+            {memberDiff(member.id).map((diff) => (
+              <div key={diff.id} className="member-diff">
+                <p className="note">
+                  {member.type}.{member.member} の実装の先で変えたところ: {diff.name}
+                </p>
+                {diff.loading ? <p className="note">読み込んでいます…</p> : <DiffView hunks={diff.hunks} />}
+              </div>
+            ))}
           </>
         ) : null}
         {node.target?.kind === 'untraceable' ? <p className="note">型で呼び先を引けない呼び出しです（{node.target.why}）。</p> : null}
@@ -270,7 +506,6 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     const card = data.functions[focusId];
     const change = changes?.byId.get(focusId);
     const failures = [...new Set((entry?.failures ?? []).map((failure) => failure.error))];
-    const picked = selected !== null && selected.frame === focusKey ? selected.node : undefined;
     return (
       <div className="frame-detail">
         <section aria-label="図のフレーム">
@@ -285,7 +520,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               失敗するとき <Chips items={failures.slice(0, 12)} />
             </p>
           ) : null}
-          {change !== undefined ? <ChangeDetail change={change} hunks={allHunks(focusChange)} /> : null}
+          {change !== undefined ? <ChangeDetail change={change} hunks={allHunks(focusChange)} data={data} framework={framework} onOpenFunction={onOpenFunction} /> : null}
           <div className="detail-actions">
             <button type="button" className="code-button" onClick={() => onOpenCode(focusId)}>
               コードを見る
@@ -297,7 +532,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
             ) : null}
           </div>
         </section>
-        {picked !== undefined ? nodeDetail(picked) : <p className="note">アウトラインの行か図の箱を選ぶと、その行の詳細もここに出ます。</p>}
+        {shown !== null ? nodeDetail(shown.node) : <p className="note">アウトラインの行か図の箱を選ぶと、その行の詳細もここに出ます。</p>}
       </div>
     );
   };
@@ -311,24 +546,39 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
         diagram !== undefined && active !== undefined ? (
           <div className="pane-diagram">
             <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
-              {crumbs.map((crumb, index) => (
-                <span key={crumb.key || 'root'} className="crumb">
-                  {index > 0 ? <span className="crumb-sep" aria-hidden="true">›</span> : null}
-                  {index === crumbs.length - 1 ? (
-                    <strong aria-current="location">{crumb.label}</strong>
-                  ) : (
-                    <button type="button" className="link" onClick={() => onState({ ...state, focus: crumb.key })} title="この関数の図に戻る">
-                      {crumb.label}
-                    </button>
-                  )}
-                </span>
-              ))}
-              <span className="note crumb-hint">青が選んだ道筋。箱に重ねる（タップする）と詳しく見られ、そこから中へ潜れます。</span>
+              {folded.length === 0 ? (
+                crumbs.map((item, index) => crumb(item, index, index === crumbs.length - 1))
+              ) : (
+                <>
+                  {crumb(crumbs[0] as { key: string; label: string }, 0, false)}
+                  <span className="crumb crumb-folded">
+                    <span className="crumb-sep" aria-hidden="true">
+                      ›
+                    </span>
+                    <details className="crumb-more" ref={more}>
+                      <summary title={folded.map((item) => item.label).join(' › ')} aria-label={`間のフレーム ${folded.length} 個: ${folded.map((item) => item.label).join('、')}`}>
+                        …
+                      </summary>
+                      <ul className="crumb-menu">
+                        {folded.map((item) => (
+                          <li key={item.key}>
+                            <button type="button" className="link" onClick={() => goTo(item.key)}>
+                              {item.label}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </span>
+                  {crumbs.slice(1 + folded.length).map((item, index, rest) => crumb(item, 1 + folded.length + index, index === rest.length - 1))}
+                </>
+              )}
+              {crumbs.length <= 2 ? <span className="note crumb-hint">青が選んだ道筋。箱に重ねる（タップする）と詳しく見られ、そこから中へ潜れます。</span> : null}
             </nav>
             <FlowDiagram
               diagram={diagram}
               active={active}
-              selected={selected?.frame === focusKey ? selected.node.id : null}
+              selected={shown?.node.id ?? null}
               reveal={reveal?.frame === focusKey ? reveal : null}
               focus={focusRequest?.frame === focusKey ? focusRequest : null}
               label="フレームの図"
@@ -351,13 +601,19 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
           <p className="note">図のフレームと、その下に開いているフレームに、このPRの差分はありません。{below > 0 ? '「変更まで展開」で、変わった関数まで開けます。' : ''}</p>
         ) : (
           <div className="path-diff">
-            {pathDiff.map(({ key, id, hunks, entry }) => (
-              <section key={key || 'root'}>
-                <h4>
-                  {entry !== undefined ? <Badge mark={markOf(entry.kind)} /> : null} {entry !== undefined ? changeName(data, entry) : (entryOf(data, id)?.name ?? id)}
-                </h4>
-                {entry?.summary.length ? <p className="note">{entry.summary.slice(0, 4).join(' / ')}</p> : null}
-                <DiffView hunks={hunks} />
+            {pathDiff.map((section) => (
+              <section key={section.key || 'root'}>
+                <h4>{section.title}</h4>
+                {section.summary.length > 0 ? (
+                  <ul className="path-summary note">
+                    {section.summary.slice(0, 4).map((line, index) => (
+                      <li key={index}>
+                        <Inline text={line} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {section.loading ? <p className="note">読み込んでいます…</p> : <DiffView hunks={section.hunks} />}
               </section>
             ))}
           </div>
@@ -366,10 +622,21 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     { id: 'detail', label: '詳細', content: detail() },
   ];
   const current = panes.find((pane) => pane.id === tab) ?? panes[0];
+  /** The tabs answer the arrow keys, Home and End, as a tablist does: the tab moved to is shown and takes the focus. */
+  const onTabsKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const at = panes.findIndex((pane) => pane.id === current?.id);
+    const next = event.key === 'ArrowRight' ? at + 1 : event.key === 'ArrowLeft' ? at - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? panes.length - 1 : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    const pane = panes[(next + panes.length) % panes.length];
+    if (pane === undefined) return;
+    setTab(pane.id);
+    document.getElementById(`${tabsId}-tab-${pane.id}`)?.focus();
+  };
 
   return (
     <div className="trace-area">
-      <SelectionBar selections={selections} state={state} onState={onState} onExpandChanges={expand} changesBelow={below} />
+      <SelectionBar selections={selections} state={state} onState={onState} onExpandChanges={expand} changesBelow={below} onPick={(selection) => setPending({ target: selection.target })} />
       <div className={`work${mobile ? '' : ' with-pane'}`} ref={work} style={mobile ? undefined : { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(0, ${paneWidth}%)` }}>
         <div className="outline">
           {root === undefined ? (
@@ -379,10 +646,19 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               data={data}
               changes={changes}
               rootId={rootId}
+              source={source}
               state={state}
               trees={frames.trees}
               diffs={frames.changes}
               enabled={enabled}
+              rows={rows}
+              onToggle={toggle}
+              showCode={showCode}
+              onShowCode={(code) => {
+                setShowCode(code);
+                writeShowCode(code);
+              }}
+              memberDiff={memberDiff}
               selected={outlineSelection}
               onState={onState}
               onSelect={(row) => {
@@ -434,14 +710,25 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
             onKeyDown={onSplitterKey}
           />
           <aside className="pane" aria-label="図と詳細">
-            <div className="seg pane-tabs" role="tablist">
+            <div className="seg pane-tabs" role="tablist" aria-label="図と詳細の切り替え" onKeyDown={onTabsKey}>
               {panes.map((pane) => (
-                <button key={pane.id} type="button" role="tab" aria-selected={pane.id === current?.id} aria-pressed={pane.id === current?.id} onClick={() => setTab(pane.id)}>
+                <button
+                  key={pane.id}
+                  id={`${tabsId}-tab-${pane.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={pane.id === current?.id}
+                  aria-controls={`${tabsId}-panel`}
+                  tabIndex={pane.id === current?.id ? 0 : -1}
+                  onClick={() => setTab(pane.id)}
+                >
                   {pane.label}
                 </button>
               ))}
             </div>
-            <div className="pane-content">{current?.content}</div>
+            <div className="pane-content" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-tab-${current?.id ?? 'diagram'}`}>
+              {current?.content}
+            </div>
           </aside>
           </>
         )}

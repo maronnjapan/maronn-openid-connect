@@ -1,7 +1,9 @@
 import type { Decisions, Selection } from '../types';
 import type { TraceState } from '../lib/trace';
+import { Inline } from './ChangeParts';
 import { MobileMenuSection } from './MobileMenu';
 
+/** The ready-made choices of a trace and what picking one tells the trace (see SelectionBar). */
 export interface SelectionBarProps {
   /** The ready-made choices of the root frame (exits, steps) and the ways to the changes. */
   selections: readonly Selection[];
@@ -11,6 +13,8 @@ export interface SelectionBarProps {
   onExpandChanges?: (() => void) | undefined;
   /** How many changes are below the root. */
   changesBelow?: number;
+  /** A choice was picked (not unpicked): the trace selects and shows the node it leads to. */
+  onPick?: (selection: Selection) => void;
 }
 
 /** Whether two choices choose the same sides. */
@@ -38,12 +42,13 @@ const GROUPS: ReadonlyArray<{ kind: Selection['kind']; heading: string }> = [
 
 /**
  * The ready-made choices of a trace (よく使う選択): the ways into its steps,
- * to the changes of the pull request, and to each way it ends, computed
- * from the trees. Picking one chooses its sides (and opens the frames of a
- * way that crosses them); picking several shows their union. The page shows
- * everything until one is picked.
+ * to the changes of the pull request, to each way it ends, and to each
+ * failure (whose calls on the way are chosen to fail), computed from the
+ * trees. Picking one chooses its sides (and opens the frames of a way that
+ * crosses them), so the rows it does not run turn grey; picking several
+ * shows their union. Every row is on until one is picked.
  */
-export function SelectionBar({ selections, state, onState, onExpandChanges, changesBelow = 0 }: SelectionBarProps) {
+export function SelectionBar({ selections, state, onState, onExpandChanges, changesBelow = 0, onPick }: SelectionBarProps) {
   const picked = (selection: Selection) => state.choices.some((choice) => same(choice, selection.decisions));
   const toggle = (selection: Selection) => {
     if (picked(selection)) {
@@ -53,17 +58,18 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
     const open = [...new Set([...state.open, ...(selection.frames ?? [])])];
     const focus = selection.frames !== undefined && selection.frames.length > 0 ? (selection.frames[selection.frames.length - 1] as string) : state.focus;
     onState({ ...state, open, focus, choices: [...state.choices, selection.decisions] });
+    onPick?.(selection);
   };
   const count = state.choices.length;
   return (
     <MobileMenuSection section="cases">
       <details className="selections">
-        <summary role="button" aria-label="よく使う選択を開く">
+        <summary>
           <span className="selections-title">よく使う選択</span>
           <span className="selections-current">{count === 0 ? 'すべての分岐を表示' : `${count} 個を選択中`}</span>
         </summary>
         <div className="selections-head">
-          <span className="note">選ぶと、その道筋の側だけを残します。複数選ぶと和集合です。分岐ごとの側はアウトラインのボタンでも選べます。</span>
+          <span className="note">選ぶと、その道筋で通らない行が灰色になります（行は消えません）。複数選ぶと和集合です。分岐ごとの側はアウトラインのボタンでも選べます。</span>
           <span className="selections-actions">
             <button type="button" onClick={() => onState({ ...state, choices: [] })} disabled={count === 0}>
               すべて表示
@@ -77,10 +83,16 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
           const list = selections.filter((selection) => selection.kind === kind);
           if (list.length === 0) return null;
           const item = (selection: Selection, index: number, label = selection.name) => (
-            <label key={`${kind}-${index}`} className={`selection${picked(selection) ? ' checked' : ''}${kind === 'failure' ? ' error' : ''}`} title={`${selection.name} ${selection.note ?? ''}`.trim()}>
+            <label key={`${kind}-${index}`} className={`selection${picked(selection) ? ' checked' : ''}${kind === 'failure' ? ' error' : ''}`} title={`${selection.name} ${selection.note ?? ''}`.replace(/`/g, '').trim()}>
               <input type="checkbox" checked={picked(selection)} onChange={() => toggle(selection)} />
-              <span>{label}</span>
-              {selection.note !== undefined && kind !== 'exit' && kind !== 'failure' ? <span className="muted">{selection.note}</span> : null}
+              <span>
+                <Inline text={label} />
+              </span>
+              {selection.note !== undefined && selection.note !== '' && kind !== 'exit' && kind !== 'failure' ? (
+                <span className="muted">
+                  <Inline text={selection.note} />
+                </span>
+              ) : null}
             </label>
           );
           if (kind === 'failure') {

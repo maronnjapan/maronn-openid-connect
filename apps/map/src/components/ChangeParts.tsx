@@ -1,5 +1,6 @@
-import type { DiffHunk, FrameChangeEntry } from '../types';
-import { countWords, diffStat, inlineParts, markOf, noteBlocks, numberHunk, type Mark } from '../lib/changes';
+import type { DiffHunk, FrameChangeEntry, MapData } from '../types';
+import { countWords, diffStat, failureCatchers, inlineParts, markOf, noteBlocks, numberHunk, type Mark } from '../lib/changes';
+import { entryOf } from '../lib/trace';
 
 /** A badge that says how something changed in the pull request; its tooltip says what that means. */
 export function Badge({ mark }: { mark: Mark }) {
@@ -112,10 +113,37 @@ export function ChangeNotes({ change }: { change: FrameChangeEntry }) {
   );
 }
 
-/** The diff of a frame in words: what the tree diff found, with the counts. */
-export function ChangeSummary({ change }: { change: FrameChangeEntry }) {
+/** What a change summary needs besides the change: the map (the names of the endpoints and the frames), the framework shown, and a way to open a function. */
+export interface ChangeContext {
+  data: Pick<MapData, 'flows' | 'functions' | 'bodies'>;
+  framework: string;
+  onOpenFunction?: ((id: string) => void) | undefined;
+}
+
+/** The name of an endpoint of a way, by its label in the framework shown (the source's first framework for the other source). */
+function endpointName(data: ChangeContext['data'], framework: string, way: { endpoint: string; source: string }): string {
+  const shown = way.source === (framework === 'nextjs' ? 'nextjs' : 'hono') ? framework : way.source;
+  const label = data.flows[shown]?.endpoints.find((candidate) => candidate.id === way.endpoint)?.label ?? way.endpoint;
+  return shown === framework ? label : `${label}（${shown === 'nextjs' ? 'Next.js' : 'Hono'}）`;
+}
+
+/**
+ * The diff of a frame in words: what the tree diff found, with the counts;
+ * the failures it makes leave the frame, and where each is caught on the
+ * ways from the endpoints of the framework shown; the members whose
+ * implementation it changed; and the calls the types do not tell, inside
+ * it (the map cannot follow them down) and outside it that may call it
+ * (the ways it reaches leave them out).
+ */
+export function ChangeSummary({ change, data, framework, onOpenFunction }: { change: FrameChangeEntry } & ChangeContext) {
   if (change.summary.length === 0) return null;
   const counts = countWords(change.counts);
+  const catchers = change.failuresAdded === undefined ? [] : failureCatchers(change, framework);
+  const callers = change.untraceableCallers ?? [];
+  const frameName = (id: string) => {
+    const entry = entryOf(data, id);
+    return entry === undefined ? id.slice(id.indexOf('#') + 1) : 'endpoint' in entry ? entry.name : `${entry.name}()`;
+  };
   return (
     <div className="change-summary">
       <ul>
@@ -127,10 +155,63 @@ export function ChangeSummary({ change }: { change: FrameChangeEntry }) {
       </ul>
       {change.summary.length > 12 ? <p className="note">ほか {change.summary.length - 12} 個</p> : null}
       {counts !== '' ? <p className="note">{counts}</p> : null}
-      {change.failuresAdded !== undefined ? <p className="note">新しく外へ出る失敗: {change.failuresAdded.join('、')}</p> : null}
+      {change.failuresAdded !== undefined ? (
+        <div className="note change-effect">
+          <p>
+            新しく外へ出る失敗:{' '}
+            {change.failuresAdded.map((error, index) => (
+              <span key={error}>
+                {index > 0 ? '、' : ''}
+                <code>{error}</code>
+              </span>
+            ))}
+          </p>
+          {catchers.length > 0 ? (
+            <ul className="plain">
+              {catchers.map((catcher) => (
+                <li key={`${catcher.kind}:${catcher.by ?? ''}`}>
+                  {catcher.kind === 'answer' ? (
+                    <>
+                      catch で捕まえて <code>{catcher.by}</code> が応答する
+                    </>
+                  ) : catcher.kind === 'frame' ? (
+                    <>
+                      <code>{catcher.by}</code> の catch で捕まえる
+                    </>
+                  ) : (
+                    'どこでも捕まえずにエンドポイントの外へ出る'
+                  )}
+                  （{catcher.endpoints.map((way) => endpointName(data, framework, way)).join('、')}）
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       {change.failuresRemoved !== undefined ? <p className="note">外へ出なくなった失敗: {change.failuresRemoved.join('、')}</p> : null}
-      {change.members !== undefined ? <p className="note">実装を変えたメンバー: {change.members.map((id) => id.slice(id.indexOf('#') + 1)).join('、')}（そのメンバーを呼ぶところすべてに届く）</p> : null}
-      {change.untraceable !== undefined ? <p className="note">型で呼び先を引けない呼び出しが {change.untraceable} 個あります（届く先はその分を含みません）。</p> : null}
+      {change.members !== undefined ? <p className="note">実装を変えたメンバー: {change.members.map((id) => id.slice(id.indexOf('#') + 1)).join('、')}（型で引けるそのメンバーの呼び出しすべてに届く）</p> : null}
+      {callers.length > 0 ? (
+        <div className="note change-effect untraceable-callers">
+          <p>
+            <span className="badge badge-required">追えない呼び出しあり</span> 型で呼び先を引けない次の {callers.length} 箇所の呼び出しが、この変更を呼んでいるかもしれません。届く経路にはこれらを入れていません。
+          </p>
+          <ul className="plain">
+            {callers.map((site) => (
+              <li key={`${site.frame}/${site.node}`}>
+                {onOpenFunction !== undefined && data.functions[site.frame] !== undefined ? (
+                  <button type="button" className="link mono" onClick={() => onOpenFunction(site.frame)}>
+                    {frameName(site.frame)}
+                  </button>
+                ) : (
+                  <span className="mono">{frameName(site.frame)}</span>
+                )}
+                : {site.why}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {change.untraceable !== undefined ? <p className="note">この中の {change.untraceable} 個の呼び出しは型で呼び先を引けないため、地図はその先をたどれません（その先の変更は下の変更に数えていません）。</p> : null}
     </div>
   );
 }
@@ -139,7 +220,7 @@ export function ChangeSummary({ change }: { change: FrameChangeEntry }) {
  * What the pull request did to a frame: how it changed, the diff in words,
  * what the change notes say, and its diff on demand.
  */
-export function ChangeDetail({ change, hunks }: { change: FrameChangeEntry; hunks?: readonly DiffHunk[] | undefined }) {
+export function ChangeDetail({ change, hunks, ...context }: { change: FrameChangeEntry; hunks?: readonly DiffHunk[] | undefined } & ChangeContext) {
   const stat = diffStat(hunks);
   return (
     <section className="change" aria-label="このPRでの変更">
@@ -147,7 +228,7 @@ export function ChangeDetail({ change, hunks }: { change: FrameChangeEntry; hunk
         <Badge mark={markOf(change.kind)} />
         <span className="change-title">{changeHeadline(change)}</span>
       </div>
-      <ChangeSummary change={change} />
+      <ChangeSummary change={change} {...context} />
       <div className="change-notes">
         <ChangeNotes change={change} />
       </div>

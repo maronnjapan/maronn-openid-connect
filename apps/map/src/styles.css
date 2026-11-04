@@ -123,16 +123,22 @@ h1, h2, h3, h4 { margin: 0; }
 .work { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .work.with-pane { grid-template-columns: minmax(0, 1fr) 8px minmax(0, 42%); }
 .work.with-panel { grid-template-columns: minmax(0, 1fr) 340px; }
+/* The page of the changes of a pull request: the changes, and the endpoints they reach beside them (no splitter). */
+.work.changes-work { grid-template-columns: minmax(0, 1fr) minmax(240px, 32%); }
 .trace-area { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .outline { overflow: auto; min-height: 0; min-width: 0; background: var(--surface); }
 .pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .pane-tabs { flex: none; margin: 8px; align-self: flex-start; flex-wrap: wrap; }
+.pane-tabs button[aria-selected="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line); font-weight: 600; }
 .pane-content { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 0 12px 16px; gap: 10px; }
 .pane-diagram { flex: 1; min-height: 360px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .pane-note { padding: 6px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; flex-wrap: wrap; }
 .path-diff { display: flex; flex-direction: column; gap: 12px; }
 .path-diff h4 { font-size: 13px; display: flex; gap: 6px; align-items: center; }
 .path-diff .diff { max-height: none; }
+.path-summary { margin: 0; padding-left: 1.2em; }
+.member-diff { display: flex; flex-direction: column; gap: 2px; }
+.implementers { font-size: 12.5px; }
 .node-detail, .step-detail { display: flex; flex-direction: column; gap: 8px; }
 .node-detail p, .step-detail p { margin: 0; }
 .step-detail h3 { font-size: 15px; }
@@ -152,7 +158,7 @@ h1, h2, h3, h4 { margin: 0; }
 
 /* ---- the outline of a trace */
 .trace { list-style: none; margin: 0; padding: 6px 0 64px; font-size: 13px; }
-.trace-row { padding-top: 1px; padding-bottom: 1px; padding-right: 12px; border-left: 3px solid transparent; }
+.trace-row { padding-top: 1px; padding-bottom: 1px; padding-right: 12px; padding-left: calc(8px + var(--depth, 0) * 18px); border-left: 3px solid transparent; }
 .trace-row.on { color: var(--fg); }
 .trace-row.off { color: var(--faint); }
 .trace-row.off .code-text, .trace-row.off .step-title { color: var(--faint); }
@@ -168,6 +174,8 @@ h1, h2, h3, h4 { margin: 0; }
 .code-text { border: 0; background: none; padding: 0; cursor: pointer; text-align: left; color: inherit; min-width: 0; max-width: min(64ch, calc(100% - 30px)); flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trace-outline { display: flex; flex-direction: column; min-height: 100%; }
 .outline-tools { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; }
+/* The name of the root of the trace, in the bar: a phone has no header to say it. */
+.outline-title { display: none; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .outline-mode { flex: none; }
 .outline-mode button { padding: 1px 10px; font-size: 12px; }
 .outline-hint { font-size: 11.5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -183,7 +191,11 @@ h1, h2, h3, h4 { margin: 0; }
 .kind-throw .row-exit, .trace-row.catch .row-exit.on { color: var(--danger); }
 .tag { flex: none; font-size: 11px; border-radius: 3px; padding: 0 4px; line-height: 16px; border: 1px solid var(--line); color: var(--muted); }
 .tag-error { color: var(--danger); border-color: var(--danger); }
-.trace-row.off .tag { color: var(--faint); border-color: var(--line); }
+.trace-row.off .tag, .tag.tag-off { color: var(--faint); border-color: var(--line); }
+.row-static { cursor: default; }
+/* The chips of the sides, the page and the diff of a row under </>: a phone's, whose line has no room for them. */
+.row-sides { display: none; padding: 2px 0 2px 26px; }
+.row-actions { display: none; flex-wrap: wrap; gap: 6px; padding: 4px 0 4px 26px; }
 .row-more { flex: none; border: 1px solid transparent; background: none; color: var(--faint); cursor: pointer; padding: 0 4px; font-family: var(--font-code); font-size: 11px; border-radius: 3px; }
 .row-more:hover, .row-more[aria-expanded="true"] { color: var(--accent); border-color: var(--line); }
 /* On a screen with a pointer, a row's own buttons show when the row is hovered or focused, so the words read alone. */
@@ -214,11 +226,19 @@ h1, h2, h3, h4 { margin: 0; }
 .splitter::after { content: ''; position: absolute; top: 50%; left: 2px; width: 3px; height: 32px; margin-top: -16px; border-radius: 2px; background: var(--line); }
 .splitter:hover::after, .splitter:focus-visible::after { background: var(--accent); }
 .splitter:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.crumbs { align-items: baseline; flex-wrap: nowrap; min-width: 0; }
-.crumb { display: inline-block; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.crumb > * + * { margin-left: 6px; }
-.crumb-sep { color: var(--faint); }
+/* The breadcrumb: the root and the frame in focus keep their names (cut at the name, never at the ›); the frames between fold into one … whose menu names them; the hint takes only the room left. */
+.crumbs { align-items: baseline; flex-wrap: nowrap; gap: 6px; min-width: 0; position: relative; }
+.crumb { display: inline-flex; align-items: baseline; gap: 5px; flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.crumb > .link, .crumb > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.crumb.root { min-width: min(6em, 30%); }
+.crumb.current { flex-shrink: 0; max-width: 70%; }
+.crumb-sep { flex: none; color: var(--faint); }
 .crumb strong { font-weight: 600; }
+.crumb-folded { flex: none; }
+.crumb-more > summary { list-style: none; cursor: pointer; color: var(--accent); padding: 0 4px; border-radius: 3px; }
+.crumb-more > summary::-webkit-details-marker { display: none; }
+.crumb-more > summary:hover, .crumb-more[open] > summary { background: var(--accent-soft); }
+.crumb-menu { position: absolute; z-index: 5; top: 100%; left: 8px; margin: 2px 0 0; padding: 6px 10px; list-style: none; display: flex; flex-direction: column; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14); }
 .crumb-hint { margin-left: auto; padding-left: 8px; flex: 1 1 0; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
 .step-title.code-text { white-space: normal; max-width: none; }
 .code-text:hover { text-decoration: underline; text-underline-offset: 2px; }
@@ -240,6 +260,8 @@ h1, h2, h3, h4 { margin: 0; }
 .branch-label::before { content: '└ '; color: var(--faint); font-weight: 400; }
 .toward { font-size: 12px; color: var(--muted); }
 .trace-row.removed del { color: var(--danger); }
+/* A removed node is one line too: its code shortens, the whole of it in the tooltip. */
+.trace .trace-row.removed > .trace-line > del { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trace-failure { font-size: 12px; color: var(--danger); padding-left: 26px; }
 .trace-row .diff { margin-left: 26px; }
 .exprs { margin: 2px 0 0 26px; padding-left: 1em; font-size: 12px; color: var(--fg); }
@@ -437,9 +459,17 @@ h1, h2, h3, h4 { margin: 0; }
 .change-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .where-inline { font-size: 11.5px; overflow-wrap: anywhere; }
 
-.change-summary ul { margin: 0; padding-left: 1.2em; font-size: 12.5px; }
-.change-summary .note { margin-top: 2px; }
+.change-summary ul { margin: 0; padding-left: 1.2em; font-size: 12.5px; overflow-wrap: anywhere; }
+.change-summary .note { margin-top: 2px; overflow-wrap: anywhere; }
 .ways { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+/* The ways of a frame changed in more than one place, under the change each leads to. */
+.way-groups { display: flex; flex-direction: column; gap: 8px; }
+.way-label { margin: 0 0 4px; font-size: 12.5px; color: var(--fg); overflow-wrap: anywhere; }
+.way-label code, .ways .row-text code { font-family: var(--font-code); font-size: 0.92em; }
+.ways .row-text.escapes { color: var(--danger); }
+.change-effect p { margin: 0; }
+.change-effect ul { margin: 2px 0 0; }
+.untraceable-callers .badge { vertical-align: 0; }
 .undocumented { border: 1px solid var(--fg); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; max-width: 72em; }
 .badge-required { background: var(--surface); color: var(--fg); border-style: dashed; }
 .drawer-diff { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; }
@@ -507,7 +537,19 @@ h1, h2, h3, h4 { margin: 0; }
   .code-drawer { width: 100vw; }
   .sidebar-open .body { grid-template-columns: minmax(0, 1fr); }
   .work.with-panel, .work.with-pane { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  .trace { padding-top: max(60px, calc(env(safe-area-inset-top, 0px) + 56px)); }
+  /* The bar of the outline leaves room for the floating ☰ (44px at 8px from the corner) and names the root; the hint has no room. */
+  .outline-tools { min-height: max(60px, calc(env(safe-area-inset-top, 0px) + 52px)); padding-left: max(64px, calc(env(safe-area-inset-left, 0px) + 60px)); gap: 8px; }
+  .outline-title { display: block; flex: 1 1 auto; }
+  .outline-hint { display: none; }
+  /* A row keeps room for its words: the counts of the changes, the change in words, the chips of the sides, the page and the diff go under </>; */
+  /* the badges and tags shorten only once the words are down to their least, and a deep row indents by less, so the line never runs past the screen. */
+  .trace-row { padding-left: calc(4px + min(var(--depth, 0), 10) * 12px); }
+  .trace-line { gap: 2px 6px; }
+  .trace-row:not(.branch) > .trace-line > .row-words { min-width: 40%; flex-shrink: 1000; }
+  .below-words, .trace-row > .trace-line > .row-change, .trace-row > .trace-line > .sides, .trace-row > .trace-line > .line-action { display: none; }
+  .trace .trace-row > .trace-line > :is(.badge, .below, .tag, .chip, .row-failure) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-sides { display: block; }
+  .row-actions { display: flex; }
   .twisty { width: 32px; height: 32px; font-size: 14px; }
   .side { line-height: 28px; padding: 0 12px; }
   .side-panel { border-left: 0; border-top: 1px solid var(--line); }

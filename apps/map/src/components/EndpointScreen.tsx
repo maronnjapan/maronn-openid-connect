@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import type { FlowEndpoint, MapData, Selection } from '../types';
-import { changeName, frameMark, type ChangeIndex } from '../lib/changes';
+import type { FlowEndpoint, MapData } from '../types';
+import { frameMark, waySelections, type ChangeIndex } from '../lib/changes';
 import { generatedWhen } from '../lib/model';
 import { endpointSources } from '../lib/source';
 import { entryOf, type TraceState } from '../lib/trace';
@@ -10,6 +10,7 @@ import { ScreenHeader } from './ScreenHeader';
 import { StepPanel } from './StepPanel';
 import { Trace } from './Trace';
 
+/** The endpoint an endpoint screen shows, its trace, and what a link asks it to select (see EndpointScreen). */
 export interface EndpointScreenProps {
   data: MapData;
   changes: ChangeIndex | undefined;
@@ -17,37 +18,25 @@ export interface EndpointScreenProps {
   endpoint: FlowEndpoint;
   trace: TraceState;
   enabled: ReadonlySet<string>;
+  /** The step a link names (`#hono--token--select-signing-keys`): the trace selects it and shows where it is. */
+  step?: string | null;
+  /** A node a way to a change leads to, keyed like a decision: the trace selects it once its frame shows. */
+  target?: string | null;
   onTrace: (next: TraceState) => void;
   onOpenFunction: (id: string) => void;
-}
-
-/** The ways from an endpoint to the changes of the pull request, as ready-made choices. */
-export function changeSelections(data: MapData, changes: ChangeIndex | undefined, framework: string, endpoint: string): Selection[] {
-  if (changes === undefined) return [];
-  return changes.changes.frames.flatMap((entry) =>
-    entry.reach
-      .filter((way) => way.endpoint === endpoint && way.frameworks.includes(framework))
-      .map((way): Selection => ({
-        kind: 'change',
-        name: `${changeName(data, entry)}${way.step === undefined ? '' : `（${way.step} から）`}`,
-        note: entry.summary[0] ?? '',
-        decisions: way.decisions,
-        frames: way.frames,
-        target: way.target,
-      })),
-  );
 }
 
 /**
  * One endpoint as a trace: what it does in a line, the ready-made choices,
  * and the outline of the frame its trace starts from (the handler of the
  * pipeline, or the Route Handler), each call opening its callee in place.
- * A step selected shows its facts beside the outline.
+ * A step selected shows its facts beside the outline; a step or a node a
+ * link names is selected and shown.
  */
-export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, onTrace, onOpenFunction }: EndpointScreenProps) {
+export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, step = null, target = null, onTrace, onOpenFunction }: EndpointScreenProps) {
   const [code, setCode] = useState<string | null>(null);
   const sources = useMemo(() => endpointSources(data, endpoint), [data, endpoint]);
-  const extra = useMemo(() => changeSelections(data, changes, framework, endpoint.id), [data, changes, framework, endpoint.id]);
+  const extra = useMemo(() => waySelections(data, changes, framework, endpoint.id, enabled), [data, changes, framework, endpoint.id, enabled]);
   const root = entryOf(data, endpoint.root);
   const mark = frameMark(changes, endpoint.root);
   return (
@@ -81,8 +70,11 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
           key={`${framework}/${endpoint.id}`}
           data={data}
           changes={changes}
+          framework={framework}
           rootId={endpoint.root}
           extraSelections={extra}
+          step={step}
+          target={target}
           state={trace}
           onState={onTrace}
           enabled={enabled}

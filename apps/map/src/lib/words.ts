@@ -5,12 +5,15 @@
  *
  * The words come from what the repository already requires or writes: the
  * label of a step, the JSDoc of the function a call reaches (the first line
- * is linted), the JSDoc of an interface member, and the comment above a
- * statement. Where none of these says what a statement does (a variable, a
- * condition written in code), the row shows the code itself: words made up
- * from the code read worse than the code.
+ * is linted), the JSDoc of an interface member, the JSDoc of the predicate a
+ * condition is, and the comment above a statement. Where none of these says
+ * what a statement does (a variable, a condition written in code), the row
+ * shows the code itself, and the words the analysis made from a condition
+ * go to its tooltip. Words are made from the code only where they read
+ * plainly: what a run of such statements binds or sets (runWords), what a
+ * return returns (returnedWords), the side of a decision, how a side ends.
  */
-import type { MapData, TreeNode } from '../types';
+import type { Branch, MapData, TreeNode } from '../types';
 
 /** One line for a row: natural language, or the code where there are no words. */
 export interface Words {
@@ -65,8 +68,11 @@ export function nodeWords(node: TreeNode, source: WordSource, call?: TreeNode): 
       return summary === undefined ? code(node.code) : words(summary);
     }
     case 'return': {
-      const said = writtenWords(node) ?? (call === undefined ? undefined : calleeSummary(call, source)) ?? returnedWords(node.code);
-      return said === undefined ? code(node.code, '終わり') : words(said, '終わり');
+      // A return in a callback ends the callback, not the frame: it gives the callback's value, and its row says no end.
+      const tag = node.local === true ? undefined : '終わり';
+      // The JSDoc of a call says what the return answers only when the return returns that call; an object that holds a call reads as its keys.
+      const said = writtenWords(node) ?? (call !== undefined && returnsCall(node, call) ? calleeSummary(call, source) : undefined) ?? returnedWords(node.code);
+      return said === undefined ? code(node.code, tag) : words(said, tag);
     }
     case 'throw': {
       const said = writtenWords(node);
@@ -83,12 +89,64 @@ export function nodeWords(node: TreeNode, source: WordSource, call?: TreeNode): 
   }
 }
 
-/** The calls evaluated before a node, split into the one its row stands for (the last, when it is a plain call and the node is not a call itself) and the others, which keep rows of their own. */
+/**
+ * Whether a return returns a call itself (`return f(x)`, `return await f(x)`),
+ * not a value the call is a part of (`return { a: f(x) }`, `return [...f(x)]`,
+ * `return f(x).y`): the value starts with the call's callee, and the
+ * parenthesis its arguments open closes at the end of the value (or the
+ * shortened code ends before it does).
+ */
+export function returnsCall(node: TreeNode, call: TreeNode): boolean {
+  const value = node.code.replace(/\s+/g, ' ').trim().replace(/^return\s+/, '').replace(/^await\s+/, '').replace(/;$/, '').trim();
+  const called = call.code.replace(/\s+/g, ' ').trim().replace(/^await\s+/, '');
+  if (value === called) return true;
+  const open = called.indexOf('(');
+  if (open <= 0 || !value.startsWith(called.slice(0, open + 1))) return false;
+  let depth = 0;
+  let quote = '';
+  for (let index = open; index < value.length; index += 1) {
+    const char = value[index] as string;
+    if (quote !== '') {
+      if (char === quote) quote = '';
+    } else if (char === "'" || char === '"' || char === '`') quote = char;
+    else if (char === '(') depth += 1;
+    else if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return index === value.length - 1;
+    }
+  }
+  return true;
+}
+
+/**
+ * The calls evaluated before a node, split into the one its row stands for
+ * and the others, which keep rows of their own. A condition or a throw
+ * stands for the last call evaluated before it, when that is a plain call; a
+ * return only when it returns that call (see returnsCall); a call stands for
+ * none.
+ */
 export function splitPre(node: TreeNode): { call?: TreeNode; others: TreeNode[] } {
   const pre = node.pre ?? [];
   const last = pre[pre.length - 1];
   if (node.kind === 'call' || last === undefined || last.kind !== 'call' || last.branches !== undefined) return { others: [...pre] };
+  if (node.kind === 'return' && !returnsCall(node, last)) return { others: [...pre] };
   return { call: last, others: pre.slice(0, -1) };
+}
+
+/**
+ * The label of a side of a decision, told apart from the other sides: its
+ * own, unless another side has the same one (the handlers of a Route
+ * Handler, `GET | POST /userinfo` both); such a side is named by the function
+ * it calls first (`GET /userinfo`), else by its place (`…（2）`).
+ */
+export function sideLabel(node: TreeNode, branch: Branch): string {
+  const sides = node.branches ?? [];
+  if (sides.filter((other) => other.label === branch.label).length < 2) return branch.label;
+  const first = branch.nodes[0];
+  const name = first?.kind === 'call' && first.target?.kind === 'function' ? first.target.id.slice(first.target.id.indexOf('#') + 1) : undefined;
+  const route = /^([A-Z]+(?: \| [A-Z]+)*) (\/\S*)$/.exec(branch.label);
+  if (name !== undefined && route !== null && (route[1] as string).split(' | ').includes(name)) return `${name} ${route[2] as string}`;
+  return name ?? `${branch.label}（${sides.indexOf(branch) + 1}）`;
 }
 
 /** The words of a side read as one line after an arrow: what it calls and how it ends (`→ 終わり: トークンを返す`), `何もしない` for nothing. */

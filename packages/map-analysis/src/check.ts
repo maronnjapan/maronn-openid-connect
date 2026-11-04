@@ -54,9 +54,15 @@ export function uncoveredLines(tree: FlowTree, text: string | undefined): number
   return missing;
 }
 
-/** Whether a line is inside a node of a tree, or in its head (JSDoc and declaration). */
+/**
+ * Whether a line is inside a node of a tree, in its head (JSDoc and
+ * declaration), or on the last line of the frame (the brace that closes the
+ * body, which no node holds when the body ends in a return: every line of an
+ * added function is a changed one, that brace included).
+ */
 function inTree(tree: FlowTree, line: number): boolean {
   if (line >= tree.lines[0] && line <= tree.head[1]) return true;
+  if (line === tree.lines[1]) return true;
   const visit = (nodes: readonly TreeNode[]): boolean => nodes.some((node) => line >= node.lines[0] && line <= node.lines[1]);
   return visit(tree.nodes);
 }

@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { activeOf, defaultChecked, deriveCases, ERROR_CASE, layoutGraph, MAIN_CASE, textColumns, truncateColumns, type GraphEdge, type GraphNode } from './graph';
+import { compactArguments, layoutGraph, textColumns, truncateColumns, wrapColumns, type GraphEdge, type GraphGroup, type GraphNode, type LayoutBox, type LayoutGroup } from './graph';
 
 const nodes = (...ids: string[]): GraphNode[] => ids.map((id) => ({ id }));
-const label = (id: string) => id.toUpperCase();
-const endpointOptions = { errors: 'modifier' as const, nodeLabel: label, nameBySink: false };
 
 /** A token endpoint in small: two grants after a fork, a dispatch that answers itself, and an error step. */
 const tokenNodes = nodes('parse', 'dispatch', 'grant', 'code', 'refresh', 'issue', 'respond', 'error');
@@ -20,115 +18,6 @@ const tokenEdges: GraphEdge[] = [
   { from: 'code', to: 'error', kind: 'error' },
   { from: 'refresh', to: 'error', kind: 'error' },
 ];
-
-describe('deriveCases', () => {
-  it('should keep different exits selectable separately even when their displayed return or error labels match', () => {
-    const edges: GraphEdge[] = [{ from: 's', to: 'a', kind: 'branch' }, { from: 's', to: 'b', kind: 'branch' }];
-    const cases = deriveCases(nodes('s', 'a', 'b'), edges, { errors: 'path', nodeLabel: () => 'same response', nameBySink: true, maxPaths: 1 });
-    expect(cases.map((flowCase) => flowCase.label)).toEqual(['→ same response', '→ same response (2)']);
-  });
-
-  it('should make a case of each path, named by its labels, and one for the error arrows', () => {
-    const cases = deriveCases(tokenNodes, tokenEdges, endpointOptions);
-    expect(cases.map((flowCase) => [flowCase.label, flowCase.kind, flowCase.nodes])).toEqual([
-      ['authorization_code', 'path', ['parse', 'dispatch', 'grant', 'code', 'issue', 'respond']],
-      ['refresh_token', 'path', ['parse', 'dispatch', 'grant', 'refresh', 'issue', 'respond']],
-      ['answered', 'path', ['parse', 'dispatch', 'respond']],
-      [ERROR_CASE, 'error', []],
-    ]);
-  });
-
-  it('should name the only path without a label as the main flow', () => {
-    const cases = deriveCases(nodes('a', 'b'), [{ from: 'a', to: 'b', kind: 'flow' }], endpointOptions);
-    expect(cases.map((flowCase) => flowCase.label)).toEqual([MAIN_CASE]);
-  });
-
-  it('should tell apart paths whose labels match by the box their last label leaves', () => {
-    const edges: GraphEdge[] = [
-      { from: 'a', to: 'b', kind: 'flow' },
-      { from: 'a', to: 'end', kind: 'branch', label: 'answered' },
-      { from: 'b', to: 'c', kind: 'flow' },
-      { from: 'b', to: 'end', kind: 'branch', label: 'answered' },
-      { from: 'c', to: 'end', kind: 'flow' },
-    ];
-    expect(deriveCases(nodes('a', 'b', 'c', 'end'), edges, endpointOptions).map((flowCase) => flowCase.label)).toEqual([MAIN_CASE, 'B: answered', 'A: answered']);
-  });
-
-  it('should start a path of a screen at each method and keep it on that method', () => {
-    const edges: GraphEdge[] = [
-      { from: 'load', to: 'show', kind: 'flow', label: 'GET' },
-      { from: 'reject-cross-origin', to: 'load', kind: 'flow', label: 'POST' },
-      { from: 'load', to: 'check', kind: 'flow', label: 'POST' },
-      { from: 'check', to: 'session', kind: 'branch', label: 'authenticated' },
-    ];
-    const cases = deriveCases(nodes('load', 'show', 'reject-cross-origin', 'check', 'session'), edges, endpointOptions);
-    expect(cases.map((flowCase) => [flowCase.label, flowCase.nodes])).toEqual([
-      ['GET', ['load', 'show']],
-      ['POST › authenticated', ['reject-cross-origin', 'load', 'check', 'session']],
-    ]);
-  });
-
-  it('should follow the arrows into a catch block of a function and name each case by where it ends', () => {
-    const edges: GraphEdge[] = [
-      { from: 'start', to: 'run', kind: 'flow' },
-      { from: 'run', to: 'ok', kind: 'flow' },
-      { from: 'start', to: 'handle', kind: 'error', label: 'catch' },
-      { from: 'handle', to: 'failed', kind: 'flow' },
-    ];
-    const cases = deriveCases(nodes('start', 'run', 'ok', 'handle', 'failed'), edges, { errors: 'path', nodeLabel: label, nameBySink: true });
-    expect(cases.map((flowCase) => flowCase.label)).toEqual(['→ OK', 'catch → FAILED']);
-  });
-
-  it('should fall back to one case per box the diagram ends at when there are too many paths', () => {
-    const edges: GraphEdge[] = [
-      { from: 's', to: 'a', kind: 'branch', label: 'x' },
-      { from: 's', to: 'b', kind: 'flow' },
-      { from: 'a', to: 'b', kind: 'flow' },
-      { from: 'b', to: 'c', kind: 'branch', label: 'y' },
-      { from: 'b', to: 'd', kind: 'flow' },
-      { from: 'c', to: 'd', kind: 'flow' },
-      { from: 'b', to: 'fail', kind: 'branch', label: 'z' },
-    ];
-    const cases = deriveCases(nodes('s', 'a', 'b', 'c', 'd', 'fail'), edges, { errors: 'path', nodeLabel: label, nameBySink: true, maxPaths: 3 });
-    expect(cases.map((flowCase) => [flowCase.kind, flowCase.label, flowCase.nodes])).toEqual([
-      ['exit', '→ D', ['s', 'a', 'b', 'c', 'd']],
-      ['exit', '→ FAIL', ['s', 'a', 'b', 'fail']],
-    ]);
-  });
-});
-
-describe('defaultChecked', () => {
-  it('should check the first case only', () => {
-    expect([...defaultChecked(deriveCases(tokenNodes, tokenEdges, endpointOptions))]).toEqual(['c0']);
-  });
-});
-
-describe('activeOf', () => {
-  const cases = deriveCases(tokenNodes, tokenEdges, endpointOptions);
-
-  it('should use the boxes and arrows of the checked cases only', () => {
-    const active = activeOf(cases, new Set(['c2']), tokenEdges);
-    expect([...active.nodes]).toEqual(['parse', 'dispatch', 'respond']);
-    expect([...active.edges]).toEqual([0, 7]);
-  });
-
-  it('should add the error arrows from the boxes of the checked cases when the error case is checked', () => {
-    const active = activeOf(cases, new Set(['c0', 'error']), tokenEdges);
-    expect([...active.edges].filter((index) => tokenEdges[index]!.kind === 'error')).toEqual([8, 9]);
-    expect(active.nodes.has('error')).toBe(true);
-    expect(active.nodes.has('refresh')).toBe(false);
-  });
-
-  it('should show every error arrow when the error case is checked alone', () => {
-    const active = activeOf(cases, new Set(['error']), tokenEdges);
-    expect([...active.edges]).toEqual([8, 9, 10]);
-    expect([...active.nodes]).toEqual(['parse', 'error', 'code', 'refresh']);
-  });
-
-  it('should use nothing when no case is checked', () => {
-    expect(activeOf(cases, new Set(), tokenEdges)).toEqual({ nodes: new Set(), edges: new Set() });
-  });
-});
 
 describe('layoutGraph', () => {
   const forkNodes = nodes('start', 'left', 'right', 'join');
@@ -149,7 +38,7 @@ describe('layoutGraph', () => {
     expect(layout.arrows.map((arrow) => arrow.label?.text)).toEqual(['yes', 'no', undefined, undefined]);
   });
 
-  it('should keep positions and dimensions stable when cases change and draw only the requested arrows', () => {
+  it('should keep positions and dimensions stable when the choice changes and draw only the requested arrows', () => {
     const first = layoutGraph(tokenNodes, tokenEdges, new Set([0, 7]));
     const all = layoutGraph(tokenNodes, tokenEdges, new Set(tokenEdges.map((_, index) => index)));
     expect(first.boxes).toEqual(all.boxes);
@@ -217,6 +106,152 @@ describe('layoutGraph', () => {
     expect(layout.arrows).toEqual([]);
     expect(layoutGraph([], [], new Set()).boxes).toEqual([]);
   });
+
+  it('should lay out a straight column with 320px boxes of their own heights, 20px apart inside 12px margins', () => {
+    const heights: Record<string, number> = { a: 36, b: 80, c: 48, d: 50 };
+    const chain: GraphEdge[] = [
+      { from: 'a', to: 'b', kind: 'flow' },
+      { from: 'b', to: 'c', kind: 'flow' },
+      { from: 'c', to: 'd', kind: 'flow' },
+    ];
+    const layout = layoutGraph(nodes('a', 'b', 'c', 'd'), chain, new Set([0, 1, 2]), 'TB', { height: (id) => heights[id] as number });
+    expect(layout.boxWidth).toBe(320);
+    expect(layout.boxes.map((box) => [box.x, box.width, box.height])).toEqual([[12, 320, 36], [12, 320, 80], [12, 320, 48], [12, 320, 50]]);
+    expect(layout.boxes.map((box) => box.y)).toEqual([12, 68, 168, 236]);
+    expect([layout.width, layout.height]).toEqual([344, 298]);
+  });
+
+  it('should narrow every box to 200px when the sides of a fork share a rank', () => {
+    const layout = layoutGraph(forkNodes, forkEdges, new Set([0, 1, 2, 3]));
+    expect(layout.boxWidth).toBe(200);
+    expect(layout.boxes.map((box) => [box.width, box.height])).toEqual([[200, 48], [200, 48], [200, 48], [200, 48]]);
+    expect(layout.width).toBe(440);
+  });
+
+  it('should keep 320px boxes for the same fork from left to right', () => {
+    const layout = layoutGraph(forkNodes, forkEdges, new Set([0, 1, 2, 3]), 'LR');
+    expect(layout.boxWidth).toBe(320);
+    expect(layout.boxes.map((box) => box.width)).toEqual([320, 320, 320, 320]);
+  });
+
+  it('should ask options.height for the final width and give each box that height', () => {
+    const asked: Array<[string, number]> = [];
+    const height = (id: string, width: number): number => {
+      asked.push([id, width]);
+      return 30 + id.length * 4 + width / 20;
+    };
+    const layout = layoutGraph(forkNodes, forkEdges, new Set(), 'TB', { height });
+    expect(layout.boxWidth).toBe(200);
+    expect(layout.boxes.map((box) => [box.id, box.height])).toEqual([['start', 60], ['left', 56], ['right', 60], ['join', 56]]);
+    expect(Object.fromEntries(asked)).toEqual({ start: 200, left: 200, right: 200, join: 200 });
+  });
+
+  it('should keep boxes, width and height identical for every subset of shown arrows when the boxes have their own heights', () => {
+    const guardNodes = nodes('start', 'check', 'yes', 'no', 'join', 'error');
+    const guardEdges: GraphEdge[] = [
+      { from: 'start', to: 'check', kind: 'flow' },
+      { from: 'check', to: 'yes', kind: 'branch', label: 'ある' },
+      { from: 'check', to: 'no', kind: 'branch', label: 'ない' },
+      { from: 'yes', to: 'join', kind: 'flow' },
+      { from: 'no', to: 'join', kind: 'flow' },
+      { from: 'check', to: 'error', kind: 'error' },
+    ];
+    const heights: Record<string, number> = { start: 36, check: 80, yes: 48, no: 64, join: 48, error: 36 };
+    // A title wraps onto more lines in a narrower box.
+    const height = (id: string, width: number): number => (heights[id] as number) + 3200 / width;
+    const subsets = guardEdges.reduce<number[][]>((sets, _, index) => [...sets, ...sets.map((set) => [...set, index])], [[]]);
+    const layouts = subsets.map((shown) => layoutGraph(guardNodes, guardEdges, new Set(shown), 'TB', { height }));
+    const placements = layouts.map(({ boxes, width, height: tall, boxWidth }) => ({ boxes, width, height: tall, boxWidth }));
+    expect(subsets).toHaveLength(64);
+    expect(placements).toEqual(placements.map(() => placements[0]));
+    expect(placements[0]!.boxWidth).toBe(200);
+    expect(placements[0]!.boxes.map((box) => box.height)).toEqual([52, 96, 64, 80, 64, 52]);
+    expect(layouts.map((layout) => layout.arrows.map((arrow) => arrow.index))).toEqual(subsets);
+  });
+});
+
+/**
+ * A try in small: a region around three boxes with a region around the middle one, its error arrow to a
+ * handler, and beside it the other side of a fork before it.
+ */
+const regionNodes = nodes('start', 'a', 'b', 'c', 'other', 'handler', 'end');
+const regionEdges: GraphEdge[] = [
+  { from: 'start', to: 'a', kind: 'branch', label: '成立' },
+  { from: 'a', to: 'b', kind: 'flow' },
+  { from: 'b', to: 'c', kind: 'flow' },
+  { from: 'c', to: 'end', kind: 'flow' },
+  { from: 'start', to: 'other', kind: 'branch', label: '不成立' },
+  { from: 'other', to: 'end', kind: 'flow' },
+  { from: 'outer', to: 'handler', kind: 'error', label: '例外が起きたとき' },
+  { from: 'handler', to: 'end', kind: 'flow' },
+];
+const regionGroups: GraphGroup[] = [
+  { id: 'outer', members: ['a', 'b', 'c'] },
+  { id: 'inner', parent: 'outer', members: ['b'] },
+];
+const headers: Record<string, number> = { outer: 30, inner: 30 };
+
+/** Whether two rectangles overlap (touching edges do not). */
+const overlaps = (a: LayoutBox | LayoutGroup, b: LayoutBox | LayoutGroup) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+/** Whether a rectangle lies inside another with at least a margin around it. */
+const encloses = (outer: LayoutBox | LayoutGroup, inner: LayoutBox | LayoutGroup, margin: number) =>
+  inner.x - outer.x >= margin && inner.y - outer.y >= margin && outer.x + outer.width - (inner.x + inner.width) >= margin && outer.y + outer.height - (inner.y + inner.height) >= margin;
+
+describe('layoutGraph with regions', () => {
+  const layoutOf = (direction: 'TB' | 'LR', shown: ReadonlySet<number> = new Set(regionEdges.map((_, index) => index))) =>
+    layoutGraph(regionNodes, regionEdges, shown, direction, { height: () => 34, groups: regionGroups, header: (id) => headers[id] as number });
+
+  it.each(['TB', 'LR'] as const)('should enclose the boxes of each region and the region inside it, keep every other box outside, and make the room of its label at the top in %s', (direction) => {
+    const layout = layoutOf(direction);
+    const box = (id: string) => layout.boxes.find((candidate) => candidate.id === id) as LayoutBox;
+    const [outer, inner] = layout.groups as [LayoutGroup, LayoutGroup];
+    expect(layout.groups.map((group) => group.id)).toEqual(['outer', 'inner']);
+    expect(['a', 'b', 'c'].map((id) => encloses(outer, box(id), 8))).toEqual([true, true, true]);
+    expect(encloses(outer, inner, 8)).toBe(true);
+    expect(encloses(inner, box('b'), 8)).toBe(true);
+    expect(['start', 'other', 'handler', 'end'].filter((id) => overlaps(outer, box(id)))).toEqual([]);
+    expect(['a', 'c'].filter((id) => overlaps(inner, box(id)))).toEqual([]);
+    expect(Math.min(box('a').y, inner.y) - outer.y).toBeGreaterThanOrEqual(30);
+    expect(box('b').y - inner.y).toBeGreaterThanOrEqual(30);
+    expect([...layout.boxes, ...layout.groups].every((rect) => rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= layout.width && rect.y + rect.height <= layout.height)).toBe(true);
+  });
+
+  it.each(['TB', 'LR'] as const)('should draw an arrow from a region from its border, laid out from its last box, in %s', (direction) => {
+    const layout = layoutOf(direction);
+    const outer = layout.groups[0] as LayoutGroup;
+    const error = layout.arrows.find((arrow) => arrow.index === 6)!;
+    const first = error.points[0]!;
+    const label = error.label!;
+    const distances = [first.x - outer.x, outer.x + outer.width - first.x, first.y - outer.y, outer.y + outer.height - first.y];
+    expect(Math.min(...distances.map(Math.abs))).toBeLessThan(0.5);
+    expect(Math.min(...distances)).toBeGreaterThan(-0.5);
+    expect(label.text).toBe('例外が起きたとき');
+    expect(overlaps(outer, { id: 'label', x: label.x - label.width / 2, y: label.y - label.height / 2, width: label.width, height: label.height })).toBe(false);
+  });
+
+  it.each(['TB', 'LR'] as const)('should keep boxes, regions, width and height identical whichever arrows are shown in %s', (direction) => {
+    const subsets = [[], regionEdges.map((_, index) => index), ...regionEdges.map((_, index) => [index])];
+    const placements = subsets.map((shown) => {
+      const { boxes, groups, width, height, boxWidth } = layoutOf(direction, new Set(shown));
+      return { boxes, groups, width, height, boxWidth };
+    });
+    expect(placements).toEqual(placements.map(() => placements[0]));
+    expect(subsets.map((shown) => layoutOf(direction, new Set(shown)).arrows.map((arrow) => arrow.index))).toEqual(subsets);
+  });
+
+  it('should keep 200px boxes when the sides of a fork share a rank, and leave a graph without regions as it was', () => {
+    expect(layoutOf('TB').boxWidth).toBe(200);
+    const plain = layoutGraph(regionNodes, regionEdges.slice(0, 6), new Set([0, 1, 2]), 'TB', { height: () => 34 });
+    const grouped = layoutGraph(regionNodes, regionEdges.slice(0, 6), new Set([0, 1, 2]), 'TB', { height: () => 34, groups: [] });
+    expect(grouped).toEqual(plain);
+    expect(plain.groups).toEqual([]);
+  });
+
+  it('should leave out a region that encloses no box and lay out an arrow to it nowhere', () => {
+    const layout = layoutGraph(nodes('a', 'b'), [{ from: 'a', to: 'b', kind: 'flow' }, { from: 'empty', to: 'b', kind: 'error' }], new Set([0, 1]), 'TB', { groups: [{ id: 'empty', members: ['missing'] }] });
+    expect(layout.groups).toEqual([]);
+    expect(layout.arrows.map((arrow) => arrow.index)).toEqual([0]);
+  });
 });
 
 describe('truncateColumns', () => {
@@ -227,37 +262,103 @@ describe('truncateColumns', () => {
   });
 });
 
-describe('deriveCases of a function', () => {
-  it('should include the returning arrow in a loop case and stop after one iteration', () => {
-    const edges: GraphEdge[] = [
-      { from: 'start', to: 'work', kind: 'flow' },
-      { from: 'work', to: 'done', kind: 'branch', label: 'done' },
-      { from: 'work', to: 'work', kind: 'branch', label: 'retry' },
-    ];
-    const cases = deriveCases(nodes('start', 'work', 'done'), edges, endpointOptions);
-    expect(cases.map((flowCase) => [flowCase.label, flowCase.nodes, flowCase.edges])).toEqual([
-      ['done', ['start', 'work', 'done'], [0, 1]],
-      ['retry', ['start', 'work', 'work'], [0, 2]],
-    ]);
-    expect([...activeOf(cases, new Set(['c1']), edges).edges]).toEqual([0, 2]);
+describe('wrapColumns', () => {
+  it('should count a wide character as two columns', () => {
+    expect(wrapColumns('認可コードを発行', 8, 2)).toEqual(['認可コー', 'ドを発行']);
   });
 
-  it('should give a disconnected cycle a selectable case', () => {
-    const edges: GraphEdge[] = [
-      { from: 'a', to: 'b', kind: 'flow' },
-      { from: 'b', to: 'a', kind: 'branch', label: 'repeat' },
-    ];
-    expect(deriveCases(nodes('a', 'b'), edges, endpointOptions).map((flowCase) => flowCase.edges)).toEqual([[0, 1]]);
+  it('should break after 、 in the last 40% of a line', () => {
+    expect(wrapColumns('トークンを検証し、署名を確かめる', 20, 2)).toEqual(['トークンを検証し、', '署名を確かめる']);
   });
 
-  it('should list the path that runs the most first, so the main flow is the one checked at first', () => {
-    const edges: GraphEdge[] = [
-      { from: 'start', to: 'check', kind: 'flow' },
-      { from: 'check', to: 'fail', kind: 'branch', label: '!ok' },
-      { from: 'check', to: 'work', kind: 'branch', label: 'ok' },
-      { from: 'work', to: 'done', kind: 'flow' },
-    ];
-    const cases = deriveCases(nodes('start', 'check', 'fail', 'work', 'done'), edges, { errors: 'path', nodeLabel: label, nameBySink: true });
-    expect(cases.map((flowCase) => flowCase.label)).toEqual(['ok → DONE', '!ok → FAIL']);
+  it('should break at a space in the last 40% of a line and drop it', () => {
+    expect(wrapColumns('const client = await findClient(id)', 24, 2)).toEqual(['const client = await', 'findClient(id)']);
+  });
+
+  it('should break before an upper-case letter that follows a lower-case one', () => {
+    expect(wrapColumns('verifyIdJagAssertion()', 14, 2)).toEqual(['verifyIdJag', 'Assertion()']);
+  });
+
+  it('should prefer a space to a later camelCase boundary when both keep the whole text', () => {
+    expect(wrapColumns('return signJwt(header, payload, privateKey)', 40, 2)).toEqual(['return signJwt(header, payload,', 'privateKey)']);
+  });
+
+  it('should keep a text on one line when only its closing punctuation runs past the end', () => {
+    expect(wrapColumns('buildAccessTokenAudience()', 25, 2)).toEqual(['buildAccessTokenAudience()']);
+    expect(wrapColumns('return { name, namedCurve }', 25, 2)).toEqual(['return { name, namedCurve }']);
+    expect(wrapColumns('デバイス認可レスポンスで応答する（no-store）', 42, 2)).toEqual(['デバイス認可レスポンスで応答する（no-store）']);
+    expect(wrapColumns('return signJwt(header, payload, privateKey)', 42, 2)).toEqual(['return signJwt(header, payload, privateKey)']);
+  });
+
+  it('should keep closing punctuation at the end of a line rather than start the next line with it', () => {
+    expect(wrapColumns('▾ サブジェクト、auth_time、nonce を取り出す', 25, 2)).toEqual(['▾ サブジェクト、auth_time、', 'nonce を取り出す']);
+    expect(wrapColumns('return createFormPostResponseMode({ issuer })', 42, 2)).toEqual(['return createFormPostResponseMode({', 'issuer })']);
+    expect(wrapColumns('return info ? { tokenType, accessToken } : null', 25, 2)).toEqual(['return info ? { tokenType,', 'accessToken } : null']);
+    expect(wrapColumns('「認可」を確かめる', 4, 3)).toEqual(['「認', '可」', 'を…']);
+  });
+
+  it('should end a line a character early when the closing punctuation after it takes more than two columns', () => {
+    expect(wrapColumns('abcdefghij)))', 10, 2)).toEqual(['abcdefghi', 'j)))']);
+  });
+
+  it('should break at the limit when a line has no good break', () => {
+    expect(wrapColumns('abcdefghijklmnopqrstuvwxyz', 10, 3)).toEqual(['abcdefghij', 'klmnopqrst', 'uvwxyz']);
+  });
+
+  it('should end a line at an earlier good break when the whole text still fits', () => {
+    expect(wrapColumns('return AUTHORIZATION_CODE_TTL', 24, 2)).toEqual(['return', 'AUTHORIZATION_CODE_TTL']);
+    expect(wrapColumns('認可、コードを発行する', 16, 2)).toEqual(['認可、', 'コードを発行する']);
+  });
+
+  it('should break at the limit when only that shows the whole text', () => {
+    expect(wrapColumns('c.req.header(name)', 10, 2)).toEqual(['c.req.head', 'er(name)']);
+  });
+
+  it('should fill the lines of a text too long for them, taking a good break only in the last 40% of a line', () => {
+    expect(wrapColumns('return AUTHORIZATION_CODE_TTL_IN_SECONDS_FOR_REFRESH', 24, 2)).toEqual(['return AUTHORIZATION_COD', 'E_TTL_IN_SECONDS_FOR_RE…']);
+  });
+
+  it('should end only a last line that cuts the text with an ellipsis', () => {
+    expect(wrapColumns('トークンを検証し、署名と有効期限と発行者を確かめる', 20, 2)).toEqual(['トークンを検証し、', '署名と有効期限と発…']);
+    expect(wrapColumns('aaaa bbbb cccc', 10, 2)).toEqual(['aaaa bbbb', 'cccc']);
+    expect(wrapColumns('認可コードを発行する', 9, 1)).toEqual([truncateColumns('認可コードを発行する', 9)]);
+  });
+
+  it('should keep a short text on one line', () => {
+    expect(wrapColumns('issueToken()', 42, 2)).toEqual(['issueToken()']);
+    expect(wrapColumns('', 42, 2)).toEqual(['']);
+  });
+});
+
+describe('compactArguments', () => {
+  it('should replace the arguments of a call with (…)', () => {
+    expect(compactArguments("return oauthError('invalid_request', `…`)")).toBe('return oauthError(…)');
+    expect(compactArguments("例外 → throw new OAuthError('invalid_client', 'unknown client')")).toBe('例外 → throw new OAuthError(…)');
+  });
+
+  it('should replace nested parentheses with the arguments around them', () => {
+    expect(compactArguments('return c.json(toBody(error, { status: (code ?? 400) }), 400)')).toBe('return c.json(…)');
+  });
+
+  it('should not end the arguments at a parenthesis inside a string or a template literal', () => {
+    expect(compactArguments("throw new OAuthError(`client ${clientId(request)} (unknown)`, ')')")).toBe('throw new OAuthError(…)');
+    expect(compactArguments("throw new OAuthError(`unknown: ${names.map((name, index) => `${index + 1}) ${name}`).join(', ')}`)")).toBe('throw new OAuthError(…)');
+  });
+
+  it('should compact each call of a chain and an optional call', () => {
+    expect(compactArguments("c.req.header('Authorization')?.split(' ')")).toBe('c.req.header(…)?.split(…)');
+    expect(compactArguments('handlers[name](request) ?? callback?.(value)')).toBe('handlers[name](…) ?? callback?.(…)');
+  });
+
+  it('should compact an argument list the text cuts off', () => {
+    expect(compactArguments('return buildRefreshTokenRequest(refreshTokenInfo, authenticatedClientI…')).toBe('return buildRefreshTokenRequest(…)');
+  });
+
+  it('should leave text without a call unchanged', () => {
+    expect(compactArguments('if (!client && (grant || scope))')).toBe('if (!client && (grant || scope))');
+    expect(compactArguments("if(typeof(value) !== 'string')")).toBe("if(typeof(value) !== 'string')");
+    expect(compactArguments("return '(none)'")).toBe("return '(none)'");
+    expect(compactArguments('→ 2 通りで終わる')).toBe('→ 2 通りで終わる');
+    expect(compactArguments('await next()')).toBe('await next()');
   });
 });

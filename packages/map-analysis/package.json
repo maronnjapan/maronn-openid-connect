@@ -1,0 +1,28 @@
+{
+  "name": "@maronn-openid-connect/map-analysis",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The analysis behind the OIDC Provider Map: the flow tree of every function and endpoint read with the TypeScript compiler, the tree diff of a pull request, its reach and the change notes; apps/map shows what it writes",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./model": {
+      "types": "./src/model.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@maronn-openid-connect/cli": "workspace:*",
+    "@types/node": "^26.6.6",
+    "shiki": "4.5.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

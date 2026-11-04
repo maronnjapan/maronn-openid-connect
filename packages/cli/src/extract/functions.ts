@@ -20,11 +20,14 @@
  *
  * A call the text does not show — a method of a resolver or a store the
  * request context holds, a hook a feature registers — is not in a card. The
- * step meta lists those in its `calls`.
+ * step meta lists those in its `calls`. The flow inside a function (its
+ * branches, and the calls of the members) is read with the TypeScript
+ * compiler by the map of the repository (packages/map-analysis), which the
+ * published CLI does not need.
  */
 import { posix } from 'node:path';
-import { buildFunctionFlow, codeMaskOf, type FunctionFlow } from './function-flow.js';
 import { codeOf, type StepKind } from './meta.js';
+import { codeMaskOf } from './tokens.js';
 import { joinLines, joinLinesFlat } from './prose.js';
 
 /** The responsibility of a function: the step kinds, or `other` for one the name does not tell. */
@@ -83,23 +86,6 @@ export interface FunctionProject {
   /** The top-level function declaration of a file whose body holds an offset, with the body's range. */
   enclosingBody(root: string, path: string, offset: number): { start: number; end: number } | undefined;
   /**
-   * The flow inside the function of a card (function-flow.ts): its calls in
-   * order, its branches and its exits. Undefined for an unknown id, a
-   * declaration without a body, or a body that cannot be read as statements.
-   */
-  flowOf(id: string): FunctionFlow | undefined;
-  /**
-   * What a call the catalog cannot resolve does — a method of a resolver or a
-   * store (`consentResolver.recordConsent`) — read from the JSDoc of the
-   * member of the interface or type the receiver is (ConsentResolver, or the
-   * type whose name the receiver's name best matches).
-   */
-  describeMember(call: string): MemberDoc | undefined;
-  /** The member of an interface or type a call names, documented or not (see describeMember). */
-  memberOf(call: string): MemberDoc | undefined;
-  /** A member by its id, `Type.member` (the `member` of a box of a flow). */
-  memberById(id: string): MemberDoc | undefined;
-  /**
    * The lines the function of a card takes in its file: its JSDoc, its
    * declaration and its body (the map of a pull request compares them with
    * the base to tell which functions the pull request changed). Undefined for
@@ -120,20 +106,6 @@ export interface FunctionSpan {
   start: number;
   /** The line of the brace that closes the body; the line of the declaration for one without a body. */
   end: number;
-}
-
-/** The JSDoc of a member of an interface or a type literal. */
-export interface MemberDoc {
-  /** The interface or type alias that declares the member. */
-  type: string;
-  member: string;
-  summary: string;
-  /** The root and the module of the declaration, as in the id of a card. */
-  package: string;
-  module: string;
-  line: number;
-  /** For a property (`store: CibaAuthenticationRequestStore`), the text of its type. */
-  annotation?: string;
 }
 
 /** The keywords and operators a `name(` may be, which are not calls. */
@@ -284,9 +256,9 @@ interface ParsedFile {
 }
 
 /**
- * Which characters of a source are code: read with the tokenizer of the flows
- * (function-flow.ts), which knows regular expressions and template literals;
- * a source it cannot read falls back to codeOf (strings and comments only).
+ * Which characters of a source are code: read with the tokenizer (tokens.ts),
+ * which knows regular expressions and template literals; a source it cannot
+ * read falls back to codeOf (strings and comments only).
  */
 function codeMask(source: string): Uint8Array {
   try {
@@ -523,25 +495,6 @@ class Project implements FunctionProject {
     return undefined;
   }
 
-  flowOf(id: string): FunctionFlow | undefined {
-    const card = this.catalog.functions[id];
-    if (card === undefined) return undefined;
-    const file = this.files.get(card.package)?.get(card.module);
-    // The card is the last declaration of its name in the file (an overload set ends with the implementation).
-    const declaration = file?.declarations.filter((candidate) => candidate.name === card.name).pop();
-    if (file === undefined || declaration?.body === undefined) return undefined;
-    const parameters = this.parameterTypes(declaration.parameters ?? '');
-    const bindings = localBindings(file.source.slice(declaration.body.start, declaration.body.end));
-    return buildFunctionFlow({
-      source: file.source,
-      body: declaration.body,
-      name: declaration.name,
-      parameters: declaration.parameters ?? '',
-      resolve: (name) => this.resolveName(file, name),
-      resolveMember: (receiver, method) => this.memberCalled(receiver, method, parameters, bindings),
-    });
-  }
-
   spanOf(id: string): FunctionSpan | undefined {
     const card = this.catalog.functions[id];
     if (card === undefined) return undefined;
@@ -559,98 +512,6 @@ class Project implements FunctionProject {
       if (doc !== -1) span.doc = lineOf(file.source, doc);
     }
     return span;
-  }
-
-  memberById(id: string): MemberDoc | undefined {
-    const dot = id.lastIndexOf('.');
-    const type = id.slice(0, dot);
-    const member = id.slice(dot + 1);
-    return this.memberDocs().find((doc) => doc.type === type && doc.member === member);
-  }
-
-  /**
-   * The id (`Type.member`) of the member a method call of a function reaches:
-   * through the declared type of its receiver (a parameter, a property of
-   * one, or a `const x: T = ...`), else through the name of the receiver or
-   * of the key it was read from the context with (`c.get('dynamicClientStore')`).
-   */
-  private memberCalled(
-    receiver: readonly string[],
-    method: string,
-    parameters: ReadonlyMap<string, string>,
-    bindings: ReadonlyMap<string, { type?: string; key?: string }>,
-  ): string | undefined {
-    const [first, ...rest] = receiver;
-    if (first === undefined) return undefined;
-    let type = parameters.get(first) ?? bindings.get(first)?.type;
-    for (const name of rest) {
-      if (type === undefined) break;
-      const property = this.memberById(`${type}.${name}`);
-      type = property?.annotation === undefined ? undefined : typeName(property.annotation);
-    }
-    if (type !== undefined && this.memberById(`${type}.${method}`) !== undefined) return `${type}.${method}`;
-    const last = receiver[receiver.length - 1] as string;
-    const named = this.memberOf(`${bindings.get(last)?.key ?? last}.${method}`) ?? this.memberOf(`${last}.${method}`);
-    return named === undefined ? undefined : `${named.type}.${named.member}`;
-  }
-
-  /** The declared type of each parameter: `store: Pick<X, 'a'>` → X; a destructured `{ store }: Input` takes the type of Input.store. */
-  private parameterTypes(parameters: string): Map<string, string> {
-    const types = new Map<string, string>();
-    for (const part of splitTopLevel(parameters)) {
-      const colon = topLevelIndex(part, ':');
-      if (colon === -1) continue;
-      const pattern = part.slice(0, colon).replace(/^\s*(?:\.\.\.)?/, '').replace(/\?\s*$/, '').trim();
-      const annotation = part.slice(colon + 1).split('=')[0]?.trim() ?? '';
-      const type = typeName(annotation);
-      if (pattern.startsWith('{')) {
-        for (const name of pattern.slice(1, -1).split(',').map((entry) => entry.split(':')[0]?.trim() ?? '').filter((name) => name !== '')) {
-          const property = type === undefined ? undefined : this.memberById(`${type}.${name}`);
-          const propertyType = property?.annotation === undefined ? undefined : typeName(property.annotation);
-          if (propertyType !== undefined) types.set(name, propertyType);
-        }
-      } else if (type !== undefined && /^[A-Za-z_$][\w$]*$/.test(pattern)) {
-        types.set(pattern, type);
-      }
-    }
-    return types;
-  }
-
-  describeMember(call: string): MemberDoc | undefined {
-    const match = this.memberOf(call);
-    return match === undefined || match.summary === '' ? undefined : match;
-  }
-
-  /** The member a call names (see memberMatch), documented or not. */
-  memberOf(call: string): MemberDoc | undefined {
-    const dot = call.lastIndexOf('.');
-    if (dot === -1) return undefined;
-    const receiver = call.slice(0, dot).split('.').pop() ?? '';
-    const member = call.slice(dot + 1);
-    const candidates = this.memberDocs().filter((doc) => doc.member === member);
-    let best: MemberDoc | undefined;
-    let bestScore = 0;
-    for (const doc of candidates) {
-      const score = memberMatch(receiver, doc.type, candidates);
-      if (score > bestScore) {
-        best = doc;
-        bestScore = score;
-      }
-    }
-    return best;
-  }
-
-  private members: MemberDoc[] | undefined;
-
-  /** The members of every interface and type literal of every root, with their JSDoc summary ('' without one). */
-  private memberDocs(): MemberDoc[] {
-    if (this.members !== undefined) return this.members;
-    const docs: MemberDoc[] = [];
-    for (const [root, parsed] of this.files) {
-      for (const file of parsed.values()) docs.push(...membersOf(root, file));
-    }
-    this.members = docs;
-    return docs;
   }
 
   private cardOf(root: string, file: ParsedFile, declaration: Declaration): FunctionCard {
@@ -732,149 +593,6 @@ class Project implements FunctionProject {
     const ids = this.exportedByName.get(root)?.get(name);
     return ids !== undefined && ids.length === 1 ? ids[0] : undefined;
   }
-}
-
-/** The name of the type an annotation names: `Pick<AuthTransactionStore, 'get'>` → AuthTransactionStore, `X | undefined` → X. */
-function typeName(annotation: string): string | undefined {
-  const text = annotation.trim();
-  const wrapped = /^(?:Readonly|Partial|Required|NonNullable|Pick|Omit)<\s*([A-Za-z_$][\w$]*)/.exec(text);
-  if (wrapped) return wrapped[1];
-  const plain = /^([A-Z][\w$]*)\b/.exec(text);
-  return plain ? plain[1] : undefined;
-}
-
-/** The parts of a list separated by commas outside brackets. */
-function splitTopLevel(text: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let current = '';
-  for (const char of text) {
-    if ('([{<'.includes(char)) depth += 1;
-    else if (')]}>'.includes(char)) depth -= 1;
-    if (char === ',' && depth === 0) {
-      parts.push(current);
-      current = '';
-    } else current += char;
-  }
-  if (current.trim() !== '') parts.push(current);
-  return parts;
-}
-
-/** The index of a character outside brackets, or -1. */
-function topLevelIndex(text: string, wanted: string): number {
-  let depth = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index] as string;
-    if ('([{<'.includes(char)) depth += 1;
-    else if (')]}>'.includes(char)) depth -= 1;
-    else if (char === wanted && depth === 0) return index;
-  }
-  return -1;
-}
-
-/** The names a body binds to the context (`const store = c.get('dynamicClientStore')`), with their declared type when there is one. */
-function localBindings(body: string): Map<string, { type?: string; key?: string }> {
-  const bindings = new Map<string, { type?: string; key?: string }>();
-  const pattern = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::\s*([^=]+?))?\s*=\s*(?:await\s+)?(?:[\w$]+\.)*get\(\s*['"]([\w$]+)['"]\s*\)/g;
-  for (const match of body.matchAll(pattern)) {
-    const type = match[2] === undefined ? undefined : typeName(match[2]);
-    bindings.set(match[1] as string, { ...(type === undefined ? {} : { type }), key: match[3] as string });
-  }
-  return bindings;
-}
-
-/** The role a name ends with (resolver, store, provider), storage counted as store; undefined without one. */
-function roleOf(name: string): { role: string; core: string } | undefined {
-  const match = /^(.*?)(resolver|storage|store|provider)$/i.exec(name);
-  if (!match) return undefined;
-  const role = (match[2] as string).toLowerCase();
-  return { role: role === 'storage' ? 'store' : role, core: (match[1] as string).toLowerCase() };
-}
-
-/** Whether the letters of `short` appear in `long` in order (authcode in authorizationcode). */
-function isSubsequence(short: string, long: string): boolean {
-  let index = 0;
-  for (const char of long) if (char === short[index]) index += 1;
-  return index === short.length;
-}
-
-/**
- * How well the name of a receiver (`authCodeResolver`) names an interface or
- * type (`AuthorizationCodeResolver`) that declares the member it calls: 0 when
- * it does not. Both must end with the same role (resolver, store, provider);
- * then the rest of the names must match, end alike, or abbreviate one
- * another. A receiver that is the bare role (`store`) matches only a member no
- * other type of that role declares.
- */
-function memberMatch(receiver: string, type: string, candidates: readonly MemberDoc[]): number {
-  const own = roleOf(receiver);
-  const declared = roleOf(type);
-  if (own === undefined || declared === undefined || own.role !== declared.role) return 0;
-  if (own.core === declared.core) return 5;
-  if (own.core !== '' && declared.core.endsWith(own.core)) return 4;
-  if (own.core !== '' && isSubsequence(own.core, declared.core)) return 3;
-  // A name that does not match: only a member exactly one type of the role declares.
-  const sameRole = candidates.filter((doc) => roleOf(doc.type)?.role === own.role);
-  return new Set(sameRole.map((doc) => doc.type)).size === 1 ? 1 : 0;
-}
-
-/**
- * The members of the interfaces and type literals of a file
- * (`interface ConsentResolver { /** ... *\/ hasConsent(...): ... }`): the
- * members at the first level of the braces, with the summary of the JSDoc
- * right above them ('' without one).
- */
-function membersOf(root: string, file: ParsedFile): MemberDoc[] {
-  const docs: MemberDoc[] = [];
-  const pattern = /^(?:export\s+)?(?:declare\s+)?(interface|type)\s+([A-Za-z_$][\w$]*)/gm;
-  for (const match of file.source.matchAll(pattern)) {
-    const index = match.index as number;
-    if (file.code[index] !== 1) continue;
-    const type = match[2] as string;
-    // The first brace of the declaration, before the `;` that ends a type alias without one.
-    let open = -1;
-    for (let cursor = index + match[0].length; cursor < file.source.length; cursor += 1) {
-      if (file.code[cursor] !== 1) continue;
-      const char = file.source[cursor];
-      if (char === '{') {
-        open = cursor;
-        break;
-      }
-      if (char === ';' || (char === '\n' && match[1] === 'type' && /^\s*(export|const|function|interface|type)\b/.test(file.source.slice(cursor + 1, cursor + 40)))) break;
-    }
-    if (open === -1) continue;
-    const close = closeOf(file, open, '{', '}');
-    if (close === -1) continue;
-    let depth = 0;
-    let lineStart = true;
-    for (let cursor = open + 1; cursor < close - 1; cursor += 1) {
-      const char = file.source[cursor] as string;
-      if (file.code[cursor] === 1) {
-        if (char === '{' || char === '(' || char === '[') depth += 1;
-        else if (char === '}' || char === ')' || char === ']') depth -= 1;
-      }
-      if (char === '\n') {
-        lineStart = true;
-        continue;
-      }
-      if (!lineStart || /\s/.test(char)) continue;
-      lineStart = false;
-      if (depth !== 0 || file.code[cursor] !== 1) continue;
-      const member = /^(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*([(<:])/.exec(file.source.slice(cursor, cursor + 120));
-      if (!member) continue;
-      const jsdoc = jsDocAbove(file.source, cursor);
-      const summary = jsdoc === undefined ? '' : parseJsDoc(jsdoc).summary;
-      const doc: MemberDoc = { type, member: member[1] as string, summary, package: root, module: file.path, line: lineOf(file.source, cursor) };
-      if (member[2] === ':') {
-        const from = cursor + member[0].length;
-        const stop = file.source.slice(from).search(/[;\n]/);
-        const annotation = file.source.slice(from, stop === -1 ? undefined : from + stop).trim();
-        if (annotation !== '') doc.annotation = annotation;
-      }
-      docs.push(doc);
-    }
-  }
-  return docs;
 }
 
 /**

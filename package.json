@@ -31,7 +31,7 @@
         "build:cli": "pnpm --filter @maronn-openid-connect/cli build && pnpm install",
         "build:core": "pnpm --filter @maronn-openid-connect/core build && pnpm install",
         "build:docs": "pnpm --filter @maronn-openid-connect/docs build:doc",
-        "build:map": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/map build",
+        "build:map": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/map-analysis build && pnpm --filter @maronn-openid-connect/map build",
         "changeset": "changeset",
         "ci:ensure-experimental-changeset": "node .github/scripts/ensure-experimental-changeset.mjs",
         "ci:version": "pnpm run ci:ensure-experimental-changeset && changeset version",
@@ -47,7 +47,7 @@
     "packageManager": "pnpm@10.17.0",
     "devDependencies": {
         "@changesets/cli": "^3.0.2",
-        "@types/node": "^26.6.4"
+        "@types/node": "^26.6.6"
     },
     "pnpm": {
         "overrides": {

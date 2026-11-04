@@ -7,14 +7,15 @@
   "scripts": {
     "data": "node scripts/build-data.mjs",
     "dev": "pnpm run data && vite --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
-    "build": "pnpm run data && vite build && pnpm run check",
+    "build": "pnpm run data && vite build && pnpm run check && pnpm run check:wiring",
     "check": "node scripts/check-map.mjs",
     "changes:draft": "node scripts/draft-notes.mjs",
     "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
     "deploy": "pnpm run build && wrangler deploy",
     "deploy:preview": "pnpm run build && wrangler versions upload",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "check:wiring": "node ../../scripts/audit-wiring.mjs && node ../../scripts/check-wiring-audit.mjs"
   },
   "dependencies": {
     "react": "^19.3.1",

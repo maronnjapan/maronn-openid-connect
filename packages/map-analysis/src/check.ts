@@ -12,6 +12,9 @@
  * - /token with every feature on offers named choices for refresh_token and
  *   authorization_code (the example the map has always given).
  * - In the map of a pull request, every change that needs a note has one.
+ * - Wiring outside ordinary call paths retains its source and a reason when
+ *   unresolved; claiming a destination requires a target and destinations.
+ * - Every unresolved call node explains why it cannot be followed.
  */
 import type { FlowTree, FrameFile, MapData, TreeNode } from './model.js';
 
@@ -29,6 +32,8 @@ export interface MapMetrics {
   token: Record<string, string[]>;
   /** The changes that need a note and have none. */
   undocumented: string[];
+  /** Wiring inventory entries, their unresolved count, and malformed output entries. */
+  wiring: { entries: number; untraceable: number; invalid: number };
 }
 
 export interface CheckResult {
@@ -67,19 +72,49 @@ function inTree(tree: FlowTree, line: number): boolean {
   return visit(tree.nodes);
 }
 
+/** Keep an unresolved call visible by requiring a reason, including in callbacks and branches. */
+function checkTargets(nodes: readonly TreeNode[], frame: string, failures: string[]): void {
+  for (const node of nodes) {
+    if (node.target?.kind === 'untraceable' && (typeof node.target.why !== 'string' || node.target.why.trim() === '')) failures.push(`${frame}:${node.id}: an untraceable call has no reason`);
+    checkTargets(node.pre ?? [], frame, failures);
+    for (const branch of node.branches ?? []) checkTargets(branch.nodes, frame, failures);
+  }
+}
+
 /**
  * Measure the map (see the module comment): the index, a reader of the
  * frame files by url, and of the text of the source files by id.
  */
 export async function checkMap(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readSource: (id: string) => Promise<string | undefined>): Promise<CheckResult> {
-  const metrics: MapMetrics = { frames: 0, selections: 0, unnamed: 0, duplicateNames: [], uncovered: [], changedOutside: [], token: {}, undocumented: data.changes?.undocumented ?? [] };
+  const metrics: MapMetrics = { frames: 0, selections: 0, unnamed: 0, duplicateNames: [], uncovered: [], changedOutside: [], token: {}, undocumented: data.changes?.undocumented ?? [], wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 } };
   const failures: string[] = [];
+  for (const wiring of data.wiring ?? []) {
+    const invalid: string[] = [];
+    if (wiring.file.trim() === '') invalid.push('has no source file');
+    if (wiring.lines.length !== 2 || !wiring.lines.every((line) => Number.isSafeInteger(line) && line >= 1) || wiring.lines[0] > wiring.lines[1]) invalid.push('has invalid source lines');
+    if (wiring.status === 'untraceable') {
+      metrics.wiring.untraceable += 1;
+      if (wiring.why === undefined || wiring.why.trim() === '') invalid.push('is untraceable but has no reason');
+    } else if (wiring.status === 'resolved') {
+      if (wiring.target === undefined || wiring.target.trim() === '') invalid.push('claims a destination but has no target');
+      else if (data.functions[wiring.target] === undefined && data.bodies[wiring.target] === undefined && data.members[wiring.target] === undefined) invalid.push('claims a target absent from the map');
+      if ((wiring.destinations?.length ?? 0) === 0 || wiring.destinations?.some((destination) => destination.trim() === '')) invalid.push('claims a destination but names no endpoints');
+      else if (wiring.destinations?.some((destination) => {
+        const colon = destination.indexOf(':');
+        const flow = data.flows[destination.slice(0, colon)];
+        return colon < 1 || !flow?.endpoints.some((endpoint) => endpoint.id === destination.slice(colon + 1));
+      })) invalid.push('claims an endpoint absent from the map');
+    } else invalid.push('has no resolution status');
+    if (invalid.length > 0) metrics.wiring.invalid += 1;
+    for (const reason of invalid) failures.push(`${wiring.id}: wiring ${reason}`);
+  }
   const entries = [...Object.values(data.functions), ...Object.values(data.bodies)];
   const texts = new Map<string, string | undefined>();
   const changed = new Map((data.changes?.frames ?? []).map((entry) => [entry.id, entry]));
   for (const entry of entries) {
     if (entry.frame === '') continue;
     const file = await readFrame(entry.frame);
+    checkTargets(file.tree.nodes, entry.id, failures);
     metrics.frames += 1;
     metrics.selections += file.selections.length;
     const names = new Set<string>();

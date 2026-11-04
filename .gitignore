@@ -54,3 +54,6 @@ packages/cli/.matrix/
 
 # apps/map: the data of the map, built from the CLI (pnpm run build:map)
 apps/map/public/data/
+
+# Local audit data, build/test logs and investigation snapshots
+/work/

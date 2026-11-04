@@ -302,6 +302,12 @@ Worker の名前は `wrangler.jsonc` の `name` で変える。
 Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`wrangler preview` が失敗したときは `.github/scripts/map-preview.mjs` が PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` し、閉じたときにその Worker も消す。
 どの場合も Actions の artifact（`oidc-provider-map`）にビルド結果が残り、`dist/` を静的に配信すれば同じ地図が見られる。
 
+## 直接呼ばれない配線
+
+上の「追えない配線」は、ミドルウェア登録、コンテキストへの書込み、コールバック、モジュール初期化を場所と理由付きで一覧する。届く先を証明できないものを、実行トレースに混ぜず残す。ファイル、コード、理由で絞り込み、型で分かる参照先は関数のページへ開ける。`#hono--wiring` / `#nextjs--wiring` で共有できる。機能をオフにしたときの配線除去までは確定しない。
+
+`map.json.wiring` は索引の関数を持たないモジュールも読む。動的なキー・外部 callback の呼び先・middleware の mount や実行順を推測しない。設計と調査の根拠は [配線の設計](docs/design-traceable-wiring.md)、再現可能な全件棚卸しは [監査記録](docs/wiring-audit/README.md)、今後の作業手順は [provider-map-traceability skill](../../skills/provider-map-traceability/SKILL.md) にある。
+
 ## 構成
 
 - `src/lib/trace.ts`：トレースの状態（開いたフレーム、選んだ決定）、選んだ決定で走るノード（「ここで失敗」を含む）、ノードへ至る決定、ステップと守りの畳み方（図と共通）、変更まで開くフレームと下の変更の到達、アウトラインの行、失敗を捕まえる `catch`

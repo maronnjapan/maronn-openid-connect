@@ -1,0 +1,536 @@
+{
+  "version": 4,
+  "counts": {
+    "functions": 1059,
+    "bodies": 19,
+    "members": 146,
+    "wiring": 0
+  },
+  "functions": [
+    {
+      "id": "core:client-jwks-uri.ts#createClientJwksUriCache",
+      "calls": [],
+      "implements": [
+        {
+          "member": "core:client-jwks-uri.ts#ClientJwksUriCache.load",
+          "lines": [
+            718,
+            737
+          ],
+          "calls": [
+            "core:client-jwks-uri.ts#validateClientJwksUri",
+            "core:client-jwks-uri.ts#copyOf",
+            "core:client-jwks-uri.ts#refresh"
+          ],
+          "reach": []
+        }
+      ],
+      "prReach": [],
+      "deferred": [
+        "core:client-jwks-uri.ts#copyOf",
+        "core:client-jwks-uri.ts#fetchClientJwkSet",
+        "core:client-jwks-uri.ts#refresh",
+        "core:client-jwks-uri.ts#store",
+        "core:client-jwks-uri.ts#validateClientJwksUri"
+      ],
+      "reach": []
+    },
+    {
+      "id": "core:client-jwks-uri.ts#isClientJwksUriError",
+      "calls": [],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": [
+        {
+          "source": "hono",
+          "endpoint": "authorize",
+          "step": "resolve-request-object",
+          "via": [
+            "hono:oidc-provider/features/request-object/steps/resolve-request-object.ts#resolveRequestObject",
+            "core:authorization-request.ts#resolveRequestObjectParams",
+            "core:request-object.ts#parseRequestObject",
+            "core:request-object.ts#loadVerificationKeys",
+            "core:client-jwks-uri.ts#isClientJwksUriError"
+          ],
+          "features": [
+            "request-object"
+          ]
+        },
+        {
+          "source": "nextjs",
+          "endpoint": "authorize",
+          "via": [
+            "nextjs:app/authorize/route.ts#authorize",
+            "nextjs:app/_oidc-provider/features/request-object/authorize.ts#resolveRequestObject",
+            "core:authorization-request.ts#resolveRequestObjectParams",
+            "core:request-object.ts#parseRequestObject",
+            "core:request-object.ts#loadVerificationKeys",
+            "core:client-jwks-uri.ts#isClientJwksUriError"
+          ],
+          "features": [
+            "request-object"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core:client-jwks-uri.ts#validateClientJwksUri",
+      "calls": [
+        {
+          "code": "authorityOf(uri)",
+          "target": {
+            "kind": "function",
+            "id": "core:client-jwks-uri.ts#authorityOf"
+          }
+        },
+        {
+          "code": "isBlockedHost(url.hostname)",
+          "target": {
+            "kind": "function",
+            "id": "core:client-jwks-uri.ts#isBlockedHost"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": [
+        {
+          "source": "hono",
+          "endpoint": "register",
+          "step": "validate-metadata",
+          "via": [
+            "hono:oidc-provider/features/dynamic-client-registration/endpoints/register/steps/validate-metadata.ts#validateRegistrationMetadata",
+            "experimental:dynamic-client-registration/registration-request.ts#validateClientMetadata",
+            "experimental:dynamic-client-registration/metadata-values.ts#validateJwksUri",
+            "core:client-jwks-uri.ts#validateClientJwksUri"
+          ],
+          "features": [
+            "dynamicClientRegistration"
+          ]
+        },
+        {
+          "source": "nextjs",
+          "endpoint": "register",
+          "via": [
+            "nextjs:app/(dynamic-client-registration)/register/route.ts#registerClient",
+            "experimental:dynamic-client-registration/registration-request.ts#validateClientMetadata",
+            "experimental:dynamic-client-registration/metadata-values.ts#validateJwksUri",
+            "core:client-jwks-uri.ts#validateClientJwksUri"
+          ],
+          "features": [
+            "dynamicClientRegistration"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core:client-jwks-uri.ts#withClientJwksUriKeys",
+      "calls": [],
+      "implements": [
+        {
+          "member": "core:client-keys.ts#ClientKeyResolver.findClientKeys",
+          "lines": [
+            765,
+            773
+          ],
+          "calls": [
+            "core:client-keys.ts#ClientKeyResolver.findClientKeys"
+          ],
+          "reach": []
+        }
+      ],
+      "prReach": [],
+      "deferred": [
+        "core:client-keys.ts#ClientKeyResolver.findClientKeys"
+      ],
+      "reach": []
+    },
+    {
+      "id": "core:jwks.ts#signingKeysToJwkSet",
+      "calls": [
+        {
+          "code": "const algParams = extractAlgorithmParamsFromJwk(key.publicJwk)",
+          "target": {
+            "kind": "function",
+            "id": "core:crypto-utils.ts#extractAlgorithmParamsFromJwk"
+          }
+        },
+        {
+          "code": "exportPublicJwk(publicKey, key.keyId)",
+          "target": {
+            "kind": "function",
+            "id": "core:jwks.ts#exportPublicJwk"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": [
+        {
+          "source": "nextjs",
+          "endpoint": "authorize",
+          "via": [
+            "nextjs:app/authorize/route.ts#authorize",
+            "nextjs:app/_oidc-provider/provider.ts#idTokenHintJwks",
+            "core:jwks.ts#signingKeysToJwkSet"
+          ],
+          "features": []
+        },
+        {
+          "source": "nextjs",
+          "endpoint": "token",
+          "step": "dispatch-id-jag-issuance",
+          "via": [
+            "nextjs:app/_oidc-provider/features/id-jag/grant.ts#dispatchIdJagIssuance",
+            "nextjs:app/_oidc-provider/features/id-jag/grant.ts#issueIdJag",
+            "nextjs:app/_oidc-provider/provider.ts#idTokenHintJwks",
+            "core:jwks.ts#signingKeysToJwkSet"
+          ],
+          "features": [
+            "id-jag"
+          ]
+        },
+        {
+          "source": "nextjs",
+          "endpoint": "logout",
+          "via": [
+            "nextjs:app/(rp-initiated-logout)/logout/route.ts#GET",
+            "nextjs:app/(rp-initiated-logout)/logout/route.ts#endSession",
+            "nextjs:app/_oidc-provider/provider.ts#idTokenHintJwks",
+            "core:jwks.ts#signingKeysToJwkSet"
+          ],
+          "features": [
+            "rpInitiatedLogout"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hono:oidc-provider/app.ts#setRequestContext",
+      "calls": [
+        {
+          "code": "signingKeys = await options.signingKeyProvider.getSigningKeys()",
+          "target": {
+            "kind": "member",
+            "id": "core:signing-key.ts#SigningKeyProvider.getSigningKeys"
+          }
+        },
+        {
+          "code": "idTokenSigningKeys = await idProvider.getSigningKeys()",
+          "target": {
+            "kind": "member",
+            "id": "core:signing-key.ts#SigningKeyProvider.getSigningKeys"
+          }
+        },
+        {
+          "code": "userinfoSigningKeys = await uiProvider.getSigningKeys()",
+          "target": {
+            "kind": "member",
+            "id": "core:signing-key.ts#SigningKeyProvider.getSigningKeys"
+          }
+        },
+        {
+          "code": "validateSigningKeySet(signingKeys)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/app.ts#validateSigningKeySet"
+          }
+        },
+        {
+          "code": "validateSigningKeySet(idTokenSigningKeys, true)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/app.ts#validateSigningKeySet"
+          }
+        },
+        {
+          "code": "validateSigningKeySet(userinfoSigningKeys)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/app.ts#validateSigningKeySet"
+          }
+        },
+        {
+          "code": "const stores = await resolveProviderStores(options.storage, c)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/app.ts#resolveProviderStores"
+          }
+        },
+        {
+          "code": "const storeResolvers = createStoreResolvers(stores)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/resolvers.ts#createStoreResolvers"
+          }
+        },
+        {
+          "code": "createDatabase(c)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/db/memory/database.ts#createDatabase"
+          }
+        },
+        {
+          "code": "createClientResolver(createDatabase(c))",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/db/memory/clients.ts#createClientResolver"
+          }
+        },
+        {
+          "code": "c.set('config', createProviderConfig(options.config))",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/config.ts#createProviderConfig"
+          }
+        },
+        {
+          "code": "c.set(…)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri"
+          }
+        },
+        {
+          "code": "createDatabase(c)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/db/memory/database.ts#createDatabase"
+          }
+        },
+        {
+          "code": "createClientKeyResolver(createDatabase(c))",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/db/memory/clients.ts#createClientKeyResolver"
+          }
+        },
+        {
+          "code": "stores.userStore.authenticate(username, password)",
+          "target": {
+            "kind": "member",
+            "id": "hono:oidc-provider/store.ts#UserStorage.authenticate"
+          }
+        },
+        {
+          "code": "c.set('views', createViews(options.views))",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/views.tsx#createViews"
+          }
+        },
+        {
+          "code": "await applyContextOf(features, { c, options, stores })",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/features/feature.ts#applyContextOf"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [
+        "core:jwks.ts#signingKeysToJwkSet"
+      ],
+      "reach": []
+    },
+    {
+      "id": "hono:oidc-provider/client-jwks-uri.ts#assertClientJwksUriRegistration",
+      "calls": [
+        {
+          "code": "validateClientJwksUri(client.jwksUri, { allowInsecure })",
+          "target": {
+            "kind": "function",
+            "id": "core:client-jwks-uri.ts#validateClientJwksUri"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "hono:oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf",
+      "calls": [],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "hono:oidc-provider/client-jwks-uri.ts#hostOf",
+      "calls": [],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "hono:oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri",
+      "calls": [
+        {
+          "code": "const loadOptions = clientJwksUriLoadOptionsOf(config, options.fetch)",
+          "target": {
+            "kind": "function",
+            "id": "hono:oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf"
+          }
+        },
+        {
+          "code": "withClientJwksUriKeys(base, { purposes, findJwksUri, load })",
+          "target": {
+            "kind": "function",
+            "id": "core:client-jwks-uri.ts#withClientJwksUriKeys"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [
+        "core:authorization-request.ts#ClientResolver.findClient",
+        "core:client-jwks-uri.ts#ClientJwksUriCache.load",
+        "core:client-jwks-uri.ts#isClientJwksUriError",
+        "hono:oidc-provider/client-jwks-uri.ts#hostOf"
+      ],
+      "reach": []
+    },
+    {
+      "id": "hono:oidc-provider/features/feature.ts#applyContextOf",
+      "calls": [],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "nextjs:app/_oidc-provider/client-jwks-uri.ts#assertClientJwksUriRegistration",
+      "calls": [
+        {
+          "code": "validateClientJwksUri(client.jwksUri, { allowInsecure })",
+          "target": {
+            "kind": "function",
+            "id": "core:client-jwks-uri.ts#validateClientJwksUri"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "nextjs:app/_oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf",
+      "calls": [],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "nextjs:app/_oidc-provider/client-jwks-uri.ts#hostOf",
+      "calls": [],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    },
+    {
+      "id": "nextjs:app/_oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri",
+      "calls": [],
+      "implements": [
+        {
+          "member": "core:client-keys.ts#ClientKeyResolver.findClientKeys",
+          "lines": [
+            79,
+            84
+          ],
+          "calls": [
+            "core:client-keys.ts#ClientKeyResolver.findClientKeys",
+            "core:client-jwks-uri.ts#withClientJwksUriKeys"
+          ],
+          "reach": []
+        }
+      ],
+      "prReach": [],
+      "deferred": [
+        "core:authorization-request.ts#ClientResolver.findClient",
+        "core:client-jwks-uri.ts#ClientJwksUriCache.load",
+        "core:client-jwks-uri.ts#isClientJwksUriError",
+        "core:client-jwks-uri.ts#withClientJwksUriKeys",
+        "core:client-keys.ts#ClientKeyResolver.findClientKeys",
+        "nextjs:app/_oidc-provider/client-jwks-uri.ts#clientJwksUriLoadOptionsOf",
+        "nextjs:app/_oidc-provider/client-jwks-uri.ts#hostOf"
+      ],
+      "reach": []
+    },
+    {
+      "id": "nextjs:app/_oidc-provider/feature.ts#contextOf",
+      "calls": [
+        {
+          "code": "feature.context?.(current)",
+          "target": {
+            "kind": "member",
+            "id": "nextjs:app/_oidc-provider/feature.ts#Feature.context"
+          }
+        }
+      ],
+      "implements": [],
+      "prReach": [],
+      "deferred": [],
+      "reach": []
+    }
+  ],
+  "members": [
+    {
+      "id": "core:client-jwks-uri.ts#ClientJwksUriCache.load",
+      "type": "ClientJwksUriCache",
+      "member": "load",
+      "summary": "`jwks_uri` の JWK Set を返す。期限内ならキャッシュから答え、期限切れなら取得する。ヒントの kid がキャッシュに無ければ、前回の取得から `refetchIntervalSeconds` が過ぎているときに取り直す（OIDC Core 1.0 §10.1.1）。設定は呼び出しごとに受け取る。",
+      "package": "core",
+      "module": "client-jwks-uri.ts",
+      "line": 644,
+      "implementedBy": [
+        "core:client-jwks-uri.ts#createClientJwksUriCache"
+      ],
+      "calls": [
+        "core:client-jwks-uri.ts#validateClientJwksUri",
+        "core:client-jwks-uri.ts#copyOf"
+      ]
+    },
+    {
+      "id": "core:client-keys.ts#ClientKeyResolver.findClientKeys",
+      "type": "ClientKeyResolver",
+      "member": "findClientKeys",
+      "summary": "クライアントが `purpose` 用に登録した公開鍵を返す。",
+      "package": "core",
+      "module": "client-keys.ts",
+      "line": 47,
+      "implementedBy": [
+        "core:client-jwks-uri.ts#withClientJwksUriKeys",
+        "core:client-keys.ts#createClientKeyResolver",
+        "hono:oidc-provider/db/kv/clients.ts#createClientKeyResolver",
+        "hono:oidc-provider/db/sql/clients.ts#createClientKeyResolver",
+        "hono:oidc-provider/features/dynamic-client-registration/store.ts#withDynamicallyRegisteredClientKeys",
+        "nextjs:app/_oidc-provider/client-jwks-uri.ts#withRegisteredClientJwksUri",
+        "nextjs:app/_oidc-provider/db/kv/clients.ts#createClientKeyResolver",
+        "nextjs:app/_oidc-provider/db/sql/clients.ts#createClientKeyResolver",
+        "nextjs:app/_oidc-provider/features/dynamic-client-registration/store.ts#withDynamicallyRegisteredClientKeys"
+      ],
+      "calls": [
+        "hono:oidc-provider/db/kv/database.ts#readRecord",
+        "hono:oidc-provider/db/sql/database.ts#SqlDatabase.all",
+        "hono:oidc-provider/db/sql/clients.ts#parseJwk",
+        "hono:oidc-provider/features/dynamic-client-registration/store.ts#DynamicallyRegisteredClientStore.get",
+        "core:client-jwks-uri.ts#withClientJwksUriKeys",
+        "nextjs:app/_oidc-provider/db/kv/database.ts#readRecord",
+        "nextjs:app/_oidc-provider/db/sql/database.ts#SqlDatabase.all",
+        "nextjs:app/_oidc-provider/db/sql/clients.ts#parseJwk",
+        "nextjs:app/_oidc-provider/features/dynamic-client-registration/store.ts#DynamicallyRegisteredClientStore.get"
+      ]
+    }
+  ]
+}

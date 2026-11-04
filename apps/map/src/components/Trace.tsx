@@ -1,7 +1,7 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, markOf, type ChangeIndex, type Mark } from '../lib/changes';
-import { activeOf, boxAction, frameDiagram, markOfBox, type DiagramNode } from '../lib/diagram';
+import { activeOf, frameDiagram, markOfBox, type DiagramNode } from '../lib/diagram';
 import { childFrame, entryOf, findNode, frameIds, framesToChanges, type TraceState } from '../lib/trace';
 import { locationOf } from '../lib/model';
 import { Badge, DiffView } from './ChangeParts';
@@ -45,6 +45,29 @@ interface Selected {
 /** No step opened or folded by the reader. */
 const NO_TOGGLES: ReadonlySet<string> = new Set();
 
+/** The share of the width the pane beside the outline takes (percent): its default, its bounds, and where the reader's own is kept. */
+const PANE_DEFAULT = 42;
+const PANE_MIN = 20;
+const PANE_MAX = 80;
+const PANE_KEY = 'map.paneWidth';
+
+function readPaneWidth(): number {
+  try {
+    const saved = Number(globalThis.localStorage?.getItem(PANE_KEY));
+    return Number.isFinite(saved) && saved >= PANE_MIN && saved <= PANE_MAX ? saved : PANE_DEFAULT;
+  } catch {
+    return PANE_DEFAULT;
+  }
+}
+
+function writePaneWidth(value: number): void {
+  try {
+    globalThis.localStorage?.setItem(PANE_KEY, String(Math.round(value)));
+  } catch {
+    // Storage may be unavailable (a private window); the width then lasts for this page only.
+  }
+}
+
 /**
  * A trace (see lib/trace.ts): the ready-made choices, the outline, and
  * beside it the diagram of the frame in focus, the diff of the frames open
@@ -55,6 +78,10 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   const { mobile } = useMobileMenu();
   const [tab, setTab] = useState<Tab>(tabs[0]?.id ?? 'diagram');
   const [overlay, setOverlay] = useState(false);
+  // The share of the width the pane takes, set by dragging the splitter (or its keys) and kept for this browser.
+  const [paneWidth, setPaneWidth] = useState(readPaneWidth);
+  const work = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
   const [selected, setSelected] = useState<Selected | null>(null);
   // The steps the reader opened or folded in the diagram, for the frame in focus only.
   const [toggled, setToggled] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: '', ids: NO_TOGGLES });
@@ -122,29 +149,63 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     toggleStep(step);
     if (keyboard) setFocusRequest({ frame: focusKey, node: step });
   };
-  /** What clicking a box of the diagram does (see boxAction): open the frame of its call and focus it, open or fold its step, or select its row of the outline, staying on the diagram. */
-  const activateBox = (box: DiagramNode, keyboard: boolean) => {
-    switch (boxAction(box)) {
-      case 'open': {
-        if (box.opens === undefined) return;
-        const key = childFrame(focusKey, box.opens.node);
-        // The box goes away with this diagram: the diagram of the frame it opens takes the keyboard focus once it shows.
-        if (keyboard) setFocusRequest({ frame: key, node: null });
-        onState({ ...state, open: [...new Set([...state.open, key])], focus: key });
-        return;
-      }
-      case 'toggle':
-        if (box.step !== undefined) toggleStep(box.step.id);
-        return;
-      case 'select': {
-        const node = box.node === undefined || focusTree === undefined ? undefined : findNode(focusTree.nodes, box.node);
-        if (node !== undefined) select({ frame: focusKey, node, frameId: focusId, from: 'diagram' });
-        return;
-      }
-      case 'none':
-        return;
-    }
+  /** Choosing a box of the diagram selects it: its outline row is highlighted and scrolled into view, and the diagram stays where it is. */
+  const selectBox = (box: DiagramNode) => {
+    const node = box.node === undefined || focusTree === undefined ? undefined : findNode(focusTree.nodes, box.node);
+    if (node !== undefined) select({ frame: focusKey, node, frameId: focusId, from: 'diagram' });
   };
+  /** Look inside the function of a box (the button of its card): the diagram moves to that frame, and the breadcrumb says where it is. */
+  const openBox = (box: DiagramNode, keyboard: boolean) => {
+    if (box.opens === undefined) return;
+    const key = childFrame(focusKey, box.opens.node);
+    // The card goes away with this diagram: the diagram of the frame it opens takes the keyboard focus once it shows.
+    if (keyboard) setFocusRequest({ frame: key, node: null });
+    onState({ ...state, open: [...new Set([...state.open, key])], focus: key });
+  };
+
+  /** Move the splitter to a pointer's x: the pane takes the width right of it. */
+  const dragTo = (clientX: number) => {
+    const rect = work.current?.getBoundingClientRect();
+    if (rect === undefined || rect.width === 0) return;
+    setPaneWidth(Math.min(PANE_MAX, Math.max(PANE_MIN, ((rect.right - clientX) / rect.width) * 100)));
+  };
+  const onSplitterDown = (event: PointerEvent<HTMLDivElement>) => {
+    dragging.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+  const onSplitterMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragging.current) dragTo(event.clientX);
+  };
+  const onSplitterUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    writePaneWidth(paneWidth);
+  };
+  const onSplitterKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 10 : 2;
+    const next = event.key === 'ArrowLeft' ? paneWidth + step : event.key === 'ArrowRight' ? paneWidth - step : event.key === 'Home' ? PANE_MAX : event.key === 'End' ? PANE_MIN : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    const clamped = Math.min(PANE_MAX, Math.max(PANE_MIN, next));
+    setPaneWidth(clamped);
+    writePaneWidth(clamped);
+  };
+  const resetPane = () => {
+    setPaneWidth(PANE_DEFAULT);
+    writePaneWidth(PANE_DEFAULT);
+  };
+
+  // Where the diagram is: the root, then the call of each frame opened on the way to the frame in focus.
+  const crumbs = useMemo(() => {
+    const keys = focusKey === '' ? [] : focusKey.split('.').map((_, index, parts) => parts.slice(0, index + 1).join('.'));
+    const nameOf = (id: string | undefined) => {
+      const entry = id === undefined ? undefined : entryOf(data, id);
+      return entry === undefined ? (id ?? '') : 'endpoint' in entry ? entry.name : `${entry.name}()`;
+    };
+    return [{ key: '', label: nameOf(rootId) }, ...keys.map((key) => ({ key, label: nameOf(known.get(key)) }))];
+  }, [focusKey, known, data, rootId]);
 
   // The diff of the frames open, in the order the trace runs them.
   const pathDiff = [...known].filter(([, id], index, list) => list.findIndex(([, other]) => other === id) === index).flatMap(([key, id]) => {
@@ -215,14 +276,21 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
       content:
         diagram !== undefined && active !== undefined ? (
           <div className="pane-diagram">
-            <p className="note pane-note">
-              {focusKey === '' ? 'このトレースの根' : `${entryOf(data, focusId)?.name ?? focusId}() の中`}の流れ。青が選んだ道筋です。
-              {focusKey !== '' ? (
-                <button type="button" className="link" onClick={() => onState({ ...state, focus: '' })}>
-                  根に戻る
-                </button>
-              ) : null}
-            </p>
+            <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
+              {crumbs.map((crumb, index) => (
+                <span key={crumb.key || 'root'} className="crumb">
+                  {index > 0 ? <span className="crumb-sep" aria-hidden="true">›</span> : null}
+                  {index === crumbs.length - 1 ? (
+                    <strong aria-current="location">{crumb.label}</strong>
+                  ) : (
+                    <button type="button" className="link" onClick={() => onState({ ...state, focus: crumb.key })} title="この関数の図に戻る">
+                      {crumb.label}
+                    </button>
+                  )}
+                </span>
+              ))}
+              <span className="note crumb-hint">青が選んだ道筋。箱に重ねると詳しく見られます。</span>
+            </nav>
             <FlowDiagram
               diagram={diagram}
               active={active}
@@ -231,7 +299,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               focus={focusRequest?.frame === focusKey ? focusRequest : null}
               label="フレームの図"
               marks={marks}
-              onSelect={activateBox}
+              onSelect={(box, keyboard) => (box.opens !== undefined ? openBox(box, keyboard) : box.step !== undefined && (box.step.open || box.step.toggles) ? toggleStep(box.step.id) : selectBox(box))}
               onToggleStep={toggleStepFromRow}
               onFocused={() => setFocusRequest(null)}
             />
@@ -267,7 +335,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   return (
     <div className="trace-area">
       <SelectionBar selections={selections} state={state} onState={onState} onExpandChanges={expand} changesBelow={below} />
-      <div className={`work${mobile ? '' : ' with-pane'}`}>
+      <div className={`work${mobile ? '' : ' with-pane'}`} ref={work} style={mobile ? undefined : { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(0, ${paneWidth}%)` }}>
         <div className="outline">
           {root === undefined ? (
             <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
@@ -288,10 +356,9 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
                   return;
                 }
                 select({ ...row, from: 'outline' });
-                // The diagram follows the frame of the row selected.
+                // The diagram follows the frame of the row selected, and shows where it is: the pane turns to the diagram.
                 if (row.frame !== focusKey && known.has(row.frame)) onState({ ...state, focus: row.frame });
-                if (row.node.kind === 'block' || mobile) setTab('detail');
-                if (mobile) setOverlay(true);
+                setTab('diagram');
               }}
               onOpenFunction={onOpenFunction}
             />
@@ -313,6 +380,25 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
             ) : null}
           </>
         ) : (
+          <>
+          <div
+            className="splitter"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="アウトラインと図の幅（左右の矢印キーで変える。ダブルクリックで元に戻す）"
+            aria-valuemin={PANE_MIN}
+            aria-valuemax={PANE_MAX}
+            aria-valuenow={Math.round(paneWidth)}
+            aria-valuetext={`図の欄 ${Math.round(paneWidth)}%`}
+            tabIndex={0}
+            title="ドラッグで幅を変える（ダブルクリックで元に戻す）"
+            onPointerDown={onSplitterDown}
+            onPointerMove={onSplitterMove}
+            onPointerUp={onSplitterUp}
+            onPointerCancel={onSplitterUp}
+            onDoubleClick={resetPane}
+            onKeyDown={onSplitterKey}
+          />
           <aside className="pane" aria-label="図と詳細">
             <div className="seg pane-tabs" role="tablist">
               {panes.map((pane) => (
@@ -323,6 +409,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
             </div>
             <div className="pane-content">{current?.content}</div>
           </aside>
+          </>
         )}
       </div>
     </div>

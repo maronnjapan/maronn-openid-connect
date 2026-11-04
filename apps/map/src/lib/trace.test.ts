@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowTree, MapData, TreeNode } from '../types';
-import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, foldedWords, frameIds, framesToChanges, nodesRun, rowFor, traceRows, wayTo, withinFrame } from './trace';
+import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, frameIds, framesToChanges, nodesRun, rowFor, traceRows, wayTo, withinFrame, type Row } from './trace';
 
 const call = (id: string, callee: string, extra: Partial<TreeNode> = {}): TreeNode => ({ id, kind: 'call', lines: [2, 2], code: `${callee}()`, target: { kind: 'function', id: callee }, ...extra });
 const returned = (id: string, code: string): TreeNode => ({ id, kind: 'return', lines: [3, 3], code });
@@ -112,52 +112,81 @@ describe('the frames of a trace', () => {
 });
 
 describe('the rows of the outline', () => {
-  const rows = (open: string[], choices: Record<string, string>[] = [], enabled?: Set<string>) =>
-    traceRows({ rootId: 'endpoint:token', hasFrame: (id) => id === 'code' || id === 'check', trees, state: { ...EMPTY_TRACE, open, choices }, ...(enabled === undefined ? {} : { enabled }) }).map((row) => {
-      if (row.kind === 'node') return `${'  '.repeat(row.depth)}${row.node.code}${row.folded ? ` ${row.folded}` : ''}${row.frameState ? ` [${row.frameState}]` : ''}${row.on ? '' : ' (off)'}`;
-      if (row.kind === 'branch') return `${'  '.repeat(row.depth)}└ ${row.branch.label}${row.folded ? `: ${row.folded}` : ''}`;
-      if (row.kind === 'actions') return `${'  '.repeat(row.depth)}処理 ×${row.nodes.length}`;
-      return `${'  '.repeat(row.depth)}${row.kind}`;
-    });
+  /** A row as a line: its code, its state, and whether the choices run it. */
+  const shown = (row: Row): string => {
+    const pad = '  '.repeat('depth' in row ? row.depth : 0);
+    if (row.kind === 'node') {
+      const step = row.step === undefined ? '' : row.step.merged ? ' {step of one call}' : row.step.open ? ' {step open}' : ' {step folded}';
+      const exit = row.exit === undefined ? '' : ` → ${row.exit.nodes.map((node) => node.code).join(', ')}${row.exit.on ? '' : ' (exit off)'}`;
+      return `${pad}${row.node.code}${step}${row.frameState ? ` [${row.frameState}]` : ''}${exit}${row.on ? '' : ' (off)'}`;
+    }
+    if (row.kind === 'branch') return `${pad}└ ${row.branch.label}${row.exit === undefined ? '' : ` → ${row.exit.nodes.map((node) => node.code).join(', ')}`}${row.chosen ? ' (chosen)' : ''}${row.on ? '' : ' (off)'}`;
+    return `${pad}${row.kind}`;
+  };
+  const rows = (open: string[], choices: Record<string, string>[] = [], enabled?: Set<string>, toggled: string[] = []) =>
+    traceRows({ rootId: 'endpoint:token', hasFrame: (id) => id === 'code' || id === 'check', trees, state: { ...EMPTY_TRACE, open, choices }, toggled: new Set(toggled), ...(enabled === undefined ? {} : { enabled }) }).map(shown);
 
-  it('should indent the tree, fold a guard and a run of actions to one line, and open a frame below its call', () => {
+  it('should indent the tree, fold a step to its label, head the rows a try guards and follow them with its catch, and open a frame below its call', () => {
     expect(rows(['s0b1n0'])).toEqual([
       'try … catch',
-      '  └ 例外なし',
-      '    [dispatch]',
-      '      exchange()',
-      '      if (exchanged) → return exchanged で終わる',
-      '    refresh ?? code()',
-      '      └ 値あり',
-      '      └ null または undefined',
-      '        code() [open]',
-      '          check() [closed]',
-      '          return x',
-      '    処理 ×2',
-      '    return respond()',
-      '  └ 例外が起きたとき',
-      '    return respondError()',
+      '  [dispatch] {step folded}',
+      '  refresh ?? code()',
+      '    └ 値あり',
+      '    └ null または undefined',
+      '      code() [open]',
+      '        check() [closed]',
+      '        return x',
+      '  const a = 1',
+      '  const b = 2',
+      '  return respond()',
+      '└ 例外が起きたとき → return respondError()',
     ]);
   });
 
-  it('should fold the side a choice does not take, and leave out the feature that is off', () => {
+  it('should keep the rows of the sides a choice does not take and turn them off, and leave out the feature that is off', () => {
     expect(rows([], [{ s0: 'catch' }], new Set<string>())).toEqual([
       'try … catch',
-      '  └ 例外なし: 処理 3、return respond() で終わる',
-      '  └ 例外が起きたとき',
-      '    return respondError()',
+      '  refresh ?? code() (off)',
+      '    └ null または undefined (chosen) (off)',
+      '      code() [closed] (off)',
+      '  const a = 1 (off)',
+      '  const b = 2 (off)',
+      '  return respond() (off)',
+      '└ 例外が起きたとき → return respondError() (chosen)',
     ]);
   });
 
-  it('should fold a side to its nodes in words', () => {
-    expect(foldedWords([call('a', 'f'), returned('b', 'return x')])).toBe('呼び出し 1、return x で終わる');
-    expect(foldedWords([])).toBe('何もしない');
+  it('should open a step the reader opens, read a guard on one line, and turn its exit off when the choice passes it', () => {
+    expect(rows([], [], undefined, ['|s0b0']).slice(1, 4)).toEqual(['  [dispatch] {step open}', '    exchange()', '    if (exchanged) → return exchanged']);
+    expect(rows([], [{ s0b0s1: 'false' }])[3]).toBe('    if (exchanged) → return exchanged (exit off)');
+  });
+
+  it('should open a step that holds a choice without being asked, and fold it again when the reader does', () => {
+    expect(rows([], [{ s0b0s1: 'true' }])[1]).toBe('  [dispatch] {step open}');
+    expect(rows([], [{ s0b0s1: 'true' }], undefined, ['|s0b0'])[1]).toBe('  [dispatch] {step folded}');
+  });
+
+  it('should read a step of one call as that call, opening its frame below the step', () => {
+    const single: FlowTree = { ...code, id: 'single', nodes: [{ id: 's0', kind: 'block', lines: [1, 2], code: '[issue]', step: { id: 'issue', label: '発行する' }, branches: [{ key: 'body', label: '発行する', nodes: [call('s0s0', 'code')] }] }] };
+    const lines = traceRows({ rootId: 'single', hasFrame: (id) => id === 'code' || id === 'check', trees: new Map([...trees, ['single', single]]), state: { ...EMPTY_TRACE, open: ['s0s0'] } }).map(shown);
+    expect(lines).toEqual(['[issue] {step of one call} [open]', '  check() [closed]', '  return x']);
+  });
+
+  it('should give a condition the call evaluated last before it, and keep the calls before that on rows of their own', () => {
+    const guarded: FlowTree = {
+      ...code,
+      id: 'guarded',
+      nodes: [{ id: 's0', kind: 'if', lines: [2, 2], code: 'if (!isX(y(z)))', form: 'guard', pre: [call('s0i0', 'y'), call('s0i1', 'code')], branches: [{ key: 'true', label: '成立', nodes: [returned('s0t0', 'return no')] }, { key: 'false', label: '不成立', nodes: [] }] }],
+    };
+    const found = traceRows({ rootId: 'guarded', hasFrame: (id) => id === 'code' || id === 'check', trees: new Map([...trees, ['guarded', guarded]]), state: EMPTY_TRACE });
+    expect(found.map(shown)).toEqual(['y()', 'if (!isX(y(z))) [closed] → return no']);
+    expect(found.map((row) => (row.kind === 'node' ? [row.before, row.call?.id] : []))).toEqual([[true, undefined], [false, 's0i1']]);
   });
 });
 
 describe('the row that shows a node', () => {
-  const outline = (open: string[], choices: Record<string, string>[] = [], unfolded: string[] = []) =>
-    traceRows({ rootId: 'endpoint:token', hasFrame: (id) => id === 'code' || id === 'check', trees, state: { ...EMPTY_TRACE, open, choices }, unfolded: new Set(unfolded) });
+  const outline = (open: string[], choices: Record<string, string>[] = [], toggled: string[] = []) =>
+    traceRows({ rootId: 'endpoint:token', hasFrame: (id) => id === 'code' || id === 'check', trees, state: { ...EMPTY_TRACE, open, choices }, toggled: new Set(toggled) });
 
   it('should give a node on a row of its own that row, in the root and in a frame opened below a call', () => {
     const rows = outline(['s0b1n0']);
@@ -166,25 +195,23 @@ describe('the row that shows a node', () => {
     expect(rowFor(rows, 's0b1n0', 's1')).toBe('s0b1n0|s1');
   });
 
-  it('should give a node in a folded run of actions the row of the run, keyed by its first action, and its own row once the run is unfolded', () => {
-    expect(rowFor(outline([]), '', 's0b2')).toBe('|actions|s0b2');
-    expect(rowFor(outline([]), '', 's0b3')).toBe('|actions|s0b2');
-    expect(rowFor(outline([], [], ['|actions|s0b2']), '', 's0b3')).toBe('|s0b3');
+  it('should give a node inside a folded step the row of the step, and its own row once the step is open', () => {
+    expect(rowFor(outline([]), '', 's0b0s0')).toBe('|s0b0');
+    expect(rowFor(outline([], [], ['|s0b0']), '', 's0b0s0')).toBe('|s0b0s0');
   });
 
-  it('should give a node inside a folded guard the row of the guard, and its own row once the guard is unfolded', () => {
-    expect(rowFor(outline([]), '', 's0b0s1t0')).toBe('|s0b0s1');
-    expect(rowFor(outline([], [], ['|s0b0s1']), '', 's0b0s1t0')).toBe('|s0b0s1t0');
+  it('should give a node inside a guard read on one line the row of the guard', () => {
+    expect(rowFor(outline([], [], ['|s0b0']), '', 's0b0s1t0')).toBe('|s0b0s1');
   });
 
-  it('should give a node in a side the choice folds the row of the decision, through the nodes it is in', () => {
-    expect(rowFor(outline([], [{ s0b1: 'defined' }]), '', 's0b1n0')).toBe('|s0b1');
-    expect(rowFor(outline([], [{ s0: 'catch' }]), '', 's0b0s1t0')).toBe('|s0');
+  it('should give a node on a side the choice does not take its own row, which stays', () => {
+    expect(rowFor(outline([], [{ s0b1: 'defined' }]), '', 's0b1n0')).toBe('|s0b1n0');
+    expect(rowFor(outline([], [{ s0: 'catch' }]), '', 's0b4')).toBe('|s0b4');
   });
 
-  it('should give no row for a frame the outline does not show: unknown, closed, or opened below a side the choice folds', () => {
+  it('should give no row for a frame the outline does not show (unknown or closed), and a row for one opened below a side the choice does not take', () => {
     expect(rowFor(outline([]), 'nowhere', 's0')).toBeUndefined();
     expect(rowFor(outline([]), 's0b1n0', 's1')).toBeUndefined();
-    expect(rowFor(outline(['s0b1n0'], [{ s0: 'catch' }]), 's0b1n0', 's1')).toBeUndefined();
+    expect(rowFor(outline(['s0b1n0'], [{ s0: 'catch' }]), 's0b1n0', 's1')).toBe('s0b1n0|s1');
   });
 });

@@ -14,6 +14,7 @@
  *   is missing.
  */
 import type { Branch, Decisions, FlowTree, FrameChange, MapData, RemovedNode, TreeNode } from '../types';
+import { splitPre } from './words';
 
 /** The state of a trace that the hash keeps. */
 export interface TraceState {
@@ -292,11 +293,39 @@ export function framesToChanges(data: MapData, reach: ChangeReach, rootId: strin
 
 // ---- the rows of the outline
 
-/** A row of the outline. */
+/** A row of the outline: a node of a tree (a statement, a decision, a step), a side of a decision, a node the pull request removed, or a frame still loading. */
 export type Row =
-  | { kind: 'node'; key: string; frame: string; node: TreeNode; depth: number; on: boolean; before: boolean; frameState?: 'open' | 'closed' | 'recursion' | 'loading'; folded?: string }
-  | { kind: 'branch'; key: string; frame: string; node: TreeNode; branch: Branch; depth: number; on: boolean; folded?: string }
-  | { kind: 'actions'; key: string; frame: string; nodes: TreeNode[]; depth: number; on: boolean }
+  | {
+      kind: 'node';
+      key: string;
+      frame: string;
+      node: TreeNode;
+      depth: number;
+      on: boolean;
+      /** A call the row stands for besides its node: the call evaluated last before a condition or a return (`if (!isX(y))`), or the one call of a step. Its frame opens below the row. */
+      call?: TreeNode;
+      /** The state of the frame the row opens: of the node when it is a call, else of `call`. */
+      frameState?: 'open' | 'closed' | 'recursion' | 'loading';
+      /** A guard or an optional item read on one line: what its true side does, and whether the choices run it. */
+      exit?: { nodes: TreeNode[]; on: boolean };
+      /** A step: whether its body shows below it. A step of one call is `merged` with it, and opens the call's frame instead. */
+      step?: { open: boolean; merged: boolean };
+      /** A call evaluated before the statement of the next row (an argument of another call). */
+      before: boolean;
+    }
+  | {
+      kind: 'branch';
+      key: string;
+      frame: string;
+      node: TreeNode;
+      branch: Branch;
+      depth: number;
+      on: boolean;
+      /** The choices take this side, and only this one. */
+      chosen: boolean;
+      /** A side that ends at once (a catch that answers with an error) or does nothing, read on its own row. */
+      exit?: { nodes: TreeNode[]; on: boolean };
+    }
   | { kind: 'removed'; key: string; frame: string; node: TreeNode; depth: number }
   | { kind: 'loading'; key: string; frame: string; depth: number };
 
@@ -310,29 +339,36 @@ export interface RowOptions {
   changes?: ReadonlyMap<string, FrameChange>;
   state: TraceState;
   enabled?: ReadonlySet<string>;
-  /** The rows the reader unfolded (a guard, a run of actions, a side not chosen), by row key. */
-  unfolded?: ReadonlySet<string>;
+  /** The steps the reader opened or folded, by row key: each flips its step's default (folded, unless it holds a change, an opened frame or a choice). */
+  toggled?: ReadonlySet<string>;
 }
 
-/** A side folded to one line: its nodes in words. */
-export function foldedWords(nodes: readonly TreeNode[]): string {
-  if (nodes.length === 0) return '何もしない';
-  const exit = [...nodes].reverse().find((node) => node.kind === 'return' || node.kind === 'throw');
-  const calls = nodes.filter((node) => node.kind === 'call').length;
-  const others = nodes.length - calls - (exit === undefined ? 0 : 1);
-  const parts: string[] = [];
-  if (calls > 0) parts.push(`呼び出し ${calls}`);
-  if (others > 0) parts.push(`処理 ${others}`);
-  const head = parts.length === 0 ? '' : `${parts.join('、')}、`;
-  return exit === undefined ? `${head}そのまま進む`.replace(/、そのまま/, 'のあとそのまま') : `${head}${exit.code} で終わる`;
+/** Whether a key or an id is below another: it starts with it and goes on with a new segment (`s0b2s0` below `s0b2`, not `s0b21`). */
+function below(candidate: string, prefix: string): boolean {
+  return candidate.startsWith(prefix) && /^[a-z.]/.test(candidate.slice(prefix.length));
 }
 
-/** The rows of the outline of a trace (see Row): each frame's tree indented below the call that opened it. */
+/** Whether a side ends at once: a few nodes, no decision among them, and the last returns or throws. */
+function endsAtOnce(nodes: readonly TreeNode[]): boolean {
+  return nodes.length > 0 && nodes.length <= 3 && ends(nodes) && !nodes.some((node) => isDecision(node) || (node.pre ?? []).some((evaluated) => evaluated.branches !== undefined));
+}
+
+/**
+ * The rows of the outline of a trace (see Row): each frame's tree indented
+ * below the call that opened it. Every side of a decision keeps its rows; the
+ * choices only turn the rows they do not run off, so nothing goes away. A
+ * step folds to its label until the reader opens it (or it holds a change,
+ * an opened frame or a choice); a step of one call is that call's row. A
+ * guard or an optional item reads on one line, a `try` heads the rows it
+ * guards and its catch follows them, and the call evaluated last before a
+ * condition or a return shares that row.
+ */
 export function traceRows(options: RowOptions): Row[] {
   const { trees, state, enabled } = options;
-  const unfolded = options.unfolded ?? new Set<string>();
+  const toggled = options.toggled ?? new Set<string>();
   const ids = frameIds(options.rootId, state.open, trees);
   const opened = new Set(state.open);
+  const chosenKeys = state.choices.flatMap((choice) => Object.keys(choice));
   const rows: Row[] = [];
   const frame = (key: string, id: string, depth: number, chain: readonly string[]) => {
     const tree = trees.get(id);
@@ -347,78 +383,93 @@ export function traceRows(options: RowOptions): Row[] {
       const at = removed.after ?? `${removed.parent}|${removed.branch ?? ''}|start`;
       removedAfter.set(at, [...(removedAfter.get(at) ?? []), removed]);
     }
+    const changedIds = [...Object.keys(change?.marks ?? {}), ...(change?.removed ?? []).map((removed) => removed.parent ?? '')];
     const removedRows = (at: string, depth: number) => {
       for (const removed of removedAfter.get(at) ?? []) rows.push({ kind: 'removed', key: `${key}|removed|${removed.node.id}|${at}`, frame: key, node: removed.node, depth });
     };
+    const frameStateOf = (call: TreeNode): Extract<Row, { kind: 'node' }>['frameState'] => {
+      const calleeId = call.target?.kind === 'function' ? call.target.id : undefined;
+      if (calleeId === undefined || !options.hasFrame(calleeId)) return undefined;
+      if (chain.includes(calleeId)) return 'recursion';
+      return opened.has(childFrame(key, call.id)) ? (trees.has(calleeId) ? 'open' : 'loading') : 'closed';
+    };
+    /** The rows of the frame a call opens, below its row. */
+    const openBelow = (call: TreeNode, frameState: Extract<Row, { kind: 'node' }>['frameState'], depth: number) => {
+      if ((frameState !== 'open' && frameState !== 'loading') || call.target?.kind !== 'function') return;
+      const child = childFrame(key, call.id);
+      frame(child, ids.get(child) ?? call.target.id, depth, [...chain, call.target.id]);
+    };
     const list = (nodes: readonly TreeNode[], depth: number, parent: string, branchKey: string) => {
       removedRows(`${parent}|${branchKey}|start`, depth);
-      const visible = nodesOn(nodes, enabled);
-      for (let index = 0; index < visible.length; index += 1) {
-        const node = visible[index] as TreeNode;
-        // A run of actions reads as one row until it is unfolded.
-        if (node.kind === 'action' && change?.marks[node.id] === undefined) {
-          let end = index;
-          while (end + 1 < visible.length && (visible[end + 1] as TreeNode).kind === 'action' && change?.marks[(visible[end + 1] as TreeNode).id] === undefined && removedAfter.get((visible[end] as TreeNode).id) === undefined) end += 1;
-          const runKey = `${key}|actions|${node.id}`;
-          if (end > index && !unfolded.has(runKey)) {
-            const run = visible.slice(index, end + 1);
-            rows.push({ kind: 'actions', key: runKey, frame: key, nodes: run, depth, on: run.some((item) => on.has(item.id)) });
-            for (const item of run) removedRows(item.id, depth);
-            index = end;
-            continue;
-          }
-        }
+      for (const node of nodesOn(nodes, enabled)) {
         one(node, depth);
         removedRows(node.id, depth);
       }
     };
-    const one = (node: TreeNode, depth: number, before = false) => {
-      for (const evaluated of node.pre ?? []) one(evaluated, depth, true);
-      const rowKey = `${key}|${node.id}`;
-      const isOn = on.has(node.id);
-      if (node.kind === 'call') {
-        const target = node.target;
-        const child = childFrame(key, node.id);
-        const calleeId = target?.kind === 'function' ? target.id : undefined;
-        const frameState = calleeId === undefined || !options.hasFrame(calleeId) ? undefined : chain.includes(calleeId) ? 'recursion' : opened.has(child) ? (trees.has(calleeId) ? 'open' : 'loading') : 'closed';
-        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before, ...(frameState === undefined ? {} : { frameState }) });
-        if (frameState === 'open' || frameState === 'loading') frame(child, ids.get(child) ?? (calleeId as string), depth + 1, [...chain, calleeId as string]);
-        return;
-      }
+    const one = (node: TreeNode, depth: number, before = false): void => {
+      const { call, others } = splitPre(node);
+      for (const evaluated of others) one(evaluated, depth, true);
       if (node.kind === 'block') {
-        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false });
-        list(node.branches?.[0]?.nodes ?? [], depth + 1, node.id, 'body');
+        step(node, depth);
         return;
       }
-      if (node.branches === undefined || node.kind === 'action') {
-        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before });
+      const isOn = on.has(node.id);
+      const base = { kind: 'node' as const, key: `${key}|${node.id}`, frame: key, node, depth, on: isOn, before };
+      const opens = node.kind === 'call' ? node : call;
+      const frameState = opens === undefined ? undefined : frameStateOf(opens);
+      const head = { ...base, ...(call === undefined ? {} : { call }), ...(frameState === undefined ? {} : { frameState }) };
+      if (node.branches === undefined || node.kind === 'action' || node.kind === 'call') {
+        rows.push(head);
+        if (opens !== undefined) openBelow(opens, frameState, depth + 1);
         return;
       }
       const branches = branchesOf(node, enabled);
       const chosen = forcedSide(node, enabled) ?? chosenSide(state.choices, decisionKey(key, node.id));
-      // A guard and an optional item read as one line: `if (!x) → throw ...`.
-      if ((node.form === 'guard' || node.form === 'optional') && !unfolded.has(rowKey) && change?.marks[node.id] === undefined && !branches.some((branch) => branch.nodes.some((child) => change?.marks[child.id] !== undefined))) {
+      const changedHere = changedIds.some((changed) => changed === node.id || below(changed, node.id));
+      // A guard and an optional item read as one line: `if (!keys) → 終わり: …`.
+      if ((node.form === 'guard' || node.form === 'optional') && !changedHere) {
         const yes = branches.find((branch) => branch.key === 'true');
-        const shown = yes === undefined ? [] : nodesOn(yes.nodes, enabled);
-        const words = shown.length === 0 ? '' : node.form === 'guard' ? `→ ${foldedWords(shown)}` : `→ ${shown.map((child) => child.code).join('、')}`;
-        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, folded: words });
+        rows.push({ ...head, exit: { nodes: yes === undefined ? [] : nodesOn(yes.nodes, enabled), on: isOn && (chosen === undefined || chosen === 'true') } });
+        if (opens !== undefined) openBelow(opens, frameState, depth + 1);
         return;
       }
-      rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false });
+      rows.push(head);
+      if (opens !== undefined) openBelow(opens, frameState, depth + 1);
+      // A try heads the rows it guards; its catch (and finally) follow them at its own depth.
+      const sideDepth = node.kind === 'try' ? depth : depth + 1;
       for (const branch of branches) {
-        const branchKey = `${rowKey}|${branch.key}`;
-        const empty = branch.nodes.length === 0 && (removedAfter.get(`${node.id}|${branch.key}|start`) ?? []).length === 0;
-        // A side with nothing in it needs no row: its chip on the decision chooses it.
-        if (empty && node.kind !== 'cond-expr') continue;
-        const other = chosen !== undefined && branch.key !== chosen && branch.always !== true;
-        const branchOn = branch.nodes.some((child) => on.has(child.id)) || (isOn && !other);
-        if (other && !unfolded.has(branchKey)) {
-          rows.push({ kind: 'branch', key: branchKey, frame: key, node, branch, depth: depth + 1, on: false, folded: foldedWords(nodesOn(branch.nodes, enabled)) });
+        const taken = chosen === undefined || branch.key === chosen || branch.always === true;
+        const branchOn = (isOn && taken) || branch.nodes.some((child) => on.has(child.id));
+        if (node.kind === 'try' && branch.key === 'try') {
+          list(branch.nodes, depth + 1, node.id, branch.key);
           continue;
         }
-        rows.push({ kind: 'branch', key: branchKey, frame: key, node, branch, depth: depth + 1, on: branchOn });
-        list(branch.nodes, depth + 2, node.id, branch.key);
+        const shown = nodesOn(branch.nodes, enabled);
+        const empty = shown.length === 0 && (removedAfter.get(`${node.id}|${branch.key}|start`) ?? []).length === 0;
+        // A side with nothing in it needs no row (its chip on the decision chooses it), except a catch, which says that it lets the error go.
+        if (empty && node.kind !== 'cond-expr' && node.kind !== 'try') continue;
+        const oneLine = node.kind === 'try' && (empty || (endsAtOnce(shown) && !shown.some((child) => changedIds.some((changed) => changed === child.id || below(changed, child.id)))));
+        rows.push({ kind: 'branch', key: `${key}|${node.id}|${branch.key}`, frame: key, node, branch, depth: sideDepth, on: branchOn, chosen: chosen === branch.key, ...(oneLine ? { exit: { nodes: shown, on: branchOn } } : {}) });
+        if (!oneLine) list(branch.nodes, sideDepth + 1, node.id, branch.key);
       }
+    };
+    const step = (node: TreeNode, depth: number) => {
+      const rowKey = `${key}|${node.id}`;
+      const isOn = on.has(node.id);
+      const body = nodesOn(node.branches?.[0]?.nodes ?? [], enabled);
+      const only = body.length === 1 ? body[0] : undefined;
+      // A step that is one call of a function reads as that call: its row opens the function.
+      if (only !== undefined && only.kind === 'call' && only.target?.kind === 'function' && options.hasFrame(only.target.id)) {
+        const frameState = frameStateOf(only);
+        rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, call: only, ...(frameState === undefined ? {} : { frameState }), step: { open: false, merged: true } });
+        openBelow(only, frameState, depth + 1);
+        return;
+      }
+      const prefix = childFrame(key, node.id);
+      const holds = changedIds.some((changed) => below(changed, node.id)) || state.open.some((open) => below(open, prefix)) || chosenKeys.some((chosen) => below(chosen, decisionKey(key, node.id)));
+      const open = toggled.has(rowKey) ? !holds : holds;
+      rows.push({ kind: 'node', key: rowKey, frame: key, node, depth, on: isOn, before: false, step: { open, merged: false } });
+      if (open) list(node.branches?.[0]?.nodes ?? [], depth + 1, node.id, 'body');
     };
     list(tree.nodes, depth, '', '');
   };
@@ -427,14 +478,15 @@ export function traceRows(options: RowOptions): Row[] {
 }
 
 /**
- * The key of the outline row that shows a node of a frame: its own row, else
- * the run of actions folded to one row that holds it, else the row that shows
- * its nearest ancestor in the same way (a guard or an optional item folded to
- * one line, a decision whose side is folded); undefined when none does, as
- * for a frame the outline does not show.
+ * The key of the outline row that shows a node of a frame: its own row, or
+ * the row that stands for it (a condition or a return for the call evaluated
+ * before it, a step for its one call), else the row that shows its nearest
+ * ancestor in the same way (a guard or an optional item read on one line, a
+ * folded step); undefined when none does, as for a frame the outline does
+ * not show.
  */
 export function rowFor(rows: readonly Row[], frame: string, node: string): string | undefined {
-  const row = rows.find((candidate) => candidate.frame === frame && (candidate.kind === 'node' ? candidate.node.id === node : candidate.kind === 'actions' && candidate.nodes.some((item) => item.id === node)));
+  const row = rows.find((candidate) => candidate.frame === frame && candidate.kind === 'node' && (candidate.node.id === node || candidate.call?.id === node));
   if (row !== undefined) return row.key;
   // An id is the id of the node it is under and its place there (`s0b1n0` under `s0b1`, `s5c1s0` under `s5`): trimming a segment at a time reaches every ancestor.
   const parent = node.replace(/[a-z]+[0-9]+$/, '');

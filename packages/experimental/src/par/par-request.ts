@@ -30,6 +30,8 @@ import {
   verifyClientSecret,
   type AuthorizationRequestParams,
   type ClientResolver,
+  type PresentedClientCredentials,
+  type TokenClientInfo,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
@@ -176,7 +178,9 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
  * クライアントを認証し、そのクライアント ID を返す。
  *
  * 認証の規則はトークンエンドポイントと同じである（RFC 9126 §2.1）。
- * ボディからは `client_id` と `client_secret` だけを使い、認証情報の取り出し、複数の認証方式の判定、検証は、core の {@link extractClientCredentials} から始まる関数にすべて任せる。
+ * ボディからは `client_id`、`client_secret`、`client_assertion_type`、`client_assertion` だけを使い、認証情報の取り出し、複数の認証方式の判定、検証は、core の {@link extractClientCredentials} から始まる関数にすべて任せる。
+ * 提示された認証情報の確認（シークレットの照合、`private_key_jwt` のクライアントアサーションの検証）は `verifyCredential` に任せる。
+ * 省略すると core の {@link verifyClientSecret} でシークレットを照合するので、`private_key_jwt` のクライアントは認証できない。
  * そのため、次の規則もトークンエンドポイントと同じになる:
  * - `Authorization` ヘッダーは `Basic` スキームだけを認証に使う。
  *   ほかのスキームのヘッダー（ゲートウェイが付ける `Bearer` など）は無視し、ボディの認証情報で認証する。
@@ -189,24 +193,33 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
  * @throws {ParError} `invalid_client`: 認証に失敗したとき（クライアント ID がない、クライアントが登録されていない、シークレットが一致しないなど）
  * @throws {ParError} `invalid_request`: 複数の認証方式を使ったとき、ボディの `client_id` が `Basic` ヘッダーと食い違うとき
  * @spec RFC 9126 §2.1
+ * @spec OIDC Core 1.0 §9
  */
 export async function authenticateParClient(context: {
   params: Record<string, string>;
   authorizationHeader?: string;
   clientResolver: TokenClientResolver;
+  verifyCredential?: (client: TokenClientInfo, presented: PresentedClientCredentials) => Promise<void>;
 }): Promise<string> {
   const { params, clientResolver } = context;
   return runClientAuthentication({
-    params: { client_id: params['client_id'], client_secret: params['client_secret'] },
+    params: {
+      client_id: params['client_id'],
+      client_secret: params['client_secret'],
+      client_assertion_type: params['client_assertion_type'],
+      client_assertion: params['client_assertion'],
+    },
     authorizationHeader: context.authorizationHeader ?? '',
     clientResolver,
+    verifyCredential:
+      context.verifyCredential ?? ((client, presented) => verifyClientSecret(client, presented.clientSecret)),
   });
 }
 
 /**
  * core の関数でクライアントを認証し、ID を返す。
  *
- * core の関数を、認証情報の取り出し、クライアントの取得、認証方式の照合、シークレットの照合の順に呼び、提示されたクライアント ID を返す。
+ * core の関数を、認証情報の取り出し、クライアントの取得、認証方式の照合の順に呼び、`verifyCredential` で認証情報を確かめてから、提示されたクライアント ID を返す。
  * core が投げた `TokenError` は `ParError` に変換して投げ、それ以外の例外はそのまま投げる。
  *
  * @throws {ParError} クライアント認証に失敗したとき
@@ -215,6 +228,7 @@ async function runClientAuthentication(context: {
   params: Record<string, string | undefined>;
   authorizationHeader: string;
   clientResolver: TokenClientResolver;
+  verifyCredential: (client: TokenClientInfo, presented: PresentedClientCredentials) => Promise<void>;
 }): Promise<string> {
   try {
     const presented = extractClientCredentials({
@@ -223,7 +237,7 @@ async function runClientAuthentication(context: {
     });
     const client = await resolveAuthenticatedTokenClient(presented.clientId, context.clientResolver);
     validateClientAuthMethod(client, presented);
-    await verifyClientSecret(client, presented.clientSecret);
+    await context.verifyCredential(client, presented);
     return presented.clientId;
   } catch (error) {
     throw toParError(error);

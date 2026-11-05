@@ -14,11 +14,12 @@ describe('dynamicClientRegistrationConfig', () => {
   });
 
   // RFC 7591 §2: the values a client may register as generated — the methods
-  // core verifies, the grants of the code flow and the Implicit Flow, no
-  // metadata beyond the standard fields.
-  it('should allow the three auth methods of core, the code and implicit grants, and no custom metadata', () => {
+  // the authenticate-client steps verify (private_key_jwt of OIDC Core 1.0 §9
+  // included), the grants of the code flow and the Implicit Flow, no metadata
+  // beyond the standard fields.
+  it('should allow the four auth methods the OP verifies, the code and implicit grants, and no custom metadata', () => {
     expect(dynamicClientRegistrationConfig).toMatchObject({
-      tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none'],
+      tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
       grantTypes: ['authorization_code', 'refresh_token', 'implicit'],
       jwksPurposes: ['request_object', 'private_key_jwt', 'dpop'],
       customClientMetadata: {},
@@ -41,14 +42,14 @@ describe('extendDynamicClientRegistrationConfig', () => {
   it('should add the given values to the lists and the table, each once', () => {
     const tenant = () => undefined;
     const config = extendDynamicClientRegistrationConfig(dynamicClientRegistrationConfig, {
-      tokenEndpointAuthMethods: ['private_key_jwt', 'none'],
+      tokenEndpointAuthMethods: ['private_key_jwt', 'none', 'tls_client_auth'],
       grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
       jwksPurposes: ['dpop', 'my-purpose'],
       customClientMetadata: { tenant_id: tenant },
     });
 
     expect(config).toMatchObject({
-      tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none', 'private_key_jwt'],
+      tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none', 'tls_client_auth'],
       grantTypes: ['authorization_code', 'refresh_token', 'implicit', 'urn:ietf:params:oauth:grant-type:device_code'],
       jwksPurposes: ['request_object', 'private_key_jwt', 'dpop', 'my-purpose'],
       customClientMetadata: { tenant_id: tenant },

@@ -53,6 +53,13 @@ export interface ProviderMetadataConfig {
   // Optional
   grantTypesSupported?: string[];
   tokenEndpointAuthMethodsSupported?: string[];
+  /**
+   * OIDC Discovery 1.0 §3 / RFC 8414 §2: JWS `alg` values the Token Endpoint
+   * accepts for the client assertion of `private_key_jwt` (OIDC Core 1.0 §9).
+   * Advertise when `tokenEndpointAuthMethodsSupported` lists `private_key_jwt`.
+   * `none` must not be listed.
+   */
+  tokenEndpointAuthSigningAlgValuesSupported?: string[];
   responseModesSupported?: string[];
   claimsParameterSupported?: boolean;
   requestParameterSupported?: boolean;
@@ -101,6 +108,7 @@ export interface ProviderMetadata {
   // Optional
   grant_types_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
+  token_endpoint_auth_signing_alg_values_supported?: string[];
   response_modes_supported?: string[];
   claims_parameter_supported?: boolean;
   request_parameter_supported?: boolean;
@@ -172,7 +180,7 @@ function validateIssuer(issuer: string): void {
  *
  * @spec OIDC Discovery 1.0 §3
  * @spec OIDC Core 1.0 §15.1
- * @throws {Error} 必須の設定がないか空のとき、`issuer` が条件を満たさないとき、RS256 の鍵がないとき、RSASSA-PKCS1-v1_5 でも ECDSA でもない鍵があるとき、または `claimTypesSupported` に `normal` 以外の値があるとき
+ * @throws {Error} 必須の設定がないか空のとき、`issuer` が条件を満たさないとき、RS256 の鍵がないとき、RSASSA-PKCS1-v1_5 でも ECDSA でもない鍵があるとき、`claimTypesSupported` に `normal` 以外の値があるとき、または `tokenEndpointAuthSigningAlgValuesSupported` に `none` があるとき
  */
 export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderMetadata {
   validateIssuer(config.issuer);
@@ -259,6 +267,18 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
   }
   if (config.tokenEndpointAuthMethodsSupported && config.tokenEndpointAuthMethodsSupported.length > 0) {
     metadata.token_endpoint_auth_methods_supported = config.tokenEndpointAuthMethodsSupported;
+  }
+  if (
+    config.tokenEndpointAuthSigningAlgValuesSupported &&
+    config.tokenEndpointAuthSigningAlgValuesSupported.length > 0
+  ) {
+    // `none` を含めていれば例外を投げる（OIDC Discovery 1.0 §3、RFC 8414 §2 の MUST NOT）。
+    // 署名の無いクライアントアサーションは、クライアント認証にならないためである。
+    if (config.tokenEndpointAuthSigningAlgValuesSupported.includes('none')) {
+      throw new Error('token_endpoint_auth_signing_alg_values_supported must not contain none');
+    }
+    metadata.token_endpoint_auth_signing_alg_values_supported =
+      config.tokenEndpointAuthSigningAlgValuesSupported;
   }
   if (config.responseModesSupported && config.responseModesSupported.length > 0) {
     metadata.response_modes_supported = config.responseModesSupported;

@@ -32,7 +32,7 @@ describe('dynamicClientRegistration', () => {
           dynamicClientRegistration: {
             maxRegisteredClients: 5,
             verifyInitialAccessToken,
-            tokenEndpointAuthMethods: ['private_key_jwt'],
+            tokenEndpointAuthMethods: ['tls_client_auth'],
           },
         },
       });
@@ -41,7 +41,7 @@ describe('dynamicClientRegistration', () => {
         ...dynamicClientRegistrationConfig,
         maxRegisteredClients: 5,
         verifyInitialAccessToken,
-        tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none', 'private_key_jwt'],
+        tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none', 'tls_client_auth'],
       });
       expect(c.get('dynamicClientStore')).toBe(dynamicClientStore);
     });

@@ -479,3 +479,96 @@ describe('verifyClientSecretHash', () => {
     );
   });
 });
+
+// OIDC Core 1.0 §9 / RFC 7521 §4.2 / RFC 7523 §2.2: private_key_jwt
+describe('private_key_jwt credentials', () => {
+  const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+  /** An unsigned-looking assertion whose payload names pkjwt-client as sub; only its sub is read here. */
+  const assertion = `${btoa(JSON.stringify({ alg: 'RS256' })).replace(/=+$/, '')}.${btoa(JSON.stringify({ sub: 'pkjwt-client' })).replace(/=+$/, '')}.c2ln`;
+  const pkjwtClient: TokenClientInfo = { clientId: 'pkjwt-client', tokenEndpointAuthMethods: ['private_key_jwt'] };
+
+  describe('extractClientCredentials', () => {
+    it('should return private_key_jwt with the assertion and the body client_id', () => {
+      expect(
+        extractClientCredentials({
+          params: { client_id: 'pkjwt-client', client_assertion_type: JWT_BEARER, client_assertion: assertion },
+          authorizationHeader: '',
+        }),
+      ).toEqual({ clientId: 'pkjwt-client', clientAssertion: assertion, method: 'private_key_jwt' });
+    });
+
+    // RFC 7521 §4.2: client_id is optional; the subject of the assertion names the client.
+    it('should take the client_id from the sub of the assertion when the body has none', () => {
+      expect(
+        extractClientCredentials({
+          params: { client_assertion_type: JWT_BEARER, client_assertion: assertion },
+          authorizationHeader: '',
+        }),
+      ).toEqual({ clientId: 'pkjwt-client', clientAssertion: assertion, method: 'private_key_jwt' });
+    });
+
+    // OAuth 2.1 §2.3: one method per request.
+    it('should reject an assertion sent with a client_secret with invalid_request', () => {
+      expect(() =>
+        extractClientCredentials({
+          params: { client_id: 'pkjwt-client', client_secret: 's', client_assertion_type: JWT_BEARER, client_assertion: assertion },
+          authorizationHeader: '',
+        }),
+      ).toThrowError(expect.objectContaining({ error: TokenErrorCode.InvalidRequest }));
+    });
+
+    it('should reject an assertion sent with a Basic header with invalid_request', () => {
+      expect(() =>
+        extractClientCredentials({
+          params: { client_assertion_type: JWT_BEARER, client_assertion: assertion },
+          authorizationHeader: `Basic ${btoa('pkjwt-client:s')}`,
+        }),
+      ).toThrowError(expect.objectContaining({ error: TokenErrorCode.InvalidRequest }));
+    });
+
+    it('should reject a client_assertion without client_assertion_type with invalid_request', () => {
+      expect(() =>
+        extractClientCredentials({ params: { client_id: 'pkjwt-client', client_assertion: assertion }, authorizationHeader: '' }),
+      ).toThrowError(
+        expect.objectContaining({
+          error: TokenErrorCode.InvalidRequest,
+          errorDescription: 'client_assertion_type and client_assertion must be sent together',
+        }),
+      );
+    });
+
+    it('should reject an unsupported client_assertion_type with invalid_client', () => {
+      expect(() =>
+        extractClientCredentials({
+          params: { client_assertion_type: 'urn:example:saml', client_assertion: assertion },
+          authorizationHeader: '',
+        }),
+      ).toThrowError(expect.objectContaining({ error: TokenErrorCode.InvalidClient, errorDescription: 'Unsupported client_assertion_type' }));
+    });
+  });
+
+  describe('validateClientAuthMethod', () => {
+    it('should accept private_key_jwt without a client_secret for a client that registered it', () => {
+      expect(validateClientAuthMethod(pkjwtClient, { method: 'private_key_jwt' })).toBeUndefined();
+    });
+
+    // Downgrade protection (OIDC Core 1.0 §9).
+    it('should reject private_key_jwt for a client registered with client_secret_basic', () => {
+      expect(() => validateClientAuthMethod(confidentialClient, { method: 'private_key_jwt' })).toThrowError(
+        expect.objectContaining({ error: TokenErrorCode.InvalidClient }),
+      );
+    });
+
+    it('should reject client_secret_basic for a client registered with private_key_jwt only', () => {
+      expect(() => validateClientAuthMethod(pkjwtClient, { method: 'client_secret_basic', clientSecret: 's' })).toThrowError(
+        expect.objectContaining({ error: TokenErrorCode.InvalidClient }),
+      );
+    });
+
+    it('should reject private_key_jwt for a public client', () => {
+      expect(() => validateClientAuthMethod(publicClient, { method: 'private_key_jwt' })).toThrowError(
+        expect.objectContaining({ error: TokenErrorCode.InvalidClient }),
+      );
+    });
+  });
+});

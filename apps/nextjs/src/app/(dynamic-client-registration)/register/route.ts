@@ -159,6 +159,9 @@ async function registerClient(request: Request): Promise<Response> {
     // 理解しないメタデータは黙って無視し（RFC 7591 §2 の MUST）、`error_description` はどれもリクエストの値を含まない固定の ASCII の文字列にする。
     const responseTypes = ['code', ...responseTypesOf(features)];
     const requestObjectSigningAlgs = registrableRequestObjectSigningAlgs(providerConfig);
+    // `private_key_jwt` の登録は `jwks` か `jwks_uri` を求め（OIDC Core 1.0 §9）、`token_endpoint_auth_signing_alg` はディスカバリーが公開する alg だけを受け付ける。
+    // `request_uris` は OP が `request_uri` に応答するときだけ登録する（`requestUriRegistrationPolicyOf()`）。
+    const requestUris = requestUriRegistrationPolicyOf(providerConfig);
     const validated = validateClientMetadata(metadata, {
       tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
       grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
@@ -171,6 +174,9 @@ async function registerClient(request: Request): Promise<Response> {
       ...(requestObjectSigningAlgs === undefined
         ? {}
         : { requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs }),
+      tokenEndpointAuthSigningAlgValuesSupported: providerConfig.tokenEndpointAuthSigningAlgValuesSupported,
+      acceptRequestUris: requestUris.accept,
+      allowInsecureRequestUris: requestUris.allowInsecure,
       customMetadata: config.customClientMetadata,
     });
     const client = buildRegisteredClient(validated);
@@ -286,6 +292,24 @@ export function registrableScopes(): readonly string[] | undefined {
 export function registrableRequestObjectSigningAlgs(config: ProviderConfig): readonly string[] | undefined {
   const advertised = discoveryOf(features, {}, config.issuer, config)['request_object_signing_alg_values_supported'];
   return Array.isArray(advertised) ? advertised.filter((alg): alg is string => typeof alg === 'string') : undefined;
+}
+
+/**
+ * `request_uris` を登録するかどうかと、`http` の URL を許すかどうかを返す。
+ *
+ * 登録するのは、ディスカバリーが `request_uri_parameter_supported: true` を公開するとき（request-object の機能が `request_uri` に応答するとき）だけで、それ以外は理解しないメタデータとして無視させる（RFC 7591 §2）。
+ * `http` の URL は、request-object の機能の設定 `allowInsecureRequestUri`（開発用）が有効なときだけ許す。
+ * その設定はこの機能のものではないので、型ではなく名前で読み、機能がないときは無効として扱う。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec OIDC Discovery 1.0 §3
+ */
+export function requestUriRegistrationPolicyOf(config: ProviderConfig): { accept: boolean; allowInsecure: boolean } {
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_uri_parameter_supported'];
+  return {
+    accept: advertised === true,
+    allowInsecure: (config as unknown as Record<string, unknown>)['allowInsecureRequestUri'] === true,
+  };
 }
 
 /**

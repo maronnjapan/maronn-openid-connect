@@ -296,6 +296,24 @@ describe('buildProviderMetadata', () => {
       ]);
     });
 
+    // OIDC Discovery 1.0 §3 / RFC 8414 §2: the algs of private_key_jwt (OIDC Core 1.0 §9).
+    it('should include token_endpoint_auth_signing_alg_values_supported when provided', () => {
+      const config = createValidConfig({
+        tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
+        tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'ES256'],
+      });
+      const metadata = buildProviderMetadata(config);
+      expect(metadata.token_endpoint_auth_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
+    });
+
+    // RFC 8414 §2: "none" MUST NOT be used.
+    it('should reject none in token_endpoint_auth_signing_alg_values_supported', () => {
+      const config = createValidConfig({ tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'none'] });
+      expect(() => buildProviderMetadata(config)).toThrowError(
+        'token_endpoint_auth_signing_alg_values_supported must not contain none',
+      );
+    });
+
     it('should include response_modes_supported when provided', () => {
       const config = createValidConfig({ responseModesSupported: ['query'] });
       const metadata = buildProviderMetadata(config);

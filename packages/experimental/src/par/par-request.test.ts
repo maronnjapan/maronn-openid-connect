@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { TokenError, TokenErrorCode } from '@maronn-openid-connect/core';
 import type {
   ClientInfo,
   ClientResolver,
@@ -46,7 +47,14 @@ const PUBLIC_CLIENT: TestClient = {
   tokenEndpointAuthMethods: ['none'],
 };
 
-const TEST_CLIENTS: readonly TestClient[] = [BASIC_CLIENT, POST_CLIENT, PUBLIC_CLIENT];
+const PRIVATE_KEY_JWT_CLIENT: TestClient = {
+  clientId: 'jwt-app',
+  redirectUris: ['https://client.example/cb'],
+  clientType: 'confidential',
+  tokenEndpointAuthMethods: ['private_key_jwt'],
+};
+
+const TEST_CLIENTS: readonly TestClient[] = [BASIC_CLIENT, POST_CLIENT, PUBLIC_CLIENT, PRIVATE_KEY_JWT_CLIENT];
 
 function createClientResolver(): ClientResolver & TokenClientResolver {
   return {
@@ -140,6 +148,45 @@ describe('assertParExpiresInSeconds', () => {
 });
 
 describe('authenticateParClient', () => {
+  // OIDC Core 1.0 §9: the client assertion is passed to the verifyCredential hook.
+  it('should pass a private_key_jwt client assertion to verifyCredential', async () => {
+    const verified: unknown[] = [];
+    const clientId = await authenticateParClient({
+      params: validParams({
+        client_id: 'jwt-app',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: 'header.payload.signature',
+      }),
+      authorizationHeader: '',
+      clientResolver: createClientResolver(),
+      verifyCredential: async (client, presented) => {
+        verified.push([client.clientId, presented]);
+      },
+    });
+
+    expect(clientId).toBe('jwt-app');
+    expect(verified).toEqual([
+      ['jwt-app', { clientId: 'jwt-app', clientAssertion: 'header.payload.signature', method: 'private_key_jwt' }],
+    ]);
+  });
+
+  it('should turn a failure of verifyCredential into a ParError', async () => {
+    await expect(
+      authenticateParClient({
+        params: validParams({
+          client_id: 'jwt-app',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          client_assertion: 'header.payload.signature',
+        }),
+        authorizationHeader: '',
+        clientResolver: createClientResolver(),
+        verifyCredential: async () => {
+          throw new TokenError(TokenErrorCode.InvalidClient, 'client_assertion signature verification failed');
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_client', errorDescription: 'client_assertion signature verification failed' });
+  });
+
   it('should return the authenticated client id for client_secret_basic with client_id in the body', async () => {
     // RFC 9126 §2.1: client_id is a required authorization request parameter, so it is
     // present in the body even when the client authenticates with HTTP Basic.

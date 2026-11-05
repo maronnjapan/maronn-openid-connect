@@ -26,6 +26,15 @@
  * - client_request_object_signing_algs: requestObjectSigningAlg, the alg every
  *   Request Object of the client must be signed with (OIDC Dynamic Client
  *   Registration 1.0 §2).
+ * - client_private_key_jwt_auths: private_key_jwt among the
+ *   tokenEndpointAuthMethods (OIDC Core 1.0 §9), after the methods of
+ *   client_auths, and its signing_alg as tokenEndpointAuthSigningAlg. The
+ *   client assertion is verified with the client_jwks keys of the
+ *   private_key_jwt purpose, or the keys of the jwks_uri.
+ * - client_request_uris: requestUris, the request_uri values the client uses
+ *   (OIDC Core 1.0 §6.2).
+ * - clients.name and client_display_uris: clientName, logoUri, policyUri,
+ *   tosUri and clientUri, what the login and consent screens show.
  * - Metadata without a column (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -50,6 +59,7 @@ import {
   hashClientSecret,
   isPublicTokenClient,
   selectRegisteredClientAuthMethods,
+  type ClientAuthMethod,
   type ClientKeyPurpose,
   type ClientKeyResolver,
   type ClientResolver,
@@ -76,6 +86,8 @@ import type { SqlDatabase } from './database.js';
  * - `client_redirect_uris` の行は `redirectUris` にする。
  * - `client_grant_types`、`client_scopes`、`client_response_types` の行は、あればそれぞれ `grantTypes`、`scope`、`responseTypes` にし、なければ設定せずに既定の扱いに任せる。
  * - `client_jwks_uris` と `client_request_object_signing_algs` の行は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
+ * - `client_private_key_jwt_auths` の行があれば、`tokenEndpointAuthMethods` の最後に `private_key_jwt` を加え、`signing_alg` を `tokenEndpointAuthSigningAlg` にする。
+ * - `client_request_uris` の行は `requestUris` に、`clients.name` は `clientName` に、`client_display_uris` の行は `logoUri`、`policyUri`、`tosUri`、`clientUri` にする。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違う `client_auths` の行を持つクライアントを読んだとき
  */
@@ -84,14 +96,19 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
     async findClient(clientId: string): Promise<RegisteredClient | null> {
       const [client] = await db.all<{
         id: string;
+        name: string | null;
         client_type: string;
         jwks_uri: string | null;
         request_object_signing_alg: string | null;
+        private_key_jwt_client_id: string | null;
+        private_key_jwt_signing_alg: string | null;
       }>({
         sql:
-          'SELECT c.id, c.client_type, u.value AS jwks_uri, a.alg AS request_object_signing_alg FROM clients c ' +
+          'SELECT c.id, c.name, c.client_type, u.value AS jwks_uri, a.alg AS request_object_signing_alg, ' +
+          'p.client_id AS private_key_jwt_client_id, p.signing_alg AS private_key_jwt_signing_alg FROM clients c ' +
           'LEFT JOIN client_jwks_uris u ON u.client_id = c.id ' +
           'LEFT JOIN client_request_object_signing_algs a ON a.client_id = c.id ' +
+          'LEFT JOIN client_private_key_jwt_auths p ON p.client_id = c.id ' +
           'WHERE c.id = ? AND c.is_deleted = FALSE',
         params: [clientId],
       });
@@ -118,6 +135,14 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
         sql: 'SELECT response_type FROM client_response_types WHERE client_id = ? ORDER BY id',
         params: [clientId],
       });
+      const requestUris = await db.all<{ value: string }>({
+        sql: 'SELECT value FROM client_request_uris WHERE client_id = ? ORDER BY id',
+        params: [clientId],
+      });
+      const displayUris = await db.all<{ kind: string; value: string }>({
+        sql: 'SELECT kind, value FROM client_display_uris WHERE client_id = ? ORDER BY kind',
+        params: [clientId],
+      });
 
       const registered: RegisteredClient = {
         clientId: client.id,
@@ -131,26 +156,57 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       if (client.request_object_signing_alg !== null) {
         registered.requestObjectSigningAlg = client.request_object_signing_alg;
       }
+      if (requestUris.length > 0) registered.requestUris = requestUris.map((row) => row.value);
+      if (client.name !== null) registered.clientName = client.name;
+      for (const row of displayUris) {
+        if (isDisplayUriKind(row.kind)) registered[DISPLAY_URI_FIELDS[row.kind]] = row.value;
+      }
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
-      } else if (auths[0]) {
-        // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
-        // そのため、最初の行とシークレットが違う行があれば、設定の誤りとして投げる。
-        const secret = auths[0].secret;
-        if (auths.some((auth) => auth.secret !== secret)) {
-          throw new Error('Client ' + clientId + ' has client_auths rows with different secrets');
+      } else {
+        const methods: ClientAuthMethod[] = [];
+        if (auths[0]) {
+          // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
+          // そのため、最初の行とシークレットが違う行があれば、設定の誤りとして投げる。
+          const secret = auths[0].secret;
+          if (auths.some((auth) => auth.secret !== secret)) {
+            throw new Error('Client ' + clientId + ' has client_auths rows with different secrets');
+          }
+          methods.push(...auths.map((auth) => auth.client_auth_type as ClientAuthType));
+          if (secret !== null) registered.clientSecretHash = secret;
         }
-        registered.tokenEndpointAuthMethods = auths.map((auth) => auth.client_auth_type as ClientAuthType);
-        if (secret !== null) registered.clientSecretHash = secret;
+        // `private_key_jwt` は、`client_auths` の方式の後ろに並べる（OIDC Core 1.0 §9）。
+        if (client.private_key_jwt_client_id !== null) {
+          methods.push('private_key_jwt');
+          if (client.private_key_jwt_signing_alg !== null) {
+            registered.tokenEndpointAuthSigningAlg = client.private_key_jwt_signing_alg;
+          }
+        }
+        if (methods.length > 0) registered.tokenEndpointAuthMethods = methods;
       }
-      // `client_auths` の行がないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
+      // どの方式の行もないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
       return registered;
     },
   };
 }
 
 type ClientAuthType = 'client_secret_basic' | 'client_secret_post';
+
+/** The kinds of client_display_uris, with the field of RegisteredClient each one is. */
+const DISPLAY_URI_FIELDS = {
+  logo_uri: 'logoUri',
+  policy_uri: 'policyUri',
+  tos_uri: 'tosUri',
+  client_uri: 'clientUri',
+} as const satisfies Record<string, keyof RegisteredClient>;
+
+type DisplayUriKind = keyof typeof DISPLAY_URI_FIELDS;
+
+/** `kind` が `client_display_uris` の種類（`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）なら true を返す。 */
+function isDisplayUriKind(kind: string): kind is DisplayUriKind {
+  return Object.hasOwn(DISPLAY_URI_FIELDS, kind);
+}
 
 /**
  * クライアントの公開鍵を用途別に取得するリゾルバを返す。
@@ -220,6 +276,7 @@ function parseJwk(clientId: string, json: string): Jwk {
  * 鍵を取り除くには、データベースの行を消し、ここに渡すクライアントからも外す。
  * 外さなければ、次の登録で鍵が戻る。
  *
+ * `tokenEndpointAuthMethods` の `private_key_jwt` は `client_private_key_jwt_auths` の行（`tokenEndpointAuthSigningAlg` を含む）に、`requestUris` は `client_request_uris` の行に、`clientName`（なければ `name`）は `clients.name` に、`logoUri`、`policyUri`、`tosUri`、`clientUri` は `client_display_uris` の行になる。
  * `jwksUri` と `requestObjectSigningAlg` は、クライアントの `client_jwks_uris` と `client_request_object_signing_algs` の行を置き換える。
  * そのため、これらを持たない登録は、登録済みの行を消す。
  * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
@@ -253,7 +310,7 @@ export async function registerClient(
       'INSERT INTO clients (id, name, client_type, is_deleted) VALUES (?, ?, ?, FALSE) ' +
       'ON CONFLICT (id) DO UPDATE SET name = excluded.name, client_type = excluded.client_type, ' +
       'is_deleted = FALSE',
-    params: [client.clientId, client.name ?? null, clientType],
+    params: [client.clientId, client.clientName ?? client.name ?? null, clientType],
   });
 
   const secretHash =
@@ -311,6 +368,34 @@ export async function registerClient(
     }
   }
 
+  // `private_key_jwt` のコンフィデンシャルクライアントは、`client_private_key_jwt_auths` の行を一つ持つ（OIDC Core 1.0 §9）。
+  const usesPrivateKeyJwt = clientType === 'confidential' && selectRegisteredClientAuthMethods(client).includes('private_key_jwt');
+  await db.run(
+    usesPrivateKeyJwt
+      ? {
+        sql:
+          'INSERT INTO client_private_key_jwt_auths (client_id, signing_alg) VALUES (?, ?) ' +
+          'ON CONFLICT (client_id) DO UPDATE SET signing_alg = excluded.signing_alg',
+        params: [client.clientId, client.tokenEndpointAuthSigningAlg ?? null],
+      }
+      : { sql: 'DELETE FROM client_private_key_jwt_auths WHERE client_id = ?', params: [client.clientId] },
+  );
+
+  // 画面に表示する URL は、種類ごとに 1 行を持つ。
+  for (const [kind, field] of Object.entries(DISPLAY_URI_FIELDS)) {
+    const value = client[field];
+    await db.run(
+      value === undefined
+        ? { sql: 'DELETE FROM client_display_uris WHERE client_id = ? AND kind = ?', params: [client.clientId, kind] }
+        : {
+          sql:
+            'INSERT INTO client_display_uris (client_id, kind, value) VALUES (?, ?, ?) ' +
+            'ON CONFLICT (client_id, kind) DO UPDATE SET value = excluded.value',
+          params: [client.clientId, kind, value],
+        },
+    );
+  }
+
   // これらのテーブルは、クライアントごとに 1 行を持つ（`client_id` が主キー）。
   const singleValues: Array<[table: string, column: string, value: string | undefined]> = [
     ['client_jwks_uris', 'value', client.jwksUri],
@@ -334,6 +419,7 @@ export async function registerClient(
     ['client_grant_types', 'grant_type', client.grantTypes ?? []],
     ['client_scopes', 'value', client.scope ?? []],
     ['client_response_types', 'response_type', client.responseTypes ?? []],
+    ['client_request_uris', 'value', client.requestUris ?? []],
   ];
   for (const [table, column, values] of childValues) {
     const ids: string[] = [];

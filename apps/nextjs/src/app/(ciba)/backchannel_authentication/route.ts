@@ -29,8 +29,8 @@ import {
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
-  verifyClientSecret,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../_oidc-provider/client-auth';
 import { cibaAuthenticationRequestStore } from '../../_oidc-provider/features/ciba/store';
 import { clientResolver } from '../../_oidc-provider/provider';
 import { resolveCibaUser } from '../../_oidc-provider/features/ciba/user';
@@ -112,7 +112,7 @@ async function backchannelAuthentication(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(client, presentedCredentials);
-    await verifyClientSecret(client, presentedCredentials.clientSecret);
+    await verifyPresentedClientCredential(client, presentedCredentials, '/backchannel_authentication');
 
     // OP が宣言していないスコープを、`/authorize` と同じ許可リスト（`scopes.ts`）で拒否する（RFC 6749 §3.3）。
     // 未知のスコープを含むリクエストをストアに保存しないよう、experimental パッケージの処理より前に確かめる。

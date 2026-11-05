@@ -39,6 +39,7 @@ import {
   validateJwksUri,
   validateRedirectUrisForApplicationType,
   validateRequestObjectSigningAlg,
+  validateRequestUris,
   validateScope,
   validateSigningAlg,
 } from './metadata-values.js';
@@ -179,6 +180,20 @@ export interface ValidateClientMetadataOptions {
    */
   requestObjectSigningAlgValuesSupported?: readonly string[];
   /**
+   * token_endpoint_auth_signing_alg（OIDC Dynamic Client Registration 1.0 §2）に受理する alg。
+   * discovery の token_endpoint_auth_signing_alg_values_supported と同じ一覧を渡す（none は
+   * 渡しても受理しない）。省略時はこのメタデータを理解しないものとして無視する。
+   */
+  tokenEndpointAuthSigningAlgValuesSupported?: readonly string[];
+  /**
+   * request_uris（OIDC Dynamic Client Registration 1.0 §2）を登録するか。既定 false で、
+   * request_uri を扱わない OP は理解しないメタデータとして無視する。true の OP は、各要素が
+   * https の絶対 URL（フラグメント可）であることを確かめて登録する。
+   */
+  acceptRequestUris?: boolean;
+  /** request_uris に http の URL を許す（開発用）。既定 false。 */
+  allowInsecureRequestUris?: boolean;
+  /**
    * カスタムメタデータ。キーがメタデータ名、値がその検証関数。標準フィールド
    * （本モジュールが理解する名前）と同じ名前は設定の誤りとして TypeError になる。
    */
@@ -213,6 +228,26 @@ export interface ValidatedClientRegistration {
    * requestObjectSigningAlgValuesSupported を渡した OP で登録したときだけ持つ。
    */
   requestObjectSigningAlg?: string;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §2 の token_endpoint_auth_signing_alg。
+   * tokenEndpointAuthSigningAlgValuesSupported を渡した OP で登録したときだけ持つ。
+   */
+  tokenEndpointAuthSigningAlg?: string;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §2 の request_uris。acceptRequestUris の OP で
+   * 登録したときだけ持つ。
+   */
+  requestUris?: string[];
+  /** OIDC Dynamic Client Registration 1.0 §2 の client_name。登録したときだけ持つ。 */
+  clientName?: string;
+  /** RFC 7591 §2 の client_uri。登録したときだけ持つ。 */
+  clientUri?: string;
+  /** RFC 7591 §2 の logo_uri。登録したときだけ持つ。 */
+  logoUri?: string;
+  /** RFC 7591 §2 の policy_uri。登録したときだけ持つ。 */
+  policyUri?: string;
+  /** RFC 7591 §2 の tos_uri。登録したときだけ持つ。 */
+  tosUri?: string;
   /**
    * 登録した全メタデータの RFC 7591 のワイヤ形式（スネークケース）。既定値の
    * 適用後の値、software_statement、カスタムメタデータを含み、201 応答の
@@ -261,6 +296,8 @@ export const STANDARD_CLIENT_METADATA_NAMES: readonly string[] = [
   'id_token_signed_response_alg',
   'userinfo_signed_response_alg',
   'request_object_signing_alg',
+  'token_endpoint_auth_signing_alg',
+  'request_uris',
   'software_statement',
 ];
 
@@ -272,7 +309,9 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * 登録メタデータを検証し、既定値を適用して返す。
  *
  * 検証は、`redirect_uris`、`token_endpoint_auth_method`、`grant_types`、`response_types`、`grant_types` と `response_types` の対応、`application_type` ごとの `redirect_uris` の制約、`id_token_signed_response_alg` の順に行う。
- * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`jwks_uri`、`default_max_age`、`userinfo_signed_response_alg`、`request_object_signing_alg`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
+ * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`jwks_uri`、`default_max_age`、`userinfo_signed_response_alg`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`request_uris`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
+ * `token_endpoint_auth_method` が `private_key_jwt` の登録は、`jwks` か `jwks_uri` を求める（OIDC Core 1.0 §9）。
+ * `token_endpoint_auth_signing_alg` は `options.tokenEndpointAuthSigningAlgValuesSupported` を渡した OP でだけ、`request_uris` は `options.acceptRequestUris` の OP でだけ登録し、ほかの OP では無視する。
  *
  * `jwks_uri` は宛先を検査して登録するが、登録の時点では取得しない。
  * `options.acceptJwksUri` が `false` の OP（`jwks_uri` を取得しない OP）では、理解しないメタデータとして無視する。
@@ -293,7 +332,8 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * @spec OIDC Dynamic Client Registration 1.0 §2
  * @spec OIDC Dynamic Client Registration 1.0 §3.2
  * @throws {ClientRegistrationError} `invalid_redirect_uri`: `redirect_uris` がないか、規則に反する URI を含むとき。
- * @throws {ClientRegistrationError} `invalid_client_metadata`: ほかのメタデータの値が正しくないとき、`grant_types` と `response_types` が対応しないとき、`jwks` と `jwks_uri` を両方含むとき、または `jwks` に `request_object_signing_alg` で使える鍵がないとき。
+ * @spec OIDC Core 1.0 §9
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: ほかのメタデータの値が正しくないとき、`grant_types` と `response_types` が対応しないとき、`jwks` と `jwks_uri` を両方含むとき、`jwks` に `request_object_signing_alg` か `token_endpoint_auth_signing_alg` で使える鍵がないとき、または `private_key_jwt` の登録が `jwks` も `jwks_uri` も持たないとき。
  * @throws {ClientRegistrationError} `invalid_software_statement`: `software_statement` が文字列でないとき。
  * @throws {TypeError} `customMetadata` に標準のメタデータと同じ名前があるとき（設定の誤り）。
  */
@@ -344,11 +384,22 @@ export function validateClientMetadata(
   };
 
   if (metadata['client_name'] !== undefined) {
-    registered['client_name'] = validateDisplayString(metadata['client_name'], 'client_name', CLIENT_NAME_MAX_LENGTH);
+    const clientName = validateDisplayString(metadata['client_name'], 'client_name', CLIENT_NAME_MAX_LENGTH);
+    validated.clientName = clientName;
+    registered['client_name'] = clientName;
   }
-  for (const name of ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri']) {
+  // 画面に表示する URL（OIDC Dynamic Client Registration 1.0 §2 の SHOULD）は、`ValidatedClientRegistration` の名前でも持つ。
+  const displayUris = [
+    ['client_uri', 'clientUri'],
+    ['logo_uri', 'logoUri'],
+    ['tos_uri', 'tosUri'],
+    ['policy_uri', 'policyUri'],
+  ] as const;
+  for (const [name, field] of displayUris) {
     if (metadata[name] !== undefined) {
-      registered[name] = validateHttpUrl(metadata[name], name);
+      const uri = validateHttpUrl(metadata[name], name);
+      validated[field] = uri;
+      registered[name] = uri;
     }
   }
   if (metadata['contacts'] !== undefined) {
@@ -415,6 +466,40 @@ export function validateClientMetadata(
     }
     validated.requestObjectSigningAlg = alg;
     registered['request_object_signing_alg'] = alg;
+  }
+  // `private_key_jwt` のクライアントは、アサーションを検証する公開鍵（`jwks` か `jwks_uri`）を登録しなければならない（OIDC Core 1.0 §9）。
+  // 鍵の無い登録は、どのリクエストでも認証できないクライアントになるので、登録の時点で拒否する。
+  if (tokenEndpointAuthMethod === 'private_key_jwt' && validated.jwks === undefined && validated.jwksUri === undefined) {
+    throw new ClientRegistrationError(
+      'invalid_client_metadata',
+      'private_key_jwt requires jwks or jwks_uri',
+    );
+  }
+  // `tokenEndpointAuthSigningAlgValuesSupported` を渡さない OP では、`token_endpoint_auth_signing_alg` を理解しないメタデータとして無視する。
+  const tokenEndpointAuthSigningAlgs = options?.tokenEndpointAuthSigningAlgValuesSupported;
+  if (metadata['token_endpoint_auth_signing_alg'] !== undefined && tokenEndpointAuthSigningAlgs !== undefined) {
+    // `none` は署名の無いアサーションなので、一覧にあっても受け付けない（OIDC Dynamic Client Registration 1.0 §2）。
+    const alg = validateSigningAlg(
+      metadata['token_endpoint_auth_signing_alg'],
+      'token_endpoint_auth_signing_alg',
+      tokenEndpointAuthSigningAlgs.filter((supported) => supported !== 'none'),
+    );
+    // 登録した鍵で検証できない登録に、アサーションを送る前に気づかせる。
+    // `jwks_uri` の鍵は登録の時点では取得しないので、照らし合わせない。
+    if (validated.jwks !== undefined && !validated.jwks.keys.some((key) => resolveJwkSigningAlg(key) === alg)) {
+      throw new ClientRegistrationError(
+        'invalid_client_metadata',
+        'jwks must contain a key that can be used with the token_endpoint_auth_signing_alg',
+      );
+    }
+    validated.tokenEndpointAuthSigningAlg = alg;
+    registered['token_endpoint_auth_signing_alg'] = alg;
+  }
+  // `acceptRequestUris` の OP（`request_uri` を扱う OP）でだけ、`request_uris` を登録する。
+  if (metadata['request_uris'] !== undefined && options?.acceptRequestUris === true) {
+    const requestUris = validateRequestUris(metadata['request_uris'], options.allowInsecureRequestUris === true);
+    validated.requestUris = requestUris;
+    registered['request_uris'] = [...requestUris];
   }
   if (metadata['software_statement'] !== undefined) {
     // 登録に使った `software_statement` は、そのままレスポンスで返す（RFC 7591 §3.2.1）。

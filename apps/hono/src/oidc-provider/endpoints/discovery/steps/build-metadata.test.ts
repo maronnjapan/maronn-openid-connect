@@ -106,7 +106,9 @@ describe('buildDiscoveryMetadata', () => {
         authorization_response_iss_parameter_supported: true,
         claims_parameter_supported: true,
         claim_types_supported: ['normal'],
-        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
+        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
+        // OIDC Discovery 1.0 §3 / RFC 8414 §2: the algs of private_key_jwt (OIDC Core 1.0 §9), without none.
+        token_endpoint_auth_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       });
     });
 

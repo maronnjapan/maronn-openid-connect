@@ -384,7 +384,35 @@ export {
   selectRegisteredClientAuthMethods,
   isPublicTokenClient,
   validateClientAuthMethodAllowed,
+  // private_key_jwt（OIDC Core 1.0 §9）のクライアントアサーションの取り出し
+  extractClientAssertion,
+  validateClientAssertionNotCombined,
+  resolveClientAssertionClientId,
 } from './client-auth.js';
+
+export {
+  // private_key_jwt（OIDC Core 1.0 §9 / RFC 7523 §3）のクライアントアサーションの検証
+  CLIENT_ASSERTION_TYPE_JWT_BEARER,
+  SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS,
+  DEFAULT_CLIENT_ASSERTION_LEEWAY_SECONDS,
+  decodeClientAssertion,
+  validateClientAssertionAlg,
+  validateClientAssertionSubject,
+  validateClientAssertionAudience,
+  validateClientAssertionTimes,
+  requireClientAssertionJti,
+  validateClientAssertionClaims,
+  loadClientAssertionKeys,
+  verifyClientAssertionSignature,
+  consumeClientAssertionJti,
+} from './client-assertion.js';
+
+export type {
+  DecodedClientAssertion,
+  ClientAssertionClaimsPolicy,
+  ValidatedClientAssertionClaims,
+  ClientAssertionJtiStore,
+} from './client-assertion.js';
 
 export type {
   ClientAuthContext,

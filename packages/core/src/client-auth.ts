@@ -5,10 +5,13 @@
  * Token Endpoint で受け付けるクライアント認証方式:
  * - client_secret_basic: Authorization: Basic base64(clientId:clientSecret)
  * - client_secret_post:  リクエストボディの client_id + client_secret
+ * - private_key_jwt:     リクエストボディの client_assertion_type + client_assertion（OIDC Core 1.0 §9 / RFC 7523 §2.2）。
+ *                        アサーションの検証は client-assertion.ts の関数が受け持つ
  *
  * OAuth 2.1 Section 2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
  */
 
+import { CLIENT_ASSERTION_TYPE_JWT_BEARER, decodeClientAssertion } from './client-assertion.js';
 import { sha256, timingSafeEqual } from './crypto-utils.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
 import type { ClientAuthMethod, TokenClientInfo } from './token-request.js';
@@ -127,6 +130,11 @@ export interface PresentedClientCredentials {
   clientId: string;
   /** 提示された client_secret。public client（method='none'）では undefined */
   clientSecret?: string;
+  /**
+   * 提示されたクライアントアサーション（`client_assertion`、method='private_key_jwt' のときだけ）。
+   * 署名とクレームはまだ検証していない（client-assertion.ts の関数で検証する）。
+   */
+  clientAssertion?: string;
   /** 実際に使われた認証方式 */
   method: ClientAuthMethod;
 }
@@ -135,11 +143,15 @@ export interface PresentedClientCredentials {
  * リクエストから認証情報と認証方式を取り出して返す。
  *
  * 返す認証方式は実際に使われた方式で、次のように決める。
+ * - ボディに `client_assertion_type` と `client_assertion` があれば `private_key_jwt`（OIDC Core 1.0 §9）
  * - `Authorization: Basic` ヘッダーがあれば `client_secret_basic`
  * - ボディに `client_id` と `client_secret` があれば `client_secret_post`
  * - ボディに `client_id` だけがあれば `none`（パブリッククライアントが自分を示す場合）
  *
  * 1 つのリクエストで使える認証方式は 1 つだけなので、`Basic` ヘッダーとボディの `client_secret` を両方送ったリクエストは拒否する（OAuth 2.1 §2.3）。
+ * クライアントアサーションと `Basic` ヘッダーか `client_secret` を一緒に送ったリクエストも、同じ理由で拒否する。
+ * `private_key_jwt` では `client_id` を省略でき、そのときはアサーションの `sub` をクライアント ID とする（RFC 7521 §4.2）。
+ * アサーションの署名とクレームはここでは確かめない（`sub` が `client_id` と一致することも含め、client-assertion.ts の関数が確かめる）。
  * ボディの `client_id` はクライアントを示す識別子で認証方式ではないので、`Basic` ヘッダーと一緒に送られても受け付ける。
  * その場合は、`Basic` ヘッダーのクライアント ID と一致することを確かめる。
  *
@@ -148,13 +160,29 @@ export interface PresentedClientCredentials {
  *
  * @spec OAuth 2.1 §2.3
  * @spec OIDC Core 1.0 §9
- * @throws {TokenError} `invalid_request`: `Basic` ヘッダーとボディの `client_secret` を両方送ったとき、またはボディの `client_id` が `Basic` ヘッダーのクライアント ID と違うとき
- * @throws {TokenError} `invalid_client`: `Basic` ヘッダーの値を読み取れないとき、またはクライアント ID がないとき
+ * @spec RFC 7521 §4.2
+ * @throws {TokenError} `invalid_request`: `Basic` ヘッダーとボディの `client_secret` を両方送ったとき、ボディの `client_id` が `Basic` ヘッダーのクライアント ID と違うとき、クライアントアサーションをほかの認証方式と一緒に送ったとき、`client_assertion_type` と `client_assertion` の一方だけを送ったとき
+ * @throws {TokenError} `invalid_client`: `Basic` ヘッダーの値を読み取れないとき、クライアント ID がないとき、`client_assertion_type` が JWT bearer でないとき、`client_id` のないリクエストのアサーションを読めないとき
  */
 export function extractClientCredentials(
   context: ClientAuthContext,
 ): PresentedClientCredentials {
   const { params, authorizationHeader } = context;
+
+  // クライアントアサーションがあれば、`private_key_jwt` として読む（OIDC Core 1.0 §9、RFC 7521 §4.2）。
+  const clientAssertion = extractClientAssertion(params);
+  if (clientAssertion !== undefined) {
+    // ほかの認証方式と一緒に送ったリクエストを `invalid_request` で拒否する（OAuth 2.1 §2.3）。
+    validateClientAssertionNotCombined(
+      hasAuthScheme(authorizationHeader, 'Basic'),
+      params.client_secret === '' ? undefined : params.client_secret,
+    );
+    return {
+      clientId: resolveClientAssertionClientId(params.client_id, clientAssertion),
+      clientAssertion,
+      method: 'private_key_jwt',
+    };
+  }
 
   // 空文字列の `client_secret` を、送られなかったもの（`undefined`）に置き換える。
   // 値のないパラメータは、リクエストから省かれたものとして扱わなければならない（RFC 6749 §3.2 の MUST）。
@@ -214,12 +242,12 @@ export function extractClientCredentials(
  * 登録が `none`（パブリッククライアント）なら、使われた方式も `none` であること、つまり認証情報を何も提示していないことを求める。
  * 認証情報を提示していれば拒否し、パブリッククライアントをコンフィデンシャルクライアントと取り違えるのを防ぐ。
  *
- * 登録がコンフィデンシャルクライアントの方式なら、`client_secret` の提示を求めたうえで、使われた方式が登録された方式のどれかであることを確かめる。
+ * 登録がコンフィデンシャルクライアントの方式なら、`client_secret` の提示を求めたうえで（使われた方式が `private_key_jwt` のときは求めない）、使われた方式が登録された方式のどれかであることを確かめる。
  * 登録されていない方式を拒否するのは、認証方式のダウングレードを防ぐためである。
  *
  * @spec OIDC Core 1.0 §9
  * @spec RFC 7591 §2
- * @throws {TokenError} `invalid_client`: 使われた方式が登録されていないとき、またはコンフィデンシャルクライアントが `client_secret` を提示していないとき
+ * @throws {TokenError} `invalid_client`: 使われた方式が登録されていないとき、またはコンフィデンシャルクライアントが `client_secret` を提示していないとき（`private_key_jwt` を除く）
  * @throws {Error} 登録で `none` をほかの方式と並べているとき（{@link selectRegisteredClientAuthMethods}）
  */
 export function validateClientAuthMethod(
@@ -232,6 +260,13 @@ export function validateClientAuthMethod(
   // パブリッククライアントは `client_id` だけで自分を示し、クライアント認証をしない。
   // 認証情報を提示していれば、使われた方式が `none` と一致しないので拒否し、コンフィデンシャルクライアントとの取り違え（昇格やダウングレード）を防ぐ。
   if (registeredMethods.includes('none')) {
+    validateClientAuthMethodAllowed(presented.method, registeredMethods);
+    return;
+  }
+
+  // `private_key_jwt` は `client_secret` を使わない。
+  // 使われた方式が登録されていることだけを確かめ、アサーションの検証は client-assertion.ts の関数に任せる（OIDC Core 1.0 §9）。
+  if (presented.method === 'private_key_jwt') {
     validateClientAuthMethodAllowed(presented.method, registeredMethods);
     return;
   }
@@ -297,6 +332,81 @@ export function validateSingleClientAuthMethod(
       'Multiple client authentication methods provided. Use either Authorization header or request body, not both.',
     );
   }
+}
+
+/**
+ * ボディのクライアントアサーションを返し、送られていなければ `undefined` を返す。
+ *
+ * `client_assertion_type` と `client_assertion` は組で送る（RFC 7521 §4.2）。
+ * 空文字列の値は、送られなかったものとして扱う（RFC 6749 §3.2）。
+ * `client_assertion_type` は JWT bearer（`urn:ietf:params:oauth:client-assertion-type:jwt-bearer`、RFC 7523 §2.2）だけを受け付ける。
+ *
+ * @spec RFC 7521 §4.2
+ * @spec RFC 7523 §2.2
+ * @throws {TokenError} `invalid_request`: 二つの一方だけが送られたとき
+ * @throws {TokenError} `invalid_client`: `client_assertion_type` が JWT bearer でないとき
+ */
+export function extractClientAssertion(
+  params: Record<string, string | undefined>,
+): string | undefined {
+  const assertionType = params.client_assertion_type === '' ? undefined : params.client_assertion_type;
+  const assertion = params.client_assertion === '' ? undefined : params.client_assertion;
+  if (assertionType === undefined && assertion === undefined) {
+    return undefined;
+  }
+  if (assertionType === undefined || assertion === undefined) {
+    throw new TokenError(
+      TokenErrorCode.InvalidRequest,
+      'client_assertion_type and client_assertion must be sent together',
+    );
+  }
+  if (assertionType !== CLIENT_ASSERTION_TYPE_JWT_BEARER) {
+    throw new TokenError(TokenErrorCode.InvalidClient, 'Unsupported client_assertion_type');
+  }
+  return assertion;
+}
+
+/**
+ * クライアントアサーションと、ほかの認証方式（`Basic` ヘッダーかボディの `client_secret`）の併用を拒否する。
+ *
+ * 1 つのリクエストで使える認証方式は 1 つだけである（OAuth 2.1 §2.3）。
+ * 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
+ *
+ * @spec OAuth 2.1 §2.3
+ * @throws {TokenError} `invalid_request`: `Basic` ヘッダーか空でない `client_secret` があるとき
+ */
+export function validateClientAssertionNotCombined(
+  hasBasicHeader: boolean,
+  postSecret: string | undefined,
+): void {
+  if (hasBasicHeader || (postSecret !== undefined && postSecret !== '')) {
+    throw new TokenError(
+      TokenErrorCode.InvalidRequest,
+      'Multiple client authentication methods provided. Use either client_assertion or a client secret, not both.',
+    );
+  }
+}
+
+/**
+ * クライアントアサーションで認証するリクエストのクライアント ID を返す。
+ *
+ * ボディに `client_id` があればそれを返す。
+ * なければ、アサーションの `sub`（RFC 7523 §3 で `client_id` と同じ値）を返す（RFC 7521 §4.2 で `client_id` は省略できる）。
+ * この時点では署名を確かめていないので、返した値でクライアントを引いたあと、アサーションの検証で `iss` と `sub` が一致することを確かめる。
+ *
+ * @spec RFC 7521 §4.2
+ * @spec RFC 7523 §3
+ * @throws {TokenError} `invalid_client`: `client_id` がなく、アサーションを読めないか `sub` が空でない文字列でないとき
+ */
+export function resolveClientAssertionClientId(
+  bodyClientId: string | undefined,
+  clientAssertion: string,
+): string {
+  if (bodyClientId !== undefined && bodyClientId !== '') {
+    return bodyClientId;
+  }
+  const subject = decodeClientAssertion(clientAssertion).claims['sub'];
+  return requireClientId(typeof subject === 'string' ? subject : undefined);
 }
 
 /**

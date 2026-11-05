@@ -535,3 +535,51 @@ describe('createClientKeyResolver', () => {
     await expect(resolver.findClientKeys('rp-1', 'null')).rejects.toThrow(message);
   });
 });
+
+// OIDC Core 1.0 §9 / OIDC Dynamic Client Registration 1.0 §2: private_key_jwt, request_uris
+// and what the login and consent screens show about a statically registered client.
+describe('registerClient with private_key_jwt and display metadata', () => {
+  it('should find a private_key_jwt client with its signing alg, request_uris and display metadata', async () => {
+    await registerClient(db, {
+      clientId: 'rp-jwt',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['private_key_jwt'],
+      tokenEndpointAuthSigningAlg: 'ES256',
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestUris: ['https://rp.example.com/ro/1#abc'],
+      clientName: 'Example RP',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://rp.example.com/terms',
+      clientUri: 'https://rp.example.com/',
+    });
+
+    expect(await createClientResolver(db).findClient('rp-jwt')).toEqual({
+      clientId: 'rp-jwt',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['private_key_jwt'],
+      tokenEndpointAuthSigningAlg: 'ES256',
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestUris: ['https://rp.example.com/ro/1#abc'],
+      clientName: 'Example RP',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://rp.example.com/terms',
+      clientUri: 'https://rp.example.com/',
+    });
+  });
+
+  it('should list private_key_jwt after the secret methods of a client that registers both', async () => {
+    await registerClient(db, {
+      clientId: 'rp-both',
+      clientSecret: 's3cret',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+    });
+
+    expect(await createClientResolver(db).findClient('rp-both')).toMatchObject({
+      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+    });
+  });
+});

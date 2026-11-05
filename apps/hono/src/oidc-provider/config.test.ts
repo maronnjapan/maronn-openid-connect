@@ -29,6 +29,8 @@ describe('createProviderConfig', () => {
       clientJwksUriMaxKeys: 32,
       clientJwksUriCacheMaxEntries: 1000,
       clientJwksUriPurposes: ['request_object', 'private_key_jwt', 'dpop'],
+      // OIDC Core 1.0 §9: private_key_jwt assertions signed with the asymmetric algs core verifies.
+      tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       // The request-object feature requires signed Request Objects (OIDC Core 1.0 §6.1)
       // and accepts the algs core verifies (RFC 7518 §3.3 / §3.4).
       allowUnsignedRequestObject: false,

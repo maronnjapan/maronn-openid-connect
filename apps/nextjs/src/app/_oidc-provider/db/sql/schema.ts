@@ -125,6 +125,38 @@ CREATE TABLE IF NOT EXISTS client_request_object_signing_algs (
   alg       VARCHAR(100) NOT NULL
 );
 
+-- Not in the ER model: the client authenticates with private_key_jwt (OIDC
+-- Core 1.0 §9), with the keys it registered for the private_key_jwt purpose
+-- (client_jwks) or its jwks_uri. signing_alg is its
+-- token_endpoint_auth_signing_alg (OpenID Connect Dynamic Client Registration
+-- 1.0 §2): every client assertion must be signed with it; NULL accepts every
+-- alg the OP accepts. One per client, beside the client_auths rows.
+CREATE TABLE IF NOT EXISTS client_private_key_jwt_auths (
+  client_id   TEXT PRIMARY KEY REFERENCES clients (id) ON DELETE CASCADE,
+  signing_alg VARCHAR(100)
+);
+
+-- Not in the ER model: the request_uris of the client (OpenID Connect Dynamic
+-- Client Registration 1.0 §2), the URLs of the Request Objects it passes by
+-- reference (OIDC Core 1.0 §6.2). With require_request_uri_registration, the
+-- OP fetches these values only.
+CREATE TABLE IF NOT EXISTS client_request_uris (
+  id        TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  value     VARCHAR(5000) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_request_uris_client_id_idx ON client_request_uris (client_id);
+
+-- Not in the ER model: the URLs the login and consent screens show about the
+-- client (OpenID Connect Dynamic Client Registration 1.0 §2): its logo_uri,
+-- policy_uri, tos_uri and client_uri. Its client_name is clients.name.
+CREATE TABLE IF NOT EXISTS client_display_uris (
+  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  kind      VARCHAR(100) NOT NULL CHECK (kind IN ('logo_uri', 'policy_uri', 'tos_uri', 'client_uri')),
+  value     VARCHAR(5000) NOT NULL,
+  PRIMARY KEY (client_id, kind)
+);
+
 -- Scope: the scopes the client may request. A request for any other scope is
 -- rejected with invalid_scope. A client without rows may request every scope
 -- the OP accepts.
@@ -134,6 +166,15 @@ CREATE TABLE IF NOT EXISTS client_scopes (
   value     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS client_scopes_client_id_idx ON client_scopes (client_id);
+
+-- Not in the ER model: the client assertions of private_key_jwt the OP
+-- accepted (OIDC Core 1.0 §9), id being the SHA-256 hash of their client_id
+-- and jti. A row stays until expired_at, when the assertion has expired, so a
+-- replayed assertion is rejected (RFC 7523 §3).
+CREATE TABLE IF NOT EXISTS client_assertion_jtis (
+  id         VARCHAR(100) PRIMARY KEY,
+  expired_at BIGINT NOT NULL
+);
 
 -- User: a user of the OP. email and is_verified are the email and
 -- email_verified claims. password_hash is the hash from hashPassword()

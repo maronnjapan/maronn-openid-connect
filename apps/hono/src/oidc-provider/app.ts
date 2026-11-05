@@ -346,6 +346,8 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('authSessionStore', stores.authSessionStore);
   c.set('browserSessionStore', stores.browserSessionStore);
   c.set('userStore', stores.userStore);
+  // private_key_jwt のクライアントアサーションの使用済みの `jti`（client-auth.ts。OIDC Core 1.0 §9）。
+  c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
   c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
   c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
   c.set('userClaimsResolver', storeResolvers.userClaimsResolver);

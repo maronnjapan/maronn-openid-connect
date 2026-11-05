@@ -946,6 +946,7 @@ export interface ResolveRequestObjectOptions {
    * （`{ kid }`）に渡せば、`jwks_uri` を登録したクライアントの見慣れない kid で鍵を取り直せる
    * （OIDC Core 1.0 §10.1.1）。無いか、空の JWK Set を返すと、署名付き Request Object を
    * invalid_request_object で拒否する。
+   * `request` がない場合と、許可された `alg: "none"` では鍵を使わないため省略できる。
    */
   loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
   /**

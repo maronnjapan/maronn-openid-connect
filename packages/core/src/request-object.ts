@@ -36,6 +36,7 @@ export interface ParseRequestObjectOptions {
   /**
    * 署名検証に使う、クライアントが登録した公開鍵（JWK Set）を読む。署名付き
    * （`alg !== "none"`）Request Object の検証に必須で、無ければ署名付き Request Object を拒否する。
+   * 許可された `alg: "none"` は鍵を使わないため、このオプションは省略できる。
    *
    * 登録した alg との不一致、`alg: "none"`、受け付けない alg、壊れた JWT を拒否した後でだけ
    * 呼ぶので、`jwks_uri` からの取得のような外部への読み込みは、受け付ける alg で署名された
@@ -183,13 +184,13 @@ export async function parseRequestObject(
 
   const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
 
-  const jwks = options.loadJwks ? await loadVerificationKeys(options.loadJwks, alg, kid) : undefined;
-  if (!jwks || jwks.keys.length === 0) {
+  const keys: Jwk[] = (options.loadJwks ? await loadVerificationKeys(options.loadJwks, alg, kid) : undefined)?.keys ?? [];
+  if (keys.length === 0) {
     throw new RequestObjectError('no JWKS registered to verify the request object signature');
   }
 
   // ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ読んだすべての鍵を候補にする。
-  const keysOfKid: Jwk[] = kid === undefined ? jwks.keys.slice() : jwks.keys.filter((k) => k.kid === kid);
+  const keysOfKid: Jwk[] = kid === undefined ? keys.slice() : keys.filter((k) => k.kid === kid);
   if (keysOfKid.length === 0) {
     throw new RequestObjectError('no JWK matched the request object header (kid)');
   }

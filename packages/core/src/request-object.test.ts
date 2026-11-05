@@ -157,19 +157,45 @@ describe('parseRequestObject', () => {
       ).rejects.toBeInstanceOf(RequestObjectError);
     });
 
-    it('should throw RequestObjectError when no JWKS is registered', async () => {
+    it.each([undefined, 'req-key'])('should reject a missing loader with the expected error (kid=%s)', async (headerKid) => {
       const request = await buildSigned(
         { scope: 'openid' },
         rsaKeyPair.privateKey,
-        kid,
+        headerKid,
       );
 
-      await expect(
+      await expectRequestObjectError(
         parseRequestObject(request, {
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
         }),
-      ).rejects.toBeInstanceOf(RequestObjectError);
+        'no JWKS registered to verify the request object signature',
+      );
+    });
+
+    it.each([undefined, 'req-key'])('should reject an empty key set with the expected error (kid=%s)', async (headerKid) => {
+      const request = await buildSigned({ scope: 'openid' }, rsaKeyPair.privateKey, headerKid);
+      await expectRequestObjectError(
+        parseRequestObject(request, {
+          loadJwks: keysOf({ keys: [] }),
+          supportedSigningAlgs: ['RS256'],
+          allowUnsigned: false,
+        }),
+        'no JWKS registered to verify the request object signature',
+      );
+    });
+
+    it('should preserve the explicit rejection when a JavaScript loader returns undefined', async () => {
+      const request = await buildSigned({ scope: 'openid' }, rsaKeyPair.privateKey);
+      await expectRequestObjectError(
+        parseRequestObject(request, {
+          // A JavaScript caller can violate the TypeScript return contract.
+          loadJwks: async () => undefined as unknown as JwkSet,
+          supportedSigningAlgs: ['RS256'],
+          allowUnsigned: false,
+        }),
+        'no JWKS registered to verify the request object signature',
+      );
     });
   });
 

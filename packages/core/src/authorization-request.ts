@@ -94,9 +94,10 @@ export interface AuthorizationRequestParams {
    */
   request?: string;
   /**
-   * OIDC Core 1.0 §6.2: Request Object passed by reference. Unsupported here
-   * (`request_uri_parameter_supported` is false), so a present `request_uri` is
-   * rejected with `request_uri_not_supported` (§6.3).
+   * OIDC Core 1.0 §6.2: Request Object passed by reference. resolveRequestUriParams()
+   * fetches it and replaces it with `request` (request-uri.ts). An OP that does not
+   * fetch it rejects it with `request_uri_not_supported` (§6.3,
+   * rejectUnsupportedRequestParams()).
    */
   request_uri?: string;
   /**
@@ -1028,7 +1029,9 @@ export async function resolveRequestObjectParams(
  *
  * 次のパラメータがあると、それぞれのエラーコードの `AuthorizationError` を投げる:
  * - `request`: `options.requestParameterSupported` が false の構成でだけ `request_not_supported`（OIDC Core 1.0 §6.1、§6.3）。既定では対応しているものとして扱い、拒否しない。
- * - `request_uri`: 対応していないので `request_uri_not_supported`（OIDC Core 1.0 §6.2、§6.3）。
+ * - `request_uri`: `options.requestUriParameterSupported` が true でなければ `request_uri_not_supported`（OIDC Core 1.0 §6.2、§6.3）。
+ *   true の構成では通すが、`request` と一緒に送ったリクエストは `invalid_request` で拒否する（OIDC Core 1.0 §6.2、RFC 9101 §5）。
+ *   取得して `request` に置き換えるのは `resolveRequestUriParams()` で、置き換えた後のパラメータには `request_uri` が残らない。
  * - `registration`: 対応していないので `registration_not_supported`（OIDC Core 1.0 §3.1.2.1、§7.2.1、§3.1.2.6）。
  *
  * どれもリダイレクト先が決まったあとのエラーなので、リダイレクトで返す。
@@ -1044,7 +1047,7 @@ export function rejectUnsupportedRequestParams(
   params: Pick<AuthorizationRequestParams, 'request' | 'request_uri' | 'registration'>,
   redirectUri: string,
   state?: string,
-  options: { requestParameterSupported?: boolean } = {},
+  options: { requestParameterSupported?: boolean; requestUriParameterSupported?: boolean } = {},
 ): void {
   if (
     params.request !== undefined &&
@@ -1058,10 +1061,20 @@ export function rejectUnsupportedRequestParams(
     );
   }
 
-  if (params.request_uri !== undefined) {
+  if (params.request_uri !== undefined && options.requestUriParameterSupported !== true) {
     throw new AuthorizationError(
       AuthorizationErrorCode.RequestUriNotSupported,
       'request_uri parameter (Request Object by reference) is not supported',
+      redirectUri,
+      state,
+    );
+  }
+
+  // `request` と `request_uri` は一緒に使ってはならない（OIDC Core 1.0 §6.2、RFC 9101 §5）。
+  if (params.request_uri !== undefined && params.request !== undefined) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidRequest,
+      'request and request_uri must not be used together',
       redirectUri,
       state,
     );

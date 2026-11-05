@@ -82,7 +82,7 @@ export interface ProviderConfig {
    * loopback, private and link-local addresses. For development only: by
    * default the OP fetches https URLs of public hosts only, so a jwks_uri
    * cannot make it reach into its own network (RFC 8725 §3.10). The names a
-   * DNS host resolves to are not checked; pass clientJwksFetch (app.ts) to send
+   * DNS host resolves to are not checked; pass outboundFetch (app.ts) to send
    * the fetches through an egress proxy that does.
    */
   allowInsecureClientJwksUri: boolean;

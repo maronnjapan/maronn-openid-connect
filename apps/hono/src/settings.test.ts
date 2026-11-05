@@ -8,6 +8,7 @@ import {
   readList,
   readPostLogoutRedirectUris,
   readRegisteredClients,
+  readRequestUri,
   readServerAddress,
 } from './settings.js';
 
@@ -177,5 +178,19 @@ describe('createEphemeralSigningKeyProvider', () => {
     expect(first.map((key) => key.keyId)).toEqual(['app-key-1']);
     expect(first[0]!.publicJwk).toMatchObject({ kty: 'RSA', alg: 'RS256', use: 'sig', kid: 'app-key-1' });
     expect(second[0]).toBe(first[0]);
+  });
+});
+
+describe('readRequestUri', () => {
+  it('should keep the defaults of the request-object feature when nothing is set', () => {
+    expect(readRequestUri({})).toEqual({});
+  });
+
+  // OIDC Core 1.0 §6.2 / OIDC Discovery 1.0 §3.
+  it('should allow insecure request_uris and require their registration when the variables are 1', () => {
+    expect(readRequestUri({ OIDC_ALLOW_INSECURE_REQUEST_URI: '1', OIDC_REQUIRE_REQUEST_URI_REGISTRATION: '1' })).toEqual({
+      allowInsecureRequestUri: true,
+      requireRequestUriRegistration: true,
+    });
   });
 });

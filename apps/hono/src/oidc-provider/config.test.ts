@@ -35,6 +35,14 @@ describe('createProviderConfig', () => {
       // and accepts the algs core verifies (RFC 7518 §3.3 / §3.4).
       allowUnsignedRequestObject: false,
       requestObjectSigningAlgValuesSupported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
+      // OIDC Core 1.0 §6.2: request_uri fetched from https URLs of public hosts,
+      // at most 512 characters, within 3 seconds and 64 KiB.
+      requestUriParameterSupported: true,
+      requireRequestUriRegistration: false,
+      allowInsecureRequestUri: false,
+      requestUriTimeoutMs: 3000,
+      requestUriMaxBytes: 65536,
+      requestUriMaxLength: 512,
     });
   });
 

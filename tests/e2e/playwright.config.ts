@@ -209,6 +209,22 @@ const oidcClientsJson = JSON.stringify([
   },
 ]);
 
+// OIDC Discovery 1.0 §3 require_request_uri_registration: the client of the
+// capped-registration OP instance (below), which registered the one
+// request_uri it uses (OIDC Dynamic Client Registration 1.0 §2 request_uris).
+const requestUriRegistrationClientsJson = JSON.stringify([
+  {
+    clientId: 'e2e-request-uri-registered',
+    clientSecret: 'e2e-request-uri-registered-secret',
+    redirectUris: [`${clientBaseURL}/request-object-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+    requestUris: [`${clientBaseURL}/request-objects/registered`],
+  },
+]);
+
 // EXPERIMENTAL (ID-JAG draft §4.4): the client registrations of the SECOND OP
 // (the resource authorization server). e2e-client holds the jwt-bearer grant so
 // it can redeem ID-JAGs issued by the first OP; e2e-xaa-other exists so the
@@ -266,6 +282,9 @@ export default defineConfig({
         // spec rotates a key and signs with it right away).
         OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI: '1',
         OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS: '0',
+        // OIDC Core 1.0 §6.2: the E2E RP serves its Request Objects passed by
+        // reference over http on 127.0.0.1 too (specs/request-uri.spec.ts).
+        OIDC_ALLOW_INSECURE_REQUEST_URI: '1',
         CLIENT_ID: 'e2e-client',
         CLIENT_SECRET: 'e2e-client-secret',
         CLIENT_REDIRECT_URI: `${clientBaseURL}/callback`,
@@ -355,6 +374,15 @@ export default defineConfig({
               ISSUER: dcrIssuer,
               OIDC_SIGNING_KEY_ID: 'e2e-dcr-rs256-key',
               OIDC_DCR_MAX_CLIENTS: '3',
+              // OIDC Discovery 1.0 §3 require_request_uri_registration: this
+              // instance fetches only the request_uris a client registered, so
+              // specs/request-uri.spec.ts registers one statically here (the
+              // registration cap counts dynamic clients only). Its Request
+              // Object is unsigned, as the conformance OP accepts them.
+              OIDC_CLIENTS_JSON: requestUriRegistrationClientsJson,
+              OIDC_REQUIRE_REQUEST_URI_REGISTRATION: '1',
+              OIDC_ALLOW_INSECURE_REQUEST_URI: '1',
+              OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT: '1',
               OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
                 ? `${process.env.OIDC_D1_PERSIST_PATH}-dcr`
                 : '.wrangler/state-dcr',

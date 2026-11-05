@@ -128,6 +128,24 @@ export function readClientJwksUri(
 }
 
 /**
+ * The request_uri of the authorization requests (OIDC Core 1.0 §6.2):
+ * OIDC_ALLOW_INSECURE_REQUEST_URI=1 lets a request_uri use http and loopback
+ * or private addresses (tests/e2e serves its Request Objects at
+ * http://127.0.0.1:3020), and OIDC_REQUIRE_REQUEST_URI_REGISTRATION=1 fetches
+ * only the request_uris a client registered (OIDC Discovery 1.0 §3
+ * require_request_uri_registration). An unset variable keeps the default of
+ * the request-object feature.
+ */
+export function readRequestUri(
+  env: Environment,
+): Partial<Pick<ProviderConfig, 'allowInsecureRequestUri' | 'requireRequestUriRegistration'>> {
+  return {
+    ...(env['OIDC_ALLOW_INSECURE_REQUEST_URI'] === '1' ? { allowInsecureRequestUri: true } : {}),
+    ...(env['OIDC_REQUIRE_REQUEST_URI_REGISTRATION'] === '1' ? { requireRequestUriRegistration: true } : {}),
+  };
+}
+
+/**
  * EXPERIMENTAL (Cross-App Access / ID-JAG): the trust configuration, so two
  * instances of the app can play the IdP and the resource authorization server
  * against each other (tests/e2e does exactly that).

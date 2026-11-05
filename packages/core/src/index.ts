@@ -420,6 +420,25 @@ export type {
 } from './client-auth.js';
 
 export {
+  // Request Object の参照渡し（request_uri。OIDC Core 1.0 §6.2）: 宛先の検査、1 回の取得、
+  // 登録した request_uris との照合、request への置き換え
+  RequestUriError,
+  isRequestUriError,
+  DEFAULT_REQUEST_URI_OPTIONS,
+  validateRequestUri,
+  requestUriFetchUrl,
+  matchesRegisteredRequestUri,
+  fetchRequestObjectByReference,
+  resolveRequestUriParams,
+} from './request-uri.js';
+
+export type {
+  RequestUriPolicy,
+  FetchRequestObjectOptions,
+  ResolveRequestUriOptions,
+} from './request-uri.js';
+
+export {
   // クライアントが用途ごとに登録した公開鍵の取得（private_key_jwt / Request Object / DPoP など）
   createClientKeyResolver,
 } from './client-keys.js';

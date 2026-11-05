@@ -19,6 +19,7 @@ import {
   readClientJwksUri,
   readCrossAppAccess,
   readDynamicClientRegistration,
+  readRequestUri,
   readPostLogoutRedirectUris,
   readRegisteredClients,
   readServerAddress,
@@ -59,6 +60,8 @@ export async function createServerApp(env: Environment): Promise<Hono> {
       allowUnsignedRequestObject: env['OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT'] === '1',
       // The jwks_uri of the clients (RFC 7591 §2): tests/e2e serves its keys over http on 127.0.0.1.
       ...readClientJwksUri(env),
+      // The request_uri of the authorization requests (OIDC Core 1.0 §6.2): tests/e2e serves them over http on 127.0.0.1.
+      ...readRequestUri(env),
       // EXTENSION (google-login): the button appears once a Google OAuth
       // client ID is configured.
       ...(googleClientId ? { googleLogin: { clientId: googleClientId } } : {}),

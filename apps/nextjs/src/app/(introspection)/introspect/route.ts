@@ -23,7 +23,6 @@ import {
   type IntrospectionResponse,
 } from '@maronn-openid-connect/core';
 import { respondIntrospectionJwt } from '../../_oidc-provider/features/jwt-introspection-response/respond';
-import { appendAuthorizationDetailsToIntrospection } from '../../_oidc-provider/features/rar/introspect';
 import { clientResolver, loadSigningKeys, stores } from '../../_oidc-provider/provider';
 import { createIntrospectionResolvers } from '../../_oidc-provider/features/introspection/resolvers';
 import {
@@ -135,9 +134,6 @@ async function introspect(request: Request): Promise<Response> {
     if (resolved !== null && isIntrospectionTokenActive(resolved)) {
       response = buildIntrospectionResponse(resolved);
     }
-
-    // [append-introspection-details] (feature: rar) authorization details を introspection 応答へ含める — RFC 9396 §9.2
-    response = await appendAuthorizationDetailsToIntrospection(response, resolved);
 
     // [respond-jwt] (feature: jwt-introspection-response) 求められたら署名付き JWT で応答する — RFC 9701 §4 / §5
     const jwtResponse = await respondIntrospectionJwt(request, response, authenticatedClientId, keys);

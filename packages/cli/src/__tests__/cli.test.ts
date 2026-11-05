@@ -71,7 +71,7 @@ describe('run', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
     expect(consoleSpy).toHaveBeenCalledWith(
-      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration, rar. Extension features (disabled by default): google-login',
+      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration. Extension features (disabled by default): google-login',
     );
     expect(process.exitCode).toBe(1);
     vi.restoreAllMocks();
@@ -455,58 +455,6 @@ describe('run', () => {
       const output = logSpy.mock.calls.map((call) => call[0]).join('\n');
       expect(output).toContain('Install dependencies: pnpm add hono @maronn-openid-connect/core');
       expect(output).not.toContain('@maronn-openid-connect/experimental');
-      vi.restoreAllMocks();
-    });
-  });
-
-  // EXPERIMENTAL (RFC 9396): the CLI-side surface of --enable rar — option
-  // parsing, the generated files and their imports, and the absence of every
-  // rar artifact without the option. The generated OP's behavior is covered
-  // by tests/e2e, not here.
-  describe('--enable rar', () => {
-    it('should generate the rar feature importing the experimental rar subpath', () => {
-      const outputDir = join(testDir, 'oidc-provider');
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      run(['generate', 'hono', '-o', outputDir, '--enable', 'rar']);
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(undefined);
-      expect(existsSync(join(outputDir, 'features', 'rar', 'feature.ts'))).toBe(true);
-      const validateStep = readFileSync(
-        join(outputDir, 'features', 'rar', 'steps', 'validate-authorization-details.ts'),
-        'utf-8',
-      );
-      expect(validateStep).toContain("from '@maronn-openid-connect/experimental/rar'");
-      const pipeline = readFileSync(join(outputDir, 'endpoints', 'token', 'pipeline.ts'), 'utf-8');
-      expect(pipeline).toContain('[reject-token-request-details] (feature: rar)');
-      vi.restoreAllMocks();
-    });
-
-    it('should generate the rar blocks of the Next.js output only when selected', () => {
-      const outputDir = join(testDir, 'oidc-provider');
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      run(['generate', 'nextjs', '-o', outputDir, '--enable', 'rar']);
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(existsSync(join(outputDir, '_oidc-provider', 'features', 'rar', 'authorize.ts'))).toBe(true);
-      const tokenRoute = readFileSync(join(outputDir, 'token', 'route.ts'), 'utf-8');
-      expect(tokenRoute).toContain('[append-token-response-details] (feature: rar)');
-      vi.restoreAllMocks();
-    });
-
-    it('should generate no rar artifact without --enable rar', () => {
-      const outputDir = join(testDir, 'oidc-provider');
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      run(['generate', 'hono', '-o', outputDir]);
-      expect(existsSync(join(outputDir, 'features', 'rar'))).toBe(false);
-      for (const file of [
-        join('endpoints', 'authorize', 'pipeline.ts'),
-        join('endpoints', 'consent', 'pipeline.ts'),
-        join('endpoints', 'token', 'pipeline.ts'),
-        join('features', 'introspection', 'endpoints', 'introspection', 'pipeline.ts'),
-      ]) {
-        expect(readFileSync(join(outputDir, file), 'utf-8')).not.toContain('(feature: rar)');
-      }
       vi.restoreAllMocks();
     });
   });

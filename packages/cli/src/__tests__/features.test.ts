@@ -34,7 +34,6 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'jwt-introspection-response',
       'rp-initiated-logout',
       'dynamic-client-registration',
-      'rar',
     ]);
   });
 });
@@ -65,7 +64,6 @@ describe('DEFAULT_FEATURES', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       dynamicClientRegistration: false,
-      rar: false,
       googleLogin: false,
     });
   });
@@ -92,7 +90,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
-        rar: false,
         googleLogin: false,
       });
     });
@@ -118,7 +115,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
-        rar: false,
         googleLogin: false,
       });
     });
@@ -144,7 +140,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
-        rar: false,
         googleLogin: false,
       });
     });
@@ -174,7 +169,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
-        rar: false,
         googleLogin: false,
       });
     });
@@ -198,7 +192,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
-        rar: false,
         googleLogin: false,
       });
     });
@@ -216,8 +209,6 @@ describe('resolveFeatures', () => {
             'jwt-introspection-response',
             'rp-initiated-logout',
             'dynamic-client-registration',
-            'rar',
-      'rar',
             'google-login',
           ],
         }),
@@ -239,7 +230,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: true,
         rpInitiatedLogout: true,
         dynamicClientRegistration: true,
-        rar: true,
         googleLogin: true,
       });
     });
@@ -263,7 +253,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
-        rar: false,
         googleLogin: false,
       });
     });

@@ -101,7 +101,7 @@ tokenApp.post('/', async (c) => {
     await revokeRotatedRefreshToken(c, params, validatedRequest);
 
     // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
-    let tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
+    const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
 
     // [respond] 応答する（no-store） — RFC 6749 §5.1
     return respondToken(c, tokenResponse);

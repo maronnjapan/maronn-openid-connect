@@ -28,7 +28,6 @@ import {
 } from '../../authorize/response-mode';
 import { issueHybridConsentResponse } from '../../_oidc-provider/features/hybrid-flow/consent';
 import { issueImplicitConsentResponse } from '../../_oidc-provider/features/implicit-flow/consent';
-import { recordGrantedAuthorizationDetails } from '../../_oidc-provider/features/rar/consent';
 import { readFormFields, redirectToErrorPage } from '../../_oidc-provider/http';
 import { config, loadSigningKeys, resolvers, stores } from '../../_oidc-provider/provider';
 import {
@@ -176,9 +175,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     ttlSeconds: config.authorizationCodeTtl,
   });
   await stores.authCodeStore.set(authCodeData.code, authCodeData);
-
-  // [record-granted-details] (feature: rar) 承認された authorization details をグラントへ紐付ける — RFC 9396 §7
-  await recordGrantedAuthorizationDetails(transactionId, authCodeData.grantId, config.refreshTokenAbsoluteLifetime);
 
   // [record-consent] 同意とグラントを記録する — OIDC Core 1.0 §3.1.2.4
   // 同意を記録し、後の `prompt=none` や SSO のリクエストで、同意画面を出さずに同意を確かめられるようにする（OIDC Core 1.0 §3.1.2.1、§3.1.2.4）。

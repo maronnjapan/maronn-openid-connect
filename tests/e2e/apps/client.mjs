@@ -121,14 +121,6 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { kid: key.publicJwk.kid });
       return;
     }
-    // EXPERIMENTAL (RFC 9396): run the ordinary code flow with an
-    // authorization_details parameter (the payment_initiation example of
-    // §2.1), then refresh and introspect to see the approved details come
-    // back on every channel.
-    if (req.method === 'GET' && url.pathname === '/start-rar') {
-      await startAuthorization(url, res, { rar: true });
-      return;
-    }
     if (req.method === 'GET' && url.pathname === '/callback') {
       await handleCallback(url, res);
       return;
@@ -159,7 +151,6 @@ async function startAuthorization(requestUrl, res, options = {}) {
     codeVerifier,
     createdAt: Date.now(),
     exchange: options.exchange === true,
-    rar: options.rar === true,
   });
 
   const authorizationUrl = new URL('/authorize', issuer);
@@ -183,21 +174,6 @@ async function startAuthorization(requestUrl, res, options = {}) {
   // The request itself is otherwise identical to the plain code flow.
   const responseMode = requestUrl.searchParams.get('response_mode') ?? options.responseMode;
   if (responseMode) authorizationUrl.searchParams.set('response_mode', responseMode);
-
-  // EXPERIMENTAL (RFC 9396 §3): the authorization_details parameter, a
-  // URL-encoded JSON array shaped after the payment_initiation example of
-  // §2.1. A spec overrides the type (?type=...) to drive the unknown-type
-  // rejection of §5.
-  if (options.rar === true) {
-    authorizationUrl.searchParams.set('authorization_details', JSON.stringify([
-      {
-        type: requestUrl.searchParams.get('type') ?? 'payment_initiation',
-        actions: ['initiate'],
-        locations: ['https://example.com/payments'],
-        instructedAmount: { currency: 'EUR', amount: '123.50' },
-      },
-    ]));
-  }
 
   redirect(res, authorizationUrl.toString());
 }
@@ -596,14 +572,6 @@ async function handleCallback(url, res, method = 'GET') {
     client_secret: clientSecret,
     code_verifier: transaction.codeVerifier,
   });
-
-  // EXPERIMENTAL (RFC 9396): show what came back on every channel the
-  // approved details travel on, instead of the ordinary result page.
-  if (transaction.rar) {
-    await completeRarInspection(res, tokens);
-    return;
-  }
-
   const userInfo = await fetchJson(new URL('/userinfo', issuer), {
     headers: {
       Authorization: `Bearer ${tokens.access_token}`,
@@ -874,49 +842,6 @@ function renderExchangeResult(result) {
     </main>
   </body>
 </html>`;
-}
-
-/**
- * EXPERIMENTAL — Rich Authorization Requests (RFC 9396 §7 / §9.2).
- *
- * Follows the approved details over every channel they travel on: the token
- * response of the code grant, the token response of a refresh (same grant),
- * and the introspection answer a resource server would get. The page prints
- * each one as JSON ('null' when the member is absent), plus the rotated
- * refresh token so a spec can drive the token-endpoint rejection of §6 with
- * it.
- */
-async function completeRarInspection(res, tokens) {
-  const refreshed = tokens.refresh_token === undefined
-    ? null
-    : await formPost(new URL('/token', issuer), {
-      grant_type: 'refresh_token',
-      refresh_token: tokens.refresh_token,
-      client_id: clientId,
-      client_secret: clientSecret,
-    });
-  const introspected = await formPost(new URL('/introspect', issuer), {
-    token: (refreshed ?? tokens).access_token,
-    client_id: clientId,
-    client_secret: clientSecret,
-  });
-  sendHtml(res, 200, `<!doctype html>
-<html>
-  <head><title>RAR Complete</title></head>
-  <body>
-    <main>
-      <h1>RAR Complete</h1>
-      <dl>
-        <dt>token type</dt><dd data-testid="token-type">${escapeHtml(tokens.token_type)}</dd>
-        <dt>token details</dt><dd data-testid="rar-token-details">${escapeHtml(JSON.stringify(tokens.authorization_details ?? null))}</dd>
-        <dt>refreshed details</dt><dd data-testid="rar-refresh-details">${escapeHtml(JSON.stringify(refreshed?.authorization_details ?? null))}</dd>
-        <dt>refresh token</dt><dd data-testid="rar-refresh-token">${escapeHtml(refreshed?.refresh_token ?? '')}</dd>
-        <dt>introspection active</dt><dd data-testid="rar-introspection-active">${escapeHtml(String(introspected.active))}</dd>
-        <dt>introspection details</dt><dd data-testid="rar-introspection-details">${escapeHtml(JSON.stringify(introspected.authorization_details ?? null))}</dd>
-      </dl>
-    </main>
-  </body>
-</html>`);
 }
 
 function renderAuthorizationError(result) {

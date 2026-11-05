@@ -1,6 +1,4 @@
-import { consentRowsOf } from '../_oidc-provider/feature';
-import { features } from '../_oidc-provider/features';
-import { config, stores } from '../_oidc-provider/provider';
+import { stores } from '../_oidc-provider/provider';
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';
 import { requireTransaction } from '../_oidc-provider/transaction';
 
@@ -39,10 +37,6 @@ export default async function ConsentPage() {
     ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
     : requestedScopes;
 
-  // The extra rows the features show for this transaction (the consent hook),
-  // such as the authorization details of the rar feature (RFC 9396 §3.1).
-  const featureRows = await consentRowsOf(features, transactionId, config);
-
   return (
     <main>
       <h1>Authorize Application</h1>
@@ -55,16 +49,6 @@ export default async function ConsentPage() {
           <li key={scope}>{scope}</li>
         ))}
       </ul>
-      {featureRows.length > 0 ? (
-        <>
-          <p>The client also requests the following authorization details:</p>
-          <ul>
-            {featureRows.map((row, index) => (
-              <li key={index}>{row}</li>
-            ))}
-          </ul>
-        </>
-      ) : null}
       {/*
         The submit buttons carry the authorization decision (OIDC Core 1.0
         §3.1.2.4). decision/route.ts accepts exactly 'approve' and 'deny' and rejects

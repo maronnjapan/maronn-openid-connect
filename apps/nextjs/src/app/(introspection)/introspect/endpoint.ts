@@ -19,7 +19,6 @@ export const endpoint = defineEndpoint({
     { id: 'authenticate-client', consumes: ['params'], produces: ['authenticatedClientId'] },
     { id: 'resolve-token', consumes: ['params', 'authenticatedClientId'], produces: ['resolved'] },
     { id: 'build-response', consumes: ['resolved'], produces: ['response'] },
-    { id: 'append-introspection-details', feature: 'rar', consumes: ['response', 'resolved'], produces: ['response'] },
     { id: 'respond-jwt', feature: 'jwt-introspection-response', consumes: ['response', 'authenticatedClientId', 'keys'], produces: [] },
     { id: 'respond', consumes: ['response'], produces: [] },
     { id: 'respond-error', consumes: [], produces: [] },

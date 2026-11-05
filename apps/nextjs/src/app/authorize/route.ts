@@ -52,11 +52,6 @@ import {
 } from '../_oidc-provider/features/implicit-flow/authorize';
 import { resolveJarmResponseContext } from '../_oidc-provider/features/jarm/authorize';
 import { resolvePushedAuthorizationRequest } from '../_oidc-provider/features/par/authorize';
-import {
-  recordAuthorizationDetails,
-  validateAuthorizationDetailsRequest,
-} from '../_oidc-provider/features/rar/authorize';
-import { resolveRarTypes } from '../_oidc-provider/features/rar/config';
 import { resolveRequestObject } from '../_oidc-provider/features/request-object/authorize';
 import { responseTypesOf, tokenGrantsOf } from '../_oidc-provider/feature';
 import { features } from '../_oidc-provider/features';
@@ -220,7 +215,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
 
     // `prompt` の各値が `none`、`login`、`consent`、`select_account` のどれかであることを確かめる（OIDC Core 1.0 §3.1.2.1）。
     // `none` とほかの値の併用も、`invalid_request` で拒否する。
-    let prompt = validatePromptParameter(requestParams, redirectUri, state);
+    const prompt = validatePromptParameter(requestParams, redirectUri, state);
 
     // `offline_access` は、次の二つの条件を両方満たしたときだけスコープに残す。
     // - エンドユーザーが同意する（`prompt=consent`、OIDC Core 1.0 §11）。
@@ -279,11 +274,6 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // [validate-hybrid-request] (feature: hybrid-flow) ハイブリッドフローのリクエストを検証する — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
     validateHybridRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, responseMode);
 
-    // [validate-authorization-details] (feature: rar) authorization_details を検証し、同意を必須にする — RFC 9396 §3 / §5
-    const rarRequest = validateAuthorizationDetailsRequest({ params, requestObjectClaims, prompt, redirectUri, state, rarTypes: resolveRarTypes(config) });
-    const authorizationDetails = rarRequest.authorizationDetails;
-    prompt = rarRequest.prompt;
-
     // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     // 各検証の結果から、検証済みのリクエストを組み立てる。
     // 形は core の `ValidatedAuthorizationRequest`（`createAuthTransaction()` が受け取る型）なので、上の検証を足したり消したりしても、後の処理（トランザクション、認可コード）は影響を受けない。
@@ -323,9 +313,6 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
       ? { ...transaction, responseMode: responseMode.name }
       : transaction;
     await transactionStore.put('auth_txn:' + transactionId, storedTransaction, transactionTtlSeconds);
-
-    // [record-authorization-details] (feature: rar) authorization details をトランザクションへ保持する — RFC 9396 §3
-    await recordAuthorizationDetails(transactionId, transactionTtlSeconds, authorizationDetails);
 
     // [validate-prompt-combination] ほかの値と併用された prompt=none を拒否する — OIDC Core 1.0 §3.1.2.1
     // `prompt` は空白で区切った値の並びなので、空白で分けて配列にする（OIDC Core 1.0 §3.1.2.1）。

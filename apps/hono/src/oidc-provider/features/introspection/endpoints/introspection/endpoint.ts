@@ -24,7 +24,6 @@ export const endpoint = defineEndpoint({
     'authenticate-client',
     'resolve-token',
     'build-response',
-    'append-introspection-details',
     'sign-response',
     'respond',
     'respond-error',

@@ -34,7 +34,7 @@ introspectionApp.post('/', async (c) => {
     const resolved = await resolveIntrospectedToken(c, params, authenticatedClientId);
 
     // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
-    let introspection = describeIntrospectedToken(resolved);
+    const introspection = describeIntrospectedToken(resolved);
 
     // [respond] 応答する（no-store） — RFC 7662 §2.2
     return respondIntrospection(c, { status: 200, body: introspection });

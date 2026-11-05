@@ -21,7 +21,6 @@ export const endpoint = defineEndpoint({
   rearrangeable: false,
   steps: [
     'load-transaction',
-    'describe-authorization-details',
     'describe-consent-screen',
     'reject-cross-origin-post',
     'validate-csrf-token',
@@ -31,7 +30,6 @@ export const endpoint = defineEndpoint({
     'issue-implicit-response',
     'issue-hybrid-response',
     'issue-authorization-code',
-    'record-granted-details',
     'record-consent',
     'build-authorization-response',
   ],
@@ -39,8 +37,6 @@ export const endpoint = defineEndpoint({
     chain: false,
     extra: [
       { from: 'load-transaction', to: 'describe-consent-screen', label: 'GET', kind: 'flow' },
-      { from: 'load-transaction', to: 'describe-authorization-details', label: 'GET', kind: 'branch' },
-      { from: 'describe-authorization-details', to: 'describe-consent-screen', label: 'GET', kind: 'branch' },
       { from: 'reject-cross-origin-post', to: 'load-transaction', label: 'POST', kind: 'flow' },
       { from: 'load-transaction', to: 'validate-csrf-token', label: 'POST', kind: 'flow' },
       { from: 'validate-csrf-token', to: 'deny-authorization', label: 'action=deny', kind: 'branch' },
@@ -50,8 +46,6 @@ export const endpoint = defineEndpoint({
       { from: 'require-authenticated-subject', to: 'issue-hybrid-response', label: 'code id_token / code token / code id_token token', kind: 'branch' },
       { from: 'require-authenticated-subject', to: 'issue-authorization-code', kind: 'flow' },
       { from: 'issue-authorization-code', to: 'record-consent', kind: 'flow' },
-      { from: 'issue-authorization-code', to: 'record-granted-details', kind: 'branch' },
-      { from: 'record-granted-details', to: 'record-consent', kind: 'branch' },
       { from: 'record-consent', to: 'build-authorization-response', kind: 'flow' },
     ],
   },

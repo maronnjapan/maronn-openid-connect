@@ -3,7 +3,6 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  signingKeysToJwkSet,
   type AcrResolver,
   type ClientKeyResolver,
   type ClientResolver,
@@ -81,8 +80,20 @@ export interface OidcProviderOptions {
    * (ClientKeyResolver in core). The OP verifies signed Request Objects with
    * the keys of request_object.
    * Defaults to the keys registerClient() put into db/, read for each request.
+   * Either way, a client that registered a jwksUri gets the keys of its
+   * jwks_uri for the purposes of config.clientJwksUriPurposes
+   * (client-jwks-uri.ts), and this resolver answers for every other client
+   * and purpose.
    */
   clientKeyResolver?: ClientKeyResolver;
+  /**
+   * The fetch the OP fetches the jwks_uri of the clients with (RFC 7591 §2).
+   * Defaults to globalThis.fetch. Pass a fetch that goes through an egress
+   * proxy to keep the fetches away from the networks of the OP: the
+   * destination check of client-jwks-uri.ts sees the host of a jwks_uri, not
+   * the addresses its name resolves to.
+   */
+  clientJwksFetch?: typeof fetch;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -287,6 +298,8 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
  *
  * `c.set()` で入れるのは、設定、用途ごとの署名鍵の集合、ストア、ストアの上に作ったリゾルバ、クライアントのリゾルバ、ビュー、各機能のコンテキストのフックが返す値などである。
  * オプションでリゾルバやストアが渡されていれば、`db/` のものの代わりにそれを使う。
+ * クライアントの鍵のリゾルバはそのまま入れ、`jwks_uri` の扱いはエンドポイントが呼ぶ `getClientKeyResolver()` に置く。
+ * 既定の認証と ID トークンの検証鍵も、使う側で型のあるストアと署名鍵から読む。
  *
  * 署名鍵を読み込めないとき、または読み込んだ集合が `validateSigningKeySet()` の検証に通らないときは、何も入れずに `server_error` の 503 のレスポンスを返す。
  * 呼び出し側は、そのレスポンスで応答する。
@@ -324,6 +337,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
   c.set('clientKeyResolver', options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)));
+  c.set('clientJwksFetch', options.clientJwksFetch);
   c.set('stores', stores);
   c.set('transactionStore', stores.transactionStore);
   c.set('authCodeStore', stores.authCodeStore);
@@ -332,14 +346,11 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('authSessionStore', stores.authSessionStore);
   c.set('browserSessionStore', stores.browserSessionStore);
   c.set('userStore', stores.userStore);
-  c.set('authenticateUser', (username: string, password: string) =>
-    stores.userStore.authenticate(username, password));
   c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
   c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
   c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
   c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
   c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);
-  c.set('revokeConsentAndTokens', storeResolvers.revokeConsentAndTokens);
 
   // `acrResolver` が渡されていれば入れる。
   // 渡されていなければ、トークンエンドポイントは、要求された `acr_values` のうち最も優先されるものをトークンに入れる。
@@ -348,7 +359,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   }
   // `id_token_hint` を検証する JWKS のプロバイダを入れる。
   // 渡されていなければ OP 自身の ID トークンの署名鍵を使うので、OP が発行した ID トークンを `id_token_hint` として検証できる（OIDC Core 1.0 §3.1.2.2）。
-  c.set('jwksProvider', options.jwksProvider ?? (() => signingKeysToJwkSet(idTokenSigningKeys)));
+  c.set('jwksProvider', options.jwksProvider);
   // セッションと同意のリゾルバを入れる。
   // 渡されていなければ、Cookie のセッションとストアの同意を読む既定のリゾルバを使うので、設定しなくても `prompt=none`、`max_age`、SSO が動く（OIDC Core 1.0 §3.1.2.1、§3.1.2.3）。
   c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);

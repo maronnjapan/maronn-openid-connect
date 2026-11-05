@@ -8,10 +8,9 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'implicit-flow',
   kind: 'resolve',
-  label: 'Answer the Implicit Flow in the fragment',
+  label: 'インプリシットフローをフラグメントで返す',
   spec: 'OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5',
   function: 'resolveFragmentResponseContext',
-  calls: ['defaultResponseModeOf'],
   consumes: ['params', 'effectiveParams', 'issuer'],
   optional: ['effectiveParams'],
   produces: ['responseMode'],
@@ -19,21 +18,22 @@ export const meta = step({
 });
 
 /**
- * Answer in the fragment response mode when that is the default of the
- * request's response_type — any response type that returns an ID Token or an
- * access token: the Implicit Flow's id_token and id_token token, and the
- * Hybrid Flow's code id_token, code token and code id_token token of the
- * hybrid-flow feature, which requires this one (Multiple Response Type
- * Encoding Practices §3 / §5) — or when the request asked for
- * response_mode=fragment (§2.1).
+ * フラグメントで返すリクエストならそのモードを返す。
  *
- * Runs after the blocks of the response modes a request asks for by name
- * (form_post, JARM), each of which assigns the response mode only while it is
- * unset, so a request of the Implicit Flow with response_mode=form_post is
- * posted. Its errors go back in the fragment from here on (OIDC Core 1.0
- * §3.2.2.6), the rejection of response_mode=query included
- * (validate-implicit-request). Any other request is left to the plain query
- * response: undefined.
+ * 次のどちらかに当たるリクエストに、フラグメントのレスポンスモードを返す。
+ * - `response_mode=fragment` を指定している（OAuth 2.0 Multiple Response Type Encoding Practices §2.1）。
+ * - `response_type` の既定のレスポンスモードがフラグメントである（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5）。
+ *
+ * 既定がフラグメントになるのは、ID トークンかアクセストークンを返すレスポンスタイプである。
+ * インプリシットフローの `id_token` と `id_token token` のほか、`hybrid-flow` 機能が扱うハイブリッドフローの `code id_token`、`code token`、`code id_token token` も当たる（`hybrid-flow` 機能はこの機能を必要とする）。
+ * どちらにも当たらないリクエストには `undefined` を返し、パラメータをクエリに付ける通常のレスポンスに任せる。
+ *
+ * パイプラインは、名前で要求されるレスポンスモード（JARM、`form_post`）のステップのあとに、このステップを呼ぶ。
+ * どのステップの結果も、レスポンスモードがまだ決まっていないときだけ使うので、`response_mode=form_post` を指定したインプリシットフローのリクエストはフォームで POST される。
+ * ここでレスポンスモードが決まると、以降のエラーはフラグメントで返る（OIDC Core 1.0 §3.2.2.6）。
+ * `validate-implicit-request` ステップが `response_mode=query` を拒否するエラーも同じである。
+ *
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §2.1
  */
 export function resolveFragmentResponseContext(
   params: AuthorizationRequestParams,

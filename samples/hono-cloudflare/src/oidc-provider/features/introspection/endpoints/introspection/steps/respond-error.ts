@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 7662 §2.3',
   function: 'respondIntrospectionError',
   consumes: [],
@@ -17,8 +17,17 @@ export const meta = step({
 });
 
 /**
- * Answer a failure of any step with the OAuth error response.
- * RFC 7662 §2.3 / RFC 6749 §5.2
+ * ステップの失敗に、OAuth のエラーレスポンスで応答する。
+ *
+ * 投げられた値によって、次のように応答する。
+ * - `IntrospectionEndpointError`: ステップが決めたレスポンス（400 の不正なリクエスト）をそのまま返す。
+ * - `TokenError` と `IntrospectionError`: そのステータスコード（`invalid_client` は 401、ほかは 400）と `error`、`error_description` で応答し、401 のときは `WWW-Authenticate` ヘッダーを付ける。
+ * - それ以外: 500 の `server_error` で応答する。
+ *
+ * どのレスポンスにも `Cache-Control: no-store` を付ける。
+ *
+ * @spec RFC 7662 §2.3
+ * @spec RFC 6749 §5.2
  */
 export function respondIntrospectionError(c: any, error: unknown): Response {
   if (error instanceof IntrospectionEndpointError) {

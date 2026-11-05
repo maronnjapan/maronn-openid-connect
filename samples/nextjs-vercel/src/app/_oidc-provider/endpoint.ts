@@ -26,7 +26,13 @@ export interface EndpointMeta {
   readonly steps: readonly EndpointStep[];
 }
 
-/** Describe the steps of a Route Handler. The function only checks the shape; it returns its argument. */
+/**
+ * ルートハンドラの説明を受け取り、そのまま返す。
+ *
+ * 説明には、ルートハンドラのパスと、実行するステップが含まれる。
+ * 実行時には何もしない。
+ * 引数が `EndpointMeta` の形であることは、TypeScript の型検査で確かめる。
+ */
 export function defineEndpoint<const E extends EndpointMeta>(endpoint: E): E {
   return endpoint;
 }

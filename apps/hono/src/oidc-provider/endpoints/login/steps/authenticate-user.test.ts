@@ -31,8 +31,8 @@ describe('authenticateEndUser', () => {
     expect(await authenticateEndUser(c, 'mallory', 'correct-password')).toBeUndefined();
   });
 
-  it('should return undefined when the authenticateUser of the context answers null', async () => {
-    const c = contextOf(undefined, { authenticateUser: async () => null });
+  it('should return undefined when the user store of the context answers undefined', async () => {
+    const c = contextOf(undefined, { userStore: { authenticate: async () => undefined } });
 
     expect(await authenticateEndUser(c, 'alice', 'correct-password')).toBeUndefined();
   });

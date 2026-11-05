@@ -17,9 +17,20 @@ import type { JwkSet } from './jwks.js';
  *   持つので、登録した鍵の proof だけを受け付ける OP が使う
  *
  * 文字列なので、ほかの用途も足せる。core で鍵を受け取る処理は署名付き Request Object の検証
- * （`resolveRequestObjectParams()` の `options.jwks`）だけで、private_key_jwt と DPoP の検証は持たない。
+ * （`resolveRequestObjectParams()` の `options.loadJwks`）だけで、private_key_jwt と DPoP の検証は持たない。
  */
 export type ClientKeyPurpose = 'private_key_jwt' | 'request_object' | 'dpop' | (string & {});
+
+/**
+ * 鍵を引くときの手がかり。{@link ClientKeyResolver.findClientKeys} の任意の第 3 引数。
+ */
+export interface ClientKeyLookupHint {
+  /**
+   * 検証する JWS の JOSE ヘッダーの `kid`。`jwks_uri` を登録したクライアントでは、キャッシュに無い
+   * kid が鍵を取り直す合図になる（OIDC Core 1.0 §10.1.1）。値で保存した鍵を返す実装は無視してよい。
+   */
+  kid?: string;
+}
 
 /**
  * クライアントが用途ごとに登録した公開鍵を引く。
@@ -31,8 +42,9 @@ export interface ClientKeyResolver {
    * クライアントが `purpose` 用に登録した公開鍵を返す。
    *
    * 鍵がないとき（`clientId` のクライアントがないときも含む）は、`keys` が空の JWK Set を返す。
+   * `hint`（{@link ClientKeyLookupHint}）は検証する JWS の手がかりで、省略できる。2 引数の実装もそのまま型に合う。
    */
-  findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet>;
+  findClientKeys(clientId: string, purpose: ClientKeyPurpose, hint?: ClientKeyLookupHint): Promise<JwkSet>;
 }
 
 /** 1 つのクライアントの公開鍵。キーが用途、値がその用途の JWK Set。 */

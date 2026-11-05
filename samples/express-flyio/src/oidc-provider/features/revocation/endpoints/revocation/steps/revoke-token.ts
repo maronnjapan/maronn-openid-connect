@@ -11,19 +11,24 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'persist',
-  label: 'Revoke the token and its grant siblings',
+  label: 'トークンと同じグラントのトークンを失効させる',
   spec: 'RFC 7009 §2.1',
   function: 'revokeToken',
-  calls: ['validateRevocationTokenClient', 'revokeResolvedToken', 'revokeGrantAccessTokens'],
   consumes: ['token', 'resolved', 'authenticatedClientId'],
   produces: [],
   removable: false,
 });
 
 /**
- * Revoke the token, and the access tokens of its grant when it is a refresh
- * token (RFC 7009 §2.1 SHOULD). RFC 7009 §2.2: an unknown token is still a
- * success, so the client cannot probe which token values exist.
+ * 提示されたトークンを失効させる。
+ *
+ * リフレッシュトークンを失効させたときは、同じグラントのアクセストークンも失効させる（RFC 7009 §2.1 の SHOULD）。
+ * ほかのクライアントに発行されたトークンなら、`RevocationError`（`invalid_grant`）を投げる。
+ * トークンが見つからなかったとき（`resolved` が `null`）は、何もせずに戻る。
+ * 見つからないトークンでも成功として応答し、どのトークンの値が存在するかをクライアントが探れないようにするためである（RFC 7009 §2.2）。
+ *
+ * @spec RFC 7009 §2.1
+ * @spec RFC 7009 §2.2
  */
 export async function revokeToken(
   c: any,
@@ -34,13 +39,12 @@ export async function revokeToken(
   if (resolved === null) return;
   const resolvers = c.get('revocationResolvers');
 
-  // RFC 7009 §2.1: a token issued to another client is refused (invalid_grant).
+  // ほかのクライアントに発行されたトークンなら、`invalid_grant` で拒否する（RFC 7009 §2.1）。
   validateRevocationTokenClient(resolved, authenticatedClientId);
 
   await revokeResolvedToken(token, resolved, resolvers);
 
-  // RFC 7009 §2.1 SHOULD: revoking a refresh token also revokes the access
-  // tokens of the same grant. Delete this call to revoke only the presented
-  // token.
+  // リフレッシュトークンを失効させたときは、同じグラントのアクセストークンも失効させる（RFC 7009 §2.1 の SHOULD）。
+  // 提示されたトークンだけを失効させたいときは、この呼び出しを消す。
   await revokeGrantAccessTokens(resolved, resolvers);
 }

@@ -11,19 +11,24 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'validate',
-  label: 'Authenticate the client',
+  label: 'クライアントを認証する',
   spec: 'RFC 7009 §2.1 / OAuth 2.1 §2.3',
   function: 'authenticateRevocationClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
   consumes: ['params', 'authorization'],
   produces: ['authenticatedClientId'],
   removable: false,
 });
 
 /**
- * Authenticate the caller — the same steps as the token endpoint
- * (OAuth 2.1 §2.3 / OIDC Core 1.0 §9). Public clients registered with
- * token_endpoint_auth_method=none pass with client_id only (RFC 7009 §2.1).
+ * クライアントを認証し、その `client_id` を返す。
+ *
+ * 認証の手順はトークンエンドポイントと同じである（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
+ * `token_endpoint_auth_method` を `none` で登録したパブリッククライアントは、`client_id` だけで通る（RFC 7009 §2.1）。
+ * 認証に失敗すると、中で呼ぶ core の関数が `TokenError`（`invalid_client` など）を投げる。
+ *
+ * @spec RFC 7009 §2.1
+ * @spec OAuth 2.1 §2.3
+ * @spec OIDC Core 1.0 §9
  */
 export async function authenticateRevocationClient(
   c: any,

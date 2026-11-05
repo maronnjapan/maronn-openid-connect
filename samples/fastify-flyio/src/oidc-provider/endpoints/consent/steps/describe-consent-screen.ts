@@ -7,27 +7,28 @@ export const meta = step({
   id: 'describe-consent-screen',
   endpoint: 'consent',
   kind: 'transform',
-  label: 'Describe the consent form',
+  label: '同意画面の表示内容を組み立てる',
   function: 'describeConsentScreen',
-  calls: ['resolveGrantableScopes'],
   consumes: ['transactionId', 'transaction'],
   produces: ['screen'],
   removable: false,
 });
 
 /**
- * [describe-consent-screen] Describe the form for a transaction: the
- * csrf_token, the client and the scopes this End-User is asked to grant.
+ * 同意フォームに表示する内容を返す。
+ *
+ * 内容は、トランザクションの `csrf_token` とクライアント ID、エンドユーザーに許可を求めるスコープである。
+ * スコープは、要求されたもののうち、このエンドユーザーに許可できるものに絞る。
  */
 export async function describeConsentScreen(
   c: any,
   transactionId: string,
   transaction: AuthTransaction,
 ): Promise<ConsentScreen> {
-  // Describe only what THIS End-User can actually grant. The subject comes
-  // from the auth session that /login (or the SSO fast path) stored for this
-  // transaction; without one there is nothing to apply the policy to, so the
-  // request is shown as-is and submitConsent() stops on the same missing session.
+  // 表示するスコープは、このエンドユーザーが実際に許可できるものに絞る（scopes.ts の `resolveGrantableScopes()`）。
+  // サブジェクトは、`/login`（SSO でログイン画面を省いたときは `/authorize`）がこのトランザクションのために保存した認証セッションから読む。
+  // 認証セッションがなければ絞り込みに使うサブジェクトがないので、要求されたスコープをそのまま表示する。
+  // その場合は、`submitConsent()` が同じ認証セッションの欠落で処理を止める。
   const authSessionStore = c.get('authSessionStore');
   const consentSession = await authSessionStore.get(transactionId);
   const requestedScopes = transaction.scope.split(' ').filter(Boolean);

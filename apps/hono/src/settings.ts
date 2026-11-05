@@ -12,7 +12,7 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
-import type { ClientRegistration } from './oidc-provider/config.js';
+import type { ClientRegistration, ProviderConfig } from './oidc-provider/config.js';
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -22,6 +22,16 @@ function readPositiveInteger(env: Environment, name: string): number | undefined
   if (value === undefined || value === '') return undefined;
   if (!/^[1-9][0-9]*$/.test(value)) {
     throw new Error(`${name} must be a positive integer, not "${value}"`);
+  }
+  return Number(value);
+}
+
+/** A non-negative integer variable (0 included); a value that is not one stops the app. */
+function readNonNegativeInteger(env: Environment, name: string): number | undefined {
+  const value = env[name];
+  if (value === undefined || value === '') return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${name} must be a non-negative integer, not "${value}"`);
   }
   return Number(value);
 }
@@ -92,6 +102,29 @@ export function readPostLogoutRedirectUris(env: Environment): Record<string, str
 export function readDynamicClientRegistration(env: Environment): { maxRegisteredClients?: number } {
   const maxRegisteredClients = readPositiveInteger(env, 'OIDC_DCR_MAX_CLIENTS');
   return maxRegisteredClients === undefined ? {} : { maxRegisteredClients };
+}
+
+/**
+ * The jwks_uri of the clients (RFC 7591 §2): OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI=1
+ * lets a jwks_uri use http and loopback or private addresses (tests/e2e
+ * serves the keys of its client at http://127.0.0.1:3020), and
+ * OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS / OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS
+ * replace how long keys without max-age are kept and how often an unknown kid
+ * fetches the jwks_uri again (0: every time). An unset variable keeps the
+ * default of config.ts.
+ */
+export function readClientJwksUri(
+  env: Environment,
+): Partial<
+  Pick<ProviderConfig, 'allowInsecureClientJwksUri' | 'clientJwksUriCacheTtlSeconds' | 'clientJwksUriRefetchIntervalSeconds'>
+> {
+  const ttlSeconds = readNonNegativeInteger(env, 'OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS');
+  const refetchIntervalSeconds = readNonNegativeInteger(env, 'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS');
+  return {
+    ...(env['OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI'] === '1' ? { allowInsecureClientJwksUri: true } : {}),
+    ...(ttlSeconds === undefined ? {} : { clientJwksUriCacheTtlSeconds: ttlSeconds }),
+    ...(refetchIntervalSeconds === undefined ? {} : { clientJwksUriRefetchIntervalSeconds: refetchIntervalSeconds }),
+  };
 }
 
 /**

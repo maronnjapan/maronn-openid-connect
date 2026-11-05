@@ -133,6 +133,69 @@ describe('validateRegistrationMetadata', () => {
     expect(client.metadata['tier']).toBe('free');
   });
 
+  // UC-3 / UC-9: RFC 7591 §2 jwks_uri and OIDC Dynamic Client Registration 1.0 §2
+  // request_object_signing_alg.
+  it('should register a jwks_uri and a request_object_signing_alg', async () => {
+    const { c } = await providerContext();
+
+    const client = validateRegistrationMetadata(c, {
+      redirect_uris: REDIRECT_URIS,
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      request_object_signing_alg: 'ES256',
+    });
+
+    expect(client).toMatchObject({ jwksUri: 'https://rp.example.com/jwks.json', requestObjectSigningAlg: 'ES256' });
+    expect(client.metadata).toMatchObject({
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      request_object_signing_alg: 'ES256',
+    });
+  });
+
+  it('should ignore jwks_uri when the registration settings turn acceptJwksUri off', async () => {
+    const { c } = await providerContext({ options: { dynamicClientRegistration: { acceptJwksUri: false } } });
+
+    const client = validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, jwks_uri: 'https://rp.example.com/jwks.json' });
+
+    expect(Object.hasOwn(client, 'jwksUri')).toBe(false);
+    expect(Object.hasOwn(client.metadata, 'jwks_uri')).toBe(false);
+  });
+
+  // UC-11 / UC-7: allowInsecureClientJwksUri decides the destinations a jwks_uri may name.
+  it('should reject a loopback http jwks_uri unless allowInsecureClientJwksUri is on', async () => {
+    const strict = await providerContext();
+    const development = await providerContext({ options: { config: { allowInsecureClientJwksUri: true } } });
+    const metadata = { redirect_uris: REDIRECT_URIS, jwks_uri: 'http://127.0.0.1:3020/jwks.json' };
+
+    expect(() => validateRegistrationMetadata(strict.c, metadata)).toThrow(
+      expect.objectContaining({ name: 'ClientRegistrationError', error: 'invalid_client_metadata' }),
+    );
+    expect(validateRegistrationMetadata(development.c, metadata).jwksUri).toBe('http://127.0.0.1:3020/jwks.json');
+  });
+
+  // UC-12: request_object_signing_alg is bounded by what discovery advertises.
+  it('should bound request_object_signing_alg to the algs discovery advertises', async () => {
+    const { c } = await providerContext({ options: { config: { requestObjectSigningAlgValuesSupported: ['RS256'] } } });
+
+    expect(() => validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'ES256' })).toThrow(
+      expect.objectContaining({
+        name: 'ClientRegistrationError',
+        error: 'invalid_client_metadata',
+        errorDescription: 'request_object_signing_alg must be one of RS256',
+      }),
+    );
+  });
+
+  it('should accept request_object_signing_alg none once unsigned Request Objects are accepted', async () => {
+    const strict = await providerContext();
+    const lenient = await providerContext({ options: { config: { allowUnsignedRequestObject: true } } });
+    const metadata = { redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'none' };
+
+    expect(() => validateRegistrationMetadata(strict.c, metadata)).toThrow(
+      expect.objectContaining({ name: 'ClientRegistrationError', error: 'invalid_client_metadata' }),
+    );
+    expect(validateRegistrationMetadata(lenient.c, metadata).requestObjectSigningAlg).toBe('none');
+  });
+
   // RFC 7591 §3.2.2: invalid_redirect_uri, without echoing the URI.
   it('should reject a plain-http redirect URI that is not a loopback with invalid_redirect_uri', async () => {
     const { c } = await providerContext();

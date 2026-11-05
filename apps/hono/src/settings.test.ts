@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEphemeralSigningKeyProvider,
   echoRequestedAcr,
+  readClientJwksUri,
   readCrossAppAccess,
   readDynamicClientRegistration,
   readList,
@@ -89,6 +90,32 @@ describe('readDynamicClientRegistration', () => {
   it('should reject a cap that is not a positive integer', () => {
     expect(() => readDynamicClientRegistration({ OIDC_DCR_MAX_CLIENTS: 'abc' })).toThrow(
       'OIDC_DCR_MAX_CLIENTS must be a positive integer, not "abc"',
+    );
+  });
+});
+
+describe('readClientJwksUri', () => {
+  it('should keep the defaults of the code when nothing is set', () => {
+    expect(readClientJwksUri({})).toEqual({});
+  });
+
+  // UC-7: tests/e2e serves the keys of its client at http://127.0.0.1:3020.
+  it('should allow insecure jwks_uri when OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI is 1', () => {
+    expect(readClientJwksUri({ OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI: '1' })).toEqual({ allowInsecureClientJwksUri: true });
+  });
+
+  it('should read the cache ttl and the refetch interval, 0 included', () => {
+    expect(
+      readClientJwksUri({
+        OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS: '120',
+        OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS: '0',
+      }),
+    ).toEqual({ clientJwksUriCacheTtlSeconds: 120, clientJwksUriRefetchIntervalSeconds: 0 });
+  });
+
+  it('should reject a refetch interval that is not a non-negative integer', () => {
+    expect(() => readClientJwksUri({ OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS: '-1' })).toThrow(
+      'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS must be a non-negative integer, not "-1"',
     );
   });
 });

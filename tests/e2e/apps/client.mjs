@@ -13,6 +13,16 @@ const transactions = new Map();
 const deviceFlows = new Map();
 const cibaFlows = new Map();
 
+// RFC 7591 §2 jwks_uri: the RP publishes the public keys it signs Request
+// Objects with (OIDC Core 1.0 §6.1) at /jwks.json. The RSA keys are published
+// without alg, as many JWK Sets are, so the OP pins them to RS256 (RFC 8725
+// §3.1); the EC key is P-256 and signs ES256. /rotate-request-object-key adds
+// a new RSA key and signs with it from then on (OIDC Core 1.0 §10.1.1).
+const requestObjectKeys = {
+  rsa: [await generateRequestObjectKey('RS256')],
+  ec: await generateRequestObjectKey('ES256'),
+};
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', clientBaseUrl);
@@ -87,6 +97,28 @@ const server = createServer(async (req, res) => {
     // wait for the outcome instead of reimplementing the poll loop.
     if (req.method === 'GET' && url.pathname === '/ciba-result') {
       reportCibaResult(url, res);
+      return;
+    }
+    // RFC 7591 §2 / RFC 7517 §5: the JWK Set of the RP.
+    if (req.method === 'GET' && url.pathname === '/jwks.json') {
+      sendJson(res, 200, {
+        keys: [...requestObjectKeys.rsa, requestObjectKeys.ec].map((key) => key.publicJwk),
+      });
+      return;
+    }
+    // OIDC Core 1.0 §6.1: a signed Request Object of the client named by
+    // client_id (registered with this RP's jwks_uri), with the authorization
+    // URL that carries it. The spec drives the browser and redeems the code.
+    if (req.method === 'GET' && url.pathname === '/request-object') {
+      sendJson(res, 200, await buildRequestObjectAuthorization(url));
+      return;
+    }
+    // OIDC Core 1.0 §10.1.1: the RP adds a new signing key to its jwks_uri and
+    // signs RS256 Request Objects with it from now on.
+    if (req.method === 'POST' && url.pathname === '/rotate-request-object-key') {
+      const key = await generateRequestObjectKey('RS256');
+      requestObjectKeys.rsa.push(key);
+      sendJson(res, 200, { kid: key.publicJwk.kid });
       return;
     }
     // EXPERIMENTAL (RFC 9396): run the ordinary code flow with an
@@ -168,6 +200,81 @@ async function startAuthorization(requestUrl, res, options = {}) {
   }
 
   redirect(res, authorizationUrl.toString());
+}
+
+/**
+ * A key the RP signs Request Objects with: RSA (2048 bits, RS256) or EC
+ * (P-256, ES256), with a new kid each time.
+ */
+async function generateRequestObjectKey(alg) {
+  const keyPair = alg === 'ES256'
+    ? await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+    : await crypto.subtle.generateKey(
+      { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+      true,
+      ['sign', 'verify'],
+    );
+  const exported = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  const kid = `e2e-ro-${alg.toLowerCase()}-${randomString(8)}`;
+  const publicJwk = alg === 'ES256'
+    ? { kty: 'EC', kid, use: 'sig', alg: 'ES256', crv: exported.crv, x: exported.x, y: exported.y }
+    : { kty: 'RSA', kid, use: 'sig', n: exported.n, e: exported.e };
+  return { alg, privateKey: keyPair.privateKey, publicJwk };
+}
+
+/**
+ * OIDC Core 1.0 §6.1: an authorization request whose parameters are in a
+ * Request Object signed with the RP's current key of the alg asked for (the
+ * newest RSA key for RS256, the EC key for ES256). The query keeps only what
+ * §6.1 requires there: response_type, client_id and scope.
+ */
+async function buildRequestObjectAuthorization(requestUrl) {
+  const requestClientId = requireSearchParam(requestUrl, 'client_id');
+  const alg = requestUrl.searchParams.get('alg') ?? 'RS256';
+  const key = alg === 'ES256' ? requestObjectKeys.ec : requestObjectKeys.rsa.at(-1);
+  const callback = new URL('/request-object-callback', clientBaseUrl).toString();
+  const state = randomString(16);
+  const codeVerifier = randomString(32);
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg, typ: 'oauth-authz-req+jwt', kid: key.publicJwk.kid };
+  const claims = {
+    iss: requestClientId,
+    aud: issuer,
+    iat: now,
+    exp: now + 300,
+    response_type: 'code',
+    client_id: requestClientId,
+    redirect_uri: callback,
+    scope: 'openid',
+    state,
+    nonce: randomString(16),
+    code_challenge: pkceChallenge(codeVerifier),
+    code_challenge_method: 'S256',
+  };
+  const signingInput = `${base64UrlJson(header)}.${base64UrlJson(claims)}`;
+  const signature = await crypto.subtle.sign(
+    alg === 'ES256' ? { name: 'ECDSA', hash: 'SHA-256' } : 'RSASSA-PKCS1-v1_5',
+    key.privateKey,
+    new TextEncoder().encode(signingInput),
+  );
+  const authorizationUrl = new URL('/authorize', issuer);
+  authorizationUrl.search = new URLSearchParams({
+    response_type: 'code',
+    client_id: requestClientId,
+    scope: 'openid',
+    request: `${signingInput}.${Buffer.from(signature).toString('base64url')}`,
+  }).toString();
+  return {
+    authorizationUrl: authorizationUrl.toString(),
+    redirectUri: callback,
+    state,
+    codeVerifier,
+    kid: key.publicJwk.kid,
+  };
+}
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
 async function startPushedAuthorization(requestUrl, res) {

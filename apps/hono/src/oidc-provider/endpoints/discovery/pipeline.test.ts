@@ -90,7 +90,7 @@ describe('discoveryApp', () => {
       introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
       revocation_endpoint: 'https://op.example.com/revoke',
       revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
-      request_object_signing_alg_values_supported: ['RS256'],
+      request_object_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       pushed_authorization_request_endpoint: 'https://op.example.com/par',
       authorization_signing_alg_values_supported: ['RS256'],
       device_authorization_endpoint: 'https://op.example.com/device_authorization',

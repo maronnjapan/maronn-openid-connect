@@ -6,22 +6,25 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'validate',
-  label: 'Authenticate the pushing client',
+  label: 'プッシュしたクライアントを認証する',
   spec: 'RFC 9126 §2.1',
   function: 'authenticatePushingClient',
-  calls: ['rejectForbiddenParParams', 'authenticateParClient'],
   consumes: ['params', 'authorization'],
   produces: ['clientId', 'pushedParams'],
   removable: false,
 });
 
 /**
- * Authenticate the pushing client exactly like the token endpoint does
- * (public clients present only client_id), after refusing the parameters a
- * pushed request must not carry. RFC 9126 §2.1
+ * クライアントを認証し、その ID とパラメータを返す。
  *
- * client_id is a required authorization request parameter, so the pushed
- * parameters are pinned to the authenticated client before validation.
+ * 認証の前に、プッシュされた認可リクエストに含めてはならないパラメータ（`request_uri` と `request`）を拒否する。
+ * クライアントの認証は、トークンエンドポイントとまったく同じ規則で行う（パブリッククライアントは `client_id` だけを送る）。
+ *
+ * `client_id` は認可リクエストの必須のパラメータなので、検証の前に、返すパラメータの `client_id` を認証したクライアントの ID に置き換える。
+ *
+ * @spec RFC 9126 §2.1
+ * @throws {ParError} `invalid_request`: `request_uri` か `request` を含むとき、または認証情報の送り方が正しくないとき
+ * @throws {ParError} `invalid_client`: クライアントの認証に失敗したとき
  */
 export async function authenticatePushingClient(
   c: any,
@@ -30,8 +33,8 @@ export async function authenticatePushingClient(
 ): Promise<{ clientId: string; pushedParams: Record<string, string> }> {
   const clientResolver = c.get('clientResolver');
 
-  // RFC 9126 §2.1: request_uri MUST NOT be pushed. The request parameter
-  // (PAR + JAR, §3) is not supported by this generated provider.
+  // `request_uri` か `request` を含むリクエストを、`invalid_request` で拒否する。
+  // `request_uri` はプッシュしてはならず（RFC 9126 §2.1 の MUST NOT）、`request` パラメータ（リクエストオブジェクトとの併用、RFC 9126 §3）にはこの生成された OP が対応していない。
   rejectForbiddenParParams(params);
 
   const clientId = await authenticateParClient({

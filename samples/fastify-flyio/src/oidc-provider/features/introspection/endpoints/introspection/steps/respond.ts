@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'respond',
-  label: 'Respond (no-store)',
+  label: '応答する（no-store）',
   spec: 'RFC 7662 §2.2',
   function: 'respondIntrospection',
   consumes: ['introspection'],
@@ -15,7 +15,12 @@ export const meta = step({
 });
 
 /**
- * Send an introspection answer. RFC 7662 Section 2.2: never cached.
+ * レスポンスを、キャッシュさせずに返す。
+ *
+ * `Cache-Control: no-store` と `Pragma: no-cache` と、レスポンスに指定されたヘッダーを付ける（RFC 7662 §2.2）。
+ * `text` があればそれをそのままボディにして返し（RFC 9701 の署名付き JWT）、なければ `body` を JSON にして返す。
+ *
+ * @spec RFC 7662 §2.2
  */
 export function respondIntrospection(c: any, response: IntrospectionEndpointResponse): Response {
   c.header('Cache-Control', 'no-store');

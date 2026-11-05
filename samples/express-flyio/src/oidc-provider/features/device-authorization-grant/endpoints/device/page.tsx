@@ -35,7 +35,13 @@ import { submitDeviceUserCode } from './steps/submit-user-code.js';
 
 export const devicePage = new WebRouter();
 
-/** Render the user_code entry form (RFC 8628 §3.3). */
+/**
+ * ユーザーコードの入力フォームを HTML で返す。
+ *
+ * ビューは `deviceViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ *
+ * @spec RFC 8628 §3.3
+ */
 export function renderDeviceVerificationPage(
   c: any,
   params: DeviceVerificationPageParams,
@@ -45,10 +51,13 @@ export function renderDeviceVerificationPage(
 }
 
 /**
- * Re-render the code entry form with the single, reason-free failure message.
+ * 入力フォームを、照合に失敗した旨を添えて 400 で返す。
  *
- * RFC 8628 §5.1: unknown, expired and already-used codes must be
- * indistinguishable, otherwise the response itself confirms which codes exist.
+ * 入力欄には `userCode` を残し、失敗の文言には `INVALID_USER_CODE_MESSAGE` を使う。
+ * 文言は、未知のコード、期限切れのコード、使用済みのコードのどれでも同じで、理由を示さない。
+ * 区別できると、応答そのものからどのコードが存在するかがわかってしまうためである（RFC 8628 §5.1）。
+ *
+ * @spec RFC 8628 §5.1
  */
 export function renderInvalidUserCode(c: any, userCode: string): Response {
   const views = deviceViews(c);
@@ -58,25 +67,52 @@ export function renderInvalidUserCode(c: any, userCode: string): Response {
   );
 }
 
-/** Render the sign-in form of the device flow. */
+/**
+ * デバイスフローのログインフォームを HTML で返す。
+ *
+ * ビューは `deviceViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ */
 export function renderDeviceLoginPage(c: any, params: DeviceLoginPageParams): Response {
   const views = deviceViews(c);
   return renderView(<views.deviceLoginPage {...params} />);
 }
 
-/** Render the approve / deny screen (RFC 8628 §5.4: the user_code is repeated). */
+/**
+ * 承認と拒否の画面を HTML で返す。
+ *
+ * ビューは `deviceViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ * 既定のビューは、デバイスの表示と見比べられるよう、ユーザーコードをもう一度表示する（RFC 8628 §5.4）。
+ *
+ * @spec RFC 8628 §5.4
+ */
 export function renderDeviceApprovalPage(c: any, params: DeviceApprovalPageParams): Response {
   const views = deviceViews(c);
   return renderView(<views.deviceApprovalPage {...params} />);
 }
 
-/** Render the "go back to your device" screen. */
+/**
+ * デバイスに戻るよう伝える完了画面を HTML で返す。
+ *
+ * ビューは `deviceViews()` で選ぶ（アプリが差し替えたビューか、既定のビュー）。
+ */
 export function renderDeviceCompletedPage(c: any, params: DeviceCompletedPageParams): Response {
   const views = deviceViews(c);
   return renderView(<views.deviceCompletedPage {...params} />);
 }
 
-/** Turn the outcome of a verification step into the screen that follows it. */
+/**
+ * ステップの結果に応じた画面で応答する。
+ *
+ * 結果の種類（`kind`）ごとに、次の画面を返す。
+ * - `invalid_user_code`: 照合に失敗した旨を添えた 400 の入力フォーム
+ * - `error`: 結果のステータスコードの OP のエラーページ
+ * - `session_required`: ログインし直すよう求める 401 のエラーページ
+ * - `locked_out`: 試行回数が多すぎることを示す 429 のエラーページ
+ * - `login`: ログインフォーム（結果の Cookie を設定する）
+ * - `invalid_credentials`: エラーと残りの試行回数を添えたログインフォーム
+ * - `approval`: 承認と拒否の画面（結果の Cookie を設定する）
+ * - `completed`: 完了画面（結果の Cookie を設定する）
+ */
 function respond(c: any, outcome: DeviceOutcome): Response {
   if (outcome.kind === 'invalid_user_code') return renderInvalidUserCode(c, outcome.userCode);
   if (outcome.kind === 'error') return renderErrorPage(c, outcome);
@@ -87,7 +123,7 @@ function respond(c: any, outcome: DeviceOutcome): Response {
     });
   }
   if (outcome.kind === 'locked_out') {
-    // The record is now denied: the device gets access_denied on its next poll.
+    // レコードは拒否の状態になったので、デバイスは次のポーリングで `access_denied` を受け取る。
     return renderErrorPage(c, {
       error: 'Too many login attempts',
       statusCode: 429,

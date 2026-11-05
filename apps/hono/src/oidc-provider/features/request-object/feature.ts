@@ -1,3 +1,4 @@
+import { SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS } from '@maronn-openid-connect/core';
 import { defineFeature } from '../feature.js';
 import './config.js';
 
@@ -5,23 +6,30 @@ import './config.js';
  * Request Objects passed by value: the request parameter of the
  * authorization request (OIDC Core 1.0 §6.1 / §6.3.2). The
  * resolve-request-object block of endpoints/authorize/pipeline.ts verifies it
- * against the keys the client registered for request_object and overlays its
- * claims. Without the feature the request parameter is rejected with
+ * against the keys the client registered for request_object (or publishes at
+ * its jwks_uri) and overlays its claims. A client that registered
+ * request_object_signing_alg has its Request Objects signed with that alg
+ * only. Without the feature the request parameter is rejected with
  * request_not_supported.
  */
 export const requestObject = defineFeature({
   id: 'request-object',
-  // OIDC Core 1.0 §6.1: require signed Request Objects by default; enable only for
-  // Basic OP conformance compatibility where the suite sends unsigned ones.
-  config: { allowUnsignedRequestObject: false },
+  config: {
+    // OIDC Core 1.0 §6.1: require signed Request Objects by default; enable only for
+    // Basic OP conformance compatibility where the suite sends unsigned ones.
+    allowUnsignedRequestObject: false,
+    // The algs core verifies (RFC 7518 §3.3 / §3.4), so a client may register
+    // any of them as request_object_signing_alg.
+    requestObjectSigningAlgValuesSupported: [...SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS],
+  },
   // OIDC Core 1.0 §6.1 / OIDC Discovery 1.0 §3: signed Request Object by value is
-  // supported (verified against the client's registered JWKS). RS256 is the
-  // required signing alg; 'none' is added only when unsigned objects are
-  // accepted for Basic OP conformance compatibility.
+  // supported (verified against the client's registered JWKS). 'none' is added
+  // only when unsigned objects are accepted for Basic OP conformance compatibility.
   discovery: (_issuer, config) => ({
     request_parameter_supported: true,
-    request_object_signing_alg_values_supported: config.allowUnsignedRequestObject
-      ? ['RS256', 'none']
-      : ['RS256'],
+    request_object_signing_alg_values_supported: [
+      ...config.requestObjectSigningAlgValuesSupported,
+      ...(config.allowUnsignedRequestObject ? ['none'] : []),
+    ],
   }),
 });

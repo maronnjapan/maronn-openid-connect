@@ -29,6 +29,9 @@ interface Bindings {
   XAA_ACTOR_TOKEN_RESOLVER?: string;
   OIDC_POST_LOGOUT_REDIRECT_URIS_JSON?: string;
   OIDC_DCR_MAX_CLIENTS?: string;
+  OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI?: string;
+  OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS?: string;
+  OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS?: string;
 }
 
 const bindings = env as Bindings;
@@ -107,6 +110,26 @@ const dynamicClientRegistration = {
     : {}),
 };
 
+// RFC 7591 §2 jwks_uri: the generated OP fetches the keys of a client from the
+// jwks_uri it registered. Only https URLs of public hosts by default;
+// OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI=1 also lets http and loopback or private
+// addresses through, for development (tests/e2e serves its keys over http on
+// 127.0.0.1). The two others replace how long keys without max-age are kept
+// and how often an unknown kid fetches the jwks_uri again (0: every time).
+const clientJwksUriCacheTtlSeconds = secondsFromBinding(
+  'OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS',
+  bindings.OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS,
+);
+const clientJwksUriRefetchIntervalSeconds = secondsFromBinding(
+  'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS',
+  bindings.OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS,
+);
+const clientJwksUri = {
+  allowInsecureClientJwksUri: bindings.OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI === '1',
+  ...(clientJwksUriCacheTtlSeconds === undefined ? {} : { clientJwksUriCacheTtlSeconds }),
+  ...(clientJwksUriRefetchIntervalSeconds === undefined ? {} : { clientJwksUriRefetchIntervalSeconds }),
+};
+
 // OIDC Core 1.0 §2 / §3.1.2.1: when a client requests an acr via `acr_values`
 // (or `claims.id_token.acr.values`), echo the most-preferred requested value back
 // as the `acr` of the ID Token and the access token. The generated OP does that
@@ -155,6 +178,7 @@ applyOidc(app, {
       bindings.OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW === '1',
     allowUnsignedRequestObject:
       bindings.OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT === '1',
+    ...clientJwksUri,
   },
   signingKeyProvider: createCachedSigningKeyProvider(
     createEphemeralRs256KeyProvider(bindings.OIDC_SIGNING_KEY_ID),
@@ -248,4 +272,17 @@ function readRegisteredClients(encoded?: string): ReadonlyMap<string, ClientRegi
       },
     ],
   ]);
+}
+
+/**
+ * A setting of seconds from a variable: a non-negative integer, 0 included.
+ * An unset or empty variable (wrangler dev passes "" for an unset one) leaves
+ * the setting out, so the default of the generated config.ts stays.
+ */
+function secondsFromBinding(variable: string, value: string | undefined): number | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${variable} must be a non-negative integer, not "${value}"`);
+  }
+  return Number(value);
 }

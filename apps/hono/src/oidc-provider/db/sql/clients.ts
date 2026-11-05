@@ -20,6 +20,12 @@
  * - client_response_types: responseTypes, the response types the client may
  *   use at the authorization endpoint (id_token and id_token token for the
  *   Implicit Flow). A client without rows may use code only.
+ * - client_jwks_uris: jwksUri, the jwks_uri the OP fetches the client's keys
+ *   from (RFC 7591 §2). A client with one gets the keys of its jwks_uri, not
+ *   those of client_jwks, for the purposes of clientJwksUriPurposes.
+ * - client_request_object_signing_algs: requestObjectSigningAlg, the alg every
+ *   Request Object of the client must be signed with (OIDC Dynamic Client
+ *   Registration 1.0 §2).
  * - Metadata without a column (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -51,6 +57,7 @@ import {
   type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../../client-jwks-uri.js';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 import type { SqlDatabase } from './database.js';
 
@@ -68,14 +75,24 @@ import type { SqlDatabase } from './database.js';
  * - `client_auths` の行がないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
  * - `client_redirect_uris` の行は `redirectUris` にする。
  * - `client_grant_types`、`client_scopes`、`client_response_types` の行は、あればそれぞれ `grantTypes`、`scope`、`responseTypes` にし、なければ設定せずに既定の扱いに任せる。
+ * - `client_jwks_uris` と `client_request_object_signing_algs` の行は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違う `client_auths` の行を持つクライアントを読んだとき
  */
 export function createClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
-      const [client] = await db.all<{ id: string; client_type: string }>({
-        sql: 'SELECT id, client_type FROM clients WHERE id = ? AND is_deleted = FALSE',
+      const [client] = await db.all<{
+        id: string;
+        client_type: string;
+        jwks_uri: string | null;
+        request_object_signing_alg: string | null;
+      }>({
+        sql:
+          'SELECT c.id, c.client_type, u.value AS jwks_uri, a.alg AS request_object_signing_alg FROM clients c ' +
+          'LEFT JOIN client_jwks_uris u ON u.client_id = c.id ' +
+          'LEFT JOIN client_request_object_signing_algs a ON a.client_id = c.id ' +
+          'WHERE c.id = ? AND c.is_deleted = FALSE',
         params: [clientId],
       });
       if (!client) return null;
@@ -110,6 +127,10 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
       if (responseTypes.length > 0) registered.responseTypes = responseTypes.map((row) => row.response_type);
+      if (client.jwks_uri !== null) registered.jwksUri = client.jwks_uri;
+      if (client.request_object_signing_alg !== null) {
+        registered.requestObjectSigningAlg = client.request_object_signing_alg;
+      }
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
@@ -199,8 +220,13 @@ function parseJwk(clientId: string, json: string): Jwk {
  * 鍵を取り除くには、データベースの行を消し、ここに渡すクライアントからも外す。
  * 外さなければ、次の登録で鍵が戻る。
  *
+ * `jwksUri` と `requestObjectSigningAlg` は、クライアントの `client_jwks_uris` と `client_request_object_signing_algs` の行を置き換える。
+ * そのため、これらを持たない登録は、登録済みの行を消す。
+ * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
+ *
  * セットアップ用のスクリプトや起動時の処理から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
  *
+ * @throws {Error} `jwksUri` が `http` か `https` の絶対 URL でないとき、または `jwksUri` と `keys` を両方持つとき（何も書き込まずに投げる）
  * @throws {Error} `clientType` が `public` でなく、`tokenEndpointAuthMethods` に `none` とほかの方式を並べたとき
  * @example
  * ```ts
@@ -220,6 +246,7 @@ export async function registerClient(
   db: SqlDatabase,
   client: ClientRegistration & { name?: string },
 ): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   await db.run({
     sql:
@@ -282,6 +309,24 @@ export async function registerClient(
         ],
       });
     }
+  }
+
+  // これらのテーブルは、クライアントごとに 1 行を持つ（`client_id` が主キー）。
+  const singleValues: Array<[table: string, column: string, value: string | undefined]> = [
+    ['client_jwks_uris', 'value', client.jwksUri],
+    ['client_request_object_signing_algs', 'alg', client.requestObjectSigningAlg],
+  ];
+  for (const [table, column, value] of singleValues) {
+    await db.run(
+      value === undefined
+        ? { sql: 'DELETE FROM ' + table + ' WHERE client_id = ?', params: [client.clientId] }
+        : {
+          sql:
+            'INSERT INTO ' + table + ' (client_id, ' + column + ') VALUES (?, ?) ' +
+            'ON CONFLICT (client_id) DO UPDATE SET ' + column + ' = excluded.' + column,
+          params: [client.clientId, value],
+        },
+    );
   }
 
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [

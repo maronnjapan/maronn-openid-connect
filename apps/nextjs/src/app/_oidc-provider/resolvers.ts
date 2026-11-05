@@ -117,13 +117,6 @@ export function createStoreResolvers(stores: ProviderStores) {
     },
   };
 
-  const revokeConsentAndTokens = async (subject: string, clientId: string): Promise<void> => {
-    const grantIds = await consentStore.revoke(subject, clientId);
-    for (const grantId of grantIds) {
-      await authorizationCodeResolver.revokeTokensByGrantId?.(grantId);
-    }
-  };
-
   const consentResolver: GrantAwareConsentResolver = {
     async hasConsent(subject: string, clientId: string, scopes: string[]): Promise<boolean> {
       return consentStore.hasConsent(subject, clientId, scopes);
@@ -135,7 +128,7 @@ export function createStoreResolvers(stores: ProviderStores) {
       await consentStore.recordGrant(subject, clientId, grantId);
     },
     async revokeConsent(subject: string, clientId: string): Promise<void> {
-      await revokeConsentAndTokens(subject, clientId);
+      await revokeConsentAndTokens(stores, subject, clientId);
     },
   };
 
@@ -147,6 +140,15 @@ export function createStoreResolvers(stores: ProviderStores) {
     userClaimsResolver,
     sessionResolver,
     consentResolver,
-    revokeConsentAndTokens,
+    revokeConsentAndTokens: (subject: string, clientId: string) => revokeConsentAndTokens(stores, subject, clientId),
   };
+}
+
+/** 同意を取り消し、その同意に記録したグラントのアクセストークンとリフレッシュトークンを失効させる。 */
+export async function revokeConsentAndTokens(stores: ProviderStores, subject: string, clientId: string): Promise<void> {
+  const grantIds = await stores.consentStore.revoke(subject, clientId);
+  for (const grantId of grantIds) {
+    await stores.accessTokenStore.revokeByGrantId(grantId);
+    await stores.refreshTokenStore.revokeByGrantId(grantId);
+  }
 }

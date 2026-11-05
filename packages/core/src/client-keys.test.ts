@@ -87,6 +87,18 @@ describe('createClientKeyResolver', () => {
     expect(await resolver.findClientKeys('client-a', 'private_key_jwt')).toEqual({ keys: [requestObjectKey] });
   });
 
+  // ClientKeyLookupHint (the kid of the JWS) is a signal for a jwks_uri; keys
+  // stored by value are returned as they are.
+  it('should return the same keys whatever kid the hint names', async () => {
+    const resolver = createClientKeyResolver(
+      lookupOf({ 'client-a': { request_object: { keys: [requestObjectKey] } } }),
+    );
+
+    expect(await resolver.findClientKeys('client-a', 'request_object', { kid: 'unknown-kid' })).toEqual({
+      keys: [requestObjectKey],
+    });
+  });
+
   it('should not share the returned key list with the registration', async () => {
     const registered: ClientKeysByPurpose = { private_key_jwt: { keys: [signingKey] } };
     const resolver = createClientKeyResolver(() => registered);

@@ -31,6 +31,7 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
+import { withRegisteredClientJwksUri } from './client-jwks-uri';
 import { createProviderConfig, type ProviderConfig } from './config';
 import {
   createClientKeyResolver,
@@ -47,6 +48,13 @@ import { createStoreResolvers } from './resolvers';
  * it is the iss of every token, and the origin every URL the OP builds for
  * itself is based on (OIDC Discovery 1.0 §3). The enabled features add their
  * own settings and defaults (createProviderConfig() in config.ts).
+ *
+ * The jwks_uri of the clients (RFC 7591 §2): OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI=1
+ * lets a jwks_uri use http and loopback or private addresses (development
+ * only), and OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS /
+ * OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS replace how long keys without
+ * max-age are kept and how often an unknown kid fetches the jwks_uri again
+ * (0: every time). The other settings of config.ts keep their defaults.
  */
 export const config: ProviderConfig = createProviderConfig({
   issuer: process.env.OIDC_ISSUER ?? process.env.ISSUER ?? 'http://localhost:3000',
@@ -55,7 +63,29 @@ export const config: ProviderConfig = createProviderConfig({
   refreshTokenAbsoluteLifetime: 7776000,
   accessTokenFormat: 'jwt',
   authorizationCodeTtl: 300,
+  allowInsecureClientJwksUri: process.env.OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI === '1',
+  ...secondsFromEnvironment('clientJwksUriCacheTtlSeconds', 'OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS'),
+  ...secondsFromEnvironment('clientJwksUriRefetchIntervalSeconds', 'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS'),
 });
+
+/**
+ * 環境変数 `variable` の値（0 を含む 0 以上の整数）を、設定の `field` の秒数にしたオブジェクトを返し、整数でなければ `Error` を投げる。
+ *
+ * 環境変数がないか空のときは空のオブジェクトを返すので、config.ts の既定値がそのまま残る。
+ *
+ * @throws {Error} 値が 0 以上の整数として読めないとき
+ */
+function secondsFromEnvironment<Name extends keyof ProviderConfig>(
+  field: Name,
+  variable: string,
+): Partial<Record<Name, number>> {
+  const value = process.env[variable];
+  if (value === undefined || value === '') return {};
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${variable} must be a non-negative integer, not "${value}"`);
+  }
+  return { [field]: Number(value) } as Partial<Record<Name, number>>;
+}
 
 /**
  * The database of db/ (--db): the clients, the users and every record the OP
@@ -78,11 +108,21 @@ const context = contextOf(features, {
 export const clientResolver = context.clientResolver;
 
 /**
- * The public keys of the registered clients, one purpose at a time (the OP
- * verifies signed Request Objects with those of request_object), read from
- * db/ for each request.
+ * The base public keys of the registered clients, including the feature
+ * hooks' additions. Endpoints call getClientKeyResolver() to add jwks_uri
+ * lookup explicitly when using these keys.
  */
 export const clientKeyResolver: ClientKeyResolver = context.clientKeyResolver;
+
+/**
+ * クライアントの鍵を、登録された `jwks_uri` も使って読むリゾルバを返す。
+ *
+ * 初期化の副作用として包まず、エンドポイントが明示的に呼ぶので、設定と core まで型で辿れる。
+ * 機能が組み立てたリゾルバと、その時点の設定を使う。
+ */
+export function getClientKeyResolver(): ClientKeyResolver {
+  return withRegisteredClientJwksUri(config, () => context.clientResolver, clientKeyResolver);
+}
 
 /** The stores of the authorization flows, on the same database. */
 export const stores = createProviderStores(database);
@@ -107,6 +147,8 @@ export const accessTokenIssuer: AccessTokenIssuer =
 export const corsOrigins: string | readonly string[] = process.env.OIDC_CORS_ORIGINS ?? config.issuer;
 
 /**
+ * 要求された acr_values の最優先の値と pwd の amr を返し、要求がなければ undefined を返す。
+ *
  * acr / amr of the tokens (OIDC Core 1.0 §2 / §3.1.2.1): the ID Token carries
  * both, and the access token the acr (RFC 9068 §2.2.1).
  *
@@ -117,11 +159,11 @@ export const corsOrigins: string | readonly string[] = process.env.OIDC_CORS_ORI
  * A real deployment must map this to its actual authentication context instead
  * of trusting the request.
  */
-export const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
+export async function acrResolver({ requestedAcrValues }: Parameters<AcrResolver>[0]): ReturnType<AcrResolver> {
   const acr = selectPreferredAcr(requestedAcrValues);
   if (acr === undefined) return undefined;
   return { acr, amr: ['pwd'] };
-};
+}
 
 // --- Signing keys -------------------------------------------------------------
 //

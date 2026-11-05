@@ -19,9 +19,16 @@ export class DeviceAuthorizationEndpointError extends Error {
   }
 }
 
+/**
+ * レスポンスにキャッシュを禁じるヘッダーを設定する。
+ *
+ * リクエストコンテキスト `c` に、`Cache-Control: no-store` と `Pragma: no-cache` を設定する。
+ * `device_code` はトークンの取得に使う秘密の値なので、このエンドポイントの応答はトークンレスポンスの規則に従う。
+ *
+ * @spec RFC 6749 §5.1
+ */
 export function noStore(c: any): void {
-  // RFC 8628 §3.2 has no explicit rule, but device_code is a credential, so the
-  // response follows the token response rules of RFC 6749 §5.1.
+  // RFC 8628 §3.2 にキャッシュの規則はないが、`device_code` はトークンの取得に使う秘密の値なので、トークンレスポンスと同じくキャッシュを禁じる（RFC 6749 §5.1）。
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
 }

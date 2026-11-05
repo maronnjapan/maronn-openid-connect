@@ -51,6 +51,21 @@ const allowNonPkceAuthorizationCodeFlow =
 const allowUnsignedRequestObject =
   process.env.OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT === '1';
 
+// RFC 7591 §2 jwks_uri: the generated OP fetches the keys of a client from the
+// jwks_uri it registered. Only https URLs of public hosts by default;
+// OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI=1 also lets http and loopback or private
+// addresses through, for development (tests/e2e serves its keys over http on
+// 127.0.0.1). The two others replace how long keys without max-age are kept
+// and how often an unknown kid fetches the jwks_uri again (0: every time).
+const clientJwksUriCacheTtlSeconds = secondsFromEnv('OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS');
+const clientJwksUriRefetchIntervalSeconds = secondsFromEnv('OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS');
+const clientJwksUri = {
+  allowInsecureClientJwksUri: process.env.OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI === '1',
+  ...(clientJwksUriCacheTtlSeconds === undefined ? {} : { clientJwksUriCacheTtlSeconds }),
+  ...(clientJwksUriRefetchIntervalSeconds === undefined ? {} : { clientJwksUriRefetchIntervalSeconds }),
+};
+
+
 // EXTENSION (google-login): "Sign in with Google" is enabled only when
 // GOOGLE_CLIENT_ID is set. The login page then renders the Google button next to
 // the password form, and Google posts the ID token to <issuer>/login/google,
@@ -106,6 +121,7 @@ applyOidc(app, {
     authorizationCodeTtl: 300,
     allowNonPkceAuthorizationCodeFlow,
     allowUnsignedRequestObject,
+    ...clientJwksUri,
     googleLogin,
   },
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
@@ -216,4 +232,18 @@ function assertRegisteredClient(value: unknown): asserts value is ClientRegistra
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+/**
+ * A setting of seconds from an environment variable: a non-negative integer, 0
+ * included. An unset or empty variable leaves the setting out, so the default
+ * of the generated config.ts stays.
+ */
+function secondsFromEnv(variable: string): number | undefined {
+  const value = process.env[variable];
+  if (value === undefined || value === '') return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${variable} must be a non-negative integer, not "${value}"`);
+  }
+  return Number(value);
 }

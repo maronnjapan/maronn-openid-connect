@@ -12,33 +12,35 @@ export const meta = step({
   id: 'validate-grant-type',
   endpoint: 'token',
   kind: 'validate',
-  label: 'Validate grant_type',
+  label: 'grant_type を検証する',
   spec: 'RFC 6749 §5.2',
   function: 'validateTokenGrantType',
-  calls: ['validateGrantTypeSupported', 'validateClientGrantType'],
   consumes: ['params', 'tokenClient'],
   produces: ['grantType'],
   removable: false,
 });
 
 /**
- * Validate grant_type: offered by this OP, and allowed for this client.
- * RFC 6749 §5.2 (unsupported_grant_type / unauthorized_client)
+ * `grant_type` を検証し、そのグラントタイプを返す。
+ *
+ * この OP が扱わない値なら `unsupported_grant_type` を、クライアントに許可していない値なら `unauthorized_client` を、`TokenError` として投げる。
+ * この OP が扱う値は、常に扱う `authorization_code` と、有効にした機能がトークンエンドポイントに加えたグラント（`refresh-token` 機能の `refresh_token`）である。
+ *
+ * @spec RFC 6749 §5.2
  */
 export function validateTokenGrantType(
   params: TokenRequestParams,
   tokenClient: TokenClientInfo,
 ): 'authorization_code' | 'refresh_token' {
-  // RFC 6749 §5.2: is the grant_type offered by this OP at all? The
-  // authorization_code grant always is; refresh_token only when the
-  // refresh-token feature answers it (the token entry of its feature.ts). The
-  // grants a feature answers itself were dispatched before this step.
+  // `grant_type` がこの OP の扱う値かどうかを確かめ、扱わない値なら `unsupported_grant_type` にする（RFC 6749 §5.2）。
+  // `authorization_code` は常に扱い、`refresh_token` は `refresh-token` 機能がトークンエンドポイントに加えたとき（その機能の `feature.ts` の `token.grants`）だけ扱う。
+  // 機能が自分で応答するグラントは、このステップより前で処理を終えている。
   const grantType = validateGrantTypeSupported(params.grant_type, [
     'authorization_code',
     ...tokenGrantsOf(features),
   ]);
 
-  // RFC 6749 §5.2: per-client grant_type authorization (unauthorized_client).
+  // クライアントにこの `grant_type` が許可されているかを確かめ、許可されていなければ `unauthorized_client` にする（RFC 6749 §5.2）。
   validateClientGrantType(tokenClient, grantType);
 
   return grantType;

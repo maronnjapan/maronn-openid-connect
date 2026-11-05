@@ -47,7 +47,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `login_hint` | ログイン画面のユーザー名欄に事前入力（OIDC Core 1.0 §3.1.2.1） |
 | `id_token_hint` | 署名・クレームを検証（OIDC Core 1.0 §3.1.2.2）。既定では OP 自身の署名鍵で検証 |
 | `claims` | JSON をパースし `userinfo` / `id_token` の個別クレーム要求に対応（OIDC Core 1.0 §5.5） |
-| `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理 |
+| `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。受け付ける alg は `requestObjectSigningAlgValuesSupported`（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512）で、discovery の `request_object_signing_alg_values_supported` に広告する。クライアントが `request_object_signing_alg` を登録していれば、その alg の Request Object だけを受け付ける（OIDC Core 1.0 §6.3.2）。鍵は、クライアントが `request_object` の用途に登録した公開鍵か、登録した `jwks_uri` から取得した鍵で、使える alg がヘッダーの `alg` と同じ鍵だけを使う（RFC 8725 §3.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理 |
 | `request_uri` | 未対応。仕様通り `request_uri_not_supported` で拒否（OIDC Core 1.0 §6.3） |
 | `registration` | 未対応。仕様通り `registration_not_supported` で拒否（OIDC Core 1.0 §3.1.2.6） |
 
@@ -108,6 +108,12 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 - `claims` リクエストパラメータによる個別クレーム要求に対応
 - 署名付き UserInfo レスポンス（JWT）の生成に対応
 
+## Client Keys
+
+- クライアントの公開鍵は、用途ごとに値で登録するか（`keys`）、クライアントが公開する `jwks_uri`（RFC 7591 §2）を登録する（`jwksUri`）。両方は登録できない
+- `jwks_uri` の鍵は、鍵が必要になったときに取得し、応答の `Cache-Control: max-age` を 30 〜 300 秒に丸めた期間だけキャッシュする。キャッシュに無い kid の署名が届くと取り直す（OIDC Core 1.0 §10.1.1。既定で 30 秒に 1 回まで）
+- 取得は https の公開ホストに限り、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB、鍵 32 個までに制限する。秘密鍵か対称鍵を含む JWK Set は拒否する。取得に失敗した Request Object は、理由を含まない固定文言の `invalid_request_object` で拒否する（詳細は [CLI Guide の jwks_uri](../../guides/cli/#jwks_uri)）
+
 ## Signing Keys
 
 - ID Token 署名は RS256（Basic OP 必須アルゴリズム）
@@ -129,6 +135,12 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `authorizationCodeTtl` | `300` | 認可コード有効期間（秒） |
 | `allowNonPkceAuthorizationCodeFlow` | `false` | confidential client の非 PKCE フローを許可（conformance 互換モード） |
 | `allowUnsignedRequestObject` | `false` | 署名なし（`alg: none`）Request Object の互換受理 |
+| `requestObjectSigningAlgValuesSupported` | `['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']` | 署名付き Request Object に受け付ける alg（request-object 機能） |
+| `allowInsecureClientJwksUri` | `false` | クライアントの `jwks_uri` に、http と `localhost`、ループバック・私設・リンクローカルのアドレスを許す（開発用） |
+| `clientJwksUriCacheTtlSeconds` / `clientJwksUriCacheMinTtlSeconds` / `clientJwksUriCacheMaxTtlSeconds` | `300` / `30` / `300` | `jwks_uri` の鍵を使う期間（`max-age` が無いとき）と、その下限と上限（秒） |
+| `clientJwksUriRefetchIntervalSeconds` | `30` | キャッシュに無い kid で `jwks_uri` を取り直す間隔（秒） |
+| `clientJwksUriTimeoutMs` / `clientJwksUriMaxBytes` / `clientJwksUriMaxKeys` / `clientJwksUriCacheMaxEntries` | `3000` / `65536` / `32` / `1000` | `jwks_uri` の取得のタイムアウト（ミリ秒）、文書の上限（バイト）、鍵の数の上限、キャッシュに持つ `jwks_uri` の数の上限 |
+| `clientJwksUriPurposes` | `['request_object', 'private_key_jwt', 'dpop']` | `jwks_uri` の鍵を返す `ClientKeyResolver` の用途 |
 
 ## Feature Toggles
 

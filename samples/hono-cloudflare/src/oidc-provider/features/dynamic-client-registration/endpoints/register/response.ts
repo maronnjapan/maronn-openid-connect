@@ -19,6 +19,14 @@ export class RegistrationEndpointError extends Error {
   }
 }
 
+/**
+ * 登録のレスポンスを、キャッシュを禁止して返す。
+ *
+ * `Cache-Control: no-store` と `Pragma: no-cache` を付け、ステップが指定したヘッダー（`WWW-Authenticate` など）を加える。
+ * ステータスコードは指定のもの（登録できたときは 201、失敗したときはエラーのステータスコード）を使い、ボディが `null` ならボディなしで、それ以外は JSON で応答する。
+ *
+ * @spec RFC 7591 §3.2
+ */
 export function sendRegistrationResponse(c: any, response: RegistrationEndpointResponse): Response {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');

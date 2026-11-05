@@ -12,10 +12,9 @@ export const meta = step({
   id: 'create-transaction',
   endpoint: 'authorize',
   kind: 'persist',
-  label: 'Create and store the authorization transaction',
+  label: '認可トランザクションを作って保存する',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'createAuthorizationTransaction',
-  calls: ['generateRandomString', 'createAuthTransaction'],
   consumes: ['validatedRequest', 'responseMode'],
   optional: ['responseMode'],
   produces: ['transactionId', 'transaction', 'transactionTtlSeconds'],
@@ -23,17 +22,17 @@ export const meta = step({
 });
 
 /**
- * Create the authorization transaction and store it for the login / consent
- * steps. OIDC Core 1.0 §3.1.2.3
+ * トランザクションを作って保存し、ID と有効期間を返す。
  *
- * csrfToken is embedded in the login / consent forms; transactionId never
- * leaves the OP except in the HttpOnly transaction cookie
- * (buildTransactionCookie() in cookies.ts).
+ * トランザクションは、検証済みのリクエストと新しい CSRF トークンから作り、ログインと同意のステップのために `auth_txn:<トランザクション ID>` のキーで 10 分間保存する。
+ * CSRF トークンは、ログインフォームと同意画面のフォームに埋め込む。
+ * トランザクション ID は、`HttpOnly` のトランザクションの Cookie（`cookies.ts` の `buildTransactionCookie()`）でしか OP の外へ出さない。
  *
- * A response mode of a feature (JARM) is recorded on the stored transaction
- * by its name, so the consent step — which only ever sees the transaction it
- * reads back — answers in the same mode (restoreResponseMode() in
- * response-mode.ts). The store MUST persist unknown fields.
+ * 機能のレスポンスモード（JARM など）があれば、その名前をトランザクションの `responseMode` に記録して保存する。
+ * 同意のステップはストアから読み戻したトランザクションしか使わないので、この記録から同じモードを復元して応答する（`response-mode.ts` の `restoreResponseMode()`）。
+ * そのため、ストアは、型に定義されていないフィールドも捨てずに保存する必要がある。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.3
  */
 export async function createAuthorizationTransaction(
   c: any,
@@ -45,7 +44,7 @@ export async function createAuthorizationTransaction(
   const transaction: AuthTransaction = createAuthTransaction(validatedRequest, csrfToken);
   const transactionId = await generateRandomString(32);
 
-  const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
+  const transactionTtlSeconds = 10 * 60; // 有効期間は 10 分。
   await transactionStore.put(
     'auth_txn:' + transactionId,
     responseMode ? { ...transaction, responseMode: responseMode.name } : transaction,

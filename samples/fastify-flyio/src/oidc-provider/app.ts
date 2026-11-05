@@ -3,7 +3,6 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  signingKeysToJwkSet,
   type AcrResolver,
   type ClientKeyResolver,
   type ClientResolver,
@@ -81,8 +80,20 @@ export interface OidcProviderOptions {
    * (ClientKeyResolver in core). The OP verifies signed Request Objects with
    * the keys of request_object.
    * Defaults to the keys registerClient() put into db/, read for each request.
+   * Either way, a client that registered a jwksUri gets the keys of its
+   * jwks_uri for the purposes of config.clientJwksUriPurposes
+   * (client-jwks-uri.ts), and this resolver answers for every other client
+   * and purpose.
    */
   clientKeyResolver?: ClientKeyResolver;
+  /**
+   * The fetch the OP fetches the jwks_uri of the clients with (RFC 7591 §2).
+   * Defaults to globalThis.fetch. Pass a fetch that goes through an egress
+   * proxy to keep the fetches away from the networks of the OP: the
+   * destination check of client-jwks-uri.ts sees the host of a jwks_uri, not
+   * the addresses its name resolves to.
+   */
+  clientJwksFetch?: typeof fetch;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -129,11 +140,23 @@ export interface OidcProviderOptions {
   views?: Partial<Views>;
 }
 
+/**
+ * 署名鍵の集合を検証し、使えない集合なら例外を投げる。
+ *
+ * 次のどれかに当てはまると `Error` を投げる。
+ * - 鍵が一つもない。
+ * - 強度の足りない鍵がある（鍵長が 2048 ビット未満の RSA の鍵、楕円曲線が P-256、P-384、P-521 のどれでもない EC の鍵、RSA と EC 以外の鍵）。
+ * - 鍵が二つ以上あるのに、`kid` が空の鍵か、`kid` が重複する鍵がある（RFC 7517 §4.5）。
+ * - `requireRs256` が `true` なのに、RS256 の鍵がない（OIDC Core 1.0 §15.1）。
+ *
+ * @spec OIDC Core 1.0 §10.1
+ */
 export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): void {
-  // The first key of a set signs new tokens, so a set needs at least one key.
+  // 鍵が一つもなければ投げる。
+  // 新しいトークンには集合の最初の鍵で署名するので、鍵が少なくとも一つ要る。
   if (keys.length === 0) {
     throw new Error('Signing key set must contain at least one key');
   }
@@ -159,9 +182,11 @@ const baseRoutes: readonly FeatureRoute[] = [
 ];
 
 /**
- * The paths the provider serves: the endpoints of every provider and those of
- * the features of features/enabled.ts. The apply.ts of Express and Fastify
- * hands these paths to the provider.
+ * OP のエンドポイントのルートを、機能の分も含めて返す。
+ *
+ * すべての OP にあるエンドポイント（`/authorize`、`/token` など）のあとに、`features/enabled.ts` の機能が加えるエンドポイントを並べる。
+ * 各ルートには、パス、そのパスで応答するアプリ、受け付ける HTTP メソッド、CORS の方針が含まれる。
+ * Express と Fastify の `apply.ts` は、この一覧のパスへのリクエストを OP のルーターに渡す。
  */
 export function providerRoutes(): FeatureRoute[] {
   return [...baseRoutes, ...routesOf(features)];
@@ -170,7 +195,12 @@ export function providerRoutes(): FeatureRoute[] {
 /** Discovery and JWKS are public documents (OIDC Discovery 1.0 / RFC 8414): CORS '*'. */
 const PUBLIC_DOCUMENT_PATHS = ['/.well-known/openid-configuration', '/.well-known/jwks.json'];
 
-/** The HTTP methods of every path the provider answers, for the 405 guard. */
+/**
+ * パスごとに、受け付ける HTTP メソッドの一覧を返す。
+ *
+ * 返すのは、各ルートのパスと、その下のパス（`subpaths`）をキーにした `Map` である。
+ * `createApp()` は、この一覧にない HTTP メソッドのリクエストに 405 で応答する。
+ */
 function endpointMethods(routes: readonly FeatureRoute[]): Map<string, readonly string[]> {
   const methods = new Map<string, readonly string[]>();
   for (const route of routes) {
@@ -183,22 +213,32 @@ function endpointMethods(routes: readonly FeatureRoute[]): Map<string, readonly 
 }
 
 /**
- * Initialize the OpenID Connect Provider: a router with its middleware and its
- * endpoints (a Hono app; in the Express and Fastify output, the WebRouter of
- * web-router.ts). On Hono, mount it with app.route('/', createApp(options));
- * on Express and Fastify, call applyOidc() (apply.ts).
+ * OP のルーターを作り、エンドポイントを組み込んで返す。
+ *
+ * 返すのは Hono のアプリである。
+ * Express と Fastify 向けに生成したコードでは、代わりに `web-router.ts` の `WebRouter` を返す。
+ * Hono では `app.route('/', createApp(options))` で組み込み、Express と Fastify では `applyOidc()`（`apply.ts`）を呼ぶ。
+ *
+ * OP のパスへのリクエストには、次の順にミドルウェアを適用する。
+ * - CORS: `/token`、`/userinfo`、機能が `cors: 'protected'` で登録したエンドポイントでは `corsOrigins` のオリジンを許可し、ディスカバリーと JWKS ではすべてのオリジンを許可する。
+ *   プリフライト（`OPTIONS`）には 204 で応答する。
+ * - HTTP メソッドの検査: パスで受け付けない HTTP メソッドには、`Allow` ヘッダーを付けて 405 で応答する。
+ *   GET を受け付けるパスでは HEAD も通す。
+ * - リクエストコンテキストの設定: `setRequestContext()` を呼び、署名鍵を使えなければ 503 で応答する。
+ *
+ * HTTP メソッドの検査とリクエストコンテキストの設定は、OP のパスとその下のパスにだけ適用する。
+ * そのため、`applyOidc()` のあとにアプリが加えたルートには影響しない。
  */
 export function createApp(options: OidcProviderOptions): WebRouter {
-  // A factory must return an isolated router each time. Keeping this instance at
-  // module scope makes later createApp calls reuse a matcher whose routes were
-  // already finalized and also leaks the first call's middleware/options.
+  // 呼び出すたびに新しいルーターを作る。
+  // インスタンスをモジュールの最上位に置くと、2 回目以降の `createApp()` が、ルートの確定したマッチャーを使い回すうえ、最初の呼び出しのミドルウェアとオプションも引き継いでしまう。
   const app = new WebRouter();
   const routes = providerRoutes();
   const methods = endpointMethods(routes);
 
-  // CORS middleware (OAuth 2.1 §4.2): browser-based clients call the token,
-  // UserInfo and the protected feature endpoints with Access-Control-Allow-Origin.
-  // Preflight (OPTIONS) requests are answered here too.
+  // ブラウザで動くクライアントが呼ぶエンドポイント向けに、CORS のミドルウェアを作る（OAuth 2.1 §4.2）。
+  // 対象はトークンエンドポイント、UserInfo エンドポイント、機能が `cors: 'protected'` で登録したエンドポイントで、許可するオリジンは `corsOrigins` で決まる。
+  // プリフライト（`OPTIONS`）にも、このミドルウェアが応答する。
   const protectedCors = createCorsMiddleware({
     origins: options.corsOrigins ?? '*',
     allowMethods: ['POST', 'GET', 'OPTIONS'],
@@ -216,16 +256,15 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   }
   for (const path of PUBLIC_DOCUMENT_PATHS) app.use(path, publicCors);
 
-  // CORS must run first so OPTIONS preflights are answered before method enforcement.
-  // The middleware runs on the provider's paths only (`/x/*` matches /x and
-  // the paths below it), so a route the host app adds after applyOidc() is
-  // left to the app.
+  // パスで受け付けない HTTP メソッドに 405 で応答するミドルウェアを作る。
+  // CORS のミドルウェアを先に登録してあるので、プリフライトの `OPTIONS` は 405 にならず、CORS のミドルウェアが応答する。
+  // このミドルウェアは OP のパスとその下だけに適用する（`/x/*` は `/x` とその下のパスに一致する）ので、`applyOidc()` のあとにアプリが加えたルートはアプリに任せる。
   const enforceMethods = async (c: any, next: () => Promise<unknown>): Promise<Response | void> => {
     const allowed = methods.get(new URL(c.req.url).pathname);
     const method = c.req.method;
-    // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
-    // supported. HEAD shares GET semantics (§9.3.2), so let it through on any
-    // GET-allowing endpoint; the router runs the GET handler and strips the body.
+    // GET を受け付けるパスでは HEAD も通す。
+    // 汎用のサーバーは、GET を受け付けるところで HEAD も受け付けなければならない（RFC 9110 §9.1 の MUST）。
+    // HEAD の意味は GET と同じ（RFC 9110 §9.3.2）なので、ルーターが GET のハンドラを実行し、ボディを除いて応答する。
     const isHeadOnGet = method === 'HEAD' && (allowed?.includes('GET') ?? false);
     if (allowed && !allowed.includes(method) && !isHeadOnGet) {
       c.header('Allow', allowed.join(', '));
@@ -234,15 +273,16 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     await next();
   };
 
-  // Store runtime dependencies for use by the endpoints.
+  // エンドポイントが使う値をリクエストコンテキストに入れるミドルウェアを作る。
+  // 署名鍵を使えなければ、`setRequestContext()` が返す 503 のレスポンスで応答する。
   const storeContext = async (c: any, next: () => Promise<unknown>): Promise<Response | void> => {
     const failure = await setRequestContext(c, options);
     if (failure) return failure;
     await next();
   };
 
-  // A path below another provider path (/login/google below /login) is
-  // covered by the middleware of that path already.
+  // ミドルウェアを適用するパスを、ほかの OP のパスの下にないものに絞る。
+  // `/login` の下の `/login/google` のようなパスには、`/login/*` に適用したミドルウェアがすでに適用される。
   const mountPaths = routes
     .map((route) => route.path)
     .filter((path) => !routes.some((other) => path.startsWith(`${other.path}/`)));
@@ -254,21 +294,26 @@ export function createApp(options: OidcProviderOptions): WebRouter {
 }
 
 /**
- * Put what the endpoints read into the request context (c.set): the
- * settings, the signing keys, the stores and resolvers of db/, and the values
- * of the features' context hooks. Returns the response to answer instead
- * when the signing keys cannot be loaded.
+ * エンドポイント用の値をリクエストコンテキストに入れる。
+ *
+ * `c.set()` で入れるのは、設定、用途ごとの署名鍵の集合、ストア、ストアの上に作ったリゾルバ、クライアントのリゾルバ、ビュー、各機能のコンテキストのフックが返す値などである。
+ * オプションでリゾルバやストアが渡されていれば、`db/` のものの代わりにそれを使う。
+ * クライアントの鍵のリゾルバはそのまま入れ、`jwks_uri` の扱いはエンドポイントが呼ぶ `getClientKeyResolver()` に置く。
+ * 既定の認証と ID トークンの検証鍵も、使う側で型のあるストアと署名鍵から読む。
+ *
+ * 署名鍵を読み込めないとき、または読み込んだ集合が `validateSigningKeySet()` の検証に通らないときは、何も入れずに `server_error` の 503 のレスポンスを返す。
+ * 呼び出し側は、そのレスポンスで応答する。
+ * それ以外のときは `undefined` を返す。
  */
 export async function setRequestContext(c: any, options: OidcProviderOptions): Promise<Response | undefined> {
-  // T-022: each provider returns its registered key set. The first key of a
-  // set signs new tokens, and every key is published at the JWKS endpoint so
-  // rotated-out and alternate-alg keys stay verifiable.
+  // 各プロバイダは、登録した鍵の集合を返す。
+  // 新しいトークンには集合の最初の鍵で署名し、すべての鍵を JWKS エンドポイントで公開するので、ローテーションで外した鍵や別のアルゴリズムの鍵の署名も検証できる。
   let signingKeys: SigningKey[];
   let idTokenSigningKeys: SigningKey[];
   let userinfoSigningKeys: SigningKey[];
   try {
     signingKeys = await options.signingKeyProvider.getSigningKeys();
-    // Each purpose-specific provider falls back to the primary one.
+    // 用途ごとのプロバイダが渡されていなければ、代わりに `signingKeyProvider` を使う。
     const idProvider = options.idTokenSigningKeyProvider ?? options.signingKeyProvider;
     idTokenSigningKeys = await idProvider.getSigningKeys();
     const uiProvider = options.userinfoSigningKeyProvider ?? options.signingKeyProvider;
@@ -283,7 +328,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   const storeResolvers = createStoreResolvers(stores);
   const clientResolver = options.clientResolver ?? createClientResolver(createDatabase(c));
 
-  // T-022: registered key sets per purpose.
+  // 用途ごとに、登録された鍵の集合を入れる。
   c.set('signingKeys', signingKeys);
   c.set('idTokenSigningKeys', idTokenSigningKeys);
   c.set('userinfoSigningKeys', userinfoSigningKeys);
@@ -292,6 +337,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
   c.set('clientKeyResolver', options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)));
+  c.set('clientJwksFetch', options.clientJwksFetch);
   c.set('stores', stores);
   c.set('transactionStore', stores.transactionStore);
   c.set('authCodeStore', stores.authCodeStore);
@@ -300,38 +346,38 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('authSessionStore', stores.authSessionStore);
   c.set('browserSessionStore', stores.browserSessionStore);
   c.set('userStore', stores.userStore);
-  c.set('authenticateUser', (username: string, password: string) =>
-    stores.userStore.authenticate(username, password));
   c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
   c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
   c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
   c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
   c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);
-  c.set('revokeConsentAndTokens', storeResolvers.revokeConsentAndTokens);
 
-  // T-015: acr / amr resolver (optional; without one, the token endpoint puts
-  // the most preferred requested acr value into the tokens).
+  // `acrResolver` が渡されていれば入れる。
+  // 渡されていなければ、トークンエンドポイントは、要求された `acr_values` のうち最も優先されるものをトークンに入れる。
   if (options.acrResolver) {
     c.set('acrResolver', options.acrResolver);
   }
-  // T-017 / P1: id_token_hint 検証用 JWKS プロバイダ。未指定なら OP 自身の
-  // ID Token 署名鍵セットを既定として使い、OP が発行した ID Token を hint として
-  // 検証できるようにする（OIDC Core 1.0 §3.1.2.2）。明示指定があれば優先。
-  c.set('jwksProvider', options.jwksProvider ?? (() => signingKeysToJwkSet(idTokenSigningKeys)));
-  // P1: default cookie-based session + consent resolvers so prompt=none /
-  // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
+  // `id_token_hint` を検証する JWKS のプロバイダを入れる。
+  // 渡されていなければ OP 自身の ID トークンの署名鍵を使うので、OP が発行した ID トークンを `id_token_hint` として検証できる（OIDC Core 1.0 §3.1.2.2）。
+  c.set('jwksProvider', options.jwksProvider);
+  // セッションと同意のリゾルバを入れる。
+  // 渡されていなければ、Cookie のセッションとストアの同意を読む既定のリゾルバを使うので、設定しなくても `prompt=none`、`max_age`、SSO が動く（OIDC Core 1.0 §3.1.2.1、§3.1.2.3）。
   c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
   c.set('consentResolver', options.consentResolver ?? storeResolvers.consentResolver);
-  // Inject custom UI (login / consent / error, and the screens of the
-  // features) merged over the defaults.
+  // 既定のビューを、オプションで渡された画面（ログイン、同意、エラー、機能の画面）で上書きしたものを入れる。
   c.set('views', createViews(options.views));
 
-  // What the features add for their own steps, in the order of
-  // features/enabled.ts.
+  // 各機能が自分のステップのために加える値を、`features/enabled.ts` の順に入れる。
   await applyContextOf(features, { c, options, stores });
   return undefined;
 }
 
+/**
+ * リクエストで使うストアを返す。
+ *
+ * `storage` オプションがストアそのものならそれを返し、関数ならリクエストコンテキストを渡して呼んだ結果を返す。
+ * オプションがなければ、`createDatabase()` でリクエストのデータベースを作り、その上に `db/` のストアを作って返す。
+ */
 async function resolveProviderStores(
   storage: OidcProviderOptions['storage'],
   context: any,

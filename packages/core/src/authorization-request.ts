@@ -17,10 +17,23 @@ import type { JwkSet } from './jwks.js';
 import type { ClaimsParameter, ClaimRequestValue } from './userinfo.js';
 
 /**
- * OIDC Core 1.0 §6.1 / OIDC Basic OP の既定 Request Object 署名アルゴリズム。
- * 署名付き Request Object では少なくとも RS256 を必須対応とする。
+ * core が Request Object の署名検証に使える JWS アルゴリズム。
+ * {@link resolveRequestObjectParams} の `supportedSigningAlgs` の既定値。
+ *
+ * RSASSA-PKCS1-v1_5（RFC 7518 §3.3）と ECDSA（RFC 7518 §3.4）。RS256 は OIDC Core 1.0 §6.1 /
+ * OIDC Basic OP が求める alg。RSA-PSS（PS256 など）は検証できないので含まない。各鍵は使える
+ * alg を 1 つに固定して検証する（RFC 8725 §3.1）ので、どれを受け付けても alg の取り違えは
+ * 起きない。discovery の `request_object_signing_alg_values_supported`（OIDC Discovery 1.0 §3）
+ * に広告する値の上限でもある。
  */
-export const DEFAULT_REQUEST_OBJECT_SIGNING_ALGS = ['RS256'] as const;
+export const SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS = [
+  'RS256',
+  'RS384',
+  'RS512',
+  'ES256',
+  'ES384',
+  'ES512',
+] as const;
 
 /**
  * 認可エンドポイントのエラーコード
@@ -201,7 +214,7 @@ export type OfflineAccessGrantedCallback = (
 ) => boolean | Promise<boolean>;
 
 /**
- * `offline_access` の既定許可ロジック。
+ * 明示的な同意があり、クライアントが refresh_token グラントを許可されたときだけ offline_access を許可する。
  *
  * 独立した 2 軸の AND を取る。
  *
@@ -215,10 +228,12 @@ export type OfflineAccessGrantedCallback = (
  * 保存させるだけになる（RFC 9700 §4.14）。しかも失敗するのは発行時ではなく
  * クライアントが実際に更新を試みた時点なので、設定ミスの発見が遅れる。
  */
-export const defaultIsOfflineAccessGranted: OfflineAccessGrantedCallback = (
-  _request,
-  { promptValues, client },
-) => promptValues.includes('consent') && clientAllowsRefreshTokenGrant(client);
+export function defaultIsOfflineAccessGranted(
+  _request: Parameters<OfflineAccessGrantedCallback>[0],
+  { promptValues, client }: Parameters<OfflineAccessGrantedCallback>[1],
+): ReturnType<OfflineAccessGrantedCallback> {
+  return promptValues.includes('consent') && clientAllowsRefreshTokenGrant(client);
+}
 
 /**
  * `claims` リクエストパラメータ（OIDC Core 1.0 §5.5）を `JSON.parse` する前に課す
@@ -922,43 +937,59 @@ export interface ResolvedRequestObjectParams {
   requestObjectClaims?: Record<string, unknown>;
 }
 
+/** リクエストオブジェクトの検証に使う鍵と、受け付けるアルゴリズムの設定。 */
+export interface ResolveRequestObjectOptions {
+  /**
+   * 署名の検証に使う、クライアントが request_object の用途に登録した公開鍵を読む
+   * （`parseRequestObject()` の `loadJwks`）。JOSE ヘッダーを検査した後でだけ呼び、
+   * ヘッダーの `alg` と `kid` を渡す。`ClientKeyResolver.findClientKeys()` の第 3 引数
+   * （`{ kid }`）に渡せば、`jwks_uri` を登録したクライアントの見慣れない kid で鍵を取り直せる
+   * （OIDC Core 1.0 §10.1.1）。無いか、空の JWK Set を返すと、署名付き Request Object を
+   * invalid_request_object で拒否する。
+   * `request` がない場合と、許可された `alg: "none"` では鍵を使わないため省略できる。
+   */
+  loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
+  /**
+   * 受理する JWS 署名アルゴリズム。
+   * 未指定なら {@link SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS}（core が検証できる alg すべて）。
+   */
+  supportedSigningAlgs?: string[];
+  /**
+   * 署名無し（`alg: "none"`）Request Object を互換受理するか。既定 false（署名必須）。
+   * OIDF Conformance Suite 互換の場合のみ true にする。
+   */
+  allowUnsigned?: boolean;
+  /**
+   * クライアントが登録した `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）。
+   * あれば、ヘッダーの `alg` がこれと違う Request Object を invalid_request_object で拒否する
+   * （OIDC Core 1.0 §6.3.2）。
+   */
+  requestObjectSigningAlg?: string;
+}
+
 /**
  * リクエストオブジェクトを検証し、パラメータを返す。
  *
- * `request` パラメータがなければ、クエリパラメータのコピーをそのまま返す。
- * あれば、`request` パラメータで値として渡された署名付きのリクエストオブジェクト（JWS）を、クライアントが `request_object` の用途に登録した公開鍵（`options.jwks`）で検証する。
+ * `request` パラメータがなければ、クエリパラメータのコピーをそのまま返し、`options.loadJwks` も呼ばない。
+ * あれば、`request` パラメータで値として渡された署名付きのリクエストオブジェクト（JWS）を、クライアントが `request_object` の用途に登録した公開鍵で検証する（{@link parseRequestObject}）。
  * 検証できたら、リクエストオブジェクトのクレームでクエリの値を上書きしたパラメータと、そのクレームを返す。
- * 公開鍵は呼び出し側が `ClientKeyResolver` で取得するが、`request` パラメータがあるときだけ取得すれば足りる。
- * 受け付ける署名アルゴリズム（`options.supportedSigningAlgs`）の既定値は `RS256` だけで、署名のない（`alg` が `none` の）リクエストオブジェクトは、`options.allowUnsigned` が true でなければ拒否する。
+ * 公開鍵は `options.loadJwks` で読む。呼ぶのはヘッダーの `alg` の確認を通った後だけで、ヘッダーの `alg` と `kid` を渡す。
+ * 受け付ける署名アルゴリズム（`options.supportedSigningAlgs`）の既定値は、core が検証できるすべての alg（{@link SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS}）である。
+ * `options.requestObjectSigningAlg`（クライアントが登録した alg）があれば、ヘッダーの `alg` がそれと違うリクエストオブジェクトを拒否する（OIDC Core 1.0 §6.3.2）。
+ * 署名のない（`alg` が `none` の）リクエストオブジェクトは、`options.allowUnsigned` が true でなければ拒否する。
  *
- * 検証に失敗したリクエストオブジェクト（壊れた JWT、対応していない `alg`、鍵の不一致、署名の不一致）は信頼できないので、中の `redirect_uri` も信用しない。
+ * 検証に失敗したリクエストオブジェクト（壊れた JWT、対応していない `alg`、登録した alg との不一致、鍵の不一致、署名の不一致、`jwks_uri` の取得の失敗）は信頼できないので、中の `redirect_uri` も信用しない。
  * そのため、リダイレクトせずに `invalid_request_object` の `AuthorizationError` を投げる（OIDC Core 1.0 §6.3）。
  *
  * `response_type` と `client_id` は OAuth 2.0 のリクエスト構文の値を正とするので、上書きしない。
  * 両者の一致は、あとの {@link validateRequestObjectConsistency} で検証する。
  *
  * @spec OIDC Core 1.0 §6.1
- * @spec OIDC Core 1.0 §6.3
+ * @spec OIDC Core 1.0 §6.3 / §6.3.2
  */
 export async function resolveRequestObjectParams(
   params: AuthorizationRequestParams,
-  options: {
-    /**
-     * 署名の検証に使う、クライアントが request_object の用途に登録した公開鍵。
-     * 無い（空を含む）まま署名付き Request Object を受け取ると invalid_request_object で拒否する。
-     */
-    jwks?: JwkSet;
-    /**
-     * 受理する JWS 署名アルゴリズム。
-     * 未指定なら {@link DEFAULT_REQUEST_OBJECT_SIGNING_ALGS}（`["RS256"]`）。
-     */
-    supportedSigningAlgs?: string[];
-    /**
-     * 署名無し（`alg: "none"`）Request Object を互換受理するか。既定 false（署名必須）。
-     * OIDF Conformance Suite 互換の場合のみ true にする。
-     */
-    allowUnsigned?: boolean;
-  } = {},
+  options: ResolveRequestObjectOptions = {},
 ): Promise<ResolvedRequestObjectParams> {
   if (params.request === undefined) {
     return { effectiveParams: { ...params } };
@@ -967,12 +998,12 @@ export async function resolveRequestObjectParams(
   let requestObjectClaims: Record<string, unknown>;
   try {
     requestObjectClaims = await parseRequestObject(params.request, {
-      jwks: options.jwks,
-      supportedSigningAlgs:
-        options.supportedSigningAlgs ?? [
-          ...DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
-        ],
+      ...(options.loadJwks === undefined ? {} : { loadJwks: options.loadJwks }),
+      supportedSigningAlgs: options.supportedSigningAlgs ?? [...SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS],
       allowUnsigned: options.allowUnsigned ?? false,
+      ...(options.requestObjectSigningAlg === undefined
+        ? {}
+        : { requiredSigningAlg: options.requestObjectSigningAlg }),
     });
   } catch (e) {
     if (e instanceof RequestObjectError) {

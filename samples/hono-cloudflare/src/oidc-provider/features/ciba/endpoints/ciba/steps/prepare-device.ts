@@ -9,20 +9,20 @@ export const meta = step({
   endpoint: 'ciba',
   feature: 'ciba',
   kind: 'resolve',
-  label: 'List pending requests, or start a login transaction',
+  label: '保留中のリクエストを並べるか、ログインを始める',
   function: 'prepareCibaDevice',
-  calls: ['listPendingCibaRequests', 'createCibaLoginTransaction', 'buildCibaLoginBindingCookie'],
   consumes: [],
   produces: ['loginTransaction'],
   removable: false,
 });
 
 /**
- * Listing / login form (GET /ciba)
+ * 保留中の一覧か、ログインフォームを出す結果を返す。
  *
- * With an OP session: the pending requests addressed to the signed-in user.
- * Without one: mint a login transaction and describe the sign-in form, with the
- * binding cookie its submission needs.
+ * `GET /ciba` の処理である。
+ * `Cookie` ヘッダーが示す OP のセッションがストアにあれば、そのユーザー宛ての保留中のリクエストを `listPendingRequests()` で取得し、`pending_requests` の結果を返す。
+ * セッションがなければ、ログイントランザクションを作ってストアに保存し、フォームに埋め込むトランザクション ID と CSRF トークン、バインディング Cookie を持つ `login` の結果を返す。
+ * ログインフォームの送信（`POST /ciba/login`）には、このバインディング Cookie が必要である。
  */
 export async function prepareCibaDevice(c: any): Promise<CibaOutcome> {
   const browserSessionStore = c.get('browserSessionStore');

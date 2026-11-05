@@ -8,36 +8,40 @@ export const meta = step({
   endpoint: 'logout',
   feature: 'rp-initiated-logout',
   kind: 'persist',
-  label: 'Confirmed: end the session',
+  label: '確認済み: セッションを終える',
   spec: 'RP-Initiated Logout 1.0 §2',
   function: 'approveLogout',
-  calls: ['parseLogoutConfirmation', 'buildClearedSessionCookie'],
   consumes: ['confirmation'],
   produces: [],
   removable: false,
 });
 
 /**
- * Confirmation approve (POST /logout/approve)
+ * 確認画面の承認を検証し、セッションを削除する。
  *
- * Runs only for the browser that saw the confirmation screen: the HttpOnly
- * cookie and the hidden csrf_token must present the same secret (neither
- * alone is accepted). On success the session is deleted and the redirect
- * decision computed when the screen was shown — carried in the cookie, never
- * in the form — is honored (§3).
+ * `POST /logout/approve` の処理である。
+ * 確認画面を見たブラウザからの承認だけを受け付けるため、確認の Cookie（`HttpOnly`）のシークレットとフォームの `csrf_token` が一致することを確かめ、どちらか一方だけでは受け付けない。
+ * 一致しなければ、何も削除せずに `invalid_confirmation` を返す。
+ *
+ * 一致すれば OP のセッションを削除し、セッションの Cookie と確認の Cookie を消す Cookie を付けて、リダイレクト先があれば `redirect`、なければ `completed` を返す。
+ * リダイレクト先は、確認画面を出したときに決めて確認の Cookie に入れた値で、フォームからは受け取らない（RP-Initiated Logout 1.0 §3）。
+ * セッションがすでになくても、ある場合と同じ結果を返す。
+ *
+ * @spec RP-Initiated Logout 1.0 §2
+ * @spec RP-Initiated Logout 1.0 §3
  */
 export async function approveLogout(c: any, csrfToken: string): Promise<LogoutOutcome> {
   const browserSessionStore = c.get('browserSessionStore');
 
   const confirmation = parseLogoutConfirmation(c.req.header('Cookie') ?? null);
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
-    // Forged, replayed or expired confirmation: delete nothing.
+    // 偽造された、リプレイされた、または期限切れの確認なので、何も削除しない。
     return { kind: 'invalid_confirmation' };
   }
 
-  // The End-User explicitly approved (§2). When the session is already gone
-  // there is nothing to delete and the answer is the same either way — the
-  // confirmation flow is not an oracle for whether a session existed.
+  // エンドユーザーが明示的に承認した（RP-Initiated Logout 1.0 §2）。
+  // セッションがすでにないときは削除するものがないが、結果はセッションがあるときと変えない。
+  // 結果を変えると、確認の手順からセッションがあったかどうかが分かってしまうためである。
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   if (sessionId) {
     await browserSessionStore.delete(sessionId);

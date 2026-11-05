@@ -22,6 +22,7 @@
 
 import {
   normalizeResponseType,
+  resolveJwkSigningAlg,
   responseTypeIncludes,
   validateRegisteredRedirectUris,
   type JwkSet,
@@ -35,7 +36,9 @@ import {
   validateDisplayString,
   validateHttpUrl,
   validateJwks,
+  validateJwksUri,
   validateRedirectUrisForApplicationType,
+  validateRequestObjectSigningAlg,
   validateScope,
   validateSigningAlg,
 } from './metadata-values.js';
@@ -158,6 +161,24 @@ export interface ValidateClientMetadataOptions {
   /** userinfo_signed_response_alg に受理する alg。既定は RS256 のみ。 */
   userinfoSigningAlgValuesSupported?: readonly string[];
   /**
+   * jwks_uri（RFC 7591 §2）を登録するか。既定 true で、宛先を検査して登録し、201 応答に返す
+   * （§2 は jwks より jwks_uri を勧める）。登録時には取得しない。jwks_uri を取得しない OP は
+   * false を渡し、理解しないメタデータとして無視させる（§2 MUST ignore）。jwks との併記は、
+   * この設定によらず拒否する。
+   */
+  acceptJwksUri?: boolean;
+  /**
+   * jwks_uri に http と、ループバック・私設・リンクローカルのアドレスと localhost を許す
+   * （開発用）。既定 false。
+   */
+  allowInsecureJwksUri?: boolean;
+  /**
+   * request_object_signing_alg（OIDC Dynamic Client Registration 1.0 §2）に受理する alg。
+   * discovery の request_object_signing_alg_values_supported と同じ一覧を渡す。省略時は
+   * このメタデータを理解しないものとして無視する（Request Object を扱わない OP）。
+   */
+  requestObjectSigningAlgValuesSupported?: readonly string[];
+  /**
    * カスタムメタデータ。キーがメタデータ名、値がその検証関数。標準フィールド
    * （本モジュールが理解する名前）と同じ名前は設定の誤りとして TypeError になる。
    */
@@ -185,6 +206,13 @@ export interface ValidatedClientRegistration {
   userinfoSignedResponseAlg?: string;
   /** RFC 7591 §2 の jwks（正規化済み）。登録したときだけ持つ。 */
   jwks?: JwkSet;
+  /** RFC 7591 §2 の jwks_uri。登録したときだけ持つ（acceptJwksUri: false の OP では持たない）。 */
+  jwksUri?: string;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §2 の request_object_signing_alg。
+   * requestObjectSigningAlgValuesSupported を渡した OP で登録したときだけ持つ。
+   */
+  requestObjectSigningAlg?: string;
   /**
    * 登録した全メタデータの RFC 7591 のワイヤ形式（スネークケース）。既定値の
    * 適用後の値、software_statement、カスタムメタデータを含み、201 応答の
@@ -232,6 +260,7 @@ export const STANDARD_CLIENT_METADATA_NAMES: readonly string[] = [
   'default_max_age',
   'id_token_signed_response_alg',
   'userinfo_signed_response_alg',
+  'request_object_signing_alg',
   'software_statement',
 ];
 
@@ -243,7 +272,12 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * 登録メタデータを検証し、既定値を適用して返す。
  *
  * 検証は、`redirect_uris`、`token_endpoint_auth_method`、`grant_types`、`response_types`、`grant_types` と `response_types` の対応、`application_type` ごとの `redirect_uris` の制約、`id_token_signed_response_alg` の順に行う。
- * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`default_max_age`、`userinfo_signed_response_alg`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
+ * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`jwks_uri`、`default_max_age`、`userinfo_signed_response_alg`、`request_object_signing_alg`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
+ *
+ * `jwks_uri` は宛先を検査して登録するが、登録の時点では取得しない。
+ * `options.acceptJwksUri` が `false` の OP（`jwks_uri` を取得しない OP）では、理解しないメタデータとして無視する。
+ * `request_object_signing_alg` は、`options.requestObjectSigningAlgValuesSupported` を渡した OP（リクエストオブジェクトを扱う OP）でだけ検証して登録し、渡さない OP では無視する。
+ * `jwks` も登録するときは、その alg で使える鍵が `jwks` にあることも確かめる。
  *
  * 既定値は、RFC 7591 §2 のもの（`token_endpoint_auth_method`、`grant_types`、`response_types`）と、OIDC Dynamic Client Registration 1.0 §2 のもの（`application_type`、`id_token_signed_response_alg`）である。
  * 認可サーバーが適用した既定値はレスポンスに含めなければならない（OIDC Dynamic Client Registration 1.0 §3.2 の MUST）ので、どれも登録メタデータ（`metadata`）に書き込む。
@@ -259,7 +293,7 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * @spec OIDC Dynamic Client Registration 1.0 §2
  * @spec OIDC Dynamic Client Registration 1.0 §3.2
  * @throws {ClientRegistrationError} `invalid_redirect_uri`: `redirect_uris` がないか、規則に反する URI を含むとき。
- * @throws {ClientRegistrationError} `invalid_client_metadata`: ほかのメタデータの値が正しくないとき、`grant_types` と `response_types` が対応しないとき、または `jwks` と `jwks_uri` を両方含むとき。
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: ほかのメタデータの値が正しくないとき、`grant_types` と `response_types` が対応しないとき、`jwks` と `jwks_uri` を両方含むとき、または `jwks` に `request_object_signing_alg` で使える鍵がないとき。
  * @throws {ClientRegistrationError} `invalid_software_statement`: `software_statement` が文字列でないとき。
  * @throws {TypeError} `customMetadata` に標準のメタデータと同じ名前があるとき（設定の誤り）。
  */
@@ -336,14 +370,20 @@ export function validateClientMetadata(
     );
   }
   if (metadata['jwks'] !== undefined && metadata['jwks_uri'] !== undefined) {
-    // `jwks` と `jwks_uri` を両方含む登録は拒否する（RFC 7591 §2 は同時に使うことを禁じている）。
-    // `jwks_uri` だけのときは、この OP が取得しに行かない（理解しない）メタデータとして無視する。
+    // `jwks` と `jwks_uri` を両方含む登録は、`acceptJwksUri` の値によらず拒否する（RFC 7591 §2 は同時に使うことを禁じている）。
     throw new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present');
   }
   if (metadata['jwks'] !== undefined) {
     const jwks = validateJwks(metadata['jwks']);
     validated.jwks = jwks;
     registered['jwks'] = { keys: jwks.keys.map((key) => ({ ...key })) };
+  }
+  // `acceptJwksUri` が `false` の OP では、`jwks_uri` を理解しないメタデータとして無視する。
+  // 登録の時点では取得せず、宛先を検査するだけにする。
+  if (metadata['jwks_uri'] !== undefined && options?.acceptJwksUri !== false) {
+    const jwksUri = validateJwksUri(metadata['jwks_uri'], options?.allowInsecureJwksUri === true);
+    validated.jwksUri = jwksUri;
+    registered['jwks_uri'] = jwksUri;
   }
   if (metadata['default_max_age'] !== undefined) {
     const defaultMaxAge = validateDefaultMaxAge(metadata['default_max_age']);
@@ -359,6 +399,22 @@ export function validateClientMetadata(
     );
     validated.userinfoSignedResponseAlg = alg;
     registered['userinfo_signed_response_alg'] = alg;
+  }
+  // `requestObjectSigningAlgValuesSupported` を渡さない OP（リクエストオブジェクトを扱わない OP）では、
+  // `request_object_signing_alg` を理解しないメタデータとして無視する。
+  const requestObjectSigningAlgs = options?.requestObjectSigningAlgValuesSupported;
+  if (metadata['request_object_signing_alg'] !== undefined && requestObjectSigningAlgs !== undefined) {
+    const alg = validateRequestObjectSigningAlg(metadata['request_object_signing_alg'], requestObjectSigningAlgs);
+    // 登録した鍵で検証できない登録に、リクエストオブジェクトを送る前に気づかせる。
+    // `jwks_uri` の鍵は登録の時点では取得しないので、照らし合わせない。
+    if (alg !== 'none' && validated.jwks !== undefined && !validated.jwks.keys.some((key) => resolveJwkSigningAlg(key) === alg)) {
+      throw new ClientRegistrationError(
+        'invalid_client_metadata',
+        'jwks must contain a key that can be used with the request_object_signing_alg',
+      );
+    }
+    validated.requestObjectSigningAlg = alg;
+    registered['request_object_signing_alg'] = alg;
   }
   if (metadata['software_statement'] !== undefined) {
     // 登録に使った `software_statement` は、そのままレスポンスで返す（RFC 7591 §3.2.1）。

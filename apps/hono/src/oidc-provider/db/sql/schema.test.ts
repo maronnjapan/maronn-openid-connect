@@ -37,7 +37,9 @@ describe('SCHEMA_SQL', () => {
         'client_auths',
         'client_grant_types',
         'client_jwks',
+        'client_jwks_uris',
         'client_redirect_uris',
+        'client_request_object_signing_algs',
         'client_response_types',
         'client_scopes',
         'client_secrets',
@@ -106,6 +108,27 @@ describe('SCHEMA_SQL', () => {
       ).toThrow('FOREIGN KEY constraint failed');
     });
 
+    // RFC 7591 §2: a client has one jwks_uri; OIDC Dynamic Client Registration 1.0 §2:
+    // one request_object_signing_alg.
+    it('should keep one jwks_uri and one request object signing alg per client', () => {
+      insertClient('rp-1');
+      sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('rp-1', 'https://rp.example.com/jwks')").run();
+      sqlite.prepare("INSERT INTO client_request_object_signing_algs (client_id, alg) VALUES ('rp-1', 'RS256')").run();
+
+      expect(() =>
+        sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('rp-1', 'https://rp.example.com/other')").run(),
+      ).toThrow('UNIQUE constraint failed: client_jwks_uris.client_id');
+      expect(() =>
+        sqlite.prepare("INSERT INTO client_request_object_signing_algs (client_id, alg) VALUES ('rp-1', 'ES256')").run(),
+      ).toThrow('UNIQUE constraint failed: client_request_object_signing_algs.client_id');
+    });
+
+    it('should reject a jwks_uri of a client that does not exist', () => {
+      expect(() =>
+        sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('unknown', 'https://rp.example.com/jwks')").run(),
+      ).toThrow('FOREIGN KEY constraint failed');
+    });
+
     it('should keep one federated identity per account at a provider', () => {
       sqlite.prepare("INSERT INTO users (id, created_at, updated_at) VALUES ('user-1', 0, 0), ('user-2', 0, 0)").run();
       sqlite
@@ -136,6 +159,8 @@ describe('SCHEMA_SQL', () => {
       sqlite.prepare("INSERT INTO client_redirect_uris (id, client_id, value) VALUES ('uri-1', 'rp-1', 'https://rp.example.com/cb')").run();
       sqlite.prepare("INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES ('jwk-1', 'rp-1', 'request_object', '{}')").run();
       sqlite.prepare("INSERT INTO client_response_types (id, client_id, response_type) VALUES ('rt-1', 'rp-1', 'id_token')").run();
+      sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('rp-1', 'https://rp.example.com/jwks')").run();
+      sqlite.prepare("INSERT INTO client_request_object_signing_algs (client_id, alg) VALUES ('rp-1', 'RS256')").run();
 
       sqlite.prepare("DELETE FROM clients WHERE id = 'rp-1'").run();
 
@@ -143,10 +168,14 @@ describe('SCHEMA_SQL', () => {
         .prepare(
           'SELECT (SELECT COUNT(*) FROM client_auths) AS auths, (SELECT COUNT(*) FROM client_secrets) AS secrets, ' +
             '(SELECT COUNT(*) FROM client_redirect_uris) AS redirect_uris, (SELECT COUNT(*) FROM client_jwks) AS jwks, ' +
-            '(SELECT COUNT(*) FROM client_response_types) AS response_types',
+            '(SELECT COUNT(*) FROM client_response_types) AS response_types, ' +
+            '(SELECT COUNT(*) FROM client_jwks_uris) AS jwks_uris, ' +
+            '(SELECT COUNT(*) FROM client_request_object_signing_algs) AS request_object_signing_algs',
         )
         .all();
-      expect(counts).toEqual([{ auths: 0, secrets: 0, redirect_uris: 0, jwks: 0, response_types: 0 }]);
+      expect(counts).toEqual([
+        { auths: 0, secrets: 0, redirect_uris: 0, jwks: 0, response_types: 0, jwks_uris: 0, request_object_signing_algs: 0 },
+      ]);
     });
 
     it('should keep a code without its transaction when the transaction is deleted', () => {

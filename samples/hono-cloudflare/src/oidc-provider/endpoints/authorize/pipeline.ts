@@ -21,101 +21,94 @@ import { validateAuthorizationRequestParams } from './steps/validate-request.js'
 import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
 
 /**
- * Authorization endpoint (API layer: logic only).
- * OIDC Core 1.0 Section 3.1.2
+ * ステップを順に実行し、認可リクエストの処理結果を返す。
  *
- * Each block of processAuthorizationRequest() calls one step (one box of
- * `maronn-oidc graph --detail steps --endpoint authorize`): parse the
- * request, resolve the client and the redirect_uri, validate the parameters,
- * create the transaction, verify id_token_hint, then try prompt=none and
- * Single Sign-On before continuing on the login screen. A block whose marker
- * names a feature belongs to that feature, and its step is in features/<id>/.
+ * 各ブロックは一つのステップ（`maronn-oidc graph --detail steps --endpoint authorize` の箱一つ）を呼ぶ。
+ * リクエストを解析し、クライアントと `redirect_uri` を特定し、パラメータを検証し、トランザクションを作り、`id_token_hint` を検証してから、`prompt=none` と SSO を試し、どちらにも当たらなければログイン画面へ移る。
+ * 目印の行に機能の名前があるブロックはその機能のもので、そのステップは `features/<id>/` にある。
  *
- * The pipeline reports what the endpoint decided as an outcome: the
- * authorization response for the client, "continue on the login /
- * consent screen", or an error that must stay on the OP. It never builds a
- * Response; page.ts, which owns GET|POST /authorize, turns the outcome into
- * HTTP. A step that throws ends in authorizationErrorOutcome().
+ * 返す結果は、クライアントへの認可レスポンス、ログイン画面か同意画面へ移ること、OP で応答するエラーのどれかである。
+ * この関数は `Response` を作らない。
+ * `GET` と `POST` の `/authorize` を受ける `page.ts` が、結果を HTTP のレスポンスにする。
+ * ステップが例外を投げると、`authorizationErrorOutcome()` がそれを結果に変える。
+ *
+ * @spec OIDC Core 1.0 §3.1.2
  */
 export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
-  // The response mode the request asked for, when a feature answers in one
-  // (JARM, form_post, the fragment of the Implicit and Hybrid Flows). Set once
-  // redirect_uri is verified, by the first block of a feature that answers
-  // the request's response_mode or response_type (each assigns it only while
-  // it is still unset); undefined means the plain query response. Declared
-  // before the try block so the catch can answer in the mode the request
-  // asked for.
+  // リクエストが求めたレスポンスモードのうち、機能が応答するもの（JARM、`form_post`、インプリシットフローとハイブリッドフローのフラグメント）を入れる。
+  // `redirect_uri` を確かめた後、リクエストの `response_mode` か `response_type` に応答する機能のブロックのうち、最初のものが設定する（どのブロックも、まだ設定されていないときだけ代入する）。
+  // `undefined` なら、パラメータをクエリに付ける通常の認可レスポンスで返す。
+  // `catch` でもリクエストが求めたモードでエラーを返せるよう、`try` の前で宣言する。
   let responseMode: AuthorizationResponseMode | undefined;
   try {
-    // RFC 9207 §2: include the issuer identifier on every authorization
-    // response (success and error) so clients can pin the issuer that
-    // produced the response.
+    // 成功もエラーも、すべての認可レスポンスに付ける発行者の識別子を取り出す（RFC 9207 §2）。
+    // クライアントは、この値でレスポンスを作った発行者を確かめられる。
     const issuer: string = c.get('config').issuer;
 
-    // [parse-request] Parse the authorization request — OIDC Core 1.0 §3.1.2.1 / §13.2
+    // [parse-request] 認可リクエストを解析する — OIDC Core 1.0 §3.1.2.1 / §13.2
     const parsed = await parseAuthorizationRequest(c);
     if ('kind' in parsed) return parsed;
     let params = parsed.params;
 
-    // [resolve-pushed-request] (feature: par) Expand the pushed request_uri — RFC 9126 §4 / §5
+    // [resolve-pushed-request] (feature: par) プッシュされた request_uri を展開する — RFC 9126 §4 / §5
     params = await resolvePushedAuthorizationRequest(c, params);
 
-    // [resolve-client] Resolve the client — OAuth 2.1 §4.1.2.1 / RFC 8252 §8
+    // [resolve-client] クライアントを特定する — OAuth 2.1 §4.1.2.1 / RFC 8252 §8
     const client = await resolveAuthorizationClient(c, params);
 
-    // [resolve-request-object] (feature: request-object) Verify the Request Object and overlay its claims — OIDC Core 1.0 §6.1
+    // [resolve-request-object] (feature: request-object) リクエストオブジェクトを検証し、その値で上書きする — OIDC Core 1.0 §6.1
     const { effectiveParams, requestObjectClaims } = await resolveRequestObject(c, params, client);
 
-    // [resolve-redirect-uri] Resolve redirect_uri (errors become redirectable) — OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1
+    // [resolve-redirect-uri] redirect_uri を確定し、エラーの返し先を決める — OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1
     const { redirectUri, state } = resolveRedirectTarget(effectiveParams ?? params, client);
 
-    // [resolve-jarm-response-mode] (feature: jarm) Interpret response_mode=query.jwt — JARM §2.3 / §3
+    // [resolve-jarm-response-mode] (feature: jarm) response_mode=query.jwt を解釈する — JARM §2.3 / §3
     responseMode ??= resolveJarmResponseContext(c, effectiveParams ?? params, client, redirectUri, state, issuer);
 
-    // [resolve-form-post-response-mode] (feature: form-post-response-mode) Interpret response_mode=form_post — OAuth 2.0 Form Post Response Mode §2
+    // [resolve-form-post-response-mode] (feature: form-post-response-mode) response_mode=form_post を解釈する — OAuth 2.0 Form Post Response Mode §2
     responseMode ??= resolveFormPostResponseContext(effectiveParams ?? params, issuer);
 
-    // [resolve-fragment-response-mode] (feature: implicit-flow) Answer the Implicit Flow in the fragment — OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5
+    // [resolve-fragment-response-mode] (feature: implicit-flow) インプリシットフローをフラグメントで返す — OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5
     responseMode ??= resolveFragmentResponseContext(effectiveParams ?? params, issuer);
 
-    // [validate-request] Validate the request parameters — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
+    // [validate-request] リクエストのパラメータを検証する — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
     const validatedRequest = await validateAuthorizationRequestParams(c, { params, effectiveParams, requestObjectClaims, client, redirectUri, state });
 
-    // [validate-implicit-request] (feature: implicit-flow) Validate the Implicit Flow request (response_mode, nonce, redirect_uri) — OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5
+    // [validate-implicit-request] (feature: implicit-flow) インプリシットフローのリクエストを検証する — OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5
     validateImplicitRequest(validatedRequest, effectiveParams ?? params, client, responseMode);
 
-    // [validate-hybrid-request] (feature: hybrid-flow) Validate the Hybrid Flow request (response_mode, nonce) — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
+    // [validate-hybrid-request] (feature: hybrid-flow) ハイブリッドフローのリクエストを検証する — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
     validateHybridRequest(validatedRequest, effectiveParams ?? params, responseMode);
 
-    // [create-transaction] Create and store the authorization transaction — OIDC Core 1.0 §3.1.2.3
+    // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     const { transactionId, transaction, transactionTtlSeconds } = await createAuthorizationTransaction(c, validatedRequest, responseMode);
 
-    // [validate-prompt-combination] Reject prompt=none combined with other values — OIDC Core 1.0 §3.1.2.1
-    // OIDC Core 1.0 Section 3.1.2.1: prompt is a space-delimited list
+    // [validate-prompt-combination] ほかの値と併用された prompt=none を拒否する — OIDC Core 1.0 §3.1.2.1
+    // `prompt` は空白で区切った値の並びなので、空白で分けて配列にする（OIDC Core 1.0 §3.1.2.1）。
     const promptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
     const promptCombinationError = await rejectCombinedPromptNone(c, promptValues, transactionId, transaction, issuer, responseMode);
     if (promptCombinationError) return promptCombinationError;
 
-    // [verify-id-token-hint] Verify id_token_hint — OIDC Core 1.0 §3.1.2.1
+    // [verify-id-token-hint] id_token_hint を検証する — OIDC Core 1.0 §3.1.2.1
     const hint = await verifyIdTokenHint(c, transactionId, transaction, issuer, responseMode);
     if ('kind' in hint) return hint;
     const { verifiedHintSubject } = hint;
 
-    // [authenticate-silently] prompt=none: authenticate without interaction — OIDC Core 1.0 §3.1.2.1
+    // [authenticate-silently] prompt=none: 画面を出さずに認証する — OIDC Core 1.0 §3.1.2.1
     const silent = await completePromptNoneRequest(c, { promptValues, transactionId, transaction, verifiedHintSubject, issuer, responseMode });
     if (silent !== undefined) {
       if ('kind' in silent) return silent;
       return issueAuthorizationCodeResponse(c, { transactionId, transaction, session: silent.session, issuer, responseMode });
     }
 
-    // [reuse-session] Single Sign-On: reuse the active OP session — OIDC Core 1.0 §3.1.2.3
+    // [reuse-session] SSO: 有効な OP のセッションを再利用する — OIDC Core 1.0 §3.1.2.3
     const sso = await reuseExistingSession(c, { promptValues, transactionId, transaction, transactionTtlSeconds, verifiedHintSubject });
     if (sso !== undefined) {
       if ('kind' in sso) return sso;
       return issueAuthorizationCodeResponse(c, { transactionId, transaction, session: sso.session, issuer, responseMode });
     }
 
-    // [continue-to-login] Continue on the login screen — OIDC Core 1.0 §3.1.2.3
+    // [continue-to-login] ログイン画面へ進む — OIDC Core 1.0 §3.1.2.3
     return continueToLogin(transactionId, transactionTtlSeconds);
   } catch (error) {
     return authorizationErrorOutcome(c, error, responseMode);

@@ -11,18 +11,23 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'persist',
-  label: 'Store the request under a fresh request_uri',
+  label: '新しい request_uri でリクエストを保存する',
   spec: 'RFC 9126 §2.2 / §7.1',
   function: 'storePushedRequest',
-  calls: ['createPushedAuthorizationRecord', 'buildPushedAuthorizationResponse'],
   consumes: ['clientId', 'pushedParams'],
   produces: ['parResponse'],
   removable: false,
 });
 
 /**
- * RFC 9126 §2.2 / §7.1: mint a cryptographically random reference value and
- * store the request under it. Client credentials are never persisted.
+ * リクエストを保存し、`request_uri` を 201 で返す。
+ *
+ * 参照値は暗号論的な乱数で作り、`request_uri` は `urn:ietf:params:oauth:request_uri:` に参照値を続けた URN にする（RFC 9126 §2.2、§7.1）。
+ * 保存するパラメータの `client_id` は認証したクライアントの ID にし、クライアントの認証情報（`client_secret` など）は保存しない。
+ * 有効期間は `parConfig.expiresInSeconds` の秒数で、レスポンスの `expires_in` にもその秒数を返す。
+ *
+ * @spec RFC 9126 §2.2
+ * @spec RFC 9126 §7.1
  */
 export async function storePushedRequest(
   c: any,
@@ -38,9 +43,9 @@ export async function storePushedRequest(
   });
   const response = buildPushedAuthorizationResponse(record);
 
-  // Never log the pushed parameters themselves: they can carry PII such as
-  // login_hint, and the Authorization header carries the client_secret.
+  // プッシュされたパラメータそのものは、ログに出さない。
+  // `login_hint` などの個人情報を含むことがあり、`Authorization` ヘッダーには `client_secret` が含まれる。
 
-  // RFC 9126 §2.2: 201 Created.
+  // 201 で `request_uri` と `expires_in` を返す（RFC 9126 §2.2）。
   return { status: 201, body: { request_uri: response.requestUri, expires_in: response.expiresIn } };
 }

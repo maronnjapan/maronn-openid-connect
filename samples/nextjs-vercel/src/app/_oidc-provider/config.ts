@@ -40,7 +40,7 @@ export interface ProviderConfig {
    *
    * - `true`（既定）: `grant_types` に `refresh_token` を登録したクライアントには、
    *   `offline_access` が無くても Refresh Token を発行する。ただし発行元のログイン
-   *   セッションへ束縛され、セッションが終われば `invalid_grant` になる。ブラウザ
+   *   セッションに結び付けられ、セッションが終われば `invalid_grant` になる。ブラウザ
    *   セッションを持たない経路（device authorization grant）では発行しない。
    * - `false`: Refresh Token は `offline_access` が付与された grant にだけ発行する。
    *   ログアウトしても使い続けられる offline refresh token だけになる。
@@ -68,6 +68,60 @@ export interface ProviderConfig {
    * 既定は true で、pkce 機能（features/pkce/）が false にする。
    */
   allowNonPkceAuthorizationCodeFlow: boolean;
+  /**
+   * The settings below are for the jwks_uri a client registers (RFC 7591 §2,
+   * RegisteredClient.jwksUri): the OP fetches the client's keys from it when a
+   * process needs them, such as the verification of a signed Request Object
+   * (client-jwks-uri.ts). They are flat fields, so overriding one keeps the
+   * defaults of the others.
+   *
+   * allowInsecureClientJwksUri: let a jwks_uri use http, localhost, and
+   * loopback, private and link-local addresses. For development only: by
+   * default the OP fetches https URLs of public hosts only, so a jwks_uri
+   * cannot make it reach into its own network (RFC 8725 §3.10). The names a
+   * DNS host resolves to are not checked; pass a fetch to withRegisteredClientJwksUri()
+   * in provider.ts to send the fetches through an egress proxy that does.
+   */
+  allowInsecureClientJwksUri: boolean;
+  /**
+   * How long (seconds) the keys of a jwks_uri are used when its response has
+   * no Cache-Control max-age (RFC 9111 §4.2.2). Default 300.
+   */
+  clientJwksUriCacheTtlSeconds: number;
+  /**
+   * The least time (seconds) the keys of a jwks_uri are used, whatever its
+   * response says (a smaller max-age, no-cache, no-store), so a request does
+   * not fetch the jwks_uri every time. Default 30. Set 0 to follow max-age=0,
+   * no-cache and no-store as RFC 9111 asks; every Request Object of such a
+   * client then fetches its jwks_uri.
+   */
+  clientJwksUriCacheMinTtlSeconds: number;
+  /**
+   * The most time (seconds) the keys of a jwks_uri are used, whatever max-age
+   * its response gives: a key the client removes from its jwks_uri stops
+   * verifying after this long at most. Default 300.
+   */
+  clientJwksUriCacheMaxTtlSeconds: number;
+  /**
+   * OIDC Core 1.0 §10.1.1: a kid the cached keys do not have makes the OP
+   * fetch the jwks_uri again, at most once per this many seconds (and a failed
+   * fetch of expired keys is remembered as long). Default 30.
+   */
+  clientJwksUriRefetchIntervalSeconds: number;
+  /** How long (milliseconds) the OP waits for a jwks_uri to answer. Default 3000. */
+  clientJwksUriTimeoutMs: number;
+  /** The largest jwks_uri document (bytes) the OP reads. Default 65536. */
+  clientJwksUriMaxBytes: number;
+  /** The most keys a jwks_uri document may hold. Default 32. */
+  clientJwksUriMaxKeys: number;
+  /** How many jwks_uri the OP keeps the keys of; the oldest is dropped beyond it. Default 1000. */
+  clientJwksUriCacheMaxEntries: number;
+  /**
+   * The ClientKeyResolver purposes the jwks_uri of a client serves: for these,
+   * a client with a jwksUri gets the keys of its jwks_uri only. The same as the
+   * jwksPurposes of dynamic client registration by default.
+   */
+  clientJwksUriPurposes: readonly string[];
 }
 
 /**
@@ -81,23 +135,37 @@ const baseProviderConfig = {
   // OAuth 2.1 §6.1: refresh token は initial issuance から 90 日（7776000 秒）で必ず失効する。
   refreshTokenAbsoluteLifetime: 7776000,
   // OIDC Core 1.0 §11: offline_access 無しの Refresh Token（online refresh token）も
-  // 発行する。ログインセッションに束縛されるため、ログアウトすると使えなくなる。
+  // 発行する。ログインセッションに結び付けられるため、ログアウトすると使えなくなる。
   onlineRefreshTokenEnabled: true,
   accessTokenFormat: 'jwt',
   // OIDC Core 1.0 §3.1.3.1: authorization code は short-lived であるべき（5 分 = 300 秒）。
   authorizationCodeTtl: 300,
   allowNonPkceAuthorizationCodeFlow: true,
+  // RFC 7591 §2 jwks_uri: https and public hosts only (RFC 8725 §3.10).
+  allowInsecureClientJwksUri: false,
+  // RFC 9111 §5.2.2.1: max-age within 30 to 300 seconds, 300 without max-age.
+  clientJwksUriCacheTtlSeconds: 300,
+  clientJwksUriCacheMinTtlSeconds: 30,
+  clientJwksUriCacheMaxTtlSeconds: 300,
+  // OIDC Core 1.0 §10.1.1: an unknown kid refetches at most every 30 seconds.
+  clientJwksUriRefetchIntervalSeconds: 30,
+  clientJwksUriTimeoutMs: 3000,
+  clientJwksUriMaxBytes: 65536,
+  clientJwksUriMaxKeys: 32,
+  clientJwksUriCacheMaxEntries: 1000,
+  clientJwksUriPurposes: ['request_object', 'private_key_jwt', 'dpop'],
 } satisfies Partial<ProviderConfig>;
 
 /**
- * The settings of the provider: the defaults of this file, those of the
- * enabled features, and the overrides of provider.ts, in that order.
+ * 既定値に上書きを重ねた OP の設定を返す。
+ *
+ * このファイルの既定値、有効な機能の既定値、`provider.ts` が渡す `overrides` の順に重ね、後のものが前のものを上書きする。
  */
 export function createProviderConfig(
   overrides: Partial<ProviderConfig> = {},
 ): ProviderConfig {
-  // Every field a feature declares gets its default from the config entry of
-  // that feature's feature.ts, so the merged object is a whole ProviderConfig.
+  // 三つを重ねた設定を `ProviderConfig` として返す。
+  // 機能が宣言した項目の既定値は、その機能の `feature.ts` の `config` にあるので、重ねた結果はすべての項目がそろった `ProviderConfig` になる。
   return {
     ...baseProviderConfig,
     ...configOf(features),
@@ -139,6 +207,20 @@ export function createProviderConfig(
  * asks the ClientKeyResolver for the keys of its own purpose
  * (ClientRegistration.keys below, kept by registerClient() of db/).
  *
+ * jwksUri (RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2 — client
+ * metadata `jwks_uri`): the URL of the client's JWK Set. The ClientKeyResolver
+ * of provider.ts fetches the keys of the purposes of clientJwksUriPurposes
+ * from it (client-jwks-uri.ts), so the client rotates its keys there without
+ * the OP changing anything. A client registers either jwksUri or keys, never
+ * both.
+ *
+ * requestObjectSigningAlg (OIDC Dynamic Client Registration 1.0 §2 — client
+ * metadata `request_object_signing_alg`): every Request Object of the client
+ * must be signed with this alg, `none` included (OIDC Core 1.0 §6.3.2); the
+ * request-object feature rejects any other. Leave it out to accept every alg
+ * the provider accepts. An alg the provider does not accept is not refused at
+ * registration; the Request Objects of the client are.
+ *
  * A feature that reads client metadata of its own adds it to this interface
  * from its directory (`declare module '../../config'` in features/<id>/), so
  * removing the feature removes the field.
@@ -146,6 +228,8 @@ export function createProviderConfig(
 export interface RegisteredClient extends ClientInfo, TokenClientInfo {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
   idTokenSignedResponseAlg?: 'RS256' | 'ES256';
+  jwksUri?: string;
+  requestObjectSigningAlg?: string;
 }
 
 /**
@@ -154,6 +238,7 @@ export interface RegisteredClient extends ClientInfo, TokenClientInfo {
  * the keys, such as request_object for the signed Request Objects the OP
  * verifies (OIDC Core 1.0 §6.3.2), or private_key_jwt and dpop for processes a
  * project adds. Register the same key under two purposes to use it for both.
+ * A client with a jwksUri registers no keys: registerClient() rejects both.
  *
  * clientSecret is the secret as the client presents it; registerClient()
  * stores only its hash (clientSecretHash).

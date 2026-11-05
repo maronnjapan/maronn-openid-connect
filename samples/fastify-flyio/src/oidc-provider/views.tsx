@@ -69,6 +69,12 @@ export interface ConsentPageParams {
   scopes: string[];
   /** Client ID requesting authorization */
   clientId: string;
+  /**
+   * Display lines of the requested authorization details (RFC 9396 §3.1),
+   * listed next to the scopes. Absent unless the rar feature put them on the
+   * consent screen.
+   */
+  authorizationDetails?: readonly string[];
 }
 
 /**
@@ -135,20 +141,19 @@ export interface RenderViewInit {
 }
 
 /**
- * Turn a rendered view into the text/html Response a page sends.
+ * 描画したビューを HTML のレスポンスにして返す。
  *
- * The element is serialized to HTML here. One that contains an async component
- * serializes to a Promise; its HTML is streamed once it resolves, so the
- * Response (and the cookies a page attaches to it) is still built
- * synchronously.
+ * ステータスコードは `init.status`（既定は 200）である。
+ * ヘッダーは、既定の `Content-Type: text/html; charset=UTF-8` と `Cache-Control: no-store` を、`init.headers` で上書きしたものである。
  *
- * Every screen is rendered for the transaction or session of this browser's
- * cookie, at a URL that names neither (/login and /consent are the same URL for
- * every transaction). A stored copy would show one transaction's csrf_token,
- * login_hint or client to another browser or to a later flow, so by default the
- * page tells the browser and any intermediary not to store it (RFC 9111
- * §5.2.2.5). A screen with other caching rules passes its own Cache-Control in
- * init.headers.
+ * ビューはここで HTML の文字列にする。
+ * 非同期のコンポーネントを含むビューは HTML の `Promise` になり、その HTML はできあがってからストリームで送る。
+ * そのため、レスポンス（とページがそれに付ける Cookie）は、その場で同期的に作れる。
+ *
+ * どの画面も、このブラウザの Cookie が指すトランザクションかセッションに合わせて描画するが、URL はそのどちらも示さない（`/login` と `/consent` は、どのトランザクションでも同じ URL である）。
+ * 保存された写しがあると、あるトランザクションの `csrf_token`、`login_hint`、クライアントを、別のブラウザやあとのフローに見せてしまう。
+ * そのため既定では、ブラウザにも中継サーバーにもページを保存させない（RFC 9111 §5.2.2.5）。
+ * キャッシュの扱いが違う画面は、`init.headers` で自分の `Cache-Control` を渡す。
  */
 export function renderView(view: ViewResult, init?: RenderViewInit): Response {
   const html = serializeView(view);
@@ -161,9 +166,10 @@ export function renderView(view: ViewResult, init?: RenderViewInit): Response {
 }
 
 /**
- * HTML of a view. JSX.Element is typed as a string, but at runtime a hono/jsx
- * element is an object that serializes through toString(), and an async
- * view is a Promise of one.
+ * ビューの HTML を、文字列かその `Promise` で返す。
+ *
+ * `JSX.Element` の型は文字列だが、実行時の `hono/jsx` の要素は `toString()` で HTML になるオブジェクトであり、非同期のビューはその `Promise` である。
+ * `Promise` なら、中の要素を HTML にする `Promise` を返す。
  */
 function serializeView(view: ViewResult): string | Promise<string> {
   if (view instanceof Promise) {
@@ -172,6 +178,12 @@ function serializeView(view: ViewResult): string | Promise<string> {
   return (view as { toString(): string | Promise<string> }).toString();
 }
 
+/**
+ * HTML ができてから一度に送るストリームを返す。
+ *
+ * `html` から HTML の文字列が得られたら、UTF-8 に符号化して一つのチャンクで送り、ストリームを閉じる。
+ * `html` が拒否されると、ストリームはエラーになる。
+ */
 function streamWhenResolved(html: Promise<string>): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
@@ -186,8 +198,11 @@ function streamWhenResolved(html: Promise<string>): ReadableStream<Uint8Array> {
 // ============================================================
 
 /**
- * The HTML document every default view renders into. JSX has no syntax for the
- * doctype, so it is written with raw() — a fixed literal, never user input.
+ * `title` と `children` を入れた HTML 文書を描画する。
+ *
+ * 既定のビューは、どれもこの文書の中に描画する。
+ * JSX には DOCTYPE を書く構文がないので、`raw()` で書く。
+ * `raw()` に渡すのは固定の文字列で、ユーザーの入力は渡さない。
  */
 export function Layout(props: { title: string; children?: Child }): JSX.Element {
   return (
@@ -203,7 +218,12 @@ export function Layout(props: { title: string; children?: Child }): JSX.Element 
   );
 }
 
-/** The failure message of a form, with the attempts left when known. */
+/**
+ * フォームのエラーメッセージを描画する。
+ *
+ * 残りの試行回数がわかれば、メッセージのあとに続ける。
+ * `error` がなければ何も描画しない（`null` を返す）。
+ */
 export function FormError(props: { error?: string; remainingAttempts?: number }): JSX.Element | null {
   if (!props.error) return null;
   return (
@@ -214,7 +234,12 @@ export function FormError(props: { error?: string; remainingAttempts?: number })
   );
 }
 
-/** Username / password inputs shared by every sign-in form. */
+/**
+ * ユーザー名とパスワードの入力欄を描画する。
+ *
+ * どのログインフォームでも使う。
+ * ユーザー名の欄には `username` を初期値として入れる。
+ */
 export function CredentialFields(props: { username?: string }): JSX.Element {
   return (
     <>
@@ -230,7 +255,11 @@ export function CredentialFields(props: { username?: string }): JSX.Element {
   );
 }
 
-/** The scopes a client asked for, one list item each. */
+/**
+ * 要求されたスコープの一覧を描画する。
+ *
+ * クライアントが要求したスコープごとに、リストの項目（`li`）を一つ描画する。
+ */
 export function ScopeList(props: { scopes: string[] }): JSX.Element {
   return (
     <ul>
@@ -241,7 +270,11 @@ export function ScopeList(props: { scopes: string[] }): JSX.Element {
   );
 }
 
-/** The approve / deny result shown once the user decided. */
+/**
+ * ユーザーが選んだ承認か拒否の結果を描画する。
+ *
+ * `approved` が `true` なら承認した旨を、`false` なら拒否した旨を、`clientId` とともに表示する。
+ */
 export function DecisionOutcome(props: { approved: boolean; clientId: string }): JSX.Element {
   return props.approved ? (
     <p>You approved <strong>{props.clientId}</strong>.</p>
@@ -255,9 +288,18 @@ export function DecisionOutcome(props: { approved: boolean; clientId: string }):
 // Replace the components below to customize the UI.
 // ============================================================
 
+/**
+ * `/login` へ送るログインフォームの画面を描画する。
+ *
+ * フォームは、ユーザー名とパスワードを、隠しフィールドの `csrf_token` とともに `/login` へ POST する。
+ * フォームの下には、機能が加えるほかのログイン方法（Google でのログインなど）を並べる。
+ *
+ * ユーザー名の欄には `login_hint` を初期値として入れる。
+ * 前の試行が失敗していれば、フォームの上にエラーと、わかる場合は残りの試行回数を表示する。
+ */
 function defaultLoginPage(params: LoginPageParams): JSX.Element {
-  // OIDC Core 1.0 §3.1.2.1: login_hint pre-fills the username. It is
-  // unauthenticated input; the JSX attribute escapes it.
+  // ユーザー名の欄に `login_hint` を初期値として入れた画面を返す（OIDC Core 1.0 §3.1.2.1）。
+  // `login_hint` は認証されていない入力だが、JSX の属性に入れるとエスケープされる。
   return (
     <Layout title="Login">
       <h1>Login</h1>
@@ -283,12 +325,30 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
 // must keep both button values as they are: renaming 'approve' makes every
 // approval fail, and renaming 'deny' makes the Deny button rejected as well.
 // See the validate-decision step of endpoints/consent/.
+/**
+ * クライアントと要求されたスコープの同意画面を描画する。
+ *
+ * 承認と拒否のボタンは、`action=approve` か `action=deny` を、`csrf_token` とともに `/consent` へ POST する。
+ * 同意のハンドラは `approve` と `deny` 以外の値を 400 で拒否するので、画面を作り変えるときもボタンの値は変えない。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.4
+ */
 function defaultConsentPage(params: ConsentPageParams): JSX.Element {
   return (
     <Layout title="Consent">
       <h1>Authorize Application</h1>
       <p>Client <strong>{params.clientId}</strong> is requesting access to the following scopes:</p>
       <ScopeList scopes={params.scopes} />
+      {params.authorizationDetails && params.authorizationDetails.length > 0 ? (
+        <>
+          <p>The client also requests the following authorization details:</p>
+          <ul>
+            {params.authorizationDetails.map((line) => (
+              <li>{line}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <form method="post" action="/consent">
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <button type="submit" name="action" value="approve">Approve</button>
@@ -298,6 +358,11 @@ function defaultConsentPage(params: ConsentPageParams): JSX.Element {
   );
 }
 
+/**
+ * エラーと、あればその説明を表示する画面を描画する。
+ *
+ * ステータスコードは表示しない。
+ */
 function defaultErrorPage(params: ErrorPageParams): JSX.Element {
   return (
     <Layout title="Error">
@@ -313,6 +378,14 @@ function defaultErrorPage(params: ErrorPageParams): JSX.Element {
 // it. The script submits it as soon as it is parsed (Appendix A does the same
 // from body onload), and the button inside noscript lets a browser without
 // JavaScript continue. The script is a fixed literal, never input.
+/**
+ * 認可レスポンスを自動で POST するフォームを描画する。
+ *
+ * フォームは、レスポンスのパラメータを隠しフィールドに入れて、クライアントのリダイレクト URI へ POST する。
+ * ページを読み込むとすぐにスクリプトがフォームを送信し、JavaScript が動かないブラウザでは `Continue` のボタンで送信する。
+ *
+ * @spec OAuth 2.0 Form Post Response Mode §2
+ */
 function defaultFormPostPage(params: FormPostPageParams): JSX.Element {
   return (
     <Layout title="Submit This Form">
@@ -341,18 +414,22 @@ export const defaultViews: Views = {
 };
 
 /**
- * Build a Views instance, overriding any subset of the default views with your
- * own implementation. Inject the result through the provider options instead of
- * editing this file:
+ * 既定のビューを、渡したビューで上書きして返す。
+ *
+ * `overrides` に含まれるビューだけを置き換え、含まれないものは既定のビューのまま残す。
+ * `overrides` がなければ `defaultViews` をそのまま返す。
+ * 独自の画面は、このファイルを編集せずに、`createApp()` の `views` オプションで渡す（例を参照）。
  *
  * @example
- * // Provide your own login UI while keeping the default consent/error pages.
+ * ```tsx
+ * // 同意画面とエラー画面は既定のまま、ログイン画面だけを独自のものにする。
  * createApp({
  *   signingKeyProvider,
  *   views: {
  *     loginPage: (params) => <MyLoginPage {...params} />,
  *   },
  * });
+ * ```
  */
 export function createViews(overrides?: Partial<Views>): Views {
   if (!overrides) return defaultViews;

@@ -73,18 +73,37 @@ export interface Feature {
      */
     readonly responseTypes?: readonly AuthorizationResponseType[];
   };
+  readonly consent?: {
+    /**
+     * Extra display rows the consent page lists next to the scopes of a
+     * transaction (plain strings; the page escapes them as JSX). A feature
+     * returns [] for a transaction it has nothing to show for.
+     */
+    readonly describeTransaction?: (
+      transactionId: string,
+      config: ProviderConfig,
+    ) => Promise<readonly string[]>;
+  };
   /** Ways to sign in that the login page offers next to the password form. */
   readonly loginMethods?: readonly LoginMethod[];
 }
 
-/** Describe a feature. The function only checks the shape; it returns its argument. */
+/**
+ * 機能の説明を受け取り、そのまま返す。
+ *
+ * 実行時には何もしない。
+ * 引数が `Feature` の形であることは、TypeScript の型検査で確かめる。
+ */
 export function defineFeature<const F extends Feature>(feature: F): F {
   return feature;
 }
 
 /**
- * The provider metadata with the members of the features added: an array
- * member is merged (each value once, in order), any other member replaced.
+ * OP のメタデータに、機能が加える項目を足して返す。
+ *
+ * 機能の順に各機能の `discovery` を `issuer` と `config` で呼び、返った項目を重ねる。
+ * 元の値と新しい値がどちらも配列なら、順序を保ったまま重複を除いてつなげ、それ以外は新しい値で置き換える。
+ * 受け取った `metadata` は書き換えず、新しいオブジェクトを返す。
  */
 export function discoveryOf(
   features: readonly Feature[],
@@ -104,12 +123,21 @@ export function discoveryOf(
   return merged;
 }
 
-/** The setting defaults of the features, later ones over earlier ones. */
+/**
+ * 機能が加える設定の既定値を一つにまとめて返す。
+ *
+ * 機能の順に重ね、同じ項目は後の機能の値を使う。
+ */
 export function configOf(features: readonly Feature[]): Partial<ProviderConfig> {
   return Object.assign({}, ...features.map((feature) => feature.config ?? {}));
 }
 
-/** The values of provider.ts after every feature's context hook, in the order of the list. */
+/**
+ * 機能のフックで置き換えた `provider.ts` の値を返す。
+ *
+ * 一覧の順に各機能の `context` を、それまでに置き換えた値を渡して呼び、返った値で上書きする。
+ * `context` のない機能は何も変えない。
+ */
 export function contextOf(features: readonly Feature[], provider: ProviderContext): ProviderContext {
   return features.reduce<ProviderContext>(
     (current, feature) => ({ ...current, ...feature.context?.(current) }),
@@ -117,20 +145,59 @@ export function contextOf(features: readonly Feature[], provider: ProviderContex
   );
 }
 
-/** The grant_type values the features answer at the token endpoint, each once. */
+/**
+ * 機能が受け付ける `grant_type` の値を重複なく返す。
+ *
+ * トークンエンドポイントで受け付けるグラントタイプを、機能の順に集める。
+ */
 export function tokenGrantsOf(features: readonly Feature[]): string[] {
   return [...new Set(features.flatMap((feature) => feature.token?.grants ?? []))];
 }
 
+/**
+ * 機能が加えるレスポンスモードのハンドラを返す。
+ *
+ * 認可エンドポイントで機能が応答に使うレスポンスモードを、機能の順に並べる。
+ */
 export function responseModesOf(features: readonly Feature[]): AuthorizationResponseModeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseModes ?? []);
 }
 
-/** The response_type values the features answer besides code, each once. */
+/**
+ * `code` 以外の `response_type` の値を重複なく返す。
+ *
+ * 機能が受け付ける値を、機能の順に集める。
+ */
 export function responseTypesOf(features: readonly Feature[]): AuthorizationResponseType[] {
   return [...new Set(features.flatMap((feature) => feature.authorize?.responseTypes ?? []))];
 }
 
+/**
+ * 機能が加えるログイン方法を返す。
+ *
+ * ログイン画面で、パスワードのフォームのほかに示すログイン方法を、機能の順に並べる。
+ */
 export function loginMethodsOf(features: readonly Feature[]): LoginMethod[] {
   return features.flatMap((feature) => feature.loginMethods ?? []);
+}
+
+/**
+ * 機能が同意画面に加える表示行を、機能の順に集めて返す。
+ *
+ * 各機能の `consent.describeTransaction` をトランザクション ID と設定で呼び、
+ * 返った行をつなげる。表示する内容を持たない機能は空配列を返すので、
+ * どの機能も無ければ結果も空配列になる。
+ */
+export async function consentRowsOf(
+  features: readonly Feature[],
+  transactionId: string,
+  config: ProviderConfig,
+): Promise<string[]> {
+  const rows: string[] = [];
+  for (const feature of features) {
+    const describe = feature.consent?.describeTransaction;
+    if (describe === undefined) continue;
+    rows.push(...(await describe(transactionId, config)));
+  }
+  return rows;
 }

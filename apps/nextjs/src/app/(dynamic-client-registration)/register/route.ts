@@ -36,7 +36,8 @@ import {
   validateClientMetadata,
   type ParsedClientRegistration,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
-import { responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
+import type { ProviderConfig } from '../../_oidc-provider/config';
+import { discoveryOf, responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
 import {
   dynamicClientRegistrationConfig,
@@ -47,7 +48,7 @@ import {
   toClientRegistration,
 } from '../../_oidc-provider/features/dynamic-client-registration/store';
 import { clientCors, corsPreflight, signingKeysUnavailable, withCors } from '../../_oidc-provider/http';
-import { loadSigningKeys } from '../../_oidc-provider/provider';
+import { config as providerConfig, loadSigningKeys } from '../../_oidc-provider/provider';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../_oidc-provider/scopes';
 
 export const dynamic = 'force-dynamic';
@@ -152,9 +153,12 @@ async function registerClient(request: Request): Promise<Response> {
     // 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Dynamic Client Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
     // 適用した既定値も登録し、レスポンスで返す（OIDC Dynamic Client Registration 1.0 §3.2）。
     // アプリケーションの種類ごとの `redirect_uris` の制約と、`grant_types` と `response_types` の整合（RFC 7591 §2.1）も確かめる。
-    // 受け付ける値は、この OP が応答できるもの（設定の認証方式とグラントタイプ、機能のレスポンスタイプ、scopes.ts のスコープ、署名鍵のアルゴリズム、設定の独自のメタデータ）に限る。
+    // 受け付ける値は、この OP が応答できるもの（設定の認証方式とグラントタイプ、機能のレスポンスタイプ、scopes.ts のスコープ、署名鍵のアルゴリズム、ディスカバリーが公開する `request_object_signing_alg`、設定の独自のメタデータ）に限る。
+    // `jwks_uri` は、設定の `acceptJwksUri` が有効なあいだ、宛先をプロバイダーの設定の `allowInsecureClientJwksUri` に照らして検査して登録し、ここでは取得しない。
+    // `request_object_signing_alg` は、request-object の機能がない OP では理解しないメタデータとして無視する。
     // 理解しないメタデータは黙って無視し（RFC 7591 §2 の MUST）、`error_description` はどれもリクエストの値を含まない固定の ASCII の文字列にする。
     const responseTypes = ['code', ...responseTypesOf(features)];
+    const requestObjectSigningAlgs = registrableRequestObjectSigningAlgs(providerConfig);
     const validated = validateClientMetadata(metadata, {
       tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
       grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
@@ -162,6 +166,11 @@ async function registerClient(request: Request): Promise<Response> {
       scopes: registrableScopes(),
       idTokenSigningAlgValuesSupported: signingAlgsOf(keys.idToken),
       userinfoSigningAlgValuesSupported: signingAlgsOf(keys.userinfo),
+      acceptJwksUri: config.acceptJwksUri,
+      allowInsecureJwksUri: providerConfig.allowInsecureClientJwksUri,
+      ...(requestObjectSigningAlgs === undefined
+        ? {}
+        : { requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs }),
       customMetadata: config.customClientMetadata,
     });
     const client = buildRegisteredClient(validated);
@@ -264,6 +273,19 @@ export function registrableGrantTypes(configured: readonly string[], responseTyp
  */
 export function registrableScopes(): readonly string[] | undefined {
   return CUSTOM_SCOPES.length === 0 ? undefined : [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
+}
+
+/**
+ * 登録で指定できる `request_object_signing_alg` の値の一覧か `undefined` を返す。
+ *
+ * ディスカバリーが `request_object_signing_alg_values_supported` に公開する alg と同じ一覧で（OIDC Discovery 1.0 §3）、署名のないリクエストオブジェクトを受け付けるあいだは `none` も含む。
+ * そのメンバーを公開する機能がない（request-object の機能のない OP）ときは `undefined` を返し、`request_object_signing_alg` を理解しないメタデータとして無視させる。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ */
+export function registrableRequestObjectSigningAlgs(config: ProviderConfig): readonly string[] | undefined {
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_object_signing_alg_values_supported'];
+  return Array.isArray(advertised) ? advertised.filter((alg): alg is string => typeof alg === 'string') : undefined;
 }
 
 /**

@@ -64,6 +64,57 @@ describe('checkMap', () => {
     expect([metrics.duplicateNames, failures]).toEqual([[], []]);
   });
 
+  it('should retain a reason for unresolved wiring and require evidence before claiming an endpoint destination', async () => {
+    const { data, frame } = mapOf([]);
+    data.flows['hono'] = { endpoints: [{ id: 'example' }] } as unknown as MapData['flows'][string];
+    data.wiring = [
+      { id: 'unknown', file: 'core:a.ts', lines: [2, 2], kind: 'callback', code: 'register(callback)', status: 'untraceable', why: 'The registration target is dynamic' },
+      { id: 'known', file: 'core:a.ts', lines: [2, 2], kind: 'callback', code: 'items.map(callback)', status: 'resolved', target: 'core:a.ts#f', destinations: ['hono:example'] },
+    ];
+    const result = await checkMap(data, async () => frame, async () => undefined);
+    expect(result.failures).toEqual([]);
+    expect(result.metrics.wiring).toEqual({ entries: 2, untraceable: 1, invalid: 0 });
+  });
+
+  it('should reject unresolved wiring whose reason or source was silently dropped', async () => {
+    const { data, frame } = mapOf([]);
+    data.wiring = [{ id: 'lost', file: '', lines: [0, -1], kind: 'initialization', code: 'build()', status: 'untraceable', why: ' ' }];
+    const result = await checkMap(data, async () => frame, async () => undefined);
+    expect(result.failures).toEqual([
+      'lost: wiring has no source file',
+      'lost: wiring has invalid source lines',
+      'lost: wiring is untraceable but has no reason',
+    ]);
+    expect(result.metrics.wiring.invalid).toBe(1);
+  });
+
+  it('should reject a resolved wiring claim without target and destination evidence', async () => {
+    const { data, frame } = mapOf([]);
+    data.wiring = [{ id: 'invented', file: 'core:a.ts', lines: [2, 2], kind: 'middleware', code: 'app.use(middleware)', status: 'resolved' }];
+    expect((await checkMap(data, async () => frame, async () => undefined)).failures).toEqual([
+      'invented: wiring claims a destination but has no target',
+      'invented: wiring claims a destination but names no endpoints',
+    ]);
+  });
+
+  it('should reject names that do not refer to emitted target or endpoint evidence', async () => {
+    const { data, frame } = mapOf([]);
+    data.wiring = [{ id: 'invented', file: 'core:a.ts', lines: [2, 2], kind: 'callback', code: 'register(callback)', status: 'resolved', target: 'core:missing.ts#callback', destinations: ['hono:missing'] }];
+    expect((await checkMap(data, async () => frame, async () => undefined)).failures).toEqual([
+      'invented: wiring claims a target absent from the map',
+      'invented: wiring claims an endpoint absent from the map',
+    ]);
+  });
+
+  it('should reject missing reasons in unresolved call nodes nested in callbacks and branches', async () => {
+    const { data, frame } = mapOf([]);
+    frame.tree.nodes[0]!.pre = [{
+      id: 's0i0', kind: 'loop', lines: [2, 2], code: 'register(…)',
+      branches: [{ key: 'callback', label: 'Later', nodes: [{ id: 's0i0b0', kind: 'call', lines: [2, 2], code: 'callback()', target: { kind: 'untraceable', why: '' } }] }],
+    }];
+    expect((await checkMap(data, async () => frame, async () => undefined)).failures).toEqual(['core:a.ts#f:s0i0b0: an untraceable call has no reason']);
+  });
+
   it('should not count the closing line of an added function as a changed line in no node', async () => {
     const { data, frame } = mapWithClosingLine(3, 2);
     data.changes = changesOf([1, 2, 3]);

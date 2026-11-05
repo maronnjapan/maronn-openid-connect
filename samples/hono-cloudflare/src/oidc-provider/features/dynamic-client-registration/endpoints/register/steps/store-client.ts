@@ -9,27 +9,28 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'persist',
-  label: 'Enforce the inventory cap and store the client',
+  label: '登録数の上限を確かめてクライアントを保存する',
   spec: 'RFC 7591 §5',
   function: 'storeRegisteredClient',
-  calls: ['hashClientSecret', 'toClientRegistration'],
   consumes: ['client'],
   produces: [],
   removable: false,
 });
 
 /**
- * Enforce the inventory cap (RFC 7591 §5) and store the client. 429 with a
- * fixed body: the metadata is fine, so answering invalid_client_metadata would
- * invite a retry loop that amplifies the very DoS surface the cap is here to
- * close. No Retry-After — the cap is a stock ceiling, not a rate, so no
- * recovery time is promised.
+ * 登録数が上限内なら、クライアントをストアに保存する。
  *
- * The stored record (toClientRegistration) keeps the client_secret only as its
- * hash, like the statically registered clients (db/memory/clients.ts
- * registerClient), and the keys of the jwks under the purposes of the config:
- * the 201 response is built from the in-memory record this step receives, so
- * the plaintext never needs to rest in the store.
+ * 登録数がすでに `maxRegisteredClients` に達していれば、保存せずに固定のボディの 429 を投げる（RFC 7591 §5）。
+ * メタデータには誤りがないので、`invalid_client_metadata` にはしない。
+ * そう応答すると、クライアントがメタデータを直して送り直す繰り返しを招き、上限で防ぎたいサービス妨害攻撃の負荷をかえって増やす。
+ * `Retry-After` も付けない。
+ * 上限は登録の総数に対するもので時間あたりの頻度の制限ではないので、いつ登録できるようになるかを約束できない。
+ *
+ * 保存するレコード（`toClientRegistration()`）は、静的に登録したクライアント（db/memory/clients.ts の `registerClient()`）と同じく `client_secret` をハッシュでだけ持ち、`jwks` の鍵を設定の用途ごとに持つ。
+ * 201 のレスポンスはこのステップが受け取ったメモリ上のクライアントから組み立てるので、平文のシークレットをストアに置く必要はない。
+ *
+ * @spec RFC 7591 §5
+ * @throws {RegistrationEndpointError} 429 の `too_many_registrations`: 登録数が上限に達しているとき、または同時の登録で上限を超えたとき
  */
 export async function storeRegisteredClient(c: any, client: DynamicallyRegisteredClient): Promise<void> {
   const config = c.get('dynamicClientRegistrationConfig');
@@ -39,16 +40,21 @@ export async function storeRegisteredClient(c: any, client: DynamicallyRegistere
   }
   const clientSecretHash = client.clientSecret === undefined ? undefined : await hashClientSecret(client.clientSecret);
   await store.save(toClientRegistration(client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
-  // Concurrent requests can pass the cap check together (the awaits above let
-  // them interleave), so re-check after saving and withdraw this registration
-  // when the save overshot the cap: the cap is never exceeded, only approached.
+  // 保存したあとに登録数を数え直し、上限を超えていればこの登録を削除して 429 を投げる。
+  // 同時に届いたリクエストは、上の `await` の間に処理が入れ替わり、そろって最初の確認を通ることがあるためである。
+  // これで上限を超えた登録が残ることはない（同時に削除し合って、上限より少ないまま終わることはある）。
   if ((await store.count()) > config.maxRegisteredClients) {
     await store.delete(client.clientId);
     throw inventoryCapError();
   }
-  // Never log the registration metadata or the issued client_secret.
+  // 登録のメタデータと発行した `client_secret` は、ログに出さない。
 }
 
+/**
+ * 登録数が上限に達したときの 429 のエラーを作って返す。
+ *
+ * ボディの `error` は `too_many_registrations`、`error_description` は `registration limit reached` で、`Retry-After` ヘッダーは付けない。
+ */
 function inventoryCapError(): RegistrationEndpointError {
   return new RegistrationEndpointError({
     status: 429,

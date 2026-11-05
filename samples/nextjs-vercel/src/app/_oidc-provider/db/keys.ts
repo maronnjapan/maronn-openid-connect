@@ -25,6 +25,13 @@ import type { ClaimsParameter } from '@maronn-openid-connect/core';
 
 export const KEY_PREFIX = 'oidc:';
 
+/**
+ * 部分をエンコードしてつなぎ、ストアのキーを返す。
+ *
+ * 各部分を `encodeURIComponent()` でエンコードし（部分の中のコロンは `%3A` になる）、コロンでつないで `KEY_PREFIX` の後ろに付ける。
+ * 例えば `key('client', 'a:b')` は `oidc:client:a%3Ab` を返す。
+ * リクエストから来た値にコロンが含まれていても、ほかのキーと同じ文字列にはならない。
+ */
 function key(...parts: string[]): string {
   return KEY_PREFIX + parts.map((part) => encodeURIComponent(part)).join(':');
 }
@@ -105,6 +112,20 @@ export interface ClientRecord {
    * only.
    */
   response_types?: string[];
+  /**
+   * Not in the ER model: the jwks_uri of the client (RFC 7591 §2), the URL of
+   * the JWK Set the OP fetches its public keys from. A client with one gets the
+   * keys of its jwks_uri for the purposes it serves, not those of
+   * keys.clientJwks(). Absent (a record written before the field existed): no
+   * jwks_uri.
+   */
+  jwks_uri?: string;
+  /**
+   * Not in the ER model: the request_object_signing_alg of the client (OpenID
+   * Connect Dynamic Client Registration 1.0 §2). Every Request Object of the
+   * client must be signed with this alg. Absent: any alg the OP accepts.
+   */
+  request_object_signing_alg?: string;
 }
 
 /** One Client_auth of ClientRecord.client_auths, with its Client_secret. */

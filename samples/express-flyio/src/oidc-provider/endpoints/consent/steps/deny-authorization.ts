@@ -7,18 +7,22 @@ export const meta = step({
   id: 'deny-authorization',
   endpoint: 'consent',
   kind: 'respond',
-  label: 'Deny: answer access_denied',
+  label: '拒否: access_denied で応答する',
   spec: 'OIDC Core 1.0 §3.1.2.6',
   function: 'denyAuthorizationRequest',
-  calls: ['buildConsentRedirect'],
   consumes: ['transactionId', 'transaction', 'issuer'],
   produces: ['outcome'],
   removable: false,
 });
 
 /**
- * [deny-authorization] The End-User denied the request: finish the transaction
- * and answer access_denied to the client. OIDC Core 1.0 §3.1.2.6
+ * トランザクションを削除し、`access_denied` を返す。
+ *
+ * エンドユーザーが拒否したときに呼ぶ。
+ * ストアからトランザクションと認証セッションを削除し、`error=access_denied` と `state` を含む認可レスポンスを返す。
+ * 認可レスポンスには、トランザクションの Cookie を消す `Set-Cookie` の値を付ける。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.6
  */
 export async function denyAuthorizationRequest(
   c: any,
@@ -30,9 +34,8 @@ export async function denyAuthorizationRequest(
   const authSessionStore = c.get('authSessionStore');
   await transactionStore.delete('auth_txn:' + transactionId);
   await authSessionStore.delete(transactionId);
-  // The error goes back in the response mode the request asked for: JARM
-  // (§2.1) signs it too, so the client can verify that the OP it trusts is
-  // the one that denied the request.
+  // エラーも、認可リクエストが求めたレスポンスモードで返す。
+  // JARM ではエラーにも署名するので（JARM §2.1）、クライアントは、拒否したのが信頼している OP であることを検証できる。
   return buildConsentRedirect(c, transaction, transaction.redirectUri, {
     error: 'access_denied',
     state: transaction.state,

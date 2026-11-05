@@ -50,16 +50,18 @@ import {
  *   `jwks` when present, otherwise from `jwksUri` (fetched and cached below).
  *   Never derive the key source from the assertion itself.
  */
-const defaultIdJagActorTokenResolver: IdJagActorTokenResolver = async ({
+/** ID トークンの actor_token を検証し、ほかの種類なら null を返す。 */
+async function defaultIdJagActorTokenResolver({
   actorToken,
   actorTokenType,
   clientId,
   issuer,
   jwks,
-}) =>
-  actorTokenType === TOKEN_TYPE_ID_TOKEN
+}: Parameters<IdJagActorTokenResolver>[0]): Promise<Awaited<ReturnType<IdJagActorTokenResolver>>> {
+  return actorTokenType === TOKEN_TYPE_ID_TOKEN
     ? resolveIdJagActor({ actorToken, issuer, clientId, jwks })
     : null;
+}
 
 export const idJagConfig = {
   allowedAudiences: [] as string[],

@@ -161,6 +161,55 @@ describe('registerClient', () => {
     });
   });
 
+  describe('Client Key Source and Request Object Alg', () => {
+    // RFC 7591 §2 jwks_uri / OIDC Dynamic Client Registration 1.0 §2 request_object_signing_alg.
+    it('should save the jwksUri and the requestObjectSigningAlg in the client record', async () => {
+      await registerClient(db, {
+        clientId: 'rp-uri',
+        redirectUris: ['https://rp.example.com/callback'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+        requestObjectSigningAlg: 'ES256',
+      });
+
+      expect(await clientRecord('rp-uri')).toMatchObject({
+        jwks_uri: 'https://rp.example.com/jwks.json',
+        request_object_signing_alg: 'ES256',
+      });
+    });
+
+    it('should leave them out of the record of a client registered without them', async () => {
+      await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
+
+      const record = await clientRecord('rp-1');
+      expect(Object.hasOwn(record ?? {}, 'jwks_uri')).toBe(false);
+      expect(Object.hasOwn(record ?? {}, 'request_object_signing_alg')).toBe(false);
+    });
+
+    // UC-20 / D-17: one source of keys per client, as RFC 7591 §2 asks of jwks and jwks_uri.
+    it('should reject a client that registers both a jwksUri and keys, and save nothing', async () => {
+      await expect(
+        registerClient(db, {
+          clientId: 'rp-1',
+          redirectUris: ['https://rp.example.com/callback'],
+          jwksUri: 'https://rp.example.com/jwks.json',
+          keys: { request_object: { keys: [requestObjectKey] } },
+        }),
+      ).rejects.toThrow('Client rp-1 registers both jwksUri and keys: register one of them (RFC 7591 §2)');
+      expect(db.entries()).toEqual([]);
+    });
+
+    it('should reject a jwksUri with a fragment and save nothing', async () => {
+      await expect(
+        registerClient(db, {
+          clientId: 'rp-1',
+          redirectUris: ['https://rp.example.com/callback'],
+          jwksUri: 'https://rp.example.com/jwks.json#key',
+        }),
+      ).rejects.toThrow('Client rp-1 has an invalid jwksUri: jwks_uri must not contain a fragment');
+      expect(db.entries()).toEqual([]);
+    });
+  });
+
   describe('Registering Again', () => {
     it('should replace an earlier registration with the same client_id', async () => {
       await registerClient(db, {
@@ -319,6 +368,23 @@ describe('createClientResolver', () => {
       clientId: 'rp-1',
       clientType: 'confidential',
       redirectUris: ['https://rp.example.com/callback'],
+    });
+  });
+
+  it('should find the jwksUri and the requestObjectSigningAlg of a client', async () => {
+    await registerClient(db, {
+      clientId: 'rp-uri',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'ES256',
+    });
+
+    expect(await createClientResolver(db).findClient('rp-uri')).toEqual({
+      clientId: 'rp-uri',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'ES256',
     });
   });
 

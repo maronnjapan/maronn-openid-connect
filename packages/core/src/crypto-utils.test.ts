@@ -15,6 +15,8 @@ import {
   timingSafeEqual,
   jwaToHashName,
   rsaModulusBitLength,
+  resolveJwkSigningAlg,
+  importJwkForJwsVerification,
 } from './crypto-utils.js';
 import { webcrypto } from 'node:crypto';
 
@@ -1071,5 +1073,208 @@ describe('rsaModulusBitLength', () => {
   it('should return 0 for an all-zero modulus', () => {
     const allZero = arrayBufferToBase64Url(new Uint8Array([0, 0, 0]).buffer);
     expect(rsaModulusBitLength(allZero)).toBe(0);
+  });
+});
+
+describe('resolveJwkSigningAlg', () => {
+  // RFC 8725 §3.1: each key is used with exactly one algorithm. A JWK names the
+  // one alg it may verify; resolveJwkSigningAlg() derives it from alg, kty and crv.
+  describe('RSA JWK', () => {
+    // alg is OPTIONAL (RFC 7517 §4.4). An RSA key without it is pinned to RS256,
+    // the default of OIDC Core 1.0 and the normalization of DCR validateJwks().
+    it('should return RS256 for an RSA key without alg', () => {
+      expect(resolveJwkSigningAlg({ kty: 'RSA', n: 'n', e: 'AQAB' })).toBe('RS256');
+    });
+
+    it('should return RS384 for an RSA key with alg RS384', () => {
+      expect(resolveJwkSigningAlg({ kty: 'RSA', alg: 'RS384', n: 'n', e: 'AQAB' })).toBe('RS384');
+    });
+
+    it('should return RS512 for an RSA key with alg RS512', () => {
+      expect(resolveJwkSigningAlg({ kty: 'RSA', alg: 'RS512', n: 'n', e: 'AQAB' })).toBe('RS512');
+    });
+
+    it('should return undefined for an RSA key whose alg is not RSASSA-PKCS1-v1_5', () => {
+      expect(resolveJwkSigningAlg({ kty: 'RSA', alg: 'PS256', n: 'n', e: 'AQAB' })).toBeUndefined();
+    });
+  });
+
+  // RFC 7518 §3.4: ES256 is P-256, ES384 is P-384 and ES512 is P-521.
+  describe('EC JWK', () => {
+    it('should return ES256 for a P-256 key', () => {
+      expect(resolveJwkSigningAlg({ kty: 'EC', crv: 'P-256', x: 'x', y: 'y' })).toBe('ES256');
+    });
+
+    it('should return ES384 for a P-384 key', () => {
+      expect(resolveJwkSigningAlg({ kty: 'EC', crv: 'P-384', x: 'x', y: 'y' })).toBe('ES384');
+    });
+
+    it('should return ES512 for a P-521 key', () => {
+      expect(resolveJwkSigningAlg({ kty: 'EC', crv: 'P-521', x: 'x', y: 'y' })).toBe('ES512');
+    });
+
+    it('should return the alg of the curve when the alg agrees with the curve', () => {
+      expect(resolveJwkSigningAlg({ kty: 'EC', crv: 'P-384', alg: 'ES384', x: 'x', y: 'y' })).toBe('ES384');
+    });
+
+    it('should return undefined when the alg disagrees with the curve', () => {
+      expect(resolveJwkSigningAlg({ kty: 'EC', crv: 'P-256', alg: 'ES384', x: 'x', y: 'y' })).toBeUndefined();
+    });
+
+    it('should return undefined for an unsupported curve', () => {
+      expect(resolveJwkSigningAlg({ kty: 'EC', crv: 'secp256k1', x: 'x', y: 'y' })).toBeUndefined();
+    });
+  });
+
+  describe('Other keys', () => {
+    it('should return undefined for a symmetric key', () => {
+      expect(resolveJwkSigningAlg({ kty: 'oct', k: 'secret', alg: 'HS256' })).toBeUndefined();
+    });
+
+    it('should return undefined for an OKP key', () => {
+      expect(resolveJwkSigningAlg({ kty: 'OKP', crv: 'Ed25519', x: 'x' })).toBeUndefined();
+    });
+
+    it('should return undefined for a JWK without kty', () => {
+      expect(resolveJwkSigningAlg({ alg: 'RS256', n: 'n', e: 'AQAB' })).toBeUndefined();
+    });
+  });
+});
+
+describe('importJwkForJwsVerification', () => {
+  async function rsaPublicJwk(modulusLength = 2048) {
+    const pair = await crypto.subtle.generateKey(
+      { name: 'RSASSA-PKCS1-v1_5', modulusLength, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+      true,
+      ['sign', 'verify'],
+    );
+    return { pair, jwk: await crypto.subtle.exportKey('jwk', pair.publicKey) };
+  }
+
+  async function ecPublicJwk(curve: 'P-256' | 'P-384' | 'P-521') {
+    const pair = await generateEcKeyPair(curve);
+    return { pair, jwk: await crypto.subtle.exportKey('jwk', pair.publicKey) };
+  }
+
+  describe('RSA', () => {
+    it('should import a 2048-bit RSA key for RS256 that verifies an RS256 signature', async () => {
+      const { pair, jwk } = await rsaPublicJwk();
+      const signature = await sign('signing input', pair.privateKey);
+
+      const key = await importJwkForJwsVerification({ kty: 'RSA', n: jwk.n, e: jwk.e }, 'RS256');
+
+      expect(key.algorithm).toEqual({
+        name: 'RSASSA-PKCS1-v1_5',
+        hash: { name: 'SHA-256' },
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+      });
+      expect(key.usages).toEqual(['verify']);
+      expect(await verify('signing input', signature, key)).toBe(true);
+    });
+
+    // RFC 7518 §3.3: RS384 is RSASSA-PKCS1-v1_5 with SHA-384.
+    it('should import an RSA key with alg RS384 to verify with SHA-384', async () => {
+      const { jwk } = await rsaPublicJwk();
+
+      const key = await importJwkForJwsVerification({ kty: 'RSA', alg: 'RS384', n: jwk.n, e: jwk.e }, 'RS384');
+
+      expect((key.algorithm as { hash: { name: string } }).hash).toEqual({ name: 'SHA-384' });
+    });
+
+    // RFC 8725 §3.1: an RSA key without alg is the RS256 key, so it is not used for RS384.
+    it('should reject an RSA key without alg for RS384', async () => {
+      const { jwk } = await rsaPublicJwk();
+
+      await expect(importJwkForJwsVerification({ kty: 'RSA', n: jwk.n, e: jwk.e }, 'RS384')).rejects.toThrow(
+        'The JWK cannot be used with RS384',
+      );
+    });
+
+    it('should reject an RSA key whose alg differs from the requested alg', async () => {
+      const { jwk } = await rsaPublicJwk();
+
+      await expect(
+        importJwkForJwsVerification({ kty: 'RSA', alg: 'RS512', n: jwk.n, e: jwk.e }, 'RS256'),
+      ).rejects.toThrow('The JWK cannot be used with RS256');
+    });
+
+    // RFC 7518 §3.3: a key of size 2048 bits or larger MUST be used with these algorithms.
+    it('should reject an RSA key shorter than 2048 bits', async () => {
+      const { jwk } = await rsaPublicJwk(1024);
+
+      await expect(importJwkForJwsVerification({ kty: 'RSA', n: jwk.n, e: jwk.e }, 'RS256')).rejects.toThrow(
+        'RSA keys shorter than 2048 bits are not accepted',
+      );
+    });
+
+    it('should reject an RSA key for an ES alg', async () => {
+      const { jwk } = await rsaPublicJwk();
+
+      await expect(importJwkForJwsVerification({ kty: 'RSA', n: jwk.n, e: jwk.e }, 'ES256')).rejects.toThrow(
+        'The JWK cannot be used with ES256',
+      );
+    });
+  });
+
+  describe('EC', () => {
+    it('should import a P-256 key for ES256 that verifies an ES256 signature', async () => {
+      const { pair, jwk } = await ecPublicJwk('P-256');
+      const signature = await sign('signing input', pair.privateKey);
+
+      const key = await importJwkForJwsVerification({ kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y }, 'ES256');
+
+      expect(key.algorithm).toEqual({ name: 'ECDSA', namedCurve: 'P-256' });
+      expect(key.usages).toEqual(['verify']);
+      expect(await verify('signing input', signature, key)).toBe(true);
+    });
+
+    it('should import a P-521 key for ES512', async () => {
+      const { jwk } = await ecPublicJwk('P-521');
+
+      const key = await importJwkForJwsVerification({ kty: 'EC', crv: 'P-521', x: jwk.x, y: jwk.y }, 'ES512');
+
+      expect(key.algorithm).toEqual({ name: 'ECDSA', namedCurve: 'P-521' });
+    });
+
+    // RFC 7518 §3.4: ES256 is ECDSA using P-256 only.
+    it('should reject a P-384 key for ES256', async () => {
+      const { jwk } = await ecPublicJwk('P-384');
+
+      await expect(
+        importJwkForJwsVerification({ kty: 'EC', crv: 'P-384', x: jwk.x, y: jwk.y }, 'ES256'),
+      ).rejects.toThrow('The JWK cannot be used with ES256');
+    });
+
+    it('should reject an EC key for an RS alg', async () => {
+      const { jwk } = await ecPublicJwk('P-256');
+
+      await expect(
+        importJwkForJwsVerification({ kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y }, 'RS256'),
+      ).rejects.toThrow('The JWK cannot be used with RS256');
+    });
+  });
+
+  // RFC 8725 §3.2: only the algorithms core verifies are accepted.
+  it('should reject an alg core does not verify', async () => {
+    const { jwk } = await rsaPublicJwk();
+
+    await expect(
+      importJwkForJwsVerification({ kty: 'RSA', alg: 'PS256', n: jwk.n, e: jwk.e }, 'PS256'),
+    ).rejects.toThrow('The JWK cannot be used with PS256');
+  });
+
+  // Only the public members are imported, so a private member never makes the
+  // key a signing key.
+  it('should import only the public members of the JWK', async () => {
+    const { jwk } = await rsaPublicJwk();
+
+    const key = await importJwkForJwsVerification(
+      { kty: 'RSA', n: jwk.n, e: jwk.e, use: 'sig', key_ops: ['verify'], ext: true },
+      'RS256',
+    );
+
+    expect(key.type).toBe('public');
+    expect(key.extractable).toBe(false);
   });
 });

@@ -27,12 +27,13 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵（`jwks` オプション）で検証する |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵で検証する。鍵は `loadJwks` オプションで渡し、JOSE ヘッダーの検査を通った後でだけ、ヘッダーの `alg` と `kid` を引数に呼ぶ（値で持つ鍵は `async () => jwks` で渡す）。`requestObjectSigningAlg` オプションにクライアントが登録した `request_object_signing_alg` を渡すと、ヘッダーの `alg` が違う Request Object を `alg: "none"` も含めて拒否する（OIDC Core 1.0 §6.3.2）。受け付ける alg（`supportedSigningAlgs`）の既定は、core が検証できる `SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS`（RS256、RS384、RS512、ES256、ES384、ES512） |
 | Implicit Flow のステップ関数 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可レスポンスの組み立て。`validateResponseType` の最後の引数に `IMPLICIT_RESPONSE_TYPES` を加えて渡すと、この 2 つも受け付ける。`requireNonce` は `nonce` を必須にし、`validateImplicitResponseMode` は `response_mode=query` を拒否し、`validateImplicitRedirectUri` は https 以外の redirect_uri を public client のループバックの http に限る（§3.2.2.1）。`returnsScopeClaimsInIdToken` は scope のクレームを ID Token に載せるか（`id_token` のとき。§5.4）を返し、`buildImplicitResponseParameters` がレスポンスのパラメータを、`buildFragmentResponseUrl` がそれをフラグメントに載せた URL を作る |
 | Hybrid Flow のステップ関数 | `response_type=code id_token`、`code token`、`code id_token token`（OIDC Core 1.0 §3.3）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可コードと一緒に返す認可レスポンスの組み立て。`validateResponseType` の最後の引数に `HYBRID_RESPONSE_TYPES` を加えて渡すと、この 3 つも受け付ける。`requireHybridNonce` は、認可エンドポイントが ID Token を返す `code id_token` と `code id_token token` で `nonce` を必須にする（§3.3.2.11。`code token` では任意のまま）。`validateHybridResponseMode` は `response_mode=query` を拒否し（OAuth 2.0 Multiple Response Type Encoding Practices §5）、`buildHybridResponseParameters` が認可コードとトークンを載せたレスポンスのパラメータを作る。ID Token の `c_hash` は `computeCHash` で求め、`buildIdTokenPayload` の `cHash` に渡す |
 | `normalizeResponseType` / `responseTypeIncludes` / `isImplicitResponseType` / `isHybridResponseType` / `defaultResponseModeOf` | `response_type` の値の正規化（値の順序を問わない。OAuth 2.0 Multiple Response Type Encoding Practices §1.2）と判定、既定の response mode（トークンを返す response type はフラグメント。同 §2.1 / §3 / §5） |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
-| `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
+| `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1）。登録した alg との不一致（`requiredSigningAlg`）、`alg: "none"`、受け付けない alg を、鍵を読む前に拒否する。署名の検証には、使える alg がヘッダーの `alg` と同じ鍵だけを使い（RFC 8725 §3.1）、`use` が `sig` 以外の鍵と 2048 ビット未満の RSA 鍵（RFC 7518 §3.3）は使わない |
+| `resolveJwkSigningAlg` / `importJwkForJwsVerification` | JWK が使える唯一の alg（RSA 鍵は `alg`、無ければ RS256。EC 鍵は `crv` から ES256 / ES384 / ES512）の決定と、その alg のとおりの検証用 import（RFC 8725 §3.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務） |
 
 ### Auth Transaction (Login / Consent)
@@ -88,8 +89,41 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。core で鍵を受け取るのは `resolveRequestObjectParams` だけで、private_key_jwt と DPoP の検証は持たない |
-| `createClientKeyResolver` | クライアントごとの「用途 → JWK Set」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る。設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う |
+| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose, hint?)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。任意の第 3 引数 `hint`（`ClientKeyLookupHint`）は検証する JWS の `kid` で、`jwks_uri` を登録したクライアントでは鍵を取り直す合図になる（OIDC Core 1.0 §10.1.1）。2 引数の実装もそのまま型に合う。core で鍵を受け取るのは `resolveRequestObjectParams` だけで、private_key_jwt と DPoP の検証は持たない |
+| `createClientKeyResolver` | クライアントごとの「用途 → JWK Set」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る。設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う。`hint` は無視する |
+| `withClientJwksUriKeys` | `jwks_uri`（RFC 7591 §2）を登録したクライアントの鍵を返すように `ClientKeyResolver` を包む。`purposes` に含まれる用途で `findJwksUri(clientId)` が URI を返したら、`load(uri, hint)` の結果だけを返し、元の resolver の鍵は読まない。それ以外は元の resolver に任せる |
+| `createClientJwksUriCache` | `jwks_uri` ごとに JWK Set を覚えておくキャッシュ。`load(uri, hint, options)` は期限内ならキャッシュから答え、期限切れなら取得する。見慣れない kid は、前回の取得から `refetchIntervalSeconds`（既定 30 秒）が過ぎていれば取り直す。期限内の取り直しが失敗したときは有効なキャッシュで答え、期限切れの鍵は使わない。設定は呼び出しごとに受け取る |
+| `fetchClientJwkSet` | `jwks_uri` から JWK Set を 1 回取得する。宛先の検査、`redirect: 'manual'`（リダイレクトに従わない）、`AbortSignal.timeout()` によるタイムアウト（既定 3 秒）、本文の上限（既定 64 KiB）を持つ。`fetch` を注入でき、egress プロキシ経由の fetch に差し替えられる |
+| `validateClientJwksUri` | `jwks_uri` の宛先の検査。https、フラグメントと userinfo の不在、`localhost` とループバック・私設・リンクローカルの IP リテラルでないことを確かめる。`{ allowInsecure: true }` で http とそれらの宛先を許す（開発用）。DNS 名の解決先は検査しない |
+| `parseClientJwkSet` | 取得した文書を検査し、署名用の公開鍵だけに正規化する。秘密鍵か対称鍵を 1 つでも含む JWK Set は全体を拒否し、`use` が `sig` 以外の鍵、使える alg を決められない鍵、2048 ビット未満の RSA 鍵は捨てる |
+| `resolveClientJwksTtlSeconds` | 応答の `Cache-Control: max-age`（`Age` を引く）から鍵を使う期限を決め、下限（既定 30 秒）と上限（既定 300 秒）に丸める。`no-store` と `no-cache` は下限、`max-age` が無ければ既定の 300 秒。下限を 0 にすると RFC 9111 のとおりに再利用しない |
+| `DEFAULT_CLIENT_JWKS_URI_OPTIONS` / `ClientJwksUriError` / `isClientJwksUriError` | `jwks_uri` の取得とキャッシュの既定値（各関数の引数で 1 項目ずつ上書きできる）と、取得の失敗を表すエラー。`parseRequestObject` は `loadJwks` が投げたこのエラーを、理由を含まない固定文言（`the client jwks_uri could not be retrieved`）の `invalid_request_object` に変える |
+
+`jwks_uri` を登録したクライアントの Request Object を検証する例です。
+
+```ts
+import {
+  createClientJwksUriCache,
+  createClientKeyResolver,
+  resolveRequestObjectParams,
+  withClientJwksUriKeys,
+} from '@maronn-openid-connect/core';
+
+// プロセスで 1 つ持つ。設定値は load() の呼び出しごとに渡す
+const cache = createClientJwksUriCache();
+
+const clientKeyResolver = withClientJwksUriKeys(createClientKeyResolver(lookupStoredKeys), {
+  purposes: ['request_object'],
+  findJwksUri: async (clientId) => (await findClient(clientId))?.jwksUri,
+  load: (uri, hint) => cache.load(uri, hint, { maxTtlSeconds: 600 }),
+});
+
+const { effectiveParams } = await resolveRequestObjectParams(params, {
+  // JOSE ヘッダーを検査した後で、ヘッダーの kid を手がかりに鍵を読む
+  loadJwks: ({ kid }) => clientKeyResolver.findClientKeys(client.clientId, 'request_object', { kid }),
+  requestObjectSigningAlg: client.requestObjectSigningAlg,
+});
+```
 
 ### Errors / Utilities
 

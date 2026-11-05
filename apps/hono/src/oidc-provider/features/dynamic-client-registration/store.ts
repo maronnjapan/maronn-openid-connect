@@ -1,4 +1,4 @@
-import type { ClientKeyResolver, ClientKeysByPurpose, JwkSet } from '@maronn-openid-connect/core';
+import type { ClientKeyResolver, ClientKeysByPurpose, ClientResolver, JwkSet, TokenClientResolver } from '@maronn-openid-connect/core';
 import type { DynamicallyRegisteredClient } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 
@@ -76,7 +76,7 @@ export const dynamicClientStore: DynamicallyRegisteredClientStore =
 /**
  * 登録したクライアントから保存用のレコードを作る。
  *
- * レコードには、OP が読むフィールド（db/ の `registerClient()` が受け取るもの）、`jwks` の公開鍵を `jwksPurposes` のすべての用途に割り当てたもの（`keys`）、プロジェクト独自のコードが読むための登録したメタデータ（`RegisteredClient.registrationMetadata`）を入れる。
+ * レコードには、OP が読むフィールド（db/ の `registerClient()` が受け取るもの。`jwksUri` と `requestObjectSigningAlg` も含む）、`jwks` の公開鍵を `jwksPurposes` のすべての用途に割り当てたもの（`keys`）、プロジェクト独自のコードが読むための登録したメタデータ（`RegisteredClient.registrationMetadata`）を入れる。
  * `client_secret` は平文では入れず、`clientSecretHash` に渡されたハッシュだけを入れる。
  *
  * experimental パッケージは、認証方式と署名アルゴリズムを文字列の型で表す。
@@ -107,6 +107,8 @@ export function toClientRegistration(
       : { userinfoSignedResponseAlg: client.userinfoSignedResponseAlg as RegisteredClient['userinfoSignedResponseAlg'] }),
     ...(options.clientSecretHash === undefined ? {} : { clientSecretHash: options.clientSecretHash }),
     ...(client.jwks === undefined ? {} : { keys: keysByPurpose(client.jwks, options.jwksPurposes) }),
+    ...(client.jwksUri === undefined ? {} : { jwksUri: client.jwksUri }),
+    ...(client.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: client.requestObjectSigningAlg }),
     registrationMetadata: { ...client.metadata },
   };
 }
@@ -139,7 +141,7 @@ function keysByPurpose(jwks: JwkSet, purposes: readonly string[]): ClientKeysByP
  * 実験的な機能（RFC 7591）である。
  */
 export function withDynamicallyRegisteredClients<
-  Resolver extends { findClient(clientId: string): Promise<any> },
+  Resolver extends ClientResolver | TokenClientResolver,
 >(base: Resolver): Resolver {
   return {
     ...base,
@@ -166,13 +168,17 @@ export function withDynamicallyRegisteredClients<
  * `base` に鍵がなければ動的登録のストアを探し、登録の `jwks`（RFC 7591 §2）の鍵のうち、その用途（`jwksPurposes` の用途）に割り当てた鍵を返す。
  * どちらにもないクライアントや、鍵のない用途には、空の鍵の集合を返す（core の `ClientKeyResolver` の約束どおり）。
  *
+ * 手がかり（`hint`。検証する JWS の `kid`）は、そのまま `base` に渡す。
+ * `jwks_uri` の鍵は、使うエンドポイントが呼ぶ `getClientKeyResolver()` が、このリゾルバの外側に加える。
+ * そのリゾルバは、この機能が広げた `clientResolver` でクライアントを探すので、動的に登録したものも同じ扱いになる。
+ *
  * 実験的な機能（RFC 7591）である。
  */
 export function withDynamicallyRegisteredClientKeys(base: ClientKeyResolver): ClientKeyResolver {
   return {
     ...base,
-    async findClientKeys(clientId, purpose): Promise<JwkSet> {
-      const registered = await base.findClientKeys(clientId, purpose);
+    async findClientKeys(clientId, purpose, hint): Promise<JwkSet> {
+      const registered = await base.findClientKeys(clientId, purpose, hint);
       if (registered.keys.length > 0) {
         return registered;
       }

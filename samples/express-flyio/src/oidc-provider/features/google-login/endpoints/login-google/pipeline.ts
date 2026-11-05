@@ -18,28 +18,41 @@ import { verifyGoogleLoginCallback } from './steps/verify-google-callback.js';
 
 export type { GoogleLoginOutcome } from './outcome.js';
 
+/**
+ * ステップを順に実行し、ログインの結果を返す。
+ *
+ * `POST /login/google` の処理である。
+ * Google の ID トークンと `nonce` を検証してアカウントに対応する OP のユーザーを特定し、`nonce` を発行したトランザクションを読み込んで、OP のセッションを確立し、同意のステップに引き継ぐ。
+ * `prompt` に `login` か `select_account` があれば、セッションを確立する前に既存のセッションを破棄する。
+ * トランザクションの読み込みから同意のステップへの引き継ぎまでは、パスワードによるログイン（`POST /login`）と同じ関数を使う。
+ *
+ * 成功すると、セッションの Cookie を付けた `authenticated` を返す。
+ * 検証かトランザクションの読み込みに失敗すると、そのステップが返したエラーを返し、セッションは作らない。
+ * `config.googleLogin` が設定されていなければ、何もせずに `not_configured` を返す。
+ * `page.ts` がこの結果を、同意画面へのリダイレクトかエラーページにして応答する。
+ */
 export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   const config = c.get('config');
   if (!config.googleLogin) {
     return { kind: 'not_configured' };
   }
 
-  // [verify-google-callback] Verify the posted Google ID token and nonce
+  // [verify-google-callback] Google の ID トークンと nonce を検証する
   const verified = await verifyGoogleLoginCallback(c, config.googleLogin);
   if ('kind' in verified) return verified;
   const { transactionId, subject } = verified;
 
-  // [load-transaction] The nonce named the transaction; load it from the store.
+  // [load-transaction] nonce を発行したトランザクションを読み込む
   const loaded = await loadTransactionById(c, transactionId);
   if ('kind' in loaded) return loaded;
   const { transaction } = loaded;
 
-  // [discard-session-for-fresh-login] prompt=login: discard the existing session — OIDC Core 1.0 §3.1.2.1
+  // [discard-session-for-fresh-login] prompt=login: 既存のセッションを破棄する — OIDC Core 1.0 §3.1.2.1
   await discardSessionForFreshLogin(c, transactionId, transaction);
 
-  // [establish-session] Establish the OP browser session — OIDC Core 1.0 §3.1.2.3
+  // [establish-session] ブラウザに OP のセッションを確立する — OIDC Core 1.0 §3.1.2.3
   const { sessionId, authTime } = await establishBrowserSession(c, subject);
 
-  // [hand-off-to-consent] Store the authenticated subject for the consent step
+  // [hand-off-to-consent] 認証したサブジェクトを同意のために保存する
   return handOffToConsent(c, transactionId, subject, sessionId, authTime);
 }

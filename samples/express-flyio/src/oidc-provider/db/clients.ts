@@ -20,6 +20,12 @@
  * - client_response_types: responseTypes, the response types the client may
  *   use at the authorization endpoint (id_token and id_token token for the
  *   Implicit Flow). A client without rows may use code only.
+ * - client_jwks_uris: jwksUri, the jwks_uri the OP fetches the client's keys
+ *   from (RFC 7591 §2). A client with one gets the keys of its jwks_uri, not
+ *   those of client_jwks, for the purposes of clientJwksUriPurposes.
+ * - client_request_object_signing_algs: requestObjectSigningAlg, the alg every
+ *   Request Object of the client must be signed with (OIDC Dynamic Client
+ *   Registration 1.0 §2).
  * - Metadata without a column (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -51,14 +57,42 @@ import {
   type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../client-jwks-uri.js';
 import type { ClientRegistration, RegisteredClient } from '../config.js';
 import type { SqlDatabase } from './database.js';
 
+/**
+ * `client_id` でクライアントを取得するリゾルバを返す。
+ *
+ * 返すリゾルバの `findClient()` は、呼ばれるたびにクライアントのテーブルを読み、`RegisteredClient` に変換して返す。
+ * `clients` に行がないクライアントと、`is_deleted` が真のクライアントには `null` を返す。
+ * 認可エンドポイントとトークンエンドポイントは、このリゾルバでクライアントを取得する。
+ * 公開鍵は返さない（{@link createClientKeyResolver} のリゾルバが返す）。
+ *
+ * テーブルの値は、次のように `RegisteredClient` に移す。
+ * - `clients.client_type` が `public` なら、`tokenEndpointAuthMethods` を `['none']` にする（クライアント認証をしない）。
+ * - コンフィデンシャルクライアントなら、`client_auths` の行の方式を `tokenEndpointAuthMethods` に、`client_secrets` のシークレットがあればそれを `clientSecretHash` にする。
+ * - `client_auths` の行がないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
+ * - `client_redirect_uris` の行は `redirectUris` にする。
+ * - `client_grant_types`、`client_scopes`、`client_response_types` の行は、あればそれぞれ `grantTypes`、`scope`、`responseTypes` にし、なければ設定せずに既定の扱いに任せる。
+ * - `client_jwks_uris` と `client_request_object_signing_algs` の行は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
+ *
+ * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違う `client_auths` の行を持つクライアントを読んだとき
+ */
 export function createClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
-      const [client] = await db.all<{ id: string; client_type: string }>({
-        sql: 'SELECT id, client_type FROM clients WHERE id = ? AND is_deleted = FALSE',
+      const [client] = await db.all<{
+        id: string;
+        client_type: string;
+        jwks_uri: string | null;
+        request_object_signing_alg: string | null;
+      }>({
+        sql:
+          'SELECT c.id, c.client_type, u.value AS jwks_uri, a.alg AS request_object_signing_alg FROM clients c ' +
+          'LEFT JOIN client_jwks_uris u ON u.client_id = c.id ' +
+          'LEFT JOIN client_request_object_signing_algs a ON a.client_id = c.id ' +
+          'WHERE c.id = ? AND c.is_deleted = FALSE',
         params: [clientId],
       });
       if (!client) return null;
@@ -93,12 +127,16 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
       if (responseTypes.length > 0) registered.responseTypes = responseTypes.map((row) => row.response_type);
+      if (client.jwks_uri !== null) registered.jwksUri = client.jwks_uri;
+      if (client.request_object_signing_alg !== null) {
+        registered.requestObjectSigningAlg = client.request_object_signing_alg;
+      }
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
       } else if (auths[0]) {
-        // A client has one client_secret (RFC 7591 §2), whichever method
-        // presents it.
+        // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
+        // そのため、最初の行とシークレットが違う行があれば、設定の誤りとして投げる。
         const secret = auths[0].secret;
         if (auths.some((auth) => auth.secret !== secret)) {
           throw new Error('Client ' + clientId + ' has client_auths rows with different secrets');
@@ -106,8 +144,7 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
         registered.tokenEndpointAuthMethods = auths.map((auth) => auth.client_auth_type as ClientAuthType);
         if (secret !== null) registered.clientSecretHash = secret;
       }
-      // A confidential client without a client_auths row keeps the default
-      // client_secret_basic with no secret, so it cannot authenticate.
+      // `client_auths` の行がないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
       return registered;
     },
   };
@@ -116,10 +153,15 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
 type ClientAuthType = 'client_secret_basic' | 'client_secret_post';
 
 /**
- * The public keys of client_jwks for one purpose at a time: the
- * ClientKeyResolver the OP uses when no other one is passed in. The OP
- * verifies a signed Request Object with the keys of request_object. A deleted
- * client (is_deleted) has no keys.
+ * クライアントの公開鍵を用途別に取得するリゾルバを返す。
+ *
+ * 返すリゾルバの `findClientKeys()` は、呼ばれるたびに `client_jwks` から指定された用途の行を読み、各行の JWK を並べた JWK Set を返す。
+ * 削除済み（`is_deleted`）のクライアントと、用途の行がないクライアントには、`keys` が空の JWK Set を返す。
+ * OP は、署名付きのリクエストオブジェクトを `request_object` の用途の鍵で検証する。
+ *
+ * OP は、ほかのリゾルバを渡されなければこのリゾルバを使う。
+ *
+ * @throws {Error} 返したリゾルバの `findClientKeys()` が、JSON のオブジェクトでない `jwk` の行を読んだとき（`parseJwk()`）
  */
 export function createClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
   return {
@@ -135,7 +177,13 @@ export function createClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
   };
 }
 
-/** A client_jwks row holds one public JWK as a JSON object. */
+/**
+ * `client_jwks` の行の JWK を解析して返す。
+ *
+ * 行の `jwk` には、一つの公開鍵の JWK を JSON のオブジェクトで保存する。
+ *
+ * @throws {Error} `jwk` が JSON として正しくないか、JSON のオブジェクトでない（配列や `null` など）とき
+ */
 function parseJwk(clientId: string, json: string): Jwk {
   let jwk: unknown;
   try {
@@ -150,48 +198,55 @@ function parseJwk(clientId: string, json: string): Jwk {
 }
 
 /**
- * Put a client into the client tables, replacing the rows of an earlier
- * registration with the same client_id. Call it from a setup script or at
- * startup, with the database of db/ (createDatabase() of db/index.ts) and a
- * ClientRegistration (config.ts):
+ * クライアントをテーブルに保存し、公開鍵を追加する。
  *
- *   // createDatabase(c) where the request context exists, when instance.ts
- *   // reads it (in the Hono output, a binding of c.env such as D1)
- *   const db = createDatabase();
- *   await registerClient(db, {
- *     clientId: 'my-client',
- *     clientSecret: '...',
- *     redirectUris: ['https://client.example.com/callback'],
- *     grantTypes: ['authorization_code', 'refresh_token'],
- *     tokenEndpointAuthMethods: ['client_secret_basic'],
- *   });
+ * `clients` の行を書き、同じ `client_id` で登録済みのクライアントの行を置き換える。
+ * 削除済み（`is_deleted`）のクライアントも、登録し直すと削除済みでなくなる。
+ * `clientSecretHash` が渡されればそのまま、`clientSecret` が渡されればハッシュ（`hashClientSecret()`）にして保存する。
+ * `tokenEndpointAuthMethods` の方式（`client_secret_basic` と `client_secret_post`）は、それぞれ同じシークレットを持つ `client_auths` と `client_secrets` の行になる。
+ * パブリッククライアントと、シークレットのないクライアントには、これらの行を作らない。
+ * `clientType` がなければ、`tokenEndpointAuthMethods` が `none` のクライアントをパブリッククライアントとして保存する。
  *
- * Registering a client again with the same values leaves its rows as they
- * are, so every instance of the OP may register its clients at startup, even
- * at the same moment: each row's id comes from the values it holds, so two
- * registrations write the same rows instead of adding copies. When the values
- * change, the new redirect URIs, grant types, scopes and response types go in
- * before the old ones are removed, so requests in between still find the
- * client.
+ * 同じ値で登録し直しても、行は変わらない。
+ * 各行の ID はその行が持つ値から作る（`childRowId()`）ので、二回の登録は複製を足さずに同じ行を書く。
+ * そのため、OP の複数のインスタンスが起動時に同時にクライアントを登録してもよい。
+ * 値が変わったときは、新しいリダイレクト URI、グラントタイプ、スコープ、レスポンスタイプを入れてから古い行を消すので、そのあいだのリクエストもクライアントを見つけられる。
  *
- * clientSecret is saved as its hash (hashClientSecret()). The statements run
- * one at a time (SqlDatabase has no transactions), so run it again if it stops
- * halfway.
+ * SQL 文は一つずつ実行する（`SqlDatabase` にはトランザクションがない）。
+ * 途中で止まったときは、もう一度呼べばよい。
  *
- * Each method of tokenEndpointAuthMethods becomes a client_auths row, all of
- * them with the same secret.
+ * `client.keys` の公開鍵は、用途ごとに `client_jwks` の行として追加する。
+ * この関数は `client_jwks` の行を消さないので、OP の動作中にデータベースで鍵を管理でき、次の起動時にクライアントを登録し直しても、その鍵は残る（ファイルの冒頭を参照）。
+ * 鍵を取り除くには、データベースの行を消し、ここに渡すクライアントからも外す。
+ * 外さなければ、次の登録で鍵が戻る。
  *
- * Each key of keys (ClientRegistration.keys) becomes a client_jwks row of its
- * purpose. The client_jwks rows are only ever added here: registerClient()
- * never deletes one, so they may be managed in the database while the OP runs
- * (see the top of this file), and registering the client again at the next
- * start keeps them. To remove a key, delete its row in the database, and drop
- * it from the client passed here too, or the next registration adds it back.
+ * `jwksUri` と `requestObjectSigningAlg` は、クライアントの `client_jwks_uris` と `client_request_object_signing_algs` の行を置き換える。
+ * そのため、これらを持たない登録は、登録済みの行を消す。
+ * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
+ *
+ * セットアップ用のスクリプトや起動時の処理から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
+ *
+ * @throws {Error} `jwksUri` が `http` か `https` の絶対 URL でないとき、または `jwksUri` と `keys` を両方持つとき（何も書き込まずに投げる）
+ * @throws {Error} `clientType` が `public` でなく、`tokenEndpointAuthMethods` に `none` とほかの方式を並べたとき
+ * @example
+ * ```ts
+ * // instance.ts がリクエストコンテキストを読むとき（Hono の出力では、D1 などの c.env のバインディング）は、
+ * // コンテキストのある場所で createDatabase(c) と呼ぶ
+ * const db = createDatabase();
+ * await registerClient(db, {
+ *   clientId: 'my-client',
+ *   clientSecret: '...',
+ *   redirectUris: ['https://client.example.com/callback'],
+ *   grantTypes: ['authorization_code', 'refresh_token'],
+ *   tokenEndpointAuthMethods: ['client_secret_basic'],
+ * });
+ * ```
  */
 export async function registerClient(
   db: SqlDatabase,
   client: ClientRegistration & { name?: string },
 ): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   await db.run({
     sql:
@@ -217,9 +272,8 @@ export async function registerClient(
     }
   }
   const authIds = auths.map((auth) => auth.id);
-  // The rows of a method the client no longer lists go first. Secrets go
-  // before their client_auths rows: they reference them, and SQLite cascades
-  // only with foreign keys on.
+  // まず、クライアントが挙げなくなった方式の行を消す。
+  // シークレットの行は `client_auths` の行を参照しており、SQLite は外部キーを有効にしたときしか連鎖して消さないので、シークレットの行を先に消す。
   await db.run({
     sql: exceptIds('DELETE FROM client_secrets WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)', authIds),
     params: [client.clientId, ...authIds],
@@ -257,6 +311,24 @@ export async function registerClient(
     }
   }
 
+  // これらのテーブルは、クライアントごとに 1 行を持つ（`client_id` が主キー）。
+  const singleValues: Array<[table: string, column: string, value: string | undefined]> = [
+    ['client_jwks_uris', 'value', client.jwksUri],
+    ['client_request_object_signing_algs', 'alg', client.requestObjectSigningAlg],
+  ];
+  for (const [table, column, value] of singleValues) {
+    await db.run(
+      value === undefined
+        ? { sql: 'DELETE FROM ' + table + ' WHERE client_id = ?', params: [client.clientId] }
+        : {
+          sql:
+            'INSERT INTO ' + table + ' (client_id, ' + column + ') VALUES (?, ?) ' +
+            'ON CONFLICT (client_id) DO UPDATE SET ' + column + ' = excluded.' + column,
+          params: [client.clientId, value],
+        },
+    );
+  }
+
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [
     ['client_redirect_uris', 'value', client.redirectUris],
     ['client_grant_types', 'grant_type', client.grantTypes ?? []],
@@ -281,9 +353,10 @@ export async function registerClient(
 }
 
 /**
- * The id of a row under a client: the SHA-256 (hex) of the client_id, the
- * table and the value the row holds, so the same value always maps to the
- * same row.
+ * クライアントに属する行の ID を返す。
+ *
+ * ID は、`client_id`、テーブル名、行が持つ値を並べた JSON の SHA-256 ハッシュを、16 進数で表した文字列である。
+ * 同じ値はいつも同じ行の ID になる。
  */
 async function childRowId(clientId: string, table: string, value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -293,7 +366,13 @@ async function childRowId(clientId: string, table: string, value: string): Promi
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** A DELETE of a client's rows, narrowed to the rows whose id is not in keep. */
+/**
+ * `keep` の行を対象から外した `DELETE` 文を返す。
+ *
+ * `sql` の末尾に `AND id NOT IN (?, ...)` を足し、ID が `keep` にない行だけを消す文にする。
+ * `keep` が空なら、`sql` をそのまま返す。
+ * 足したプレースホルダーには、呼び出し側が `keep` の ID を順に渡す。
+ */
 function exceptIds(sql: string, keep: readonly string[]): string {
   return keep.length === 0 ? sql : sql + ' AND id NOT IN (' + keep.map(() => '?').join(', ') + ')';
 }

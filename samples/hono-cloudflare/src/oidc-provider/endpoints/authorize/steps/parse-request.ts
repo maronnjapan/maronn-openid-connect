@@ -5,7 +5,7 @@ export const meta = step({
   id: 'parse-request',
   endpoint: 'authorize',
   kind: 'parse',
-  label: 'Parse the authorization request',
+  label: '認可リクエストを解析する',
   spec: 'OIDC Core 1.0 §3.1.2.1 / §13.2',
   function: 'parseAuthorizationRequest',
   consumes: [],
@@ -14,11 +14,11 @@ export const meta = step({
 });
 
 /**
- * Iterates URLSearchParams and reports the first repeated key, if any.
- * OIDC Core 1.0 §3.1.2.1 / RFC 6749 §3.1: authorization request parameters
- * MUST NOT be repeated. Object.fromEntries(searchParams) silently keeps the
- * last value, which would let `response_type=code&response_type=token` slip
- * through, so we scan entries explicitly.
+ * パラメータを集め、重複した名前があればそれも返す。
+ *
+ * 認可リクエストでは、同じパラメータを繰り返せない（OIDC Core 1.0 §3.1.2.1、RFC 6749 §3.1）。
+ * `Object.fromEntries(searchParams)` は重複した名前の最後の値を黙って残すので、`response_type=code&response_type=token` のようなリクエストを通してしまう。
+ * そのため、パラメータを一つずつ調べ、すでに出た名前に出会った時点で、そこまでのパラメータと重複した名前（`duplicateKey`）を返す。
  */
 function collectUniqueParams(
   searchParams: URLSearchParams,
@@ -36,21 +36,26 @@ function collectUniqueParams(
 }
 
 /**
- * OIDC Core 1.0 Section 3.1.2.1 / Section 13.2: parses the authorization request
- * parameters from either GET (query string) or POST (application/x-www-form-urlencoded).
- * Returns null if the request transport is invalid (e.g. unsupported Content-Type on POST).
+ * クエリかボディからパラメータを読み取って返す。
+ *
+ * `POST` ならボディから、それ以外（`GET`）ならクエリから読み取る。
+ * `POST` の `Content-Type` が `application/x-www-form-urlencoded` で始まらなければ、`null` を返す。
+ * 重複した名前は、`collectUniqueParams()` が `duplicateKey` に入れて返す。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OIDC Core 1.0 §13.2
  */
 async function parseAuthorizationRequestParams(
   c: any,
 ): Promise<{ params: Record<string, string>; duplicateKey?: string } | null> {
   if (c.req.method === 'POST') {
     const contentType = c.req.header('Content-Type') ?? '';
-    // OIDC Core 1.0 Section 13.2: POST must use application/x-www-form-urlencoded.
+    // `POST` は `application/x-www-form-urlencoded` で送る必要があるので、そうでなければ `null` を返す（OIDC Core 1.0 §13.2）。
     if (!contentType.toLowerCase().split(';')[0].trim().startsWith('application/x-www-form-urlencoded')) {
       return null;
     }
-    // Read the raw body so URLSearchParams preserves duplicate keys
-    // (parseBody silently dedupes them).
+    // 重複した名前を `URLSearchParams` で見つけられるよう、ボディをそのまま文字列で読む。
+    // `parseBody()` は、重複した名前を黙って一つにまとめてしまう。
     const raw = await c.req.text();
     return collectUniqueParams(new URLSearchParams(raw));
   }
@@ -58,12 +63,18 @@ async function parseAuthorizationRequestParams(
 }
 
 /**
- * Parse the authorization request (GET query or POST form).
- * OIDC Core 1.0 §3.1.2.1 / §13.2 / RFC 6749 §3.1
+ * 認可リクエストを解析し、パラメータを返す。
  *
- * Returns the bad_request outcome for malformed transport: a POST that is not
- * application/x-www-form-urlencoded, a repeated parameter, or no client_id.
- * There is no transaction yet, so those are answered as OAuth error JSON.
+ * 次のリクエストには、パラメータの代わりに `bad_request` の結果（`invalid_request`）を返す。
+ * - `POST` で、ボディが `application/x-www-form-urlencoded` でない。
+ * - 同じパラメータが繰り返されている。
+ * - `client_id` が無い。
+ *
+ * まだトランザクションが無いので、これらには画面ではなく JSON の OAuth のエラーレスポンスで応答する。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OIDC Core 1.0 §13.2
+ * @spec RFC 6749 §3.1
  */
 export async function parseAuthorizationRequest(
   c: any,
@@ -74,7 +85,7 @@ export async function parseAuthorizationRequest(
     return { kind: 'bad_request', error: 'invalid_request', errorDescription: 'Authorization POST requests must use application/x-www-form-urlencoded' };
   }
 
-  // OIDC Core 1.0 §3.1.2.1 / RFC 6749 §3.1: request parameters MUST NOT be repeated.
+  // 同じパラメータが繰り返されていれば、`bad_request` の結果を返す（OIDC Core 1.0 §3.1.2.1、RFC 6749 §3.1）。
   if (parsed.duplicateKey !== undefined) {
     return { kind: 'bad_request', error: 'invalid_request', errorDescription: `Parameter "${parsed.duplicateKey}" must not be repeated` };
   }

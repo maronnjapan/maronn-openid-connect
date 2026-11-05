@@ -23,23 +23,29 @@ export const meta = step({
   endpoint: 'consent',
   feature: 'hybrid-flow',
   kind: 'dispatch',
-  label: 'Hybrid Flow: issue the code together with the ID Token and/or the access token',
+  label: 'ハイブリッドフロー: コードとトークンを発行する',
   spec: 'OIDC Core 1.0 §3.3.2.5',
   function: 'issueHybridConsentResponse',
-  calls: ['isHybridResponseType', 'completeAuthTransaction', 'resolveGrantableScopes', 'issueHybridTokens', 'recordConsentDecision', 'restoreResponseMode'],
   consumes: ['transactionId', 'transaction', 'session', 'issuer'],
   produces: ['outcome'],
   removable: false,
 });
 
 /**
- * The End-User approved a request of the Hybrid Flow (response_type=code
- * id_token, code token or code id_token token): finish the transaction, issue
- * the code with the ID Token and/or the access token for the granted scope,
- * record the consent and the grant, and answer the client in the response
- * mode of the request — the fragment by default (OIDC Core 1.0 §3.3.2.5),
- * never the query. Returns undefined for a request of any other response
- * type, which the steps after this one answer.
+ * 認可コードとトークンを発行し、認可レスポンスで返す。
+ *
+ * 対象は、エンドユーザーが同意したハイブリッドフローのリクエスト（`response_type` が `code id_token`、`code token`、`code id_token token`）である。
+ * ほかのレスポンスタイプには `undefined` を返し、あとのステップ（認可コードの発行）に任せる。
+ *
+ * トランザクションを終え、同意されたスコープで認可コードと ID トークンかアクセストークン（または両方）を発行し、同意とグラントを記録する。
+ * トークンの発行が `AuthorizationError` で失敗したときは、同意とグラントを記録せず、そのエラーを認可レスポンスで返す。
+ *
+ * 認可レスポンスは、トランザクションに保存したレスポンスモードで返し、保存がなければフラグメントで返す（OIDC Core 1.0 §3.3.2.5）。
+ * クエリでは返さない。
+ * 返す結果には、トランザクションの Cookie を消す `Set-Cookie` の値も含める。
+ *
+ * @throws {Error} トランザクションに保存したレスポンスモードを扱う機能が有効でないとき（`restoreResponseMode()`）。
+ * @spec OIDC Core 1.0 §3.3.2.5
  */
 export async function issueHybridConsentResponse(
   c: any,
@@ -58,14 +64,14 @@ export async function issueHybridConsentResponse(
   const answer = async (parameters: AuthorizationResponseParameters): Promise<ConsentOutcome> => ({
     kind: 'authorization_response',
     response: await responseMode.respond(transaction.redirectUri, parameters),
-    // The transaction is over; drop the cookie that named it.
+    // トランザクションは終わったので、それを指す Cookie を消す。
     cookies: [buildClearedTransactionCookie()],
   });
 
   const responseParams = await completeAuthTransaction(transactionId, transaction, c.get('transactionStore'));
-  // The scope policy (resolveGrantableScopes in scopes.ts), applied as the
-  // issue-authorization-code step applies it to a code: a dropped scope
-  // narrows the grant (RFC 6749 §3.3), and the response reports the scope.
+  // 要求されたスコープを、このエンドユーザーに与えてよいものに絞る（`scopes.ts` の `resolveGrantableScopes()`）。
+  // `issue-authorization-code` ステップが認可コードに対して行うのと同じ絞り込みである。
+  // 取り除いたスコープはグラントに含めず、レスポンスの `scope` で実際のスコープを伝える（RFC 6749 §3.3）。
   const grantedScope = await resolveGrantableScopes(
     transaction.scope.split(' ').filter(Boolean),
     session.subject,
@@ -84,8 +90,8 @@ export async function issueHybridConsentResponse(
     return answer({ error: error.error, error_description: error.errorDescription, state: transaction.state });
   }
 
-  // Record the consent and the grant, and clear the hand-off of the login
-  // step, as the record-consent step does after a code.
+  // 同意とグラントを記録し、ログインのステップから引き継いだ情報を削除する。
+  // 認可コードを発行したあとに `record-consent` ステップが行うのと同じ処理である。
   await recordConsentDecision(c, transactionId, transaction, session, issued, grantedScope);
   return answer(issued.parameters);
 }

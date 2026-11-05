@@ -11,21 +11,25 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'resolve',
-  label: 'Resolve the presented token',
+  label: '提示されたトークンを取得する',
   spec: 'RFC 7009 §2.1',
   function: 'resolveRevocationTokenTarget',
-  calls: ['requireRevocationToken', 'requireRevocationClient', 'resolveRevocationTarget'],
   consumes: ['params', 'authenticatedClientId'],
   produces: ['token', 'resolved'],
   removable: false,
 });
 
 /**
- * Resolve the presented token (access or refresh token); null when unknown.
- * RFC 7009 §2.1
+ * 提示されたトークンをストアから探して返す。
  *
- * Each check is an independent core function. token_type_hint only reorders
- * the lookup — the other token type is still searched when the hint misses.
+ * 提示されたトークンの値（`token`）と、アクセストークンとリフレッシュトークンのストアを探した結果（`resolved`）を返し、どちらにもなければ `resolved` を `null` にする。
+ * `token_type_hint` は探す順番を変えるだけで、`refresh_token` ならリフレッシュトークンから、それ以外ならアクセストークンから探し、見つからなければもう一方も探す。
+ * リフレッシュトークンは、リゾルバに探す関数と失効させる関数の両方があるときだけ探す。
+ * `token` パラメータがなければ `invalid_request` の、クライアントが識別されていなければ `invalid_client` の `RevocationError` を投げる。
+ *
+ * 中の確認はそれぞれ core の独立した関数なので、一つずつ取り除いたり差し替えたりできる。
+ *
+ * @spec RFC 7009 §2.1
  */
 export async function resolveRevocationTokenTarget(
   c: any,
@@ -34,12 +38,12 @@ export async function resolveRevocationTokenTarget(
 ): Promise<{ token: string; resolved: ResolvedRevocationToken | null }> {
   const resolvers = c.get('revocationResolvers');
 
-  // RFC 7009 §2.1: token is REQUIRED (invalid_request when absent).
+  // `token` パラメータは必須で、なければ `invalid_request` にする（RFC 7009 §2.1）。
   const token = requireRevocationToken({
     token: typeof params.token === 'string' ? params.token : undefined,
   });
 
-  // RFC 7009 §2.1: the caller must be an identified client (invalid_client).
+  // 呼び出し元のクライアントが識別されていることを確かめ、されていなければ `invalid_client` にする（RFC 7009 §2.1）。
   requireRevocationClient(authenticatedClientId);
 
   const resolved = await resolveRevocationTarget({

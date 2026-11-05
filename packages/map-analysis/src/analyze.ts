@@ -6,14 +6,16 @@
  * laid over the working tree (its changed files from git), so the trees
  * before and after a change are read the same way.
  */
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { FlowEndpoint, MemberDoc, StepMark, TreeNode } from './model.js';
+import type { FlowEndpoint, MemberDoc, StepMark, TreeNode, WiringEntry } from './model.js';
 import { moduleOf, overlayConfigs, overlayOf, pathOf, type AnalysisRoot } from './roots.js';
 import { Compiler, SyntaxKind, type Node, type Overlay, type SourceFile } from './ts.js';
 import { any, endLine, is, isFunctionLike, lineAt, nameOf, startLine, stringOf, unwrap, walk } from './ast.js';
 import { Resolver, readContextKeys, type ContextKeys } from './resolve.js';
 import { buildTree, place, signatureOf, type BuiltTree, type FrameInput } from './tree.js';
 import { shorten } from './words.js';
+import { scanWiring } from './wiring.js';
 
 /** The marker of a step, anywhere in a file: `// [id] ...`. */
 const MARKERS = /^[ \t]*\/\/ \[([a-z0-9-]+)\](?: \(feature: [a-z0-9-]+\))? /gm;
@@ -76,6 +78,30 @@ export interface Revision {
   endpointRoots: Map<string, string>;
   /** root:module → the text of the file. */
   texts: Map<string, string>;
+  /** Registration and startup diagnostics, including modules with no function declaration. */
+  wiring: WiringEntry[];
+}
+
+/** Every production module of a configured extraction root, including files containing only registrations or startup values. */
+function allModules(repository: string, roots: readonly AnalysisRoot[], given: RevisionInput['files']): Map<string, string[]> {
+  const found = new Map<string, Set<string>>([...given].map(([root, modules]) => [root, new Set(modules)]));
+  for (const root of roots) {
+    const visit = (directory: string) => {
+      for (const entry of readdirSync(join(repository, directory), { withFileTypes: true })) {
+        const path = `${directory}/${entry.name}`;
+        if (entry.isDirectory()) visit(path);
+        else if (entry.isFile()) {
+          const module = moduleOf(roots, path);
+          if (module === undefined) continue;
+          const set = found.get(module.root) ?? new Set<string>();
+          set.add(module.module);
+          found.set(module.root, set);
+        }
+      }
+    };
+    visit(root.directory);
+  }
+  return new Map([...found].map(([root, modules]) => [root, [...modules].sort()]));
 }
 
 /** The top-level function declarations of a file as the catalog reads them (packages/cli functions.ts): `function` or `export function` at the start of a line. */
@@ -175,10 +201,11 @@ function routePath(endpoint: string, sub: string): string {
 /** Read a revision (see the module comment). */
 export function readRevision(input: RevisionInput): Revision {
   const { repository, roots } = input;
-  const configs = overlayConfigs(repository, roots, input.files);
+  const files = allModules(repository, roots, input.files);
+  const configs = overlayConfigs(repository, roots, files);
   const compiler = new Compiler(repository, configs, input.overlay);
   try {
-    const revision: Revision = { frames: new Map(), trees: new Map(), members: new Map(), endpointRoots: new Map(), texts: new Map() };
+    const revision: Revision = { frames: new Map(), trees: new Map(), members: new Map(), endpointRoots: new Map(), texts: new Map(), wiring: [] };
     const sourceFiles = new Map<string, SourceFile>();
     const fileOf = (root: string, module: string): SourceFile | undefined => {
       const key = `${root}:${module}`;
@@ -203,10 +230,10 @@ export function readRevision(input: RevisionInput): Revision {
       const project = compiler.project(overlayOf(repository, root));
       if (!contextKeys.has(root.project)) {
         // The context of Hono: every file of the roots compiled with this project.
-        const files = [...input.files.entries()]
+        const projectFiles = [...files.entries()]
           .filter(([name]) => roots.find((candidate) => candidate.name === name)?.project === root.project && roots.find((candidate) => candidate.name === name)?.library === undefined)
           .flatMap(([name, modules]) => modules.map((module) => fileOf(name, module)).filter((file): file is SourceFile => file !== undefined));
-        contextKeys.set(root.project, files.length === 0 ? new Map() : readContextKeys(project, files));
+        contextKeys.set(root.project, projectFiles.length === 0 ? new Map() : readContextKeys(project, projectFiles));
       }
       const resolver = new Resolver(project, { repository, roots, isFunction: () => true, paragraph }, contextKeys.get(root.project));
       resolvers.set(root.project, resolver);
@@ -235,7 +262,7 @@ export function readRevision(input: RevisionInput): Revision {
       }
     }
     const modulesByRoot = new Map<string, Set<string>>();
-    for (const [root, modules] of input.files) modulesByRoot.set(root, new Set(modules));
+    for (const [root, modules] of files) modulesByRoot.set(root, new Set(modules));
     for (const key of bodiesOf.keys()) {
       const [root, module] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
       const set = modulesByRoot.get(root) ?? new Set<string>();
@@ -360,9 +387,11 @@ export function readRevision(input: RevisionInput): Revision {
             parts,
           });
         }
+        // Resolve the full module so pure registrations and initializers cannot silently
+        // disappear merely because no catalog function owns their source lines.
+        const resolution = resolver.resolve([file]);
+        revision.wiring.push(...scanWiring({ file, fileId, resolver, checker: compiler.project(overlayOf(repository, root)).checker, resolution, tracedRanges: frames.map((frame) => [frame.info.start, frame.info.end]) }));
         if (frames.length === 0) continue;
-        const bodies = frames.flatMap((frame) => (frame.parts === undefined ? [frame.input.declaration] : frame.parts.map((part) => part.declaration)));
-        const resolution = resolver.resolve(bodies);
         const context = { file, resolution, summaryOf, stepOf: input.stepOf, joinLines: input.joinLines };
         for (const frame of frames) {
           revision.frames.set(frame.info.id, frame.info);

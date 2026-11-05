@@ -21,10 +21,14 @@ import { prepareConsent, submitConsent } from './pipeline.js';
 export const consentPage = new WebRouter();
 
 /**
- * Render the consent form. Swap the view, return a framework-rendered Response,
- * or redirect to a UI of your own — here only. renderView() answers with
- * Cache-Control: no-store unless its headers say otherwise (views.tsx says
- * why); a Response of your own keeps it too.
+ * 同意画面を描画し、HTML の `Response` を返す。
+ *
+ * ビューは、リクエストコンテキストの `views` にあればそれを使い、なければ既定のビューを使う。
+ * 同意画面の見た目を変えるときは、この関数だけを変えればよい（ビューを差し替える、フレームワークで描画した `Response` を返す、独自の UI へリダイレクトする）。
+ *
+ * `renderView()` は、ヘッダーで別の指定をしない限り `Cache-Control: no-store` を付ける。
+ * 同意画面の URL はどのトランザクションでも同じなので、保存された画面を別のブラウザや後のフローで表示すると、別のトランザクションの `csrf_token` やクライアントが見えてしまうためである。
+ * 独自の `Response` を返すときも、このヘッダーを付ける。
  */
 export function renderConsentPage(c: any, params: ConsentPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;
@@ -42,6 +46,7 @@ consentPage.get('/', async (c) => {
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
+    authorizationDetails: screen.authorizationDetails,
   });
 });
 

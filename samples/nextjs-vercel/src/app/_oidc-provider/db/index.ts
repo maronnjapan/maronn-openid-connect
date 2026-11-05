@@ -12,10 +12,13 @@ import { createDatabase as createInstanceDatabase } from './instance';
 export type { KvDatabase as Database } from './database';
 
 /**
- * The database the provider reads and writes: the store of db/instance.ts.
- * provider.ts creates its database when a Route Handler module is imported,
- * and `next build` imports them, so createDatabase() of db/instance.ts runs
- * on the first call to a method instead, and only once.
+ * 最初に使うときに開く KV ストアを返す。
+ *
+ * 返すストアの各メソッドは、`db/instance.ts` のストアの同じメソッドを呼ぶ。
+ * `db/instance.ts` の `createDatabase()` は、最初のメソッドの呼び出しで一度だけ呼んでストアを開く。
+ *
+ * `provider.ts` はルートハンドラのモジュールが読み込まれたときにデータベースを作り、`next build` もそれらのモジュールを読み込む。
+ * ストアを開くのを最初の呼び出しまで遅らせるので、`next build` がモジュールを読み込むだけではストアを開かない。
  */
 export function createDatabase(): KvDatabase {
   let store: KvDatabase | undefined;

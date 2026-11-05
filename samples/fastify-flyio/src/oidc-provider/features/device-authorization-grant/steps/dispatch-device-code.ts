@@ -29,10 +29,9 @@ export const meta = step({
   endpoint: 'token',
   feature: 'device-authorization-grant',
   kind: 'dispatch',
-  label: 'Redeem a device_code',
+  label: 'device_code を引き換える',
   spec: 'RFC 8628 §3.4 / §3.5',
   function: 'redeemDeviceCode',
-  calls: ['processDeviceCodeGrant', 'selectSigningKeyByAlg', 'buildAccessTokenAudience', 'buildAccessTokenPayload', 'computeAtHash', 'resolveAcrAmr', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['params', 'tokenClient', 'authenticatedClientId'],
   produces: [],
   removable: false,
@@ -40,16 +39,25 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628 §3.4).
+ * グラントタイプがデバイスコードならトークンで応答する。
  *
- * Dispatched right after client authentication and BEFORE the grant_type
- * validation, which does not know the URN and would reject it with
- * unsupported_grant_type. Answers the request itself and never falls through
- * to the standard grants; returns undefined for any other grant_type.
+ * `grant_type` がデバイスコードの URN でなければ、何もせず `undefined` を返す。
+ * トークンエンドポイントのパイプラインは、このステップをクライアント認証の直後、`grant_type` の検証より前に実行する。
+ * `grant_type` の検証（core の `validateGrantTypeSupported()`）は `authorization_code` と `refresh_token` しか受け付けず、この URN を `unsupported_grant_type` で拒否するためである。
+ * デバイスコードのグラントなら、このステップが応答まで行い、標準のグラントの処理には進まない。
  *
- * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
- * in a breaking way between releases. Do not build production code on it
- * without pinning the version.
+ * `device_code` のレコードが承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンスで応答する。
+ * 承認済みでなければ、`processDeviceCodeGrant()` が投げる `DeviceAuthorizationError` を、同じコードとステータス（400）の `TokenEndpointError` にして投げる。
+ * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` を表す `TokenEndpointError` を投げる。
+ * 投げた `TokenEndpointError` は、トークンエンドポイントのエラー応答のステップがそのまま返す。
+ *
+ * experimental パッケージの API は安定しておらず、リリースの間で互換性のない変更が入ることがある。
+ * 本番のコードで使うときは、バージョンを固定する。
+ *
+ * @spec RFC 8628 §3.4
+ * @spec RFC 8628 §3.5
+ * @throws {TokenEndpointError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `device_code` のレコードが承認済みでないか、使えないとき（ステータスは 400）。
+ * @throws {TokenEndpointError} `server_error`: クライアントの `alg` に合う ID トークンの署名鍵がないとき（ステータスは 500）。
  */
 export async function redeemDeviceCode(
   c: any,
@@ -64,9 +72,8 @@ export async function redeemDeviceCode(
     const accessTokenStore = c.get('accessTokenStore');
     const deviceStore = c.get('deviceAuthorizationStore');
 
-    // RFC 8628 §3.5 state machine. Everything except "approved" throws:
-    // authorization_pending / slow_down / access_denied / expired_token, plus
-    // invalid_request / invalid_grant / unauthorized_client from §3.4.
+    // `device_code` のレコードの状態を判定し、承認済みならトークンの発行に必要な値を受け取る（RFC 8628 §3.5 の状態機械）。
+    // 承認済み以外では `DeviceAuthorizationError`（`authorization_pending`、`slow_down`、`access_denied`、`expired_token` と、§3.4 の `invalid_request`、`invalid_grant`、`unauthorized_client`）が投げられる。
     const deviceGrant = await processDeviceCodeGrant({
       params,
       client: tokenClient,
@@ -74,16 +81,14 @@ export async function redeemDeviceCode(
     });
 
     const deviceConfig = c.get('config');
-    // The first registered key signs new tokens (SigningKeyProvider contract).
+    // 新しいトークンには、登録された最初の鍵で署名する（`SigningKeyProvider` の契約）。
     const deviceSigningKey: SigningKey = c.get('signingKeys')[0];
     const devicePrivateKey = deviceSigningKey.privateKey;
     const deviceKeyId = deviceSigningKey.keyId;
-    // T-022: the ID Token this grant issues follows the SAME key-selection rule
-    // as the standard grants — pick a registered ID Token key whose alg matches
-    // the client's id_token_signed_response_alg (OIDC Dynamic Client
-    // Registration 1.0 §2), not simply the first key of the set. Using the
-    // first key would hand an ES256-registered client an RS256 ID Token, which
-    // it rejects, and would hash at_hash with the wrong algorithm.
+    // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ。
+    // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OIDC Dynamic Client Registration 1.0 §2）。
+    // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
+    // `at_hash` も誤ったアルゴリズムで計算してしまう。
     const deviceIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
     const deviceRegisteredClient = (await tokenClientResolver.findClient(
       authenticatedClientId,
@@ -108,9 +113,9 @@ export async function redeemDeviceCode(
         ? createOpaqueAccessTokenIssuer()
         : createJwtAccessTokenIssuer();
 
-    // Same aud policy as the standard grants: the UserInfo endpoint stays a
-    // permanent member (RFC 9068 §3). RFC 8628 has no resource parameter, so
-    // nothing else is requested.
+    // アクセストークンの `aud` を、標準のグラントと同じ方針で組み立てる。
+    // UserInfo エンドポイントを常に含める（RFC 9068 §3）。
+    // RFC 8628 には `resource` パラメータがないので、ほかのオーディエンスは要求されない。
     const deviceAudience = buildAccessTokenAudience({
       userInfoEndpoint: `${deviceConfig.issuer}/userinfo`,
       issuer: deviceConfig.issuer,
@@ -132,10 +137,10 @@ export async function redeemDeviceCode(
       keyId: deviceKeyId,
     });
 
-    // The device authorization endpoint requires the openid scope, so an ID
-    // Token is always issued. It carries no nonce (RFC 8628 defines no such
-    // parameter, and OIDC Core 1.0 §2 only requires nonce when the
-    // authentication request carried one) and no c_hash (there is no code).
+    // ID トークンは必ず発行する。
+    // デバイス認可エンドポイントが `openid` スコープを必須にしているためである。
+    // RFC 8628 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
+    // 認可コードがないので、`c_hash` も含めない。
     const deviceAtHash = await computeAtHash(deviceAccessToken, deviceIdTokenPrivateKey);
     const deviceAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
     const { acr: deviceAcr, amr: deviceAmr } = await resolveAcrAmr({
@@ -166,8 +171,7 @@ export async function redeemDeviceCode(
       clientId: deviceGrant.clientId,
       scope: deviceGrant.scope,
       expiresAt: deviceIssuedAt + deviceConfig.accessTokenExpiresIn,
-      // Inherit the grantId minted at approval so revoking the grant kills
-      // every token issued from this device authorization.
+      // 承認のときに作ったグラント ID を引き継ぎ、そのグラントを失効させれば、このデバイス認可から発行したトークンがすべて失効するようにする。
       grantId: deviceGrant.grantId,
       iat: deviceIssuedAt,
       nbf: deviceIssuedAt,
@@ -176,10 +180,9 @@ export async function redeemDeviceCode(
       jti: deviceAccessTokenPayload.jti,
     });
 
-    // OIDC Core 1.0 §11: offline_access survived the device authorization
-    // endpoint's policy check only if this client may hold refresh tokens, and
-    // the approval screen the user just went through IS the explicit consent
-    // that §11 asks for. Nothing further to gate on here.
+    // `scope` に `offline_access` があれば、リフレッシュトークンを発行する（OIDC Core 1.0 §11）。
+    // `offline_access` がここまで残るのは、デバイス認可エンドポイントの方針の確認で、このクライアントがリフレッシュトークンを持てると判定されたときだけである。
+    // エンドユーザーが通った承認画面が §11 の求める明示的な同意にあたるので、ここで確かめることはほかにない。
     const deviceRefreshToken = deviceGrant.scope.includes('offline_access')
       ? generateRandomString(32)
       : undefined;
@@ -189,8 +192,8 @@ export async function redeemDeviceCode(
         subject: deviceGrant.subject,
         clientId: deviceGrant.clientId,
         scope: deviceGrant.scope,
-        // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
-        // inherit originalIssuedAt so the deadline never slides forward.
+        // 有効期限は、最初の発行から数えた絶対的な期間で決める（OAuth 2.1 §6.1）。
+        // ローテーションでは `originalIssuedAt` を引き継ぐので、期限が後ろにずれることはない。
         expiresAt: deviceIssuedAt + deviceConfig.refreshTokenAbsoluteLifetime,
         originalIssuedAt: deviceIssuedAt,
         used: false,
@@ -199,8 +202,7 @@ export async function redeemDeviceCode(
         issuer: deviceConfig.issuer,
         audience: deviceAudience,
         authTime: deviceGrant.authTime,
-        // RFC 8628 has no nonce parameter, so the re-issued ID Token has none
-        // to preserve either.
+        // RFC 8628 には `nonce` パラメータがないので、再発行する ID トークンにも引き継ぐ `nonce` はない。
         nonce: undefined,
         acr: deviceAcr,
         amr: deviceAmr,
@@ -220,10 +222,9 @@ export async function redeemDeviceCode(
       },
     });
   } catch (error) {
-    // RFC 8628 §3.5: authorization_pending / slow_down / access_denied /
-    // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
-    // only come from client authentication, which runs before the branch and
-    // throws core's TokenError.
+    // `DeviceAuthorizationError` を、同じコードとステータスの `TokenEndpointError` にして投げ直す。
+    // `authorization_pending`、`slow_down`、`access_denied`、`expired_token` は RFC 6749 §5.2 の形のエラーで、ステータスは常に 400 である（RFC 8628 §3.5）。
+    // 401 になるのはクライアント認証の失敗だけで、それはこの分岐より前に core の `TokenError` として投げられる。
     if (error instanceof DeviceAuthorizationError) {
       throw new TokenEndpointError({
         status: error.statusCode,

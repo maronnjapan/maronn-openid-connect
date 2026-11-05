@@ -6,19 +6,22 @@ export const meta = step({
   id: 'continue-to-login',
   endpoint: 'authorize',
   kind: 'respond',
-  label: 'Continue on the login screen',
+  label: 'ログイン画面へ進む',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'continueToLogin',
-  calls: ['buildTransactionCookie'],
   consumes: ['transactionId', 'transactionTtlSeconds'],
   produces: [],
   removable: false,
 });
 
 /**
- * Interactive authentication: continue on the login screen (endpoints/login/page.tsx;
- * prompt=login forces re-authentication there), which finds the transaction
- * through the cookie that travels with this answer. OIDC Core 1.0 §3.1.2.3
+ * ログイン画面へ移る結果を返す。
+ *
+ * 結果には、トランザクション ID を入れたトランザクションの Cookie を付ける。
+ * ログイン画面（`endpoints/login/page.tsx`）は、リダイレクトに付いたこの Cookie からトランザクションを見つけ、エンドユーザーを対話で認証する。
+ * `prompt=login` のリクエストは、セッションがあってもここへ来て、ログイン画面で認証し直す。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.3
  */
 export function continueToLogin(transactionId: string, transactionTtlSeconds: number): AuthorizationOutcome {
   return { kind: 'login', cookies: [buildTransactionCookie(transactionId, transactionTtlSeconds)] };

@@ -13,6 +13,7 @@ import {
   type ClientResolver,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../../client-jwks-uri.js';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 import type { MemoryDatabase } from './database.js';
 
@@ -53,6 +54,10 @@ export function createClientKeyResolver(db: MemoryDatabase): ClientKeyResolver {
  * `clientSecret` はハッシュ（`hashClientSecret()`）にして `clientSecretHash` に保存し、`clientSecret` そのものは保存しない。
  * クライアントは、`tokenEndpointAuthMethods` のどの方式でも認証できる。
  *
+ * 公開鍵を `jwks_uri` で公開するクライアントは、`keys` の代わりに `jwksUri` を登録する（RFC 7591 §2）。
+ * `jwksUri` と `keys` を両方持つクライアントや、`http` か `https` の絶対 URL でない `jwksUri` は、何も保存せずに拒否する。
+ *
+ * @throws {Error} `jwksUri` が `http` か `https` の絶対 URL でないとき、または `jwksUri` と `keys` を両方持つとき（何も書き込まずに投げる）
  * @example
  * ```ts
  * await registerClient(db, {
@@ -62,9 +67,17 @@ export function createClientKeyResolver(db: MemoryDatabase): ClientKeyResolver {
  *   grantTypes: ['authorization_code', 'refresh_token'],
  *   tokenEndpointAuthMethods: ['client_secret_basic'],
  * });
+ *
+ * await registerClient(db, {
+ *   clientId: 'rp-with-jwks-uri',
+ *   redirectUris: ['https://rp.example.com/callback'],
+ *   jwksUri: 'https://rp.example.com/jwks.json',
+ *   requestObjectSigningAlg: 'ES256',
+ * });
  * ```
  */
 export async function registerClient(db: MemoryDatabase, client: ClientRegistration): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const { clientSecret, ...registration } = client;
   db.clients.set(client.clientId, {
     ...registration,

@@ -4,11 +4,12 @@ import {
   validateClientMetadata,
   type DynamicallyRegisteredClient,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
+import type { ProviderConfig } from '../../../../../config.js';
 import { supportedResponseTypes } from '../../../../../endpoints/authorize/response-type.js';
 import { step } from '../../../../../endpoints/step.js';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../../../../scopes.js';
 import { features } from '../../../../enabled.js';
-import { tokenGrantsOf } from '../../../../feature.js';
+import { discoveryOf, tokenGrantsOf } from '../../../../feature.js';
 import type { DynamicClientRegistrationConfig } from '../../../config.js';
 
 export const meta = step({
@@ -39,6 +40,8 @@ export const meta = step({
  * - `response_types`: `code` と生成された機能のレスポンスタイプ（ディスカバリーが公開するものと同じ）
  * - `scope`: scopes.ts に独自のスコープを宣言するまではどの値でもよく、宣言したあとは標準のスコープと宣言したスコープ
  * - `id_token_signed_response_alg` と `userinfo_signed_response_alg`: 登録した署名鍵のアルゴリズム（ディスカバリーが公開するものと同じ）
+ * - `jwks_uri`: 登録の設定の `acceptJwksUri` が有効なあいだ、宛先をプロバイダーの設定の `allowInsecureClientJwksUri` に照らして検査し、登録する（RFC 7591 §2）。ここでは取得しない
+ * - `request_object_signing_alg`: ディスカバリーが `request_object_signing_alg_values_supported` に公開する alg（OIDC Dynamic Client Registration 1.0 §2）。request-object の機能がない OP では、理解しないメタデータとして無視する
  * - 登録の設定（config.ts）の独自のメタデータ
  *
  * 理解しないメタデータは黙って無視する（RFC 7591 §2 の MUST）。
@@ -53,7 +56,9 @@ export function validateRegistrationMetadata(
   metadata: Record<string, unknown>,
 ): DynamicallyRegisteredClient {
   const config: DynamicClientRegistrationConfig = c.get('dynamicClientRegistrationConfig');
+  const providerConfig: ProviderConfig = c.get('config');
   const responseTypes = supportedResponseTypes();
+  const requestObjectSigningAlgs = registrableRequestObjectSigningAlgs(providerConfig);
   const validated = validateClientMetadata(metadata, {
     tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
     grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
@@ -61,9 +66,27 @@ export function validateRegistrationMetadata(
     scopes: registrableScopes(),
     idTokenSigningAlgValuesSupported: signingAlgsOf(c.get('idTokenSigningKeys')),
     userinfoSigningAlgValuesSupported: signingAlgsOf(c.get('userinfoSigningKeys')),
+    acceptJwksUri: config.acceptJwksUri,
+    allowInsecureJwksUri: providerConfig.allowInsecureClientJwksUri,
+    ...(requestObjectSigningAlgs === undefined
+      ? {}
+      : { requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs }),
     customMetadata: config.customClientMetadata,
   });
   return buildRegisteredClient(validated);
+}
+
+/**
+ * 登録で指定できる `request_object_signing_alg` の値の一覧か `undefined` を返す。
+ *
+ * ディスカバリーが `request_object_signing_alg_values_supported` に公開する alg と同じ一覧で（OIDC Discovery 1.0 §3）、署名のないリクエストオブジェクトを受け付けるあいだは `none` も含む。
+ * そのメンバーを公開する機能がない（request-object の機能のない OP）ときは `undefined` を返し、`request_object_signing_alg` を理解しないメタデータとして無視させる。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ */
+export function registrableRequestObjectSigningAlgs(config: ProviderConfig): readonly string[] | undefined {
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_object_signing_alg_values_supported'];
+  return Array.isArray(advertised) ? advertised.filter((alg): alg is string => typeof alg === 'string') : undefined;
 }
 
 /**

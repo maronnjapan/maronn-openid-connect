@@ -142,6 +142,37 @@ describe('registerClient', () => {
 
       expect(await rows('SELECT response_type FROM client_response_types')).toEqual([]);
     });
+
+    // RFC 7591 §2 jwks_uri / OIDC Dynamic Client Registration 1.0 §2 request_object_signing_alg.
+    it('should save the jwksUri and the requestObjectSigningAlg as rows of the client', async () => {
+      await registerClient(db, {
+        clientId: 'rp-uri',
+        redirectUris: ['https://rp.example.com/callback'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+        requestObjectSigningAlg: 'ES256',
+      });
+
+      expect(await rows('SELECT client_id, value FROM client_jwks_uris')).toEqual([
+        { client_id: 'rp-uri', value: 'https://rp.example.com/jwks.json' },
+      ]);
+      expect(await rows('SELECT client_id, alg FROM client_request_object_signing_algs')).toEqual([
+        { client_id: 'rp-uri', alg: 'ES256' },
+      ]);
+    });
+
+    it('should save no jwks_uri or signing alg rows for a client registered without them', async () => {
+      await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
+
+      expect(await rows('SELECT client_id FROM client_jwks_uris')).toEqual([]);
+      expect(await rows('SELECT client_id FROM client_request_object_signing_algs')).toEqual([]);
+    });
+
+    it('should reject a jwksUri that is not an absolute http or https URL and save nothing', async () => {
+      await expect(
+        registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'], jwksUri: 'ftp://rp.example.com/jwks' }),
+      ).rejects.toThrow('Client rp-1 has an invalid jwksUri: jwks_uri must use http or https');
+      expect(await rows('SELECT COUNT(*) AS count FROM clients')).toEqual([{ count: 0 }]);
+    });
   });
 
   describe('Registering Again', () => {
@@ -223,6 +254,33 @@ describe('registerClient', () => {
       expect(await snapshot()).toEqual(first);
     });
 
+    it('should replace the jwksUri and the requestObjectSigningAlg, and remove them when they are left out', async () => {
+      await registerClient(db, {
+        clientId: 'rp-uri',
+        redirectUris: ['https://rp.example.com/callback'],
+        jwksUri: 'https://rp.example.com/old-jwks.json',
+        requestObjectSigningAlg: 'RS256',
+      });
+      await registerClient(db, {
+        clientId: 'rp-uri',
+        redirectUris: ['https://rp.example.com/callback'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+        requestObjectSigningAlg: 'ES256',
+      });
+
+      expect(await rows('SELECT client_id, value FROM client_jwks_uris')).toEqual([
+        { client_id: 'rp-uri', value: 'https://rp.example.com/jwks.json' },
+      ]);
+      expect(await rows('SELECT client_id, alg FROM client_request_object_signing_algs')).toEqual([
+        { client_id: 'rp-uri', alg: 'ES256' },
+      ]);
+
+      await registerClient(db, { clientId: 'rp-uri', redirectUris: ['https://rp.example.com/callback'] });
+
+      expect(await rows('SELECT client_id FROM client_jwks_uris')).toEqual([]);
+      expect(await rows('SELECT client_id FROM client_request_object_signing_algs')).toEqual([]);
+    });
+
     it('should make a deleted client known again when it is registered again', async () => {
       await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
       await db.run({ sql: "UPDATE clients SET is_deleted = TRUE WHERE id = 'rp-1'", params: [] });
@@ -258,6 +316,20 @@ describe('registerClient', () => {
         { purpose: 'private_key_jwt', jwk: JSON.stringify(requestObjectKey) },
         { purpose: 'request_object', jwk: JSON.stringify(requestObjectKey) },
       ]);
+    });
+
+    // UC-20 / D-17: one source of keys per client, as RFC 7591 §2 asks of jwks and jwks_uri.
+    it('should reject a client that registers both a jwksUri and keys, and save nothing', async () => {
+      await expect(
+        registerClient(db, {
+          clientId: 'rp-1',
+          redirectUris: ['https://rp.example.com/callback'],
+          jwksUri: 'https://rp.example.com/jwks.json',
+          keys: { request_object: { keys: [requestObjectKey] } },
+        }),
+      ).rejects.toThrow('Client rp-1 registers both jwksUri and keys: register one of them (RFC 7591 §2)');
+      expect(await rows('SELECT COUNT(*) AS count FROM clients')).toEqual([{ count: 0 }]);
+      expect(await rows('SELECT COUNT(*) AS count FROM client_jwks')).toEqual([{ count: 0 }]);
     });
 
     it('should keep the keys of an earlier registration and add a listed key only once', async () => {
@@ -337,6 +409,23 @@ describe('createClientResolver', () => {
 
     // The rows come back in the order of their ids, which is not the order they were registered in.
     expect([...(client?.responseTypes ?? [])].sort()).toEqual(['id_token', 'id_token token']);
+  });
+
+  it('should find the jwksUri and the requestObjectSigningAlg of a client', async () => {
+    await registerClient(db, {
+      clientId: 'rp-uri',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'ES256',
+    });
+
+    expect(await createClientResolver(db).findClient('rp-uri')).toEqual({
+      clientId: 'rp-uri',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'ES256',
+    });
   });
 
   it('should find a registered client without its public keys', async () => {

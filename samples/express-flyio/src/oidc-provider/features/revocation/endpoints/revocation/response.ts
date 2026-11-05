@@ -19,6 +19,13 @@ export class RevocationEndpointError extends Error {
   }
 }
 
+/**
+ * レスポンスにキャッシュを禁じるヘッダーを設定する。
+ *
+ * リクエストコンテキストに `Cache-Control: no-store` と `Pragma: no-cache` を設定し、失効エンドポイントのレスポンスをキャッシュさせない。
+ *
+ * @spec RFC 7009 §2.2
+ */
 export function noStore(c: any): void {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');

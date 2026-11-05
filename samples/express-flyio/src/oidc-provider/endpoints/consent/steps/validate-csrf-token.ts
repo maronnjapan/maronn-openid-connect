@@ -6,18 +6,19 @@ export const meta = step({
   id: 'validate-csrf-token',
   endpoint: 'consent',
   kind: 'validate',
-  label: 'Check csrf_token against the transaction',
+  label: 'csrf_token をトランザクションと照合する',
   function: 'validateConsentCsrfToken',
-  calls: ['validateCsrfToken'],
   consumes: ['transaction', 'csrfToken'],
   produces: [],
   removable: false,
 });
 
 /**
- * [validate-csrf-token] The csrf_token says the decision came from the form
- * the OP rendered for exactly this transaction; any other token is refused
- * (403) on the OP's own error page.
+ * `csrf_token` が一致しなければ 403 のエラーを返す。
+ *
+ * 送られた `csrf_token` を、トランザクションに保存した値と比べる。
+ * 一致すれば、決定はこのトランザクションのために OP が描画したフォームから送られたと分かるので、`undefined` を返す。
+ * エラーは OP のエラーページに表示し、クライアントへはリダイレクトしない。
  */
 export function validateConsentCsrfToken(
   transaction: AuthTransaction,

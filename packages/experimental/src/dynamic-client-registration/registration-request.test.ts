@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ClientRegistrationError, isClientRegistrationError } from './registration-error.js';
 import {
   parseClientRegistrationBody,
@@ -178,10 +178,12 @@ describe('validateClientMetadata', () => {
   });
 
   describe('unknown metadata (RFC 7591 Section 2 MUST ignore)', () => {
+    // request_object_signing_alg is understood only with
+    // requestObjectSigningAlgValuesSupported (a provider without Request Objects).
     it('should silently drop metadata this provider does not understand', () => {
       const validated = validateClientMetadata({
         ...MINIMAL,
-        jwks_uri: 'https://app.example.com/jwks.json',
+        request_object_signing_alg: 'RS256',
         sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
         require_auth_time: true,
       });
@@ -851,6 +853,195 @@ describe('validateClientMetadata', () => {
     });
   });
 
+  describe('jwks_uri (RFC 7591 Section 2)', () => {
+    const jwksUriDescription =
+      'jwks_uri must be an absolute https URL without a fragment or userinfo that does not point to a loopback, private or link-local address';
+
+    // RFC 7591 §2 prefers jwks_uri to jwks, and both register by default.
+    it('should register jwks_uri and echo it by default', () => {
+      const validated = validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' });
+      expect(validated.jwksUri).toBe('https://app.example.com/jwks.json');
+      expect(validated.metadata['jwks_uri']).toBe('https://app.example.com/jwks.json');
+      expect(validated.jwks).toBeUndefined();
+    });
+
+    // A provider that does not fetch a jwks_uri turns it off.
+    it('should ignore jwks_uri when acceptJwksUri is off', () => {
+      const validated = validateClientMetadata(
+        { ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' },
+        { acceptJwksUri: false },
+      );
+      expect(validated).toEqual(MINIMAL_VALIDATED);
+    });
+
+    // D-16: the jwks_uri is checked, not fetched, at registration.
+    it('should not fetch the jwks_uri', () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      try {
+        validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    // UC-10: RFC 7591 §2 MUST NOT, whether or not the provider fetches jwks_uri.
+    it('should reject jwks together with jwks_uri even when acceptJwksUri is off', () => {
+      expect(() =>
+        validateClientMetadata(
+          {
+            ...MINIMAL,
+            jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] },
+            jwks_uri: 'https://app.example.com/jwks.json',
+          },
+          { acceptJwksUri: false },
+        ),
+      ).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present'),
+      );
+    });
+
+    // UC-11 / D-9: the error_description is fixed and never reflects the URI.
+    it.each([
+      ['an http URL', 'http://app.example.com/jwks.json'],
+      ['a private address', 'https://10.0.0.5/jwks'],
+      ['a loopback address', 'https://127.0.0.1/jwks'],
+      ['localhost', 'https://localhost/jwks'],
+      ['a fragment', 'https://app.example.com/jwks.json#key'],
+      ['userinfo', 'https://user:secret@app.example.com/jwks.json'],
+      ['a relative URL', '/jwks.json'],
+      ['a number', 42],
+    ])('should reject a jwks_uri with %s', (_label, jwksUri) => {
+      expect(() => validateClientMetadata({ ...MINIMAL, jwks_uri: jwksUri })).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', jwksUriDescription),
+      );
+    });
+
+    // UC-7: the development flag lets http and loopback through.
+    it('should accept an http loopback jwks_uri when allowInsecureJwksUri is on', () => {
+      const validated = validateClientMetadata(
+        { ...MINIMAL, jwks_uri: 'http://127.0.0.1:3020/jwks.json' },
+        { allowInsecureJwksUri: true },
+      );
+      expect(validated.jwksUri).toBe('http://127.0.0.1:3020/jwks.json');
+    });
+  });
+
+  describe('request_object_signing_alg (OIDC Dynamic Client Registration 1.0 Section 2)', () => {
+    const SUPPORTED = ['RS256', 'ES256'];
+
+    // UC-9
+    it('should register an alg of requestObjectSigningAlgValuesSupported and echo it', () => {
+      const validated = validateClientMetadata(
+        { ...MINIMAL, request_object_signing_alg: 'ES256' },
+        { requestObjectSigningAlgValuesSupported: SUPPORTED },
+      );
+      expect(validated.requestObjectSigningAlg).toBe('ES256');
+      expect(validated.metadata['request_object_signing_alg']).toBe('ES256');
+    });
+
+    it('should register nothing when the registration leaves request_object_signing_alg out', () => {
+      const validated = validateClientMetadata(MINIMAL, { requestObjectSigningAlgValuesSupported: SUPPORTED });
+      expect(validated).toEqual(MINIMAL_VALIDATED);
+    });
+
+    // UC-12
+    it('should reject an alg outside the supported values', () => {
+      expect(() =>
+        validateClientMetadata(
+          { ...MINIMAL, request_object_signing_alg: 'PS256' },
+          { requestObjectSigningAlgValuesSupported: SUPPORTED },
+        ),
+      ).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'request_object_signing_alg must be one of RS256, ES256'),
+      );
+    });
+
+    // UC-12: none is accepted only by an OP that accepts unsigned Request Objects.
+    it('should reject none when the supported values do not list it', () => {
+      expect(() =>
+        validateClientMetadata(
+          { ...MINIMAL, request_object_signing_alg: 'none' },
+          { requestObjectSigningAlgValuesSupported: SUPPORTED },
+        ),
+      ).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'request_object_signing_alg must be one of RS256, ES256'),
+      );
+    });
+
+    // OIDC Dynamic Client Registration 1.0 §2: none MAY be used.
+    it('should accept none when the supported values list it', () => {
+      const validated = validateClientMetadata(
+        { ...MINIMAL, request_object_signing_alg: 'none' },
+        { requestObjectSigningAlgValuesSupported: [...SUPPORTED, 'none'] },
+      );
+      expect(validated.requestObjectSigningAlg).toBe('none');
+    });
+
+    it('should reject an alg that is not a string', () => {
+      expect(() =>
+        validateClientMetadata(
+          { ...MINIMAL, request_object_signing_alg: ['RS256'] },
+          { requestObjectSigningAlgValuesSupported: SUPPORTED },
+        ),
+      ).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'request_object_signing_alg must be one of RS256, ES256'),
+      );
+    });
+
+    // UC-13 / D-22: a registration whose jwks cannot verify the alg fails at once.
+    it('should reject an alg that no key of jwks can be used with', () => {
+      expect(() =>
+        validateClientMetadata(
+          {
+            ...MINIMAL,
+            request_object_signing_alg: 'ES256',
+            jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] },
+          },
+          { requestObjectSigningAlgValuesSupported: SUPPORTED },
+        ),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'jwks must contain a key that can be used with the request_object_signing_alg',
+        ),
+      );
+    });
+
+    it('should accept an alg a key of jwks can be used with', () => {
+      const validated = validateClientMetadata(
+        {
+          ...MINIMAL,
+          request_object_signing_alg: 'ES256',
+          jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }, { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }] },
+        },
+        { requestObjectSigningAlgValuesSupported: SUPPORTED },
+      );
+      expect(validated.requestObjectSigningAlg).toBe('ES256');
+    });
+
+    it('should not look for a key of none in jwks', () => {
+      const validated = validateClientMetadata(
+        { ...MINIMAL, request_object_signing_alg: 'none', jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] } },
+        { requestObjectSigningAlgValuesSupported: ['RS256', 'none'] },
+      );
+      expect(validated.requestObjectSigningAlg).toBe('none');
+    });
+
+    // D-16 / D-22: the keys behind a jwks_uri are not fetched, so they are not checked.
+    it('should register the alg with a jwks_uri without checking its keys', () => {
+      const validated = validateClientMetadata(
+        { ...MINIMAL, request_object_signing_alg: 'ES256', jwks_uri: 'https://app.example.com/jwks.json' },
+        { requestObjectSigningAlgValuesSupported: SUPPORTED },
+      );
+      expect(validated).toMatchObject({ requestObjectSigningAlg: 'ES256', jwksUri: 'https://app.example.com/jwks.json' });
+      expect(validated.metadata).toMatchObject({
+        request_object_signing_alg: 'ES256',
+        jwks_uri: 'https://app.example.com/jwks.json',
+      });
+    });
+  });
+
   describe('software_statement echo (RFC 7591 Section 3.2.1)', () => {
     it('should return a software_statement string the caller placed as registered metadata', () => {
       const validated = validateClientMetadata({ ...MINIMAL, software_statement: 'eyJhbGciOiJSUzI1NiJ9.e30.sig' });
@@ -915,6 +1106,14 @@ describe('validateClientMetadata', () => {
       expect(() =>
         validateClientMetadata(MINIMAL, { customMetadata: { redirect_uris: (value) => value } }),
       ).toThrowError(new TypeError('custom client metadata must not redefine the standard field redirect_uris'));
+    });
+
+    it('should refuse a custom validator for request_object_signing_alg, a standard field', () => {
+      expect(() =>
+        validateClientMetadata(MINIMAL, { customMetadata: { request_object_signing_alg: (value) => value } }),
+      ).toThrowError(
+        new TypeError('custom client metadata must not redefine the standard field request_object_signing_alg'),
+      );
     });
   });
 });

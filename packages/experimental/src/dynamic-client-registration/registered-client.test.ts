@@ -131,6 +131,31 @@ describe('buildRegisteredClient', () => {
       });
     });
 
+    // UC-3 / UC-9
+    it('should carry jwks_uri and request_object_signing_alg into the record', () => {
+      const client = buildRegisteredClient(
+        {
+          ...CONFIDENTIAL,
+          jwksUri: 'https://app.example.com/jwks.json',
+          requestObjectSigningAlg: 'ES256',
+          metadata: {
+            ...CONFIDENTIAL.metadata,
+            jwks_uri: 'https://app.example.com/jwks.json',
+            request_object_signing_alg: 'ES256',
+          },
+        },
+        FIXED,
+      );
+      expect(client).toMatchObject({
+        jwksUri: 'https://app.example.com/jwks.json',
+        requestObjectSigningAlg: 'ES256',
+      });
+      expect(buildClientRegistrationResponse(client)).toMatchObject({
+        jwks_uri: 'https://app.example.com/jwks.json',
+        request_object_signing_alg: 'ES256',
+      });
+    });
+
     // id_token_signed_response_alg is never left out: it always carries at
     // least its default (OIDC Dynamic Client Registration 1.0 §2).
     it('should leave the optional record fields out when they were not registered', () => {

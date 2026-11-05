@@ -22,6 +22,12 @@
  * - response_types: responseTypes, the response types the client may use at
  *   the authorization endpoint (id_token and id_token token for the Implicit
  *   Flow). A client without them may use code only.
+ * - jwks_uri: jwksUri, the jwks_uri the OP fetches the client's keys from
+ *   (RFC 7591 §2). A client with one gets the keys of its jwks_uri, not those
+ *   of keys.clientJwks(), for the purposes of clientJwksUriPurposes.
+ * - request_object_signing_alg: requestObjectSigningAlg, the alg every Request
+ *   Object of the client must be signed with (OIDC Dynamic Client Registration
+ *   1.0 §2).
  * - Metadata without a field (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -48,6 +54,7 @@ import {
   type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../../client-jwks-uri.js';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 import { readRecord, writeRecord, type KvDatabase } from './database.js';
 import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord } from './keys.js';
@@ -65,6 +72,7 @@ import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord }
  * - コンフィデンシャルクライアントなら、`client_auths` の各エントリーの方式を `tokenEndpointAuthMethods` に、エントリーのシークレットを `clientSecretHash` にする。
  * - `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
  * - `grant_types`、`scopes`、`response_types` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes` にし、空なら設定せずに既定の扱いに任せる。
+ * - `jwks_uri` と `request_object_signing_alg` は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違うエントリーを `client_auths` に持つクライアントを読んだとき
  */
@@ -81,6 +89,10 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       if (client.grant_types.length > 0) registered.grantTypes = client.grant_types;
       if (client.scopes.length > 0) registered.scope = client.scopes;
       if ((client.response_types ?? []).length > 0) registered.responseTypes = client.response_types;
+      if (typeof client.jwks_uri === 'string') registered.jwksUri = client.jwks_uri;
+      if (typeof client.request_object_signing_alg === 'string') {
+        registered.requestObjectSigningAlg = client.request_object_signing_alg;
+      }
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
       } else if (client.client_auths[0]) {
@@ -136,8 +148,13 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * 鍵を取り除くには、ストアのレコードから消し、ここに渡すクライアントからも外す。
  * 外さなければ、次の登録で鍵が戻る。
  *
+ * `jwksUri` と `requestObjectSigningAlg` は、クライアントのレコードの `jwks_uri` と `request_object_signing_alg` に書く。
+ * そのため、これらを持たない登録は、登録済みの値を取り除く。
+ * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
+ *
  * セットアップ用のスクリプトや起動時の処理から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
  *
+ * @throws {Error} `jwksUri` が `http` か `https` の絶対 URL でないとき、または `jwksUri` と `keys` を両方持つとき（何も書き込まずに投げる）
  * @throws {Error} `clientType` が `public` でなく、`tokenEndpointAuthMethods` に `none` とほかの方式を並べたとき
  * @example
  * ```ts
@@ -157,6 +174,7 @@ export async function registerClient(
   db: KvDatabase,
   client: ClientRegistration & { name?: string },
 ): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   const secretHash =
     client.clientSecretHash ??
@@ -178,6 +196,10 @@ export async function registerClient(
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],
     response_types: [...(client.responseTypes ?? [])],
+    ...(client.jwksUri === undefined ? {} : { jwks_uri: client.jwksUri }),
+    ...(client.requestObjectSigningAlg === undefined
+      ? {}
+      : { request_object_signing_alg: client.requestObjectSigningAlg }),
   };
   await writeRecord(db, keys.client(client.clientId), record);
 

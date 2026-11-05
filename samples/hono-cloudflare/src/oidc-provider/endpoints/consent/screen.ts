@@ -23,6 +23,12 @@ export interface ConsentScreen {
   scopes: string[];
   /** Client requesting the authorization. */
   clientId: string;
+  /**
+   * Display lines of the requested authorization details (RFC 9396 §3.1),
+   * shown next to the scopes. Set by the rar feature; absent without it or
+   * when the request carried no authorization_details.
+   */
+  authorizationDetails?: readonly string[];
 }
 
 /** A failure the OP shows on its own error page (never redirected to the client). */
@@ -62,11 +68,15 @@ export interface ConsentedAuthorization {
 }
 
 /**
- * The OP's own error page for a transaction that cannot continue: unknown,
- * finished or expired (400), or a csrf_token that does not belong to it (403).
- * It is never redirected to the client's redirect_uri: until the transaction
- * and its csrf_token check out, the OP cannot tell whose request this is, and
- * answering the client could hand a code for this End-User to someone else.
+ * トランザクションのエラーを、画面に出すエラーに変える。
+ *
+ * ステータスコードには、エラーの `httpStatusCode` を使う。
+ * トランザクションが見つからないとき（すでに終わったものを含む）と期限切れのときは 400、`csrf_token` がトランザクションのものでないときは 403 になる。
+ *
+ * このエラーは OP のエラーページに表示し、クライアントの `redirect_uri` へはリダイレクトしない。
+ * トランザクションと `csrf_token` を確かめるまでは誰のリクエストかを OP が判別できず、クライアントへ応答すると、このエンドユーザーの認可コードを別人に渡すおそれがあるためである。
+ *
+ * @throws 受け取った `error` が `AuthTransactionError` でないときは、それをそのまま投げる。
  */
 export function transactionErrorOutcome(error: unknown): ConsentError {
   if (!(error instanceof AuthTransactionError)) throw error;

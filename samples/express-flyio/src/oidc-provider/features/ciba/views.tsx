@@ -71,6 +71,12 @@ declare module '../../views.js' {
   }
 }
 
+/**
+ * 認証デバイスのログイン画面を描画する。
+ *
+ * ユーザー名とパスワードを `/ciba/login` に送るフォームで、隠しフィールドの `login_transaction_id` と `csrf_token` も一緒に送る。
+ * 前の試行が失敗していれば、フォームの上にエラーと、わかっていれば残りの試行回数を表示する。
+ */
 function defaultCibaLoginPage(params: CibaLoginPageParams): JSX.Element {
   return (
     <Layout title="Sign in">
@@ -87,6 +93,15 @@ function defaultCibaLoginPage(params: CibaLoginPageParams): JSX.Element {
   );
 }
 
+/**
+ * 保留中のリクエストを承認と拒否のボタン付きで描画する。
+ *
+ * ログインしているエンドユーザー宛てのリクエストごとに、クライアント、要求されたスコープ、`binding_message`（クライアントが送ったときだけ）、残りの秒数を表示する。
+ * 承認と拒否のボタンは、`decision`、`auth_req_id`、`csrf_token` を `/ciba/approve` に送る。
+ * リクエストがなければ、保留中のリクエストがないことだけを表示する。
+ *
+ * @spec CIBA Core 1.0 §7.1
+ */
 function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): JSX.Element {
   if (params.requests.length === 0) {
     return (
@@ -97,9 +112,9 @@ function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): 
     );
   }
 
-  // CIBA Core 1.0 §7.1: the binding_message is repeated here on purpose. Ask
-  // the user to check it against the device that started the request before
-  // approving. The Deny button is rendered with the same prominence as Approve.
+  // `binding_message` は、ここであえてもう一度表示する（CIBA Core 1.0 §7.1）。
+  // 承認する前に、リクエストを始めたデバイスの表示と見比べるようエンドユーザーに促す。
+  // 拒否のボタンは、承認のボタンと同じ目立ち方で表示する。
   return (
     <Layout title="Sign-in Requests">
       <h1>Sign-in Requests</h1>
@@ -124,6 +139,11 @@ function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): 
   );
 }
 
+/**
+ * 承認か拒否を記録した後の完了画面を描画する。
+ *
+ * エンドユーザーがクライアントを承認したか拒否したかと、このページを閉じてデバイスに戻ってよいことを表示する。
+ */
 function defaultCibaCompletedPage(params: CibaCompletedPageParams): JSX.Element {
   return (
     <Layout title="Sign-in Requests">
@@ -134,7 +154,11 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): JSX.Element 
   );
 }
 
-/** The views of the request for these screens: the ones the app replaced, else the defaults above. */
+/**
+ * 認証デバイスの 3 つの画面のビューを返す。
+ *
+ * リクエストコンテキストの `views`（アプリが `views` オプションで差し替えたビュー）にあればそれを、なければこのファイルの既定のビューを返す。
+ */
 export function cibaViews(c: any): Required<Pick<Views, 'cibaLoginPage' | 'cibaPendingRequestsPage' | 'cibaCompletedPage'>> {
   const views: Partial<Views> = c.get('views') ?? {};
   return {

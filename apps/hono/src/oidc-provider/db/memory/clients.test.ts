@@ -44,9 +44,83 @@ describe('registerClient', () => {
 
     expect(db.clients.get('rp-1')).toEqual({ clientId: 'rp-1', redirectUris: ['https://new.example.com/cb'] });
   });
+
+  // UC-1 / UC-8: RFC 7591 §2 jwks_uri and OIDC Dynamic Client Registration 1.0 §2
+  // request_object_signing_alg.
+  it('should keep the jwksUri and the requestObjectSigningAlg of a client', async () => {
+    const db = createEmptyDatabase();
+
+    await registerClient(db, {
+      clientId: 'rp-uri',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'ES256',
+    });
+
+    expect(db.clients.get('rp-uri')).toEqual({
+      clientId: 'rp-uri',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'ES256',
+    });
+  });
+
+  // The destination policy (allowInsecureClientJwksUri) applies when the keys are fetched.
+  it('should keep an http loopback jwksUri', async () => {
+    const db = createEmptyDatabase();
+
+    await registerClient(db, {
+      clientId: 'rp-dev',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'http://127.0.0.1:3020/jwks.json',
+    });
+
+    expect(db.clients.get('rp-dev')?.jwksUri).toBe('http://127.0.0.1:3020/jwks.json');
+  });
+
+  // UC-20 / D-17: one source of keys per client, as RFC 7591 §2 asks of jwks and jwks_uri.
+  it('should reject a client that registers both a jwksUri and keys, and keep nothing', async () => {
+    const db = createEmptyDatabase();
+
+    await expect(
+      registerClient(db, {
+        clientId: 'rp-1',
+        redirectUris: ['https://rp.example.com/callback'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+        keys: { request_object: { keys: [requestObjectKey] } },
+      }),
+    ).rejects.toThrow('Client rp-1 registers both jwksUri and keys: register one of them (RFC 7591 §2)');
+    expect(db.clients.has('rp-1')).toBe(false);
+  });
+
+  it('should reject a jwksUri that is not an absolute http or https URL', async () => {
+    const db = createEmptyDatabase();
+
+    await expect(
+      registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'], jwksUri: '/jwks.json' }),
+    ).rejects.toThrow('Client rp-1 has an invalid jwksUri: jwks_uri must be an absolute URI');
+    expect(db.clients.has('rp-1')).toBe(false);
+  });
 });
 
 describe('createClientResolver', () => {
+  it('should find the jwksUri and the requestObjectSigningAlg of a client', async () => {
+    const db = createEmptyDatabase();
+    await registerClient(db, {
+      clientId: 'rp-uri',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'RS256',
+    });
+
+    expect(await createClientResolver(db).findClient('rp-uri')).toEqual({
+      clientId: 'rp-uri',
+      redirectUris: ['https://rp.example.com/callback'],
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestObjectSigningAlg: 'RS256',
+    });
+  });
+
   it('should find a registered client without its public keys', async () => {
     const db = createEmptyDatabase();
     await registerClient(db, {

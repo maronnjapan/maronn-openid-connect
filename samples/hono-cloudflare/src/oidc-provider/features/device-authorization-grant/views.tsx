@@ -79,6 +79,14 @@ declare module '../../views.js' {
   }
 }
 
+/**
+ * ユーザーコードの入力画面を描画する。
+ *
+ * エンドユーザーが入力した `user_code` を `/device` に送るフォームである。
+ * `userCode` があれば入力欄に入れておき、照合に失敗していれば、その文言（`error`）をフォームの上に表示する。
+ *
+ * @spec RFC 8628 §3.3
+ */
 function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): JSX.Element {
   return (
     <Layout title="Device Activation">
@@ -96,6 +104,15 @@ function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): JS
   );
 }
 
+/**
+ * デバイス認可のログイン画面を描画する。
+ *
+ * 承認しようとしているデバイスのユーザーコードを表示し、ユーザー名とパスワードを `/device/login` に送るフォームを置く。
+ * フォームは、隠しフィールドの `user_code` と `csrf_token` も一緒に送る。
+ * 前の試行が失敗していれば、フォームの上にエラーと、わかっていれば残りの試行回数を表示する。
+ *
+ * @spec RFC 8628 §3.3
+ */
 function defaultDeviceLoginPage(params: DeviceLoginPageParams): JSX.Element {
   return (
     <Layout title="Login">
@@ -112,9 +129,18 @@ function defaultDeviceLoginPage(params: DeviceLoginPageParams): JSX.Element {
   );
 }
 
+/**
+ * デバイスの承認画面を描画する。
+ *
+ * デバイスの表示と見比べるためのユーザーコード、クライアント、要求されたスコープを表示する。
+ * 承認と拒否のボタンは、`decision`、`user_code`、`csrf_token` を `/device/approve` に送る。
+ *
+ * @spec RFC 8628 §3.3
+ * @spec RFC 8628 §5.4
+ */
 function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): JSX.Element {
-  // RFC 8628 §5.4: the code is repeated here on purpose. Ask the user to check it
-  // against the device in front of them before approving.
+  // ユーザーコードは、ここであえてもう一度表示する（RFC 8628 §5.4）。
+  // 承認する前に、手元のデバイスの表示と見比べるようエンドユーザーに促す。
   return (
     <Layout title="Authorize Device">
       <h1>Authorize Device</h1>
@@ -132,6 +158,11 @@ function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): JSX.Elemen
   );
 }
 
+/**
+ * 承認か拒否を記録した後の完了画面を描画する。
+ *
+ * エンドユーザーがクライアントを承認したか拒否したかと、このページを閉じてデバイスに戻ってよいことを表示する。
+ */
 function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): JSX.Element {
   return (
     <Layout title="Device Activation">
@@ -142,7 +173,11 @@ function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): JSX.Elem
   );
 }
 
-/** The device views of the request: the ones the app replaced, else the defaults above. */
+/**
+ * デバイスフローの 4 つの画面のビューを返す。
+ *
+ * リクエストコンテキストの `views`（アプリが `views` オプションで差し替えたビュー）にあればそれを、なければこのファイルの既定のビューを返す。
+ */
 export function deviceViews(c: any): Required<Pick<Views, 'deviceVerificationPage' | 'deviceLoginPage' | 'deviceApprovalPage' | 'deviceCompletedPage'>> {
   const views: Partial<Views> = c.get('views') ?? {};
   return {

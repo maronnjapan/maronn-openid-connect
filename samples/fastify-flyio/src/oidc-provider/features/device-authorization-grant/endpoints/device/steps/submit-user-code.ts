@@ -10,22 +10,26 @@ export const meta = step({
   endpoint: 'device',
   feature: 'device-authorization-grant',
   kind: 'resolve',
-  label: 'Match the user_code and bind this browser',
+  label: 'user_code を照合し、このブラウザを結び付ける',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceUserCode',
-  calls: ['findPendingRecordByUserCode', 'issueVerificationBinding', 'buildDeviceBindingCookie'],
   consumes: [],
   produces: ['record', 'bindingCookie'],
   removable: false,
 });
 
 /**
- * User code submission (POST /device)
- * RFC 8628 §3.3
+ * ユーザーコードを照合し、ログインか承認の結果を返す。
  *
- * On a match this is where the browser binding is minted, so this is also the
- * first answer that may carry a csrf_token. Everything downstream requires the
- * cookie this outcome sets.
+ * `POST /device` の処理である。
+ * `submittedUserCode` が保留中のレコードに一致しなければ、`invalid_user_code` の結果を返す。
+ * 一致すれば、バインディングの秘密の値と CSRF トークンを作り直してレコードに保存し、秘密の値をバインディング Cookie にしてこのブラウザに渡す。
+ * OP のセッションがあれば承認画面（`approval`）の結果を、なければログインフォーム（`login`）の結果を、どちらもバインディング Cookie を付けて返す。
+ *
+ * バインディング Cookie を作るのはこのステップだけなので、`csrf_token` を最初に渡すのもこのステップである。
+ * 後のステップ（ログインと承認）は、どれもこの Cookie を求める。
+ *
+ * @spec RFC 8628 §3.3
  */
 export async function submitDeviceUserCode(c: any, submittedUserCode: string): Promise<DeviceOutcome> {
   const deviceStore = c.get('deviceAuthorizationStore');
@@ -36,9 +40,9 @@ export async function submitDeviceUserCode(c: any, submittedUserCode: string): P
     return { kind: 'invalid_user_code', userCode: submittedUserCode };
   }
 
-  // Rotate the binding secret and the csrf token together. A second browser
-  // submitting the same user_code takes the binding over (last writer wins);
-  // that is inherent to a flow whose identifier is shareable by design.
+  // バインディングの秘密の値と CSRF トークンを、まとめて作り直す。
+  // 別のブラウザが同じ `user_code` を送信すると、バインディングはそのブラウザに移る（最後に送信したものが勝つ）。
+  // 識別子を他人と共有できる設計のフローでは、避けられない性質である。
   const { bindingSecret, csrfToken } = await issueVerificationBinding(record, deviceStore);
   const cookie = buildDeviceBindingCookie(
     record.userCode,

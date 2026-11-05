@@ -24,10 +24,17 @@
  * 生成コードは、関数が設定されているときだけ対応する値（Bearer トークン、
  * software_statement）の提示を要求し、無ければ要求しない。
  *
+ * jwks_uri は登録だけを受け持ち（既定で登録し、validateClientMetadata の
+ * acceptJwksUri: false で無視する。宛先を検査し、取得はしない）、鍵の取得は生成コードが
+ * core の部品（fetchClientJwkSet / createClientJwksUriCache / withClientJwksUriKeys）で、
+ * 鍵を使うときに行う。
+ * request_object_signing_alg は、OP が受け付ける alg の一覧
+ * （requestObjectSigningAlgValuesSupported）を渡したときだけ理解する。
+ *
  * スコープ外（非目標）: RFC 7592（登録後の参照・更新・削除、
  * registration_access_token / registration_client_uri はどちらも返さない）、
- * initial access token と software statement の発行と検証、URL 参照系
- * メタデータ（jwks_uri / sector_identifier_uri など）の取得。
+ * initial access token と software statement の発行と検証、jwks_uri 以外の URL
+ * 参照系メタデータ（sector_identifier_uri など）、登録時の jwks_uri の取得。
  */
 export {
   ClientRegistrationError,

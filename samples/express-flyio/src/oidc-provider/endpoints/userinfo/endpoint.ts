@@ -1,14 +1,22 @@
 import { defineEndpoint } from '../step.js';
 
-/** The UserInfo endpoint. OIDC Core 1.0 §5.3 */
+/**
+ * 提示されたアクセストークンのエンドユーザーについて、トークンのスコープと `claims` パラメータに応じたクレームを JSON で返す。
+ * クライアントが `userinfo_signed_response_alg` を登録していれば、署名した JWT で返す。
+ *
+ * トークンがないとき、または不正なときは、`Bearer` のエラーで応答する。
+ * レスポンスは、成功でもエラーでもキャッシュさせない（`Cache-Control: no-store`）。
+ *
+ * @spec OIDC Core 1.0 §5.3
+ */
 export const endpoint = defineEndpoint({
   id: 'userinfo',
   order: 80,
-  label: 'UserInfo endpoint',
+  label: 'UserInfo エンドポイント',
   path: '/userinfo',
   methods: ['GET', 'POST'],
   layer: 'api',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §5.3',
   rearrangeable: true,
   steps: [

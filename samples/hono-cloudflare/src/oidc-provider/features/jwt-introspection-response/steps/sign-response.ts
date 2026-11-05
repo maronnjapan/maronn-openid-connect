@@ -17,10 +17,9 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'jwt-introspection-response',
   kind: 'dispatch',
-  label: 'Answer as a signed JWT when asked for one',
+  label: '求められたら署名付き JWT で応答する',
   spec: 'RFC 9701 §4 / §5',
   function: 'signIntrospectionResponse',
-  calls: ['acceptsIntrospectionJwt', 'restrictIntrospectionResponseToCaller', 'selectSigningKeyByAlg', 'createIntrospectionResponseJwt'],
   consumes: ['introspection', 'authenticatedClientId'],
   produces: [],
   removable: false,
@@ -28,12 +27,18 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — RFC 9701 §4 / §5: a caller whose Accept header names
- * application/token-introspection+jwt receives the introspection response as
- * a signed JWT. Any other request (no Accept, application/json, a wildcard)
- * returns undefined and is answered as before. The step sits AFTER client
- * authentication and token resolution so the Accept header can never bypass
- * either (§8.2 downgrade prevention).
+ * JWT 形式が求められたら、署名付きの JWT で応答する。
+ *
+ * 実験的な機能である。
+ * `Accept` ヘッダーが `application/token-introspection+jwt` を示す呼び出し元には、イントロスペクションのレスポンスを署名付きの JWT にし、`Content-Type` をそのメディアタイプにして返す。
+ * JWT にする前に、レスポンスを呼び出し元に見せてよい内容に絞り、レスポンスには `Cache-Control: no-store` を付ける。
+ * それ以外のリクエスト（`Accept` がない、`application/json`、ワイルドカード）では `undefined` を返し、次の `respond` ステップが JSON で応答する。
+ * RS256 の署名鍵が登録されていなければ例外を投げ、`server_error` の応答になる。
+ *
+ * このステップはクライアントの認証とトークンの検索の後に置くので、`Accept` ヘッダーでそのどちらかを飛ばすことはできない（RFC 9701 §8.2 のダウングレードの防止）。
+ *
+ * @spec RFC 9701 §4
+ * @spec RFC 9701 §5
  */
 export async function signIntrospectionResponse(
   c: any,
@@ -42,23 +47,16 @@ export async function signIntrospectionResponse(
 ): Promise<Response | undefined> {
   if (!acceptsIntrospectionJwt(c.req.header('Accept'))) return undefined;
 
-  // RFC 9701 §3 / §5: before the response leaves as a signed assertion its
-  // members are restricted to what the authenticated caller may see — a
-  // caller that is neither the client the token was issued to nor listed in
-  // its aud gets { active: false }, indistinguishable from an unknown token.
+  // 署名付きの JWT にする前に、レスポンスのメンバーを、認証した呼び出し元に見せてよいものに絞る（RFC 9701 §3、§5）。
+  // 呼び出し元が、トークンの発行先のクライアントでも `aud` に含まれるものでもなければ、登録されていないトークンと区別できない `{ active: false }` にする。
   const restrictedResponse = restrictIntrospectionResponseToCaller(
     introspection,
     authenticatedClientId,
   );
-  // RFC 9701 §6: alg is pinned to RS256 (the default for a client that
-  // registered no introspection_signed_response_alg). The first key of the
-  // general-purpose set is not guaranteed to be RS256 — a SigningKeyProvider
-  // may legitimately put an ES256 key first in an RS256 + ES256 set — so the
-  // key is picked by alg from the set. Its public half is published at
-  // /.well-known/jwks.json under the same kid. selectSigningKeyByAlg throws
-  // when no RS256 key is registered, which surfaces as a server_error
-  // (a configuration mistake) rather than as an unverifiable introspection
-  // response.
+  // 署名の `alg` は RS256 に固定する（`introspection_signed_response_alg` を登録していないクライアントの既定値。RFC 9701 §6）。
+  // 汎用の鍵の集合の最初の鍵が RS256 とは限らない（`SigningKeyProvider` は、RS256 と ES256 の集合で ES256 の鍵を先に置いてもよい）ので、集合から `alg` で鍵を選ぶ。
+  // その鍵の公開鍵は、同じ `kid` で `/.well-known/jwks.json` に公開されている。
+  // RS256 の鍵が登録されていなければ `selectSigningKeyByAlg()` が例外を投げ、検証できないレスポンスを返す代わりに、設定の誤りとして `server_error` で応答することになる。
   const introspectionSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
   const introspectionSigningKey = selectSigningKeyByAlg(introspectionSigningKeys, 'RS256');
   const responseJwt = await createIntrospectionResponseJwt({
@@ -67,8 +65,7 @@ export async function signIntrospectionResponse(
     introspection: restrictedResponse,
     signingKey: introspectionSigningKey,
   });
-  // RFC 9701 §5: the success response is the compact JWS itself under its
-  // own media type.
+  // 成功のレスポンスは JWS のコンパクト形式の文字列そのもので、専用のメディアタイプ（`application/token-introspection+jwt`）で返す（RFC 9701 §5）。
   return respondIntrospection(c, {
     status: 200,
     text: responseJwt,

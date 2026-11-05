@@ -67,7 +67,9 @@ describe('the trees of the repository', () => {
                 ? 'spread'
                 : imported !== undefined
                   ? 're-export'
-                  : undefined;
+                  : new RegExp(`(?:\\(|,)\\s*${name}\\s*(?:,|\\))`).test(text)
+                    ? 'callback-reference'
+                    : undefined;
         if (reason === undefined) unexplained.push(`${card.id} → ${callee}`);
       }
     }
@@ -147,6 +149,21 @@ describe('the trees of the repository', () => {
     expect(verify).toContain('TokenError(invalid_client)');
     // The handler of /token catches every failure of its steps.
     expect(failures.get('endpoint:token') ?? []).toEqual([]);
+  });
+
+  it('should connect registered-client key selection and its deferred key loader to each source endpoint', () => {
+    const trees = new Map([...repository.head.trees].map(([id, built]) => [id, built.tree]));
+    const roots: EndpointRoot[] = repository.endpoints.flatMap((source) => source.endpoints.map((endpoint) => ({ source: source.source, frameworks: source.frameworks, endpoint, root: repository.head.endpointRoots.get(`${source.source}:${endpoint.id}`) ?? '' })));
+    const graph = new CallGraph(trees, roots);
+    for (const [source, module] of [['hono', 'oidc-provider'], ['nextjs', 'app/_oidc-provider']]) {
+      for (const name of ['withRegisteredClientJwksUri', 'hostOf', 'clientJwksUriLoadOptionsOf']) {
+        const ways = reachOf(graph, { frame: `${source}:${module}/client-jwks-uri.ts#${name}`, node: '' });
+        expect(ways.map((way) => `${way.source}:${way.endpoint}`), `${source}:${name}`).toEqual([`${source}:authorize`]);
+      }
+    }
+    const cache = reachOf(graph, { member: 'core:client-jwks-uri.ts#ClientJwksUriCache.load' });
+    expect([...new Set(cache.map((way) => `${way.source}:${way.endpoint}`))].sort()).toEqual(['hono:authorize', 'nextjs:authorize']);
+    expect(cache.every((way) => way.features.includes('request-object'))).toBe(true);
   });
 });
 

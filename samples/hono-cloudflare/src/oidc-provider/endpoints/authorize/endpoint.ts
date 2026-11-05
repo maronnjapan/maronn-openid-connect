@@ -1,14 +1,22 @@
 import { defineEndpoint } from '../step.js';
 
-/** The authorization endpoint. OIDC Core 1.0 §3.1.2 */
+/**
+ * 認可リクエストを検証し、トランザクションとして保存してから、画面が要るかどうかで応答を分ける。
+ * 画面が要らないとき（`prompt=none` でセッションと同意がそろっているとき、または有効なセッションのエンドユーザーが要求されたスコープにすでに同意しているとき）は、すぐに認可レスポンスでクライアントに応答する。
+ * 画面が要るときは、トランザクションの Cookie を付けて、ログイン画面か同意画面へリダイレクトする。
+ * エラーになったときは、`redirect_uri` を確かめた後ならエラーの認可レスポンスでクライアントに応答し、確かめる前なら OP のエラー画面（`Accept` ヘッダーで JSON を求める呼び出し元には 400 の JSON）で応答する。
+ * `POST` の `Content-Type` の誤り、パラメータの重複、`client_id` の欠落には、400 の JSON で応答する。
+ *
+ * @spec OIDC Core 1.0 §3.1.2
+ */
 export const endpoint = defineEndpoint({
   id: 'authorize',
   order: 30,
-  label: 'Authorization endpoint',
+  label: '認可エンドポイント',
   path: '/authorize',
   methods: ['GET', 'POST'],
   layer: 'browser',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §3.1.2',
   rearrangeable: true,
   // Defined before the first step: the issuer of the provider. The response
@@ -43,14 +51,14 @@ export const endpoint = defineEndpoint({
     chain: true,
     off: ['issue-authorization-code'],
     extra: [
-      { from: 'authenticate-silently', to: 'issue-authorization-code', label: 'session + consent', kind: 'branch' },
-      { from: 'reuse-session', to: 'issue-authorization-code', label: 'session + prior consent', kind: 'branch' },
-      { from: 'reuse-session', to: 'continue-to-login', label: 'consent screen', kind: 'branch' },
+      { from: 'authenticate-silently', to: 'issue-authorization-code', label: 'セッションと同意あり', kind: 'branch' },
+      { from: 'reuse-session', to: 'issue-authorization-code', label: 'セッションと過去の同意あり', kind: 'branch' },
+      { from: 'reuse-session', to: 'continue-to-login', label: '同意画面へ', kind: 'branch' },
     ],
   },
   journeys: [
-    { from: 'authorize', to: 'login', label: 'login required', kind: 'flow', order: 30 },
-    { from: 'authorize', to: 'consent', label: 'SSO: consent required', kind: 'flow', order: 40 },
-    { from: 'authorize', to: 'token', label: 'code (prompt=none / SSO)', kind: 'flow', order: 50 },
+    { from: 'authorize', to: 'login', label: 'ログインが必要', kind: 'flow', order: 30 },
+    { from: 'authorize', to: 'consent', label: 'SSO: 同意が必要', kind: 'flow', order: 40 },
+    { from: 'authorize', to: 'token', label: 'code（prompt=none / SSO）', kind: 'flow', order: 50 },
   ],
 });

@@ -10,17 +10,21 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'parse',
-  label: 'Read the JSON metadata',
+  label: 'JSON のメタデータを読み取る',
   spec: 'RFC 7591 §3.1',
   function: 'parseRegistrationRequest',
-  calls: ['parseClientRegistrationBody'],
   consumes: [],
   produces: ['registration'],
   removable: false,
 });
 
 /**
- * RFC 7591 §3.1: the registration request body MUST be application/json.
+ * メディアタイプが `application/json` なら true を返す。
+ *
+ * `Content-Type` の値の `;` より前の部分を小文字にして比べるので、`charset` などのパラメータが付いていても true を返す。
+ * 登録リクエストのボディは `application/json` でなければならない（RFC 7591 §3.1）。
+ *
+ * @spec RFC 7591 §3.1
  */
 function isJson(contentType: string): boolean {
   const [mediaType = ''] = contentType.toLowerCase().split(';');
@@ -28,17 +32,20 @@ function isJson(contentType: string): boolean {
 }
 
 /**
- * RFC 7591 §3.1: the registration request body MUST be application/json
- * (parameters such as charset are fine). Enforcing the media type also closes
- * the cross-origin text/plain form post that can synthesize a JSON-shaped body
- * without a CORS preflight.
+ * JSON のボディからメタデータを読み取って返す。
  *
- * A Content-Length that already declares more than maxRegistrationBodyBytes is
- * refused before the body is read, so an oversized request is not buffered
- * first. The header can lie, so the authoritative check stays the UTF-8 byte
- * count on the body itself (parseClientRegistrationBody), which also checks
- * the JSON shape and splits a software_statement (RFC 7591 §2.3) from the
- * plain metadata for the next step.
+ * 登録リクエストのボディは `application/json` でなければならない（RFC 7591 §3.1）。
+ * `charset` などのパラメータは付いていてもよい。
+ * メディアタイプを限ると、CORS のプリフライトなしで送れる別オリジンの `text/plain` のフォーム送信で、JSON の形をしたボディを作られることも防げる。
+ *
+ * `Content-Length` が `maxRegistrationBodyBytes` より大きい値を宣言していれば、ボディを読む前に拒否するので、大きすぎるリクエストをメモリに読み込まずに済む。
+ * ヘッダーの値は偽れるので、最終的な判定は、ボディそのものの UTF-8 のバイト数で `parseClientRegistrationBody()` が行う。
+ * `parseClientRegistrationBody()` は JSON の形も確かめ、`software_statement`（RFC 7591 §2.3）をそれ以外のメタデータから分けて返す。
+ *
+ * @spec RFC 7591 §3.1
+ * @throws {RegistrationEndpointError} 400 の `invalid_client_metadata`: `Content-Type` が `application/json` でないとき、または `Content-Length` が上限を超えるとき
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: ボディが上限のバイト数を超えるとき、JSON として読めないとき、JSON のオブジェクトでないとき
+ * @throws {ClientRegistrationError} `invalid_software_statement`: `software_statement` が文字列でないとき
  */
 export async function parseRegistrationRequest(c: any): Promise<ParsedClientRegistration> {
   if (!isJson(c.req.header('Content-Type') ?? '')) {

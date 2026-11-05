@@ -40,12 +40,20 @@ export const publicCors: CorsPolicy = {
   maxAge: 600,
 };
 
-/** Answer a CORS preflight request. */
+/**
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 応答には、`policy` から `corsHeaders()` が作る CORS のヘッダーを付ける。
+ */
 export function corsPreflight(request: Request, policy: CorsPolicy): Response {
   return new Response(null, { status: 204, headers: corsHeaders(request, policy) });
 }
 
-/** Add the CORS headers of policy to a response. */
+/**
+ * レスポンスに `policy` の CORS のヘッダーを付けて返す。
+ *
+ * ボディ、ステータス、ヘッダーを写した新しいレスポンスを作り、`corsHeaders()` が作る CORS のヘッダーで上書きする。
+ */
 export function withCors(request: Request, policy: CorsPolicy, response: Response): Response {
   const headers = new Headers(response.headers);
   corsHeaders(request, policy).forEach((value, name) => headers.set(name, value));
@@ -56,6 +64,12 @@ export function withCors(request: Request, policy: CorsPolicy, response: Respons
   });
 }
 
+/**
+ * リクエストに返す CORS のヘッダーを作って返す。
+ *
+ * `Vary: Origin` と、`policy` の許可するメソッド、許可するヘッダー、キャッシュしてよい秒数を必ず入れる。
+ * `allowedOrigin()` がリクエストの `Origin` を許可すれば、`Access-Control-Allow-Origin` も入れる。
+ */
 function corsHeaders(request: Request, policy: CorsPolicy): Headers {
   const headers = new Headers();
   const origin = allowedOrigin(request.headers.get('Origin'), policy.origins);
@@ -69,6 +83,12 @@ function corsHeaders(request: Request, policy: CorsPolicy): Headers {
   return headers;
 }
 
+/**
+ * `Access-Control-Allow-Origin` に入れる値を返す。
+ *
+ * `allowed` が一つの文字列（`*` か一つのオリジン）なら、リクエストの `Origin` にかかわらずその文字列を返す。
+ * 配列なら、リクエストの `Origin` が含まれるときだけその値を返し、それ以外は `undefined` を返す（ヘッダーを付けない）。
+ */
 function allowedOrigin(
   requestOrigin: string | null,
   allowed: string | readonly string[],
@@ -79,8 +99,10 @@ function allowedOrigin(
 }
 
 /**
- * A JSON response that must never be stored: token, introspection and the
- * other credential-bearing responses (RFC 6749 §5.1 / §5.2).
+ * キャッシュを禁じるヘッダー付きの JSON で応答する。
+ *
+ * `init` のヘッダーに `Cache-Control: no-store` と `Pragma: no-cache` を加え、`body` を JSON にして返す。
+ * トークンレスポンスやイントロスペクションのレスポンスなど、認証情報を含むレスポンスに使う（RFC 6749 §5.1、§5.2）。
  */
 export function noStoreJson(body: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
@@ -89,7 +111,14 @@ export function noStoreJson(body: unknown, init: ResponseInit = {}): Response {
   return Response.json(body, { ...init, headers });
 }
 
-/** An OAuth error response (RFC 6749 §5.2), never cached. */
+/**
+ * キャッシュされない OAuth のエラーレスポンスを返す。
+ *
+ * ボディは `error` と `error_description` の JSON で、ステータスコードは `status`（既定は 400）である。
+ * `noStoreJson()` で返すので、キャッシュを禁じるヘッダーが付く。
+ *
+ * @spec RFC 6749 §5.2
+ */
 export function oauthError(
   error: string,
   errorDescription: string | undefined,
@@ -100,8 +129,10 @@ export function oauthError(
 }
 
 /**
- * The signing keys could not be loaded or failed validation (a key provider
- * outage, or a key set the OP must not sign with).
+ * 署名鍵を使えないときの 503 のエラーレスポンスを返す。
+ *
+ * ボディは `server_error` のエラーの JSON である。
+ * 署名鍵を読み込めないとき（鍵のプロバイダの障害など）と、読み込んだ鍵の集合が OP の署名に使えないときに使う。
  */
 export function signingKeysUnavailable(): Response {
   return Response.json(
@@ -111,9 +142,23 @@ export function signingKeysUnavailable(): Response {
 }
 
 /**
- * Is the request body application/x-www-form-urlencoded? Media types are
- * case-insensitive and may carry parameters such as "; charset=UTF-8"
- * (RFC 9110 §8.3.1).
+ * `Authorization` ヘッダの値から Bearer のトークンを返す。
+ *
+ * スキームは大文字と小文字を区別せずに照合し（RFC 7235 §2.1）、スキームの後ろの空白はいくつあってもすべて飛ばす（`"Bearer" 1*SP b64token`）。
+ * トークンの値は変えずにそのまま返す。
+ * Bearer 以外のスキームや、トークンの無い値には空文字を返す。
+ *
+ * @spec RFC 6750 §2.1
+ */
+export function readBearerToken(authorizationHeader: string): string {
+  return /^Bearer +(.*)$/i.exec(authorizationHeader)?.[1] ?? '';
+}
+
+/**
+ * ボディが URL エンコードのフォームなら true を返す。
+ *
+ * `Content-Type` のメディアタイプが `application/x-www-form-urlencoded` であるかを確かめる。
+ * メディアタイプは大文字と小文字を区別せず、`; charset=UTF-8` のようなパラメータが付くこともあるので、小文字にしてパラメータを除いてから比べる（RFC 9110 §8.3.1）。
  */
 export function isFormUrlEncoded(request: Request): boolean {
   const [mediaType = ''] = (request.headers.get('Content-Type') ?? '').toLowerCase().split(';');
@@ -126,7 +171,12 @@ export interface UniqueParams {
   duplicateKey?: string;
 }
 
-/** Collect parameters, stopping at the first repeated name (RFC 6749 §3.1 / §3.2). */
+/**
+ * パラメータを集め、名前の重複があればその名前も返す。
+ *
+ * 最初に重複した名前で集めるのをやめ、それまでに集めたパラメータと、その名前（`duplicateKey`）を返す。
+ * OAuth のリクエストでは、同じ名前のパラメータを繰り返してはならない（RFC 6749 §3.1、§3.2）。
+ */
 export function uniqueParams(searchParams: URLSearchParams): UniqueParams {
   const params: Record<string, string> = {};
   const seen = new Set<string>();
@@ -141,8 +191,10 @@ export function uniqueParams(searchParams: URLSearchParams): UniqueParams {
 }
 
 /**
- * The fields of a form POST (urlencoded or multipart). A body that is neither
- * yields no fields, so every field reads as missing.
+ * フォームの POST のフィールドを読み取って返す。
+ *
+ * URL エンコードと `multipart/form-data` のボディを読む。
+ * どちらでもないボディには空の `FormData` を返すので、どのフィールドもないものとして扱われる。
  */
 export async function readFormFields(request: Request): Promise<FormData> {
   try {
@@ -153,9 +205,10 @@ export async function readFormFields(request: Request): Promise<FormData> {
 }
 
 /**
- * The OP's error page (app/oidc-error) for an error that must stay on the OP,
- * as a path of this app with the error in the query. Pages and Server Actions
- * redirect() to it.
+ * エラーをクエリに入れたエラー画面のパスを返す。
+ *
+ * 返すのは OP のエラー画面（`app/oidc-error`）の `/oidc-error?error=…` の形のパスで、`errorDescription` があれば `error_description` も入れる。
+ * クライアントへ返さずに OP にとどめるエラーに使い、ページとサーバーアクションは `redirect()` でブラウザをこのパスへ移す。
  */
 export function errorPagePath(error: string, errorDescription?: string): string {
   const query = new URLSearchParams({ error });
@@ -164,9 +217,11 @@ export function errorPagePath(error: string, errorDescription?: string): string 
 }
 
 /**
- * Send the browser to the OP's error page from a Route Handler. 303, so the
- * page is fetched with GET even after a POST; built on config.issuer, never on
- * the request URL (OIDC Discovery 1.0 §3).
+ * OP のエラー画面へ 303 でリダイレクトする。
+ *
+ * ルートハンドラから使う。
+ * 303 なので、POST のあとでもブラウザはエラー画面を GET で取得する。
+ * URL は設定の `issuer` の上に組み立て、リクエストの URL は使わない（OIDC Discovery 1.0 §3）。
  */
 export function redirectToErrorPage(error: string, errorDescription?: string): Response {
   return NextResponse.redirect(new URL(errorPagePath(error, errorDescription), config.issuer), 303);

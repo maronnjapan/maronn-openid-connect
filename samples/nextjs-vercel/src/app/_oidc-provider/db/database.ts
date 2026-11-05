@@ -33,13 +33,25 @@ export interface KvDatabase {
   delete(key: string): Promise<void>;
 }
 
-/** The record under key (parsed from JSON), or undefined when the key is missing. */
+/**
+ * `key` の値を JSON として解析し、レコードとして返す。
+ *
+ * キーがないとき（期限切れのときを含む）は `undefined` を返す。
+ *
+ * @throws {SyntaxError} 値が JSON として正しくないとき（`JSON.parse()`）
+ */
 export async function readRecord<T>(db: KvDatabase, key: string): Promise<T | undefined> {
   const value = await db.get(key);
   return value === null ? undefined : (JSON.parse(value) as T);
 }
 
-/** Store record under key as JSON. */
+/**
+ * `record` を JSON にして `key` に保存する。
+ *
+ * キーにある値は置き換える。
+ * `ttlSeconds` を渡すと、その秒数が過ぎたキーはないものとして読まれる。
+ * 渡さなければ、キーは期限切れにならない。
+ */
 export async function writeRecord(
   db: KvDatabase,
   key: string,

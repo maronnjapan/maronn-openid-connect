@@ -61,9 +61,18 @@ const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 /** The statuses of a transaction in progress. */
 const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 
+/**
+ * SQL のテーブルに読み書きする OP のストアを返す。
+ *
+ * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログインのストアである。
+ * テーブルは `schema.sql` で定義したもので、SQL 文はすべて `db` で実行する。
+ * 認可コードとトークンは、値そのものではなく SHA-256 のハッシュ（`hashKey()`）で保存し、そのハッシュで探す。
+ *
+ * 返したストアの `authCodeStore.consume()` と `refreshTokenStore.consume()` は、`is_used` を `FALSE` から `TRUE` に変える一つの条件付きの `UPDATE` を実行し、変わった行がなければ `TokenError`（`invalid_grant`）を投げる。
+ * 同時に届いた二つのリクエストのうち、行を変えられた一方だけがトークンを受け取る（OAuth 2.1 §4.1.2）。
+ */
 export function createProviderStores(db: SqlDatabase): ProviderStores {
-  // Transaction + Authentication_request: what the authorization request asked
-  // for goes to authentication_requests, the state of the flow to transactions.
+  // 認可リクエストの内容は `authentication_requests` に、フローの状態は `transactions` に保存する。
   const transactionStore: TransactionStorage = {
     async get(key) {
       const [row] = await db.all<TransactionRow>({
@@ -105,8 +114,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
       if (row.claims !== null) transaction.claims = JSON.parse(row.claims) as ClaimsParameter;
       return transaction;
     },
-    // The expiry is the transaction's own expiresAt (milliseconds, rounded up
-    // to seconds), which the ttlSeconds core passes is computed from.
+    // 有効期限には、トランザクション自身の `expiresAt`（ミリ秒）を秒に切り上げて使う。
+    // core が渡す `ttlSeconds` も、この `expiresAt` から計算した値である。
     async put(key, value, _ttlSeconds) {
       const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
       const {
@@ -134,8 +143,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         bindingHash,
         ...otherParameters
       } = value as StoredTransaction;
-      // A new transaction starts as requested. Saving it again (a failed login
-      // attempt) keeps its status.
+      // 新しいトランザクションは `requested` の状態で始める。
+      // 保存し直すとき（ログインに失敗したときなど）は、今の状態を変えない。
       await db.run({
         sql:
           'INSERT INTO transactions (transaction_id, status, created_at, expired_at, payload) ' +
@@ -185,14 +194,15 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         ],
       });
     },
-    // One-time use: the transaction is no longer in progress, and its row stays.
+    // トランザクションは一度しか使えないので、進行中なら状態を `failed` にして終わらせる。
+    // 行は消さずに残す。
     async delete(key) {
       await db.run({
         sql: "UPDATE transactions SET status = 'failed' WHERE transaction_id = ? AND status IN " + IN_PROGRESS,
         params: [withoutPrefix(key, TRANSACTION_KEY_PREFIX)],
       });
     },
-    // The Implicit Flow ended the transaction (delete) and then issued its tokens.
+    // インプリシットフローがトランザクションを終わらせて（`delete`）からトークンを発行したので、状態を `token_issued` にする。
     async recordTokenIssued(transactionId) {
       await db.run({
         sql: "UPDATE transactions SET status = 'token_issued' WHERE transaction_id = ?",
@@ -203,9 +213,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
 
   const authCodeStore: AuthorizationCodeStorage = {
     async set(code, info) {
-      // The routes pass core's AuthorizationCodeData, which names the
-      // transaction the code was issued from. Neither the raw code nor a value
-      // with its own column goes into payload.
+      // ルートが渡すのは core の `AuthorizationCodeData` で、認可コードを発行したトランザクションの ID（`transactionId`）を含む。
+      // 認可コードの値そのものと、専用の列がある値は、`payload` に入れない。
       const { code: _code, used, expiresAt, grantId, transactionId, ...payload } =
         info as AuthorizationCodeInfo & Pick<AuthorizationCodeData, 'transactionId'>;
       await db.run({
@@ -239,8 +248,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         used: toBoolean(row.is_used),
       };
     },
-    // Only one of two concurrent requests changes the row; the other one finds
-    // the code already used and must not receive tokens.
+    // 同時に届いた二つのリクエストのうち、行を変えられるのは一方だけである。
+    // もう一方には `TokenError`（`invalid_grant`）を投げるので、そのリクエストはトークンを受け取れない。
     async consume(code) {
       const { changes } = await db.run({
         sql: 'UPDATE codes SET is_used = TRUE WHERE id = ? AND is_used = FALSE',
@@ -270,12 +279,11 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         sql:
           'INSERT INTO access_tokens (id, sub, exp, iat, iss, client_id, scope, acr, transaction_id, ' +
           'token_hash, grant_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ' +
-          // The transaction the token was issued from: the one the Implicit
-          // Flow names, or that of the code the grant came from. A grant
-          // without either (the device flow, CIBA) has none.
+          // トークンを発行したトランザクションとして、インプリシットフローが示すトランザクションか、グラントの元になった認可コードのトランザクションを記録する。
+          // どちらもないグラント（デバイスフロー、CIBA）には記録しない。
           'COALESCE(?, (SELECT transaction_id FROM codes WHERE grant_id = ? LIMIT 1)), ?, ?, ?)',
         params: [
-          // A token issued without a jti is kept under its hash.
+          // `jti` なしで発行されたトークンは、トークンのハッシュを `id` にする。
           jti ?? tokenHash,
           sub,
           expiresAt,
@@ -340,9 +348,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
       await db.run({
         sql:
           'INSERT INTO refresh_tokens (id, access_token_id, exp, iat, is_used, grant_id, payload) VALUES (?, ' +
-          // The access token of the same token response: the token endpoint
-          // stores it just before, with the same grant and iat, and no refresh
-          // token links it yet.
+          // 同じトークンレスポンスのアクセストークンを `access_token_id` に記録する。
+          // トークンエンドポイントはそのアクセストークンを直前に保存するので、同じグラントと `iat` を持ち、まだどのリフレッシュトークンにも結び付いていないアクセストークンを選ぶ。
           '(SELECT a.id FROM access_tokens a WHERE a.grant_id = ? AND a.iat = ? ' +
           'AND NOT EXISTS (SELECT 1 FROM refresh_tokens r WHERE r.access_token_id = a.id) ' +
           'ORDER BY a.id LIMIT 1), ?, ?, ' + sqlBoolean(used) + ', ?, ?)',
@@ -372,7 +379,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
       if (row.iat !== null) info.iat = Number(row.iat);
       return info;
     },
-    // Rotation: like authCodeStore.consume, exactly one request wins.
+    // ローテーションのために、リフレッシュトークンを使用済みにする。
+    // `authCodeStore.consume()` と同じく、同時に届いたリクエストのうち一つだけが成功する。
     async consume(token) {
       const { changes } = await db.run({
         sql: 'UPDATE refresh_tokens SET is_used = TRUE WHERE id = ? AND is_used = FALSE',
@@ -384,17 +392,15 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     },
     delete: deleteRefreshToken,
     revoke: deleteRefreshToken,
-    // Rotated (used) refresh tokens share the grant_id, so they go too.
+    // ローテーションで使用済みになったリフレッシュトークンも同じ `grant_id` を持つので、一緒に消える。
     async revokeByGrantId(grantId) {
       await db.run({ sql: 'DELETE FROM refresh_tokens WHERE grant_id = ?', params: [grantId] });
     },
   };
 
-  // auth_type of a sign-in (auth_users): the provider of the user's federated
-  // identity, or password. A user created by an upstream sign-in (such as Sign
-  // in with Google) has no password, and registerUser() (users.ts) creates no
-  // federated identity, so each user signs in one way only unless you link an
-  // upstream account to a user with a password yourself.
+  // ログイン（`auth_users`）の `auth_type` として、ユーザーの外部アカウントの ID プロバイダ名を返し、外部アカウントがなければ `password` を返す。
+  // 外部の ID プロバイダでのログイン（Google でのログインなど）で作られたユーザーにはパスワードがなく、`registerUser()`（`users.ts`）は外部アカウントを紐付けない。
+  // そのため、パスワードのあるユーザーに利用者が外部アカウントを紐付けない限り、ユーザーのログインの方法は一つに決まる。
   const authTypeOf = async (userId: string): Promise<string> => {
     const [row] = await db.all<{ provider: string }>({
       sql: 'SELECT provider FROM federated_identities WHERE user_id = ? ORDER BY created_at LIMIT 1',
@@ -403,7 +409,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     return row?.provider ?? 'password';
   };
 
-  // Auth_user: the sign-in handed from /login to /consent, per transaction.
+  // ログインの結果（`auth_users`）は、`/login` から `/consent` へトランザクションごとに渡す。
   const authSessionStore: AuthSessionStorage = {
     async set(transactionId, info) {
       await db.run({
@@ -461,7 +467,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     async grant(subject, clientId, scopes) {
       const unique = [...new Set(scopes)];
       if (unique.length === 0) return;
-      // Scopes granted before are skipped by ON CONFLICT DO NOTHING; new ones are added.
+      // 同意済みのスコープは `ON CONFLICT DO NOTHING` で飛ばし、新しいスコープだけを追加する。
       await db.run({
         sql:
           'INSERT INTO consent_scopes (subject, client_id, scope) VALUES ' +
@@ -472,7 +478,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     },
     async hasConsent(subject, clientId, scopes) {
       const unique = [...new Set(scopes)];
-      // An empty request is never treated as consented (and IN () is not valid SQL).
+      // スコープが一つもないリクエストは、同意済みとみなさず `false` を返す（空の `IN ()` は SQL として正しくない）。
       if (unique.length === 0) return false;
       const [row] = await db.all<{ granted: number | string }>({
         sql:
@@ -482,7 +488,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
           ')',
         params: [subject, clientId, ...unique],
       });
-      // A partially granted request counts fewer rows than it asked for.
+      // 一部のスコープにしか同意していなければ、数えた行は要求したスコープの数より少ない。
       return Number(row?.granted ?? 0) === unique.length;
     },
     async recordGrant(subject, clientId, grantId) {
@@ -498,8 +504,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         sql: 'DELETE FROM consent_scopes WHERE subject = ? AND client_id = ?',
         params: [subject, clientId],
       });
-      // DELETE ... RETURNING hands back every grant it removed, in the same
-      // statement, so the caller revokes the tokens of each one.
+      // `DELETE ... RETURNING` で、消したグラントを同じ文で受け取って返す。
+      // 呼び出し側は、返されたグラントごとにトークンを失効させる。
       const rows = await db.all<{ grant_id: string }>({
         sql: 'DELETE FROM consent_grants WHERE subject = ? AND client_id = ? RETURNING grant_id',
         params: [subject, clientId],
@@ -509,7 +515,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
   };
 
 
-  // The user linked to an account at an upstream identity provider, if any.
+  // 外部の ID プロバイダのアカウントに紐付いたユーザーの ID を返し、紐付けがなければ `undefined` を返す。
   const findFederatedUser = async (provider: string, providerSub: string): Promise<string | undefined> => {
     const [row] = await db.all<{ user_id: string }>({
       sql: 'SELECT user_id FROM federated_identities WHERE provider = ? AND provider_sub = ?',
@@ -518,10 +524,9 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     return row?.user_id;
   };
 
-  // Create the user of an upstream account on its first sign-in, under a new
-  // random id. Two first sign-ins of one account may race: UNIQUE (provider,
-  // provider_sub) keeps one federated identity, and the user created by the
-  // other request is removed again.
+  // 外部アカウントの最初のログインで、新しいランダムな ID のユーザーを作ってアカウントを紐付け、紐付いたユーザーの ID を返す。
+  // 同じアカウントの最初のログインが同時に二つ届いても、`UNIQUE (provider, provider_sub)` によって紐付けは一つだけ残る。
+  // 紐付けを書けなかったリクエストは、自分が作ったユーザーを消し、先に紐付いたユーザーの ID を返す。
   const createFederatedUser = async (provider: string, providerSub: string): Promise<string> => {
     const userId = crypto.randomUUID();
     const now = nowSeconds();
@@ -542,9 +547,9 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     return linkedUserId;
   };
 
-  // Save the claims the upstream provider asserted to the user: email and
-  // email_verified to their columns, the others to claims as JSON.
-  // password_hash is left as it is.
+  // 外部の ID プロバイダから受け取ったクレームを、ユーザーの行に保存する。
+  // `email` と `email_verified` はそれぞれの列に、ほかのクレームは JSON にして `claims` に入れる。
+  // `password_hash` は変えない。
   const saveFederatedClaims = async (claims: UserClaims): Promise<void> => {
     const { sub, email, email_verified, ...otherClaims } = claims;
     await db.run({
@@ -555,18 +560,18 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     });
   };
 
-  // User: the users table. Put users there with registerUser() (users.ts).
+  // ユーザーは `users` テーブルから読み書きする。
+  // ユーザーは `registerUser()`（`users.ts`）で登録する。
   const userStore: UserStorage = {
-    // The password form checks users.id as the username. Look the row up by
-    // email instead to sign in with an email address.
+    // パスワードのフォームでは、`users.id` をユーザー名として照合する。
+    // メールアドレスでログインさせるには、代わりに `email` で行を探す。
     async authenticate(username, password) {
       const [row] = await db.all<UserRow & { password_hash: string | null }>({
         sql: 'SELECT email, is_verified, password_hash, claims FROM users WHERE id = ?',
         params: [username],
       });
-      // verifyPassword() takes as long without a hash, so the response time does
-      // not tell whether the user exists. A user without a password (one
-      // created by an upstream sign-in) cannot sign in with the form.
+      // `verifyPassword()` はハッシュがなくても同じだけ時間をかけるので、応答までの時間からユーザーの有無はわからない。
+      // パスワードのないユーザー（外部の ID プロバイダでのログインで作られたユーザー）は、フォームではログインできない。
       const passwordHash = row?.password_hash ?? null;
       if (!(await verifyPassword(password, passwordHash)) || !row || passwordHash === null) {
         return undefined;
@@ -580,8 +585,8 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
       });
       return row ? userClaims(sub, row) : undefined;
     },
-    // Find or create the user of a verified upstream account by its federated
-    // identity (never by email), and save the claims the provider asserted.
+    // 検証済みの外部アカウントのユーザーを紐付けから探し、なければ作る（メールアドレスでは探さない）。
+    // そのうえで、外部の ID プロバイダから受け取ったクレームを保存して返す。
     async linkFederatedIdentity(identity) {
       const userId =
         (await findFederatedUser(identity.provider, identity.subject)) ??
@@ -592,10 +597,9 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     },
   };
 
-  // The upstream sign-in a transaction waits for, kept as the
-  // upstream_auth_requests row of the transaction and found by its nonce. A
-  // transaction has one row, so a newer login page replaces the nonce of an
-  // older one. The record expires with the transaction.
+  // トランザクションが待っている外部の ID プロバイダでのログインは、トランザクションの `upstream_auth_requests` の行に保存し、`nonce` で探す。
+  // 行はトランザクションに一つなので、新しいログイン画面の `nonce` が古い画面の `nonce` を置き換える。
+  // `find()` はトランザクションの有効期限で絞るので、トランザクションが期限切れになると行は見つからなくなる。
   const upstreamLoginStore: UpstreamLoginStorage = {
     async find(nonce) {
       const [row] = await db.all<{ provider: string; transaction_id: string; expired_at: number | string }>({
@@ -746,11 +750,17 @@ interface UserRow {
   claims: string | null;
 }
 
+/** 現在の時刻をエポック秒（整数）で返す。 */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** The claims of a users row: email and email_verified from their columns, the rest from claims. */
+/**
+ * `users` の行からクレームを組み立てて返す。
+ *
+ * `sub` には引数の `sub` を使い、ほかのクレームは `claims` の列の JSON から取る。
+ * 行に `email` があるときだけ、`email` と `email_verified`（`is_verified` の列）を加える。
+ */
 function userClaims(sub: string, row: UserRow): UserClaims {
   const claims: UserClaims = {
     ...(row.claims ? (JSON.parse(row.claims) as Partial<UserClaims>) : {}),
@@ -763,33 +773,58 @@ function userClaims(sub: string, row: UserRow): UserClaims {
   return claims;
 }
 
+/**
+ * `key` の先頭の `prefix` を取り除いて返す。
+ *
+ * `prefix` で始まらない `key` は、そのまま返す。
+ */
 function withoutPrefix(key: string, prefix: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
 
-/** The scope column: space-separated, NULL when there is none. */
+/**
+ * スコープの配列を空白区切りの文字列にして返す。
+ *
+ * `access_tokens` の `scope` の列に保存する値で、スコープがなければ `null`（列では `NULL`）を返す。
+ */
 function joinScope(scope: string[]): string | null {
   return scope.length > 0 ? scope.join(' ') : null;
 }
 
+/**
+ * 空白区切りのスコープを配列にして返す。
+ *
+ * `NULL` の列と空文字列には、空の配列を返す。
+ */
 function splitScope(scope: string | null): string[] {
   return scope ? scope.split(' ') : [];
 }
 
 /**
- * A boolean as SQL text. TRUE / FALSE work on SQLite, D1 and PostgreSQL alike,
- * while a bound number is not a BOOLEAN to every PostgreSQL driver.
+ * 真偽値を SQL の `TRUE` か `FALSE` で返す。
+ *
+ * `TRUE` と `FALSE` は、SQLite、D1、PostgreSQL のどれでも使える。
+ * 数値をバインドすると、PostgreSQL のドライバによっては `BOOLEAN` として扱われないので、リテラルで書く。
  */
 function sqlBoolean(value: boolean): 'TRUE' | 'FALSE' {
   return value ? 'TRUE' : 'FALSE';
 }
 
-/** A BOOLEAN column as read back: true / false from PostgreSQL, 1 / 0 from SQLite. */
+/**
+ * 読み出した `BOOLEAN` の列の値を真偽値にして返す。
+ *
+ * PostgreSQL は `true` か `false` を、SQLite は `1` か `0` を返すので、`true` と、数値にすると 1 になる値を真とみなす。
+ */
 function toBoolean(value: unknown): boolean {
   return value === true || Number(value) === 1;
 }
 
-/** The key a code or token is stored under: its SHA-256 hash, base64url-encoded. */
+/**
+ * 値の SHA-256 ハッシュを base64url で返す。
+ *
+ * 認可コードとトークンは、この値で保存して探す。
+ * パディングは付けない。
+ */
 async function hashKey(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   let binary = '';

@@ -5,34 +5,37 @@ export const meta = step({
   id: 'collect-signing-algorithms',
   endpoint: 'discovery',
   kind: 'resolve',
-  label: 'Collect the advertised signing algorithms',
+  label: '公開する署名アルゴリズムを集める',
   spec: 'OIDC Core 1.0 §15.1 / §5.3.2',
   function: 'collectAdvertisedSigningKeys',
-  calls: ['getJwaAlgorithm'],
   consumes: [],
   produces: ['idTokenSigningKeys', 'userinfoSigningAlgValues'],
   removable: false,
 });
 
 /**
- * Collect what the registered key sets let the OP advertise: the ID Token
- * signing keys (id_token_signing_alg_values_supported is derived from them,
- * OIDC Core 1.0 §15.1) and the UserInfo signing algorithms (§5.3.2).
+ * 公開する署名鍵とアルゴリズムを集めて返す。
+ *
+ * 返すのは、ID トークンの署名鍵の `CryptoKey` と、UserInfo の署名アルゴリズムの一覧（重複を除いたもの）である。
+ * `buildProviderMetadata()` は、ID トークンの署名鍵から `id_token_signing_alg_values_supported` を求める（OIDC Core 1.0 §15.1）。
+ * UserInfo の署名アルゴリズムは `userinfo_signing_alg_values_supported` になる（OIDC Core 1.0 §5.3.2）。
+ * どちらの鍵もリクエストコンテキストから読み、設定されていなければ空の配列にする。
+ *
+ * @spec OIDC Core 1.0 §15.1
+ * @spec OIDC Core 1.0 §5.3.2
  */
 export function collectAdvertisedSigningKeys(c: any): {
   idTokenSigningKeys: CryptoKey[];
   userinfoSigningAlgValues: string[];
 } {
-  // Derive id_token_signing_alg_values_supported from the actual key set
-  // (OIDC Core 1.0 §15.1 — RS256 presence is enforced by buildProviderMetadata).
-  // T-022: 全 registered ID Token 鍵の alg を集約することで RS256+ES256 など
-  // 混在鍵セットも正しく advertise できる。
+  // `id_token_signing_alg_values_supported` は、実際に登録した鍵の集合から求める（OIDC Core 1.0 §15.1）。
+  // RS256 の鍵があることは `buildProviderMetadata()` が確かめる。
+  // 登録したすべての ID トークンの鍵のアルゴリズムを集めるので、RS256 と ES256 が混在する鍵の集合も正しく公開できる。
   const idTokenSigningKeyArr = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
   const idTokenSigningKeys: CryptoKey[] = idTokenSigningKeyArr.map((k) => k.privateKey);
 
-  // OIDC Core 1.0 §5.3.2 / §3 discovery: advertise the UserInfo signing algs the OP
-  // can actually sign with, derived from the registered UserInfo key set (RS256,
-  // ES256, ...), so userinfo_signed_response_alg clients can rely on metadata.
+  // 登録した UserInfo の鍵の集合（RS256、ES256 など）から、OP が実際に署名できるアルゴリズムを求めて公開する（OIDC Core 1.0 §5.3.2、OIDC Discovery 1.0 §3）。
+  // `userinfo_signed_response_alg` を使うクライアントは、メタデータの値をそのまま信頼できる。
   const userinfoSigningKeyArr = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
   const userinfoSigningAlgValues = [
     ...new Set(userinfoSigningKeyArr.map((k) => getJwaAlgorithm(k.privateKey))),

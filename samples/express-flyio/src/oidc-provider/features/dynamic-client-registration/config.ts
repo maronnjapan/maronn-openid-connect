@@ -54,6 +54,15 @@ export type SoftwareStatementVerifier = (
  * - jwksPurposes: the ClientKeyResolver purposes the jwks of a registration
  *   serves — a registered key verifies signed Request Objects (request_object),
  *   and stands ready for private_key_jwt and DPoP once a project adds them.
+ * - acceptJwksUri: true as generated, which registers a jwks_uri (RFC 7591 §2)
+ *   and returns it in the 201 response. The OP checks the URL at registration
+ *   (https, no fragment or userinfo, no localhost or loopback, private or
+ *   link-local address unless allowInsecureClientJwksUri of config.ts allows
+ *   them) and fetches it only when it needs the keys (client-jwks-uri.ts), for
+ *   the purposes of clientJwksUriPurposes. Set false to ignore jwks_uri as
+ *   metadata this provider does not understand: an open registration endpoint
+ *   then never leads the OP to fetch a URL a stranger registered. A
+ *   registration with both jwks and jwks_uri is refused either way.
  * - verifyInitialAccessToken: undefined as generated, which leaves registration
  *   open (RFC 7591 §3.1 SHOULD). Set a function to require an initial access
  *   token (OIDC Dynamic Client Registration 1.0 §3): POST /register then answers
@@ -91,6 +100,7 @@ export interface DynamicClientRegistrationConfig {
   tokenEndpointAuthMethods: readonly string[];
   grantTypes: readonly string[];
   jwksPurposes: readonly string[];
+  acceptJwksUri: boolean;
   verifyInitialAccessToken: InitialAccessTokenVerifier | undefined;
   verifySoftwareStatement: SoftwareStatementVerifier | undefined;
   customClientMetadata: Readonly<Record<string, CustomClientMetadataValidator>>;
@@ -102,23 +112,22 @@ export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = 
   tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none'],
   grantTypes: ['authorization_code', 'refresh_token', 'implicit'],
   jwksPurposes: ['request_object', 'private_key_jwt', 'dpop'],
+  acceptJwksUri: true,
   verifyInitialAccessToken: undefined,
   verifySoftwareStatement: undefined,
   customClientMetadata: {},
 };
 
 /**
- * The settings of a deployment: the generated defaults with the
- * dynamicClientRegistration option of createApp() / applyOidc() applied.
+ * `base` に `additions` を反映した新しい設定を返す。
  *
- * The option adds to the lists and the table instead of replacing them, so a
- * deployment extends what the generated code allows without repeating it:
- * tokenEndpointAuthMethods, grantTypes and jwksPurposes gain the given values
- * (each once), and customClientMetadata gains the given validators (one with
- * the name of a generated validator replaces it). The scalar settings and the
- * verifier functions replace the defaults; a field left out or undefined keeps
- * them. To take a value out of a generated list, or to drop a verifier set
- * above, edit it in config.ts.
+ * `base` には生成された既定の設定を、`additions` には `createApp()` か `applyOidc()` の `dynamicClientRegistration` オプションを渡す。
+ * `base` は書き換えない。
+ *
+ * 一覧と表は置き換えずに追加するので、デプロイごとの設定は、生成されたコードが許す値を繰り返し書かずに広げられる。
+ * `tokenEndpointAuthMethods`、`grantTypes`、`jwksPurposes` には指定した値を重複なく加え、`customClientMetadata` には指定した検証関数を加える（生成された検証関数と同じ名前なら、生成されたほうを置き換える）。
+ * それ以外の項目（数値の設定と検証関数）は指定した値で置き換え、省いた項目と `undefined` の項目は `base` の値のまま残す。
+ * 生成された一覧から値を除くときや、上で設定した検証関数を外すときは、config.ts を直接編集する。
  */
 export function extendDynamicClientRegistrationConfig(
   base: DynamicClientRegistrationConfig,

@@ -5,20 +5,22 @@ export const meta = step({
   id: 'establish-session',
   endpoint: 'login',
   kind: 'persist',
-  label: 'Establish the OP browser session',
+  label: 'ブラウザに OP のセッションを確立する',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'establishBrowserSession',
-  calls: ['generateRandomString'],
   consumes: ['user'],
   produces: ['sessionId', 'authTime'],
   removable: false,
 });
 
 /**
- * [establish-session] Establish the persistent browser (OP) session for the
- * authenticated subject. Its cookie travels with the answer so SSO,
- * prompt=none and max_age work on later authorization requests.
- * OIDC Core 1.0 §3.1.2.3
+ * OP のセッションを保存し、その ID と認証時刻を返す。
+ *
+ * セッション ID は 32 バイトの乱数を base64url で表した文字列で、認証時刻は現在時刻を秒で表した値（エポック秒）である。
+ * このセッションは認可リクエストをまたいで残り、後の認可リクエストでは、このセッションをもとに SSO、`prompt=none`、`max_age` を処理する。
+ * セッションの Cookie は、このステップではなく、後の `hand-off-to-consent` のステップが結果に付ける。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.3
  */
 export async function establishBrowserSession(
   c: any,

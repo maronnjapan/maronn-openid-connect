@@ -42,8 +42,17 @@ samples/*/.vercel/
 /tasks
 /study-material
 /.review
-/.claude
-/.agents
+# Keep personal tool settings private; share only the two repository skills.
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/provider-map-implementation/
+!/.claude/skills/provider-map-review/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/provider-map-implementation/
+!/.agents/skills/provider-map-review/
 /.serena
 /.mcp.json
 /docs/implementation-guides
@@ -54,3 +63,6 @@ packages/cli/.matrix/
 
 # apps/map: the data of the map, built from the CLI (pnpm run build:map)
 apps/map/public/data/
+
+# Local audit data, build/test logs and investigation snapshots
+/work/

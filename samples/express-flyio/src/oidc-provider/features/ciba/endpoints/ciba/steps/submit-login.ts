@@ -8,34 +8,38 @@ import { buildSessionCookie } from '../../../../../cookies.js';
 import { cibaConfig } from '../../../config.js';
 import { type CibaOutcome, type CibaLoginSubmission, verificationFailure, listPendingRequests } from '../outcome.js';
 import { step } from '../../../../../endpoints/step.js';
+import type { UserStorage } from '../../../../../store.js';
 
 export const meta = step({
   id: 'submit-login',
   endpoint: 'ciba',
   feature: 'ciba',
   kind: 'validate',
-  label: 'Sign the End-User in on this browser',
+  label: 'このブラウザでエンドユーザーをログインさせる',
   function: 'submitCibaLogin',
-  calls: ['validateCibaLoginSubmission', 'recordCibaLoginFailure', 'buildSessionCookie'],
   consumes: ['loginTransaction'],
   produces: ['session'],
   removable: false,
 });
 
 /**
- * Sign in (POST /ciba/login)
+ * エンドユーザーをログインさせ、一覧の結果を返す。
  *
- * Binding first, then CSRF, then credentials: the binding is what proves this
- * is the browser the login form was issued to, and it must gate the step that
- * would otherwise let a forged POST establish an OP session in the victim's
- * browser.
+ * `POST /ciba/login` の処理で、バインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
+ * バインディング Cookie は、このブラウザがログインフォームを受け取ったブラウザであることを示す。
+ * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
+ *
+ * ログイントランザクションが見つからない、期限切れ、別のブラウザに渡したもの（バインディング Cookie が一致しない）、`csrf_token` が一致しない、のどれかに当たると、`error`（403）の結果を返す。
+ * 認証情報が誤っていれば失敗の回数を記録し、残りの回数を持つ `invalid_credentials` の結果を返す。
+ * 上限に達するとトランザクションを削除し、`locked_out`（429）の結果を返す。
+ * 成功するとトランザクションを削除して新しい ID の OP のセッションを保存し、保留中のリクエストと、セッションの Cookie とバインディング Cookie を消す Cookie を持つ `pending_requests` の結果を返す。
  */
 export async function submitCibaLogin(c: any, input: CibaLoginSubmission): Promise<CibaOutcome> {
   const { loginTransactionId: transactionId, csrfToken, username, password } = input;
 
   const browserSessionStore = c.get('browserSessionStore');
   const loginTransactionStore = c.get('cibaLoginTransactionStore');
-  const authenticateUser = c.get('authenticateUser');
+  const userStore: UserStorage = c.get('userStore');
 
   let transaction;
   try {
@@ -49,21 +53,21 @@ export async function submitCibaLogin(c: any, input: CibaLoginSubmission): Promi
     return verificationFailure(error);
   }
 
-  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
-  // upstream IdP) without touching anything above or below it.
-  const user = await authenticateUser(username, password);
+  // ユーザー名とパスワードでエンドユーザーを認証する。
+  // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
+  const user = await userStore.authenticate(username, password);
   if (!user) {
-    // Per-transaction throttling only. Anyone can mint fresh login
-    // transactions by reloading /ciba, so the aggregate password-guess budget
-    // is the same as the one on /login. Subject-scoped throttling is a
-    // separate concern.
+    // 失敗の回数をログイントランザクションに記録し、上限に達したらトランザクションを削除する。
+    // 回数の制限は、トランザクションごとにしかかからない。
+    // `/ciba` を開き直せば誰でも新しいトランザクションを作れるので、パスワードを試せる合計の回数は `/login` と同じく実質的に制限されない。
+    // ユーザーごとの制限は、別に扱う課題である。
     const failure = await recordCibaLoginFailure(
       transaction,
       loginTransactionStore,
       cibaConfig.maxLoginAttempts,
     );
     if (!failure.canRetry) {
-      // The transaction is gone: this form cannot be retried at all.
+      // トランザクションは削除されたので、このフォームからは再試行できない。
       return { kind: 'locked_out' };
     }
     return {
@@ -74,16 +78,15 @@ export async function submitCibaLogin(c: any, input: CibaLoginSubmission): Promi
     };
   }
 
-  // The transaction is single-use: a successful login consumes it, and the
-  // session is established under a NEWLY minted id (never one the request
-  // brought along — session fixation).
+  // ログイントランザクションは一度しか使えないので、ログインに成功したら削除する。
+  // セッションは新しく作った ID で保存し、リクエストに含まれていた ID は使わない（セッション固定攻撃を防ぐ）。
   await loginTransactionStore.delete(transaction.id);
   const authTime = Math.floor(Date.now() / 1000);
   const sessionId = generateRandomString(32);
   await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
 
-  // Two cookies travel with the listing: the new OP session, and the cleared
-  // login binding (it is single-use and would otherwise linger until Max-Age).
+  // 一覧の画面に、新しい OP のセッションの Cookie と、バインディング Cookie を消す Cookie を付ける。
+  // バインディング Cookie は一度しか使えず、消さなければ `Max-Age` まで残るためである。
   return {
     kind: 'pending_requests',
     requests: await listPendingRequests(c, user.sub),

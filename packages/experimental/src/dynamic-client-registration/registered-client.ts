@@ -16,9 +16,10 @@ import type { ValidatedClientRegistration } from './registration-request.js';
  *
  * core が解釈するフィールド（clientId / clientSecret / clientType / redirectUris /
  * grantTypes / responseTypes / tokenEndpointAuthMethods / scope / defaultMaxAge /
- * idTokenSignedResponseAlg / userinfoSignedResponseAlg）は生成コードの
- * RegisteredClient 型（core の ClientInfo & TokenClientInfo を合成した型）と同じ
- * 名前で持つ。jwks は生成コードが ClientKeyResolver の用途別の鍵へ写す。
+ * idTokenSignedResponseAlg / userinfoSignedResponseAlg）と、生成コードが読む
+ * jwksUri / requestObjectSigningAlg は、生成コードの RegisteredClient 型（core の
+ * ClientInfo & TokenClientInfo を合成した型）と同じ名前で持つ。jwks は生成コードが
+ * ClientKeyResolver の用途別の鍵へ写す。
  * metadata は登録した全メタデータのワイヤ形式で、201 応答の組み立てと、
  * client_name や logo_uri、カスタムメタデータを後から読むために保持する。
  *
@@ -43,6 +44,16 @@ export interface DynamicallyRegisteredClient {
   idTokenSignedResponseAlg?: string;
   userinfoSignedResponseAlg?: string;
   jwks?: JwkSet;
+  /**
+   * 登録した jwks_uri（RFC 7591 §2）。生成コードは、鍵を使うときにここから取得して
+   * ClientKeyResolver の用途別の鍵として返す。
+   */
+  jwksUri?: string;
+  /**
+   * 登録した request_object_signing_alg（OIDC Dynamic Client Registration 1.0 §2）。
+   * このクライアントの Request Object は、この alg で署名されていなければ拒否される。
+   */
+  requestObjectSigningAlg?: string;
   clientIdIssuedAt: number;
   metadata: Record<string, unknown>;
 }
@@ -120,6 +131,10 @@ export function buildRegisteredClient(
       ? {}
       : { userinfoSignedResponseAlg: metadata.userinfoSignedResponseAlg }),
     ...(metadata.jwks === undefined ? {} : { jwks: { keys: metadata.jwks.keys.map((key) => ({ ...key })) } }),
+    ...(metadata.jwksUri === undefined ? {} : { jwksUri: metadata.jwksUri }),
+    ...(metadata.requestObjectSigningAlg === undefined
+      ? {}
+      : { requestObjectSigningAlg: metadata.requestObjectSigningAlg }),
     clientIdIssuedAt: Math.floor(now() / 1000),
     metadata: { ...metadata.metadata },
   };

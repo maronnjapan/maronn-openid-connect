@@ -12,19 +12,23 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'validate',
-  label: 'Authenticate the client',
+  label: 'クライアントを認証する',
   spec: 'CIBA Core 1.0 §7.1',
   function: 'authenticateCibaClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
   consumes: ['params', 'authorization'],
   produces: ['client'],
   removable: false,
 });
 
 /**
- * CIBA §7.1: "The Client MUST authenticate ... using the authentication
- * method registered for its client_id" — the same pipeline the token
- * endpoint runs, step function for step function.
+ * クライアントを認証し、認証したクライアントを返す。
+ *
+ * クライアントは、`client_id` に登録した認証方式で認証しなければならない（CIBA §7.1 の MUST）。
+ * そのため、トークンエンドポイントと同じ core の関数を同じ順に呼び、提示された認証情報を読み取り、登録済みのクライアントを取得し、認証方式を確かめ、`client_secret` を比較する。
+ * 認証に失敗すると、中で呼ぶ core の関数が `TokenError`（`invalid_client` など）を投げる。
+ * 認証方式が `none` のパブリッククライアントはここを通るが、後の `create-request` のステップで `unauthorized_client` として拒否される。
+ *
+ * @spec CIBA Core 1.0 §7.1
  */
 export async function authenticateCibaClient(
   c: any,

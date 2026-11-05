@@ -558,3 +558,10 @@ h1, h2, h3, h4 { margin: 0; }
   .work.changes-work { display: block; overflow: auto; }
   .changes-work .changes-body, .changes-work .side-panel { overflow: visible; }
 }
+/* The wiring inventory keeps the source and its uncertainty together. */
+.wiring-files { padding: 1rem; }
+.wiring-file { margin-bottom: .75rem; border: 1px solid var(--line); border-radius: 6px; }
+.wiring-file > summary { cursor: pointer; padding: .75rem; overflow-wrap: anywhere; }
+.wiring-code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+.wiring-search { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.wiring-search input { min-width: 16rem; padding: .4rem; }

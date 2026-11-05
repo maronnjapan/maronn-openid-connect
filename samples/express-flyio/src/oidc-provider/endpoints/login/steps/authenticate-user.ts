@@ -1,10 +1,11 @@
 import { step } from '../../step.js';
+import type { UserStorage } from '../../../store.js';
 
 export const meta = step({
   id: 'authenticate-user',
   endpoint: 'login',
   kind: 'validate',
-  label: 'Check the credentials',
+  label: '認証情報を確かめる',
   function: 'authenticateEndUser',
   calls: ['userStore.authenticate'],
   consumes: ['username', 'password'],
@@ -13,15 +14,16 @@ export const meta = step({
 });
 
 /**
- * [authenticate-user] Check the credentials against the user store (or the
- * authenticateUser function app.ts put on the request context). Returns the
- * End-User, or undefined when the credentials are wrong.
+ * 認証情報を確かめ、エンドユーザーの `sub` を返す。
+ *
+ * リクエストのユーザーストアの `authenticate()` を呼ぶ。
+ * 認証情報が誤っていれば `undefined` を返す。
  */
 export async function authenticateEndUser(
   c: any,
   username: string,
   password: string,
 ): Promise<{ sub: string } | undefined> {
-  const authenticateUser = c.get('authenticateUser');
-  return (await authenticateUser(username, password)) ?? undefined;
+  const userStore: UserStorage = c.get('userStore');
+  return (await userStore.authenticate(username, password)) ?? undefined;
 }

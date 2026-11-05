@@ -10,29 +10,27 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'validate',
-  label: 'Verify the software statement and apply the metadata it asserts',
+  label: 'ソフトウェアステートメントを検証して適用する',
   spec: 'RFC 7591 §2.3 / §3.1.1',
   function: 'resolveRegistrationMetadata',
-  calls: ['verifySoftwareStatement', 'applySoftwareStatement'],
   consumes: ['registration'],
   produces: ['metadata'],
   removable: false,
 });
 
 /**
- * The metadata to register: the plain JSON values, with those a verified
- * software statement asserts taking precedence (RFC 7591 §3.1.1).
+ * JSON の値にソフトウェアステートメントを重ねて返す。
  *
- * No verifySoftwareStatement in the config means this provider does not
- * support software statements: a software_statement in the request is
- * ignored, as §3.1.1 allows, and the plain values register. With one, every
- * registration must carry a software_statement (invalid_client_metadata
- * without it); the function verifies it — RFC 7591 leaves the trust criteria
- * to the server, so nothing here examines the statement — and rejects it with
- * ClientRegistrationError (invalid_software_statement or
- * unapproved_software_statement; §3.2.2). The metadata it returns is applied
- * over the plain values, and the statement itself is kept so the 201 response
- * returns it unmodified (§3.2.1).
+ * 返すのは登録するメタデータで、検証したソフトウェアステートメントが示す値を JSON の値より優先する（RFC 7591 §3.1.1）。
+ *
+ * 設定に `verifySoftwareStatement` がなければ、この OP はソフトウェアステートメントに対応しないので、リクエストの `software_statement` を無視して JSON の値をそのまま返す（RFC 7591 §3.1.1 が許す扱い）。
+ * 設定にあれば、すべての登録に `software_statement` を求め、なければ `invalid_client_metadata` を投げる。
+ * `software_statement` は設定の関数が検証し、拒否するときは `ClientRegistrationError`（`invalid_software_statement` か `unapproved_software_statement`）を投げる（RFC 7591 §3.2.2）。
+ * RFC 7591 は信頼の基準をサーバーに任せているので、この関数はソフトウェアステートメントの中身を確かめない。
+ * ソフトウェアステートメントそのものも登録するメタデータに残すので、201 のレスポンスはそれを変えずに返す（RFC 7591 §3.2.1）。
+ *
+ * @spec RFC 7591 §3.1.1
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 設定に関数があり、`software_statement` がないとき
  */
 export async function resolveRegistrationMetadata(
   c: any,

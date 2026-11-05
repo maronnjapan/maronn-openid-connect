@@ -23,10 +23,9 @@ export const meta = step({
   endpoint: 'token',
   feature: 'id-jag',
   kind: 'dispatch',
-  label: 'Redeem an ID-JAG on the jwt-bearer grant',
+  label: 'jwt-bearer グラントで ID-JAG を引き換える',
   spec: 'ID-JAG draft §4.4 / RFC 7523 §2.1',
   function: 'redeemIdJag',
-  calls: ['processIdJagRedemptionRequest', 'buildAccessTokenAudience', 'buildAccessTokenPayload'],
   consumes: ['params', 'tokenClient'],
   produces: [],
   removable: false,
@@ -34,22 +33,27 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — ID-JAG redemption (Cross-App Access, draft §4.4).
+ * 提示された ID-JAG を、アクセストークンに引き換える。
  *
- * The jwt-bearer grant (RFC 7523 §2.1). The assertion must be an ID-JAG
- * (typ oauth-id-jag+jwt) issued by one of idJagConfig.trustedIdentityProviders
- * for THIS issuer and for the authenticated client. This OP then issues its
- * own access token — the IdP never mints tokens for this AS. Returns undefined
- * for any other grant_type, so the pipeline continues.
+ * `grant_type` が `jwt-bearer` グラントの URN（RFC 7523 §2.1）のときだけ応答し、それ以外のグラントタイプには `undefined` を返す。
+ * `undefined` のときは、パイプラインは次のブロックに移る。
  *
- * No ID Token is issued (this is not an OIDC authentication flow: the
- * openid scope only grants UserInfo access) and no refresh token is issued
- * (draft §4.4.3 SHOULD NOT — re-presenting the still-valid ID-JAG replaces
- * the refresh token).
+ * アサーションは ID-JAG（`typ` が `oauth-id-jag+jwt`）で、`idJagConfig.trustedIdentityProviders` のどれかが、この OP の発行者と認証したクライアントに宛てて発行したものでなければならない。
+ * 検証を通れば、この OP が自分のアクセストークンを発行してストアに保存し、200 で返す。
+ * ID プロバイダがこの OP のアクセストークンを発行することはない。
+ * 信頼する ID プロバイダの JWKS を取得できないときは、その例外をそのまま投げる（トークンエンドポイントが 500 の `server_error` で応答する）。
  *
- * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
- * in a breaking way between releases. Do not build production code on it
- * without pinning the version.
+ * ID トークンは発行しない。
+ * OIDC の認証のフローではなく、`openid` スコープは UserInfo を使えるようにするだけだからである。
+ * リフレッシュトークンも発行しない（ID-JAG draft §4.4.3 の SHOULD NOT）。
+ * 有効期間内の ID-JAG をもう一度提示すれば、リフレッシュトークンの代わりになる。
+ *
+ * 実験的な機能である `@maronn-openid-connect/experimental` を使う。
+ * その API は安定しておらず、リリースの間で互換性のない変更がありうるので、本番のコードで使うときはバージョンを固定する。
+ *
+ * @spec ID-JAG draft §4.4
+ * @spec RFC 7523 §2.1
+ * @throws {TokenEndpointError} 400 の `invalid_grant`、`invalid_request`、`invalid_scope`、`unauthorized_client`: ID-JAG やリクエストが検証を通らないとき
  */
 export async function redeemIdJag(
   c: any,
@@ -71,16 +75,15 @@ export async function redeemIdJag(
       configuredExpiresIn: idJagRedemptionConfig.accessTokenExpiresIn,
     });
 
-    // The first registered key signs new tokens (SigningKeyProvider contract).
+    // 登録した最初の鍵で、新しいトークンに署名する（`SigningKeyProvider` の約束）。
     const idJagAccessTokenSigningKey: SigningKey = c.get('signingKeys')[0];
     const idJagTokenIssuer: AccessTokenIssuer =
       idJagRedemptionConfig.accessTokenFormat === 'opaque'
         ? createOpaqueAccessTokenIssuer()
         : createJwtAccessTokenIssuer();
 
-    // Same aud policy as the standard grants: the UserInfo endpoint stays a
-    // permanent member (RFC 9068 §3); the ID-JAG's resource claim (RFC 8707)
-    // contributes the requested resources.
+    // 標準のグラントと同じ規則で `aud` を決める。
+    // UserInfo エンドポイントを常に含め（RFC 9068 §3）、ID-JAG の `resource` クレーム（RFC 8707）が示すリソースを加える。
     const idJagAudience = buildAccessTokenAudience({
       userInfoEndpoint: `${idJagRedemptionConfig.issuer}/userinfo`,
       requested: idJagGrant.requestedResources,
@@ -100,10 +103,9 @@ export async function redeemIdJag(
     const idJagAccessToken = await idJagTokenIssuer.issue({
       payload: {
         ...idJagAccessTokenPayload,
-        // RFC 8693 §4.1: an act claim carried by the ID-JAG is preserved on
-        // the issued access token, so downstream services still see WHO acts
-        // on the subject's behalf (dropping it would silently turn the
-        // delegation into impersonation).
+        // ID-JAG に `act` クレームがあれば、発行するアクセストークンにも引き継ぐ（RFC 8693 §4.1）。
+        // こうすると、後段のサービスにも、誰がサブジェクトの代わりに操作しているかがわかる。
+        // 引き継がないと、委任が気付かれないままなりすましに変わってしまう。
         ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
       },
       privateKey: idJagAccessTokenSigningKey.privateKey,
@@ -111,23 +113,21 @@ export async function redeemIdJag(
     });
 
     const idJagAccessTokenMetadata: IdJagAccessTokenInfo = {
-      // draft §4.4.1: the ID-JAG's sub is used as the local subject directly
-      // (subject resolution by identical sub; JIT provisioning is out of scope).
+      // ID-JAG の `sub` を、この OP のサブジェクトとしてそのまま使う（ID-JAG draft §4.4.1）。
+      // 同じ `sub` でサブジェクトを特定し、その場でのアカウントの作成（JIT プロビジョニング）は扱わない。
       sub: idJagGrant.subject,
       clientId: idJagGrant.clientId,
       scope: idJagGrant.scope,
       expiresAt: idJagIssuedAt + idJagGrant.expiresIn,
-      // Each redemption is its own grant: revoking one issued token must not
-      // affect tokens from other redemptions of the same (re-presentable)
-      // ID-JAG, so the payload's own jti doubles as the grant id.
+      // 引き換えごとに別のグラントにするため、ペイロードの `jti` をグラント ID にも使う。
+      // 同じ ID-JAG は何度でも提示できるので、発行したトークンの 1 つを失効させても、ほかの引き換えで発行したトークンには影響しないようにする。
       grantId: idJagAccessTokenPayload.jti,
       iat: idJagIssuedAt,
       nbf: idJagIssuedAt,
       audience: idJagAudience,
       issuer: idJagRedemptionConfig.issuer,
       jti: idJagAccessTokenPayload.jti,
-      // The actor record is persisted too, so opaque-token introspection and
-      // store-based tooling can surface it just like the JWT claim.
+      // アクターの記録も保存するので、`opaque` 形式のトークンのイントロスペクションや、ストアを読むツールでも、JWT のクレームと同じように取り出せる。
       ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
     };
     await accessTokenStore.set(idJagAccessToken, idJagAccessTokenMetadata);
@@ -142,12 +142,10 @@ export async function redeemIdJag(
       },
     });
   } catch (error) {
-    // ID-JAG errors use the RFC 6749 §5.2 shape and are always 400 — a 401
-    // can only come from client authentication, which runs before both
-    // branches and throws core's TokenError. Issuance failures map to
-    // invalid_request / invalid_target / invalid_scope / unauthorized_client
-    // (RFC 8693 §2.2.2); assertion failures on redemption map to
-    // invalid_grant (RFC 7521 §4.1).
+    // `IdJagError` を、RFC 6749 §5.2 の形の 400 のエラーにして投げる。
+    // ID-JAG のエラーは常に 400 である。
+    // 401 になるのはクライアントの認証の失敗だけで、その認証は発行と受領のどちらの分岐よりも前に実行され、core の `TokenError` を投げる。
+    // 発行の失敗は `invalid_request`、`invalid_target`、`invalid_scope`、`unauthorized_client` のどれか（RFC 8693 §2.2.2）に、受領でのアサーションの失敗は `invalid_grant`（RFC 7521 §4.1）になる。
     if (error instanceof IdJagError) {
       throw new TokenEndpointError({
         status: error.statusCode,

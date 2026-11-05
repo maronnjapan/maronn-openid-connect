@@ -11,10 +11,9 @@ export const meta = step({
   id: 'issue-id-token',
   endpoint: 'token',
   kind: 'issue',
-  label: 'Issue the ID Token',
+  label: 'ID トークンを発行する',
   spec: 'OIDC Core 1.0 §3.1.3.6 / §12.1',
   function: 'issueIdToken',
-  calls: ['computeAtHash', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['idTokenSigningKey', 'accessToken', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'acr', 'amr'],
   produces: ['idToken'],
   removable: true,
@@ -22,11 +21,14 @@ export const meta = step({
 });
 
 /**
- * Issue the ID Token when the grant carries the openid scope: at_hash binds
- * it to the access token (§3.1.3.6), and acr / amr are the ones
- * resolveTokenAcrAmr() settled on (kept from the first authentication on a
- * refresh, §12.1).
- * OIDC Core 1.0 §3.1.3.6 / §12.1
+ * `openid` スコープがあれば ID トークンを発行して返す。
+ *
+ * スコープに `openid` がなければ、ID トークンを発行せずに `undefined` を返す。
+ * `at_hash` には同じレスポンスで返すアクセストークンのハッシュの左半分を入れ、ID トークンをそのアクセストークンに結び付ける（OIDC Core 1.0 §3.1.3.6）。
+ * `acr` と `amr` には `resolveTokenAcrAmr()` が決めた値を入れ、リフレッシュでは最初の認証のときの値を引き継ぐ（OIDC Core 1.0 §12.1）。
+ *
+ * @spec OIDC Core 1.0 §3.1.3.6
+ * @spec OIDC Core 1.0 §12.1
  */
 export async function issueIdToken(
   c: any,
@@ -45,15 +47,16 @@ export async function issueIdToken(
   const { idTokenSigningKey, accessToken, subject, authTime, nonce, validatedRequest, issuedAt, acr, amr } = input;
   const config = c.get('config');
 
-  // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
-  // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / acr / amr / azp で再発行する。
-  // （§12.2 は nonce を再発行 ID Token の保持クレームに挙げないため nonce は refresh では undefined）
+  // ID トークンは、スコープに `openid` があるときだけ発行する。
+  // `refresh_token` グラントでも ID トークンを返してよく（MAY）、返すときは最初の認証と同じ `auth_time`、`acr`、`amr` で発行し直す（OIDC Core 1.0 §12、§12.1）。
+  // リフレッシュでは `nonce` が `undefined` になる。
+  // OIDC Core 1.0 §12.2 が、発行し直す ID トークンに残すクレームに `nonce` を挙げていないためである。
   if (!validatedRequest.scope.includes('openid')) {
     return undefined;
   }
 
-  // OIDC Core 1.0 §3.1.3.6: at_hash binds the ID Token to this access token.
-  // The hash function follows the ID Token signing alg.
+  // このアクセストークンのハッシュの左半分から `at_hash` を求め、ID トークンをアクセストークンに結び付ける（OIDC Core 1.0 §3.1.3.6）。
+  // ハッシュ関数は、ID トークンの署名鍵の `alg` に合わせる。
   const atHash = await computeAtHash(accessToken, idTokenSigningKey.privateKey);
 
   const idTokenPayload = buildIdTokenPayload({
@@ -70,8 +73,7 @@ export async function issueIdToken(
     amr,
   });
 
-  // Add your own ID Token claims here, e.g.:
-  //   idTokenPayload.tenant_id = await lookupTenant(subject);
+  // ID トークンに独自のクレームを加えるときは、署名する前のここでペイロードに加える（例: `idTokenPayload.tenant_id = await lookupTenant(subject);`）。
 
   return generateIdToken({
     payload: idTokenPayload,

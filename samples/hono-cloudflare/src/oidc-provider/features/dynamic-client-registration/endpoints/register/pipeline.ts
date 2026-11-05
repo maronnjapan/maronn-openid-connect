@@ -38,22 +38,22 @@ export const registerApp = new Hono<{ Variables: Record<string, any> }>();
 
 registerApp.post('/', async (c) => {
   try {
-    // [verify-initial-access-token] Check that the request may register — OIDC Dynamic Client Registration 1.0 §3 / RFC 6750 §3.1
+    // [verify-initial-access-token] 登録してよいリクエストか確かめる — OIDC Dynamic Client Registration 1.0 §3 / RFC 6750 §3.1
     await verifyRegistrationAccess(c);
 
-    // [parse-request] Read the JSON metadata — RFC 7591 §3.1
+    // [parse-request] JSON のメタデータを読み取る — RFC 7591 §3.1
     const registration = await parseRegistrationRequest(c);
 
-    // [verify-software-statement] Verify the software statement and apply the metadata it asserts — RFC 7591 §2.3 / §3.1.1
+    // [verify-software-statement] ソフトウェアステートメントを検証して適用する — RFC 7591 §2.3 / §3.1.1
     const metadata = await resolveRegistrationMetadata(c, registration);
 
-    // [validate-metadata] Validate the metadata and build the client — RFC 7591 §2 / §2.1
+    // [validate-metadata] メタデータを検証してクライアントを組み立てる — RFC 7591 §2 / §2.1
     const client = validateRegistrationMetadata(c, metadata);
 
-    // [store-client] Enforce the inventory cap and store the client — RFC 7591 §5
+    // [store-client] 登録数の上限を確かめてクライアントを保存する — RFC 7591 §5
     await storeRegisteredClient(c, client);
 
-    // [respond] Respond 201 with the registration response — RFC 7591 §3.2.1
+    // [respond] 201 と登録レスポンスで応答する — RFC 7591 §3.2.1
     return respondRegistration(c, client);
   } catch (error) {
     return respondRegistrationError(c, error);

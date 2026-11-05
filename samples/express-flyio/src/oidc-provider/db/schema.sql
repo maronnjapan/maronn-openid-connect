@@ -102,6 +102,24 @@ CREATE TABLE IF NOT EXISTS client_response_types (
 );
 CREATE INDEX IF NOT EXISTS client_response_types_client_id_idx ON client_response_types (client_id);
 
+-- Not in the ER model: the jwks_uri of the client (RFC 7591 §2), the URL of
+-- the JWK Set the OP fetches its public keys from. A client with one gets the
+-- keys of its jwks_uri for the purposes it serves, not those of client_jwks,
+-- and registers no client_jwks rows. One per client.
+CREATE TABLE IF NOT EXISTS client_jwks_uris (
+  client_id TEXT PRIMARY KEY REFERENCES clients (id) ON DELETE CASCADE,
+  value     VARCHAR(5000) NOT NULL
+);
+
+-- Not in the ER model: the request_object_signing_alg of the client (OpenID
+-- Connect Dynamic Client Registration 1.0 §2). Every Request Object of the
+-- client must be signed with this alg. A client without a row may use any
+-- alg the OP accepts. One per client.
+CREATE TABLE IF NOT EXISTS client_request_object_signing_algs (
+  client_id TEXT PRIMARY KEY REFERENCES clients (id) ON DELETE CASCADE,
+  alg       VARCHAR(100) NOT NULL
+);
+
 -- Scope: the scopes the client may request. A request for any other scope is
 -- rejected with invalid_scope. A client without rows may request every scope
 -- the OP accepts.

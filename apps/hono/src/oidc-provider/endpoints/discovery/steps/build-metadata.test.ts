@@ -95,7 +95,7 @@ describe('buildDiscoveryMetadata', () => {
       expect(await metadataFor()).toMatchObject({
         request_parameter_supported: true,
         request_uri_parameter_supported: false,
-        request_object_signing_alg_values_supported: ['RS256'],
+        request_object_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       });
     });
 

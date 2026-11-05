@@ -134,6 +134,21 @@ export interface ProviderConfig {
    * (§3.4). none and the HS algs are never accepted.
    */
   tokenEndpointAuthSigningAlgValuesSupported: readonly string[];
+  /**
+   * The URLs a client registered for the End-User to see (logo_uri,
+   * policy_uri, tos_uri, client_uri; OIDC Dynamic Client Registration 1.0 §2)
+   * appear on the login and consent pages only when they use https
+   * (client-display.ts). allowInsecureClientDisplayUris lets them use http
+   * too, for development only. Default false.
+   */
+  allowInsecureClientDisplayUris: boolean;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §9.1: show the logo_uri and
+   * policy_uri of a client only when their host is the host of one of its
+   * redirect_uris, so a client cannot borrow the logo or the policy of
+   * another site. Default false (the hosts are not compared).
+   */
+  requireClientDisplayUriHostMatch: boolean;
 }
 
 /**
@@ -168,6 +183,9 @@ const baseProviderConfig = {
   clientJwksUriPurposes: ['request_object', 'private_key_jwt', 'dpop'],
   // OIDC Core 1.0 §9: the asymmetric algs core verifies (RFC 7518 §3.3 / §3.4).
   tokenEndpointAuthSigningAlgValuesSupported: [...SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS],
+  // OIDC Dynamic Client Registration 1.0 §2 / §9.1: https only, hosts not compared.
+  allowInsecureClientDisplayUris: false,
+  requireClientDisplayUriHostMatch: false,
 } satisfies Partial<ProviderConfig>;
 
 /**

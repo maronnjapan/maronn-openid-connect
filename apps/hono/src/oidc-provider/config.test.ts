@@ -31,6 +31,9 @@ describe('createProviderConfig', () => {
       clientJwksUriPurposes: ['request_object', 'private_key_jwt', 'dpop'],
       // OIDC Core 1.0 §9: private_key_jwt assertions signed with the asymmetric algs core verifies.
       tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
+      // OIDC Dynamic Client Registration 1.0 §2 / §9.1: the client's URLs shown on https only.
+      allowInsecureClientDisplayUris: false,
+      requireClientDisplayUriHostMatch: false,
       // The request-object feature requires signed Request Objects (OIDC Core 1.0 §6.1)
       // and accepts the algs core verifies (RFC 7518 §3.3 / §3.4).
       allowUnsignedRequestObject: false,

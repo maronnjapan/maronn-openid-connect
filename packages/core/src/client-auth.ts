@@ -284,10 +284,11 @@ export function validateClientAuthMethod(
  * パブリッククライアント（登録した方式が `none`）には照合するシークレットがないので、何も確かめずに返る。
  * `clientSecretHash` が登録されていれば、提示値のハッシュをその値と比べ、`clientSecret` は使わない（{@link verifyClientSecretHash}）。
  * 登録されていなければ、提示値を `clientSecret` と比べる（{@link verifyClientSecretValue}）。
+ * どちらの場合も、シークレットを提示しないコンフィデンシャルクライアントは拒否するので、シークレットを持たない `private_key_jwt` のクライアントはこの関数では認証できない（クライアントアサーションの検証が要る。OIDC Core 1.0 §9）。
  *
  * @spec OAuth 2.1 §7.4.1
  * @spec RFC 6749 §10.10
- * @throws {TokenError} `invalid_client`: 提示値が登録値と一致しないとき（`clientSecretHash` と照合する場合は、提示値がないときも）
+ * @throws {TokenError} `invalid_client`: 提示値がないとき、または提示値が登録値と一致しないとき
  * @throws {Error} 登録で `none` をほかの方式と並べているとき（{@link selectRegisteredClientAuthMethods}）
  */
 export async function verifyClientSecret(
@@ -544,21 +545,23 @@ export function validateClientAuthMethodAllowed(
 /**
  * 提示されたシークレットを登録値と定数時間で比べる。
  *
- * どちらかが `undefined` なら空文字列として比べるので、両方とも `undefined` なら一致したものとして扱う。
- * 提示の有無はこの関数では確かめない（コンフィデンシャルクライアントでは {@link validateClientAuthMethod} が確かめる）。
+ * シークレットが `undefined` か空文字列なら比べずに拒否するので、シークレットを登録していないクライアント（`private_key_jwt` のクライアントなど）は、シークレットを提示しないリクエストでも通らない。
+ * 登録値が `undefined` なら空文字列として比べるので、どの提示値とも一致しない。
+ * `validateClientAuthMethod` はシークレットの方式でだけ提示を求めるので、この関数はそれに頼らず自分で拒否する（OIDC Core 1.0 §9 の `private_key_jwt` は、シークレットの照合で代えられない）。
  *
  * @spec OAuth 2.1 §7.4.1
  * @spec RFC 6749 §10.10
- * @throws {TokenError} `invalid_client`: 提示値と登録値が一致しないとき
+ * @spec OIDC Core 1.0 §9
+ * @throws {TokenError} `invalid_client`: シークレットがないとき、または提示値と登録値が一致しないとき
  */
 export async function verifyClientSecretValue(
   presentedSecret: string | undefined,
   registeredSecret: string | undefined,
 ): Promise<void> {
-  const secretMatches = await timingSafeEqual(
-    registeredSecret ?? '',
-    presentedSecret ?? '',
-  );
+  const secretMatches =
+    presentedSecret !== undefined &&
+    presentedSecret !== '' &&
+    (await timingSafeEqual(registeredSecret ?? '', presentedSecret));
   if (!secretMatches) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,

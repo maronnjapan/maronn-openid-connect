@@ -233,6 +233,18 @@ describe('verifyClientSecret', () => {
     expect(error?.errorDescription).toBe('Client authentication failed');
   });
 
+  // OIDC Core 1.0 §9: a private_key_jwt client has no secret, so the secret
+  // check cannot stand in for the verification of its client assertion.
+  it('should reject a private_key_jwt client that registered no secret', async () => {
+    const error = await captureAsyncError(() =>
+      verifyClientSecret({ tokenEndpointAuthMethods: ['private_key_jwt'] }, undefined),
+    );
+
+    expect(error).toBeInstanceOf(TokenError);
+    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+    expect(error?.errorDescription).toBe('Client authentication failed');
+  });
+
   describe('hashed client secret', () => {
     // SHA-256 of "secret", base64url without padding.
     const hashedClient: TokenClientInfo = {
@@ -438,6 +450,21 @@ describe('verifyClientSecretValue', () => {
         error: 'invalid_client',
         errorDescription: 'Client authentication failed',
       }),
+    );
+  });
+
+  // OIDC Core 1.0 §9: a private_key_jwt client registers no secret and
+  // presents none, and validateClientAuthMethod does not ask it for one.
+  // Nothing matching nothing must not authenticate it.
+  it('should reject a missing secret when no secret is registered', async () => {
+    await expect(verifyClientSecretValue(undefined, undefined)).rejects.toThrow(
+      expect.objectContaining({ error: 'invalid_client', errorDescription: 'Client authentication failed' }),
+    );
+  });
+
+  it('should reject an empty secret when an empty secret is registered', async () => {
+    await expect(verifyClientSecretValue('', '')).rejects.toThrow(
+      expect.objectContaining({ error: 'invalid_client', errorDescription: 'Client authentication failed' }),
     );
   });
 });

@@ -240,14 +240,18 @@ export class Resolver {
   /**
    * Whether a declaration or its type describes a callback. Follow symbols and
    * type aliases instead of serializing arbitrary value types: TypeScript 7's
-   * synchronous API cannot serialize some inferred tuple references.
+   * synchronous API cannot serialize some inferred tuple references. A type
+   * query (`typeof fetch`) is followed to the value it names, so an optional
+   * hook declared as `typeof fetch | undefined` is a callback as well.
    */
   callable(node: Node, seen: Set<number> = new Set()): boolean {
     const value = unwrap(node);
     if (isFunctionLike(value) || is(value, SyntaxKind.FunctionType) || is(value, SyntaxKind.CallSignature)) return true;
     if (is(value, SyntaxKind.UnionType) || is(value, SyntaxKind.IntersectionType)) return (value['types'] as Node[]).some((type) => this.callable(type, seen));
     if (is(value, SyntaxKind.TypeLiteral) || is(value, SyntaxKind.InterfaceDeclaration)) return (value['members'] as Node[]).some((member) => is(member, SyntaxKind.CallSignature));
-    const name = is(value, SyntaxKind.TypeReference) ? value['typeName'] as Node : is(value, SyntaxKind.PropertyAccessExpression) ? value['name'] as Node : value;
+    const name = is(value, SyntaxKind.TypeReference) ? value['typeName'] as Node
+      : is(value, SyntaxKind.TypeQuery) ? value['exprName'] as Node
+      : is(value, SyntaxKind.PropertyAccessExpression) ? value['name'] as Node : value;
     if (!is(name, SyntaxKind.Identifier) && !is(name, SyntaxKind.QualifiedName)) return false;
     const symbol = is(value.parent, SyntaxKind.ShorthandPropertyAssignment) ? this.checker.getShorthandAssignmentValueSymbol(value.parent) : this.checker.getSymbolAtLocation(name);
     if (symbol === undefined) return false;

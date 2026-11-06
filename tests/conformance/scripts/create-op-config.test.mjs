@@ -608,12 +608,12 @@ describe('opTestPlan', () => {
   });
 
   describe('Dynamic OP plan', () => {
+    // The plan fixes server_metadata=discovery, client_registration=dynamic_client,
+    // client_auth_type=private_key_jwt and response_mode=default itself, and
+    // the suite refuses a plan that sets them again; response_type is the
+    // tester's choice.
     it('should run every module of the plan when the manual review ones are kept', () => {
-      assert.equal(
-        DYNAMIC_OP_TEST_PLAN,
-        'oidcc-dynamic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]' +
-          '[client_auth_type=private_key_jwt][response_type=code][response_mode=default]',
-      );
+      assert.equal(DYNAMIC_OP_TEST_PLAN, 'oidcc-dynamic-certification-test-plan[response_type=code]');
       assert.equal(opTestPlan({ plan: 'dynamic' }), DYNAMIC_OP_TEST_PLAN);
     });
 
@@ -640,8 +640,29 @@ describe('opTestPlan', () => {
       assert.deepEqual(artifacts.config.client, { client_name: 'maronn-dynamic-op-client' });
       assert.deepEqual(artifacts.config.client2, { client_name: 'maronn-dynamic-op-client-2' });
       assert.equal(artifacts.config.alias, 'maronn-dynamic-op');
-      assert.deepEqual(artifacts.config.server, { discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration' });
       assert.deepEqual(artifacts.config.browser, createOpConformanceArtifacts().config.browser);
+    });
+
+    // oidcc-discovery-endpoint-verification warns about metadata outside
+    // RFC 8414 and OpenID Connect Discovery 1.0 unless the configuration names
+    // it. hono-cloudflare is generated with id-jag, whose two fields come from
+    // draft-ietf-oauth-identity-assertion-authz-grant §7.
+    it('should let the suite accept the id-jag metadata of hono-cloudflare', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'dynamic', sampleApp: 'hono-cloudflare' });
+
+      assert.deepEqual(artifacts.config.server, {
+        discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration',
+        allow_unexpected_metadata_fields: [
+          'identity_chaining_requested_token_types_supported',
+          'authorization_grant_profiles_supported',
+        ],
+      });
+    });
+
+    it('should name no extension metadata for a sample generated without id-jag', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'dynamic', sampleApp: 'express-flyio' });
+
+      assert.deepEqual(artifacts.config.server, { discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration' });
     });
   });
 
@@ -653,6 +674,15 @@ describe('opTestPlan', () => {
 
     it('should register no static client', () => {
       assert.deepEqual(createOpConformanceArtifacts({ plan: 'config' }).clients, []);
+    });
+
+    it('should let the suite accept the id-jag metadata of hono-cloudflare', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'config', sampleApp: 'hono-cloudflare' });
+
+      assert.deepEqual(artifacts.config.server.allow_unexpected_metadata_fields, [
+        'identity_chaining_requested_token_types_supported',
+        'authorization_grant_profiles_supported',
+      ]);
     });
   });
 });

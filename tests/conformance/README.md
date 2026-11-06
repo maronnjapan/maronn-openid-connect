@@ -12,7 +12,7 @@ OpenID Connect Core の認定プランのうち、次の5つを実行できま�
 | Basic OP | `pnpm run conformance:basic-op` | `oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]` |
 | Implicit OP | `pnpm run conformance:implicit-op` | `oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]` |
 | Hybrid OP | `pnpm run conformance:hybrid-op` | `oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]` |
-| Dynamic OP | `pnpm run conformance:dynamic-op` | `oidcc-dynamic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client][client_auth_type=private_key_jwt][response_type=code][response_mode=default]` |
+| Dynamic OP | `pnpm run conformance:dynamic-op` | `oidcc-dynamic-certification-test-plan[response_type=code]` |
 | Config OP | `pnpm run conformance:config-op` | `oidcc-config-certification-test-plan` |
 
 Basic OP、Implicit OP、Hybrid OP は、選択したサンプルOPが OpenID Connect Conformance Profiles の static client profile を満たすかを確認します。
@@ -91,6 +91,9 @@ Dynamic OP のプランは、次の23個の module からなります（Suite �
 | `oidcc-registration-logo-uri`、`oidcc-registration-policy-uri`、`oidcc-registration-tos-uri` | ログイン画面と同意画面が、登録した `client_name`、`logo_uri`、`policy_uri`、`tos_uri` を表示する |
 | `oidcc-server-rotate-keys` | サンプルの `POST /operator/signing-keys/rotate` で、新しい鍵を JWKS の先頭に足し、古い鍵を残す（OpenID Connect Core 1.0 §10.1.1） |
 
+プランのバリアントのうち、`server_metadata=discovery`、`client_registration=dynamic_client`、`client_auth_type=private_key_jwt`、`response_mode=default` はプラン自身が module ごとに決めます（Suite の `OIDCCDynamicTestPlan`）。
+Suite はこれらを重ねて指定したプランを作らない（`Variant 'client_auth_type' has been set by user, but test plan already sets this variant`）ので、テストプランの文字列には、試験者が選ぶ `response_type=code` だけを付けます。
+
 Dynamic OP のプランは Basic OP と同じく PKCE 無しで認可コードを交換するので、`pnpm run conformance:dynamic-op` は Basic OP 向けPKCE互換モードを有効にします。
 `oidcc-request-uri-unsigned` と `oidcc-ensure-request-object-with-redirect-uri` は unsigned の Request Object を送るので、unsigned Request Object の互換モードも Basic OP と同じく有効にします。
 
@@ -109,6 +112,15 @@ Node.js で動く `express-flyio`、`fastify-flyio`、`nextjs-vercel` は Node.j
 TLS の検証は止めません（`NODE_TLS_REJECT_UNAUTHORIZED=0` は使いません）。
 CA と鍵はこの実行のためだけのもので、ほかの何の秘密でもありません。
 既にあるファイルは作り直さないので、続けて実行しても同じ CA を使います。
+
+### discovery の拡張メタデータ
+
+Dynamic OP と Config OP のプランの `oidcc-discovery-endpoint-verification` は、RFC 8414 と OpenID Connect Discovery 1.0 に無い discovery の項目を WARNING にします（`CheckForUnexpectedParametersInServerMetadata`）。
+`hono-cloudflare` は `--enable id-jag` で生成しているので、discovery に Identity Assertion JWT Authorization Grant（draft-ietf-oauth-identity-assertion-authz-grant §7）の `identity_chaining_requested_token_types_supported` と `authorization_grant_profiles_supported` が入ります。
+Suite は、試験者がこうした拡張の項目の名前を設定の `server.allow_unexpected_metadata_fields` に並べると、その項目だけを警告から外します。
+`create-op-config.mjs` は、この module を含むプランで、サンプルが意図して出す拡張の項目（`hono-cloudflare` ではこの2つ）だけをここに並べます。
+ほかの項目が増えれば、これまでどおり WARNING になります。
+ほかの3つのサンプルは拡張の項目を出さないので、何も並べません。
 
 ## Config OP
 

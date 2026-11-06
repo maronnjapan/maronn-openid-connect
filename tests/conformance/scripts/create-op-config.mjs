@@ -13,9 +13,12 @@ export const HYBRID_OP_TEST_PLAN =
 
 // The suite registers every client of the Dynamic OP plan itself (RFC 7591),
 // and they authenticate at the token endpoint with private_key_jwt (OIDC Core
-// 1.0 §9).
-export const DYNAMIC_OP_TEST_PLAN =
-  'oidcc-dynamic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client][client_auth_type=private_key_jwt][response_type=code][response_mode=default]';
+// 1.0 §9). The plan fixes server_metadata=discovery,
+// client_registration=dynamic_client, client_auth_type=private_key_jwt and
+// response_mode=default itself (OIDCCDynamicTestPlan of the conformance
+// suite), and the suite refuses a plan that sets them again, so only
+// response_type is chosen here.
+export const DYNAMIC_OP_TEST_PLAN = 'oidcc-dynamic-certification-test-plan[response_type=code]';
 
 // The Config OP plan fixes its variants (discovery, static_client) itself.
 export const CONFIG_OP_TEST_PLAN = 'oidcc-config-certification-test-plan';
@@ -558,6 +561,12 @@ const SAMPLE_APPS = new Map([
       displayName: 'Hono Cloudflare',
       packageName: '@maronn-openid-connect/sample-hono-cloudflare',
       defaultStartCommand: 'corepack enable && pnpm --dir samples/hono-cloudflare start',
+      // The sample is generated with --enable id-jag, whose discovery adds
+      // these two fields (draft-ietf-oauth-identity-assertion-authz-grant §7).
+      extensionMetadataFields: [
+        'identity_chaining_requested_token_types_supported',
+        'authorization_grant_profiles_supported',
+      ],
     },
   ],
   [
@@ -626,9 +635,7 @@ export function createOpConformanceArtifacts(options = {}) {
     config: {
       alias,
       description: `maronn-openid-connect ${plan.displayName} certification check for the ${sampleApp.displayName} sample`,
-      server: {
-        discoveryUrl: `${opIssuer}/.well-known/openid-configuration`,
-      },
+      server: createSuiteServer({ opIssuer, plan, sampleApp }),
       ...Object.fromEntries(
         plan.clients.map((client) => [client.configKey, createSuiteClient(client)]),
       ),
@@ -639,6 +646,24 @@ export function createOpConformanceArtifacts(options = {}) {
       createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks }),
     ),
   };
+}
+
+/**
+ * The server of the suite configuration. oidcc-discovery-endpoint-verification
+ * (the Dynamic OP and Config OP plans) warns about every discovery field
+ * outside RFC 8414 and OpenID Connect Discovery 1.0, unless the configuration
+ * names it in allow_unexpected_metadata_fields (CheckForUnexpectedParameters
+ * InServerMetadata of the conformance suite). Only the extension fields the
+ * sample publishes on purpose are named, so any other unexpected field still
+ * warns.
+ */
+function createSuiteServer({ opIssuer, plan, sampleApp }) {
+  const discoveryUrl = `${opIssuer}/.well-known/openid-configuration`;
+  const extensionFields = sampleApp.extensionMetadataFields ?? [];
+  if (!plan.modules.includes('oidcc-discovery-endpoint-verification') || extensionFields.length === 0) {
+    return { discoveryUrl };
+  }
+  return { discoveryUrl, allow_unexpected_metadata_fields: [...extensionFields] };
 }
 
 // OIDC Core 1.0 §6.1 / RFC 9101: a suite-side static client. `jwks` gives the

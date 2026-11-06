@@ -17,10 +17,11 @@
  */
 import {
   ParError,
-  authenticateParClient,
   buildPushedAuthorizationResponse,
   createPushedAuthorizationRecord,
   rejectForbiddenParParams,
+  resolveParClient,
+  toParError,
   validatePushedAuthorizationParams,
 } from '@maronn-openid-connect/experimental/par';
 import { sanitizeErrorDescription } from '@maronn-openid-connect/core';
@@ -100,13 +101,19 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
 
     // トークンエンドポイントとまったく同じ規則で、クライアントを認証する（RFC 9126 §2.1）。
     // パブリッククライアントは認証情報を送らず、`client_id` だけを送る。
-    // `private_key_jwt` のクライアントアサーションの `aud` には、このエンドポイントの URL か issuer を求める（client-auth.ts）。
-    const clientId = await authenticateParClient({
+    // `resolveParClient()` がクライアントと認証方式を決め、提示された認証情報はほかのエンドポイントと同じ関数で確かめる（client-auth.ts）。
+    // `private_key_jwt` のクライアントアサーションの `aud` には、このエンドポイントの URL か issuer を求める。
+    const { client, presented } = await resolveParClient({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
       clientResolver,
-      verifyCredential: (client, presented) => verifyPresentedClientCredential(client, presented, '/par'),
     });
+    try {
+      await verifyPresentedClientCredential(client, presented, '/par');
+    } catch (error) {
+      throw toParError(error);
+    }
+    const clientId = presented.clientId;
 
     // `client_id` は認可リクエストの必須のパラメータなので（RFC 9126 §2.1）、検証と保存の前に、認証したクライアントの ID に置き換える。
     // 認証に使ったクライアントアサーション（`client_assertion_type` と `client_assertion`）は、保存するパラメータから除く。

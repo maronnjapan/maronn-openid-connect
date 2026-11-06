@@ -178,67 +178,69 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
  * クライアントを認証し、そのクライアント ID を返す。
  *
  * 認証の規則はトークンエンドポイントと同じである（RFC 9126 §2.1）。
- * ボディからは `client_id`、`client_secret`、`client_assertion_type`、`client_assertion` だけを使い、認証情報の取り出し、複数の認証方式の判定、検証は、core の {@link extractClientCredentials} から始まる関数にすべて任せる。
- * 提示された認証情報の確認（シークレットの照合、`private_key_jwt` のクライアントアサーションの検証）は `verifyCredential` に任せる。
- * 省略すると core の {@link verifyClientSecret} でシークレットを照合するので、`private_key_jwt` のクライアントは認証できない。
- * そのため、次の規則もトークンエンドポイントと同じになる:
- * - `Authorization` ヘッダーは `Basic` スキームだけを認証に使う。
- *   ほかのスキームのヘッダー（ゲートウェイが付ける `Bearer` など）は無視し、ボディの認証情報で認証する。
- * - 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
- * - `Basic` ヘッダーと、ボディの空でない `client_secret` を両方送ると、複数の認証方式を使ったとして `invalid_request` にする（OAuth 2.1 §2.3）。
- * - ボディの `client_id`（RFC 9126 §2.1 で認可リクエストのパラメータとして必須）を `Basic` ヘッダーと一緒に送ったときは、core が `Basic` ヘッダーのクライアント ID と一致することを確かめる。
- *   `request_uri` は、PAR のリクエストを送ったクライアントに結び付くためである（RFC 9126 §2.2）。
+ * {@link resolveParClient} でクライアントと提示された認証情報を決め、core の {@link verifyClientSecret} でシークレットを照合する。
+ * シークレットだけを照合するので、`private_key_jwt` のクライアントは `invalid_client` になる。
+ * `private_key_jwt` も受け付ける OP は、{@link resolveParClient} を呼び、返った認証情報を自分で検証する。
  *
  * @returns 認証したクライアントの ID
  * @throws {ParError} `invalid_client`: 認証に失敗したとき（クライアント ID がない、クライアントが登録されていない、シークレットが一致しないなど）
  * @throws {ParError} `invalid_request`: 複数の認証方式を使ったとき、ボディの `client_id` が `Basic` ヘッダーと食い違うとき
  * @spec RFC 9126 §2.1
- * @spec OIDC Core 1.0 §9
  */
 export async function authenticateParClient(context: {
   params: Record<string, string>;
   authorizationHeader?: string;
   clientResolver: TokenClientResolver;
-  verifyCredential?: (client: TokenClientInfo, presented: PresentedClientCredentials) => Promise<void>;
 }): Promise<string> {
-  const { params, clientResolver } = context;
-  return runClientAuthentication({
-    params: {
-      client_id: params['client_id'],
-      client_secret: params['client_secret'],
-      client_assertion_type: params['client_assertion_type'],
-      client_assertion: params['client_assertion'],
-    },
-    authorizationHeader: context.authorizationHeader ?? '',
-    clientResolver,
-    verifyCredential:
-      context.verifyCredential ?? ((client, presented) => verifyClientSecret(client, presented.clientSecret)),
-  });
+  const { client, presented } = await resolveParClient(context);
+  try {
+    await verifyClientSecret(client, presented.clientSecret);
+  } catch (error) {
+    throw toParError(error);
+  }
+  return presented.clientId;
 }
 
 /**
- * core の関数でクライアントを認証し、ID を返す。
+ * PAR のリクエストを送ったクライアントと、提示された認証情報を返す。
  *
- * core の関数を、認証情報の取り出し、クライアントの取得、認証方式の照合の順に呼び、`verifyCredential` で認証情報を確かめてから、提示されたクライアント ID を返す。
- * core が投げた `TokenError` は `ParError` に変換して投げ、それ以外の例外はそのまま投げる。
+ * 認証の規則はトークンエンドポイントと同じである（RFC 9126 §2.1）。
+ * ボディからは `client_id`、`client_secret`、`client_assertion_type`、`client_assertion` だけを使い、認証情報の取り出し、クライアントの取得、認証方式の照合を、core の {@link extractClientCredentials}、{@link resolveAuthenticatedTokenClient}、{@link validateClientAuthMethod} の順に任せる。
+ * 認証情報そのもの（シークレット、`private_key_jwt` のクライアントアサーション）は確かめないので、呼び出し側が返った `presented` を検証する（OIDC Core 1.0 §9）。
+ * そのため、次の規則もトークンエンドポイントと同じになる:
+ * - `Authorization` ヘッダーは `Basic` スキームだけを認証に使う。
+ *   ほかのスキームのヘッダー（ゲートウェイが付ける `Bearer` など）は無視し、ボディの認証情報で認証する。
+ * - 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
+ * - `Basic` ヘッダーと、ボディの空でない `client_secret` やクライアントアサーションを一緒に送ると、複数の認証方式を使ったとして `invalid_request` にする（OAuth 2.1 §2.3）。
+ * - ボディの `client_id`（RFC 9126 §2.1 で認可リクエストのパラメータとして必須）を `Basic` ヘッダーと一緒に送ったときは、core が `Basic` ヘッダーのクライアント ID と一致することを確かめる。
+ *   `request_uri` は、PAR のリクエストを送ったクライアントに結び付くためである（RFC 9126 §2.2）。
  *
- * @throws {ParError} クライアント認証に失敗したとき
+ * core が投げた `TokenError` は {@link toParError} で `ParError` に変換して投げ、それ以外の例外はそのまま投げる。
+ *
+ * @throws {ParError} `invalid_client`: クライアント ID がないとき、クライアントが登録されていないとき、登録していない方式で認証したとき
+ * @throws {ParError} `invalid_request`: 複数の認証方式を使ったとき、ボディの `client_id` が `Basic` ヘッダーと食い違うとき
+ * @spec RFC 9126 §2.1
+ * @spec OIDC Core 1.0 §9
  */
-async function runClientAuthentication(context: {
-  params: Record<string, string | undefined>;
-  authorizationHeader: string;
+export async function resolveParClient(context: {
+  params: Record<string, string>;
+  authorizationHeader?: string;
   clientResolver: TokenClientResolver;
-  verifyCredential: (client: TokenClientInfo, presented: PresentedClientCredentials) => Promise<void>;
-}): Promise<string> {
+}): Promise<{ client: TokenClientInfo; presented: PresentedClientCredentials }> {
+  const { params } = context;
   try {
     const presented = extractClientCredentials({
-      params: context.params,
-      authorizationHeader: context.authorizationHeader,
+      params: {
+        client_id: params['client_id'],
+        client_secret: params['client_secret'],
+        client_assertion_type: params['client_assertion_type'],
+        client_assertion: params['client_assertion'],
+      },
+      authorizationHeader: context.authorizationHeader ?? '',
     });
     const client = await resolveAuthenticatedTokenClient(presented.clientId, context.clientResolver);
     validateClientAuthMethod(client, presented);
-    await context.verifyCredential(client, presented);
-    return presented.clientId;
+    return { client, presented };
   } catch (error) {
     throw toParError(error);
   }
@@ -403,8 +405,11 @@ export async function handlePushedAuthorizationRequest(
  * `ParError` はそのまま返し、`TokenError` と `AuthorizationError` は、エラーコードを変換し、説明（`errorDescription`）を引き継いだ `ParError` にする。
  * それ以外の例外は、変換せずにそのまま返す。
  * 呼び出し側はそれをそのまま投げるので、例外は失われず、500 として扱われる。
+ * {@link resolveParClient} の後に、生成コードが自分で行うクライアント認証（`private_key_jwt` の検証など）のエラーも、これで PAR のエラーにする。
+ *
+ * @spec RFC 9126 §2.3
  */
-function toParError(error: unknown): unknown {
+export function toParError(error: unknown): unknown {
   if (error instanceof ParError) return error;
   if (error instanceof TokenError) return new ParError(toParErrorCodeFromToken(error.error), error.errorDescription);
   if (error instanceof AuthorizationError) {

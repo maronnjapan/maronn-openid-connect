@@ -14,6 +14,8 @@ import {
   createPushedAuthorizationRecord,
   handlePushedAuthorizationRequest,
   rejectForbiddenParParams,
+  resolveParClient,
+  toParError,
   validatePushedAuthorizationParams,
 } from './par-request.js';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
@@ -147,11 +149,10 @@ describe('assertParExpiresInSeconds', () => {
   });
 });
 
-describe('authenticateParClient', () => {
-  // OIDC Core 1.0 §9: the client assertion is passed to the verifyCredential hook.
-  it('should pass a private_key_jwt client assertion to verifyCredential', async () => {
-    const verified: unknown[] = [];
-    const clientId = await authenticateParClient({
+describe('resolveParClient', () => {
+  // OIDC Core 1.0 §9: the caller verifies the client assertion it gets back.
+  it('should return the client and the client assertion of a private_key_jwt client', async () => {
+    const { client, presented } = await resolveParClient({
       params: validParams({
         client_id: 'jwt-app',
         client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
@@ -159,18 +160,52 @@ describe('authenticateParClient', () => {
       }),
       authorizationHeader: '',
       clientResolver: createClientResolver(),
-      verifyCredential: async (client, presented) => {
-        verified.push([client.clientId, presented]);
-      },
     });
 
-    expect(clientId).toBe('jwt-app');
-    expect(verified).toEqual([
-      ['jwt-app', { clientId: 'jwt-app', clientAssertion: 'header.payload.signature', method: 'private_key_jwt' }],
-    ]);
+    expect(client.clientId).toBe('jwt-app');
+    expect(presented).toEqual({ clientId: 'jwt-app', clientAssertion: 'header.payload.signature', method: 'private_key_jwt' });
   });
 
-  it('should turn a failure of verifyCredential into a ParError', async () => {
+  it('should reject a client_secret_post request of a private_key_jwt client with a ParError', async () => {
+    await expect(
+      resolveParClient({
+        params: validParams({ client_id: 'jwt-app', client_secret: 'secret' }),
+        authorizationHeader: '',
+        clientResolver: createClientResolver(),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_client' });
+  });
+
+  it('should leave the credential unchecked so the caller verifies it', async () => {
+    const { presented } = await resolveParClient({
+      params: validParams(),
+      authorizationHeader: basicHeader('web-app', 'wrong-secret'),
+      clientResolver: createClientResolver(),
+    });
+
+    expect(presented).toEqual({ clientId: 'web-app', clientSecret: 'wrong-secret', method: 'client_secret_basic' });
+  });
+});
+
+describe('toParError', () => {
+  it('should turn a TokenError of the client authentication into a ParError of the same code', () => {
+    const error = toParError(new TokenError(TokenErrorCode.InvalidClient, 'client_assertion signature verification failed'));
+
+    expect(error).toBeInstanceOf(ParError);
+    expect(error).toMatchObject({ code: 'invalid_client', errorDescription: 'client_assertion signature verification failed' });
+  });
+
+  it('should leave an error other than the OAuth errors as it is', () => {
+    const failure = new Error('database is down');
+
+    expect(toParError(failure)).toBe(failure);
+  });
+});
+
+describe('authenticateParClient', () => {
+  // OIDC Core 1.0 §9: authenticateParClient checks secrets only, so a
+  // private_key_jwt client needs resolveParClient and its own verification.
+  it('should reject a private_key_jwt client with invalid_client', async () => {
     await expect(
       authenticateParClient({
         params: validParams({
@@ -180,11 +215,8 @@ describe('authenticateParClient', () => {
         }),
         authorizationHeader: '',
         clientResolver: createClientResolver(),
-        verifyCredential: async () => {
-          throw new TokenError(TokenErrorCode.InvalidClient, 'client_assertion signature verification failed');
-        },
       }),
-    ).rejects.toMatchObject({ code: 'invalid_client', errorDescription: 'client_assertion signature verification failed' });
+    ).rejects.toMatchObject({ code: 'invalid_client' });
   });
 
   it('should return the authenticated client id for client_secret_basic with client_id in the body', async () => {

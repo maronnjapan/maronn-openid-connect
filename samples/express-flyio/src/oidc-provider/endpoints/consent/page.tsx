@@ -46,6 +46,8 @@ consentPage.get('/', async (c) => {
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
+    // クライアントの名前、ロゴ、ポリシーと利用規約のリンクを渡す（OIDC Dynamic Client Registration 1.0 §2）。
+    client: screen.client,
   });
 });
 

@@ -115,13 +115,30 @@ export const clientResolver = context.clientResolver;
 export const clientKeyResolver: ClientKeyResolver = context.clientKeyResolver;
 
 /**
+ * The fetch the OP sends its requests to URLs a client registered or sent
+ * with: the jwks_uri of the clients (RFC 7591 §2, client-jwks-uri.ts), and
+ * the request_uri of an authorization request (OIDC Core 1.0 §6.2, the
+ * request-object feature). undefined uses globalThis.fetch. Set it to a fetch
+ * that goes through an egress proxy to keep the fetches away from the
+ * networks of the OP: the destination checks see the host of a URL, not the
+ * addresses its name resolves to.
+ */
+export const outboundFetch: typeof fetch | undefined = undefined;
+
+/**
  * クライアントの鍵を、登録された `jwks_uri` も使って読むリゾルバを返す。
  *
  * 初期化の副作用として包まず、エンドポイントが明示的に呼ぶので、設定と core まで型で辿れる。
  * 機能が組み立てたリゾルバと、その時点の設定を使う。
+ * `jwks_uri` の取得には `outboundFetch` を使う。
  */
 export function getClientKeyResolver(): ClientKeyResolver {
-  return withRegisteredClientJwksUri(config, () => context.clientResolver, clientKeyResolver);
+  return withRegisteredClientJwksUri(
+    config,
+    () => context.clientResolver,
+    clientKeyResolver,
+    outboundFetch === undefined ? {} : { fetch: outboundFetch },
+  );
 }
 
 /** The stores of the authorization flows, on the same database. */
@@ -179,7 +196,11 @@ const signingKeyRegistry = globalThis as typeof globalThis & {
 /**
  * General-purpose signing keys: access tokens, and every other JWT the OP signs
  * besides ID Tokens and UserInfo responses. Kept on globalThis so a Server
- * Action signs with the same key the JWKS Route Handler publishes.
+ * Action signs with the same key the JWKS Route Handler publishes. A project
+ * may put its own provider there before the first request (register() of
+ * instrumentation.ts), as samples/nextjs-vercel does to rotate the key while
+ * the server runs (OIDC Core 1.0 §10.1.1): put the new key first, keep the old
+ * ones after it, and call invalidate() of createCachedSigningKeyProvider().
  */
 const signingKeyProvider: SigningKeyProvider = (signingKeyRegistry.__oidcSigningKeyProvider ??=
   createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000));

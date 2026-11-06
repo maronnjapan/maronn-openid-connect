@@ -196,7 +196,11 @@ const signingKeyRegistry = globalThis as typeof globalThis & {
 /**
  * General-purpose signing keys: access tokens, and every other JWT the OP signs
  * besides ID Tokens and UserInfo responses. Kept on globalThis so a Server
- * Action signs with the same key the JWKS Route Handler publishes.
+ * Action signs with the same key the JWKS Route Handler publishes. A project
+ * may put its own provider there before the first request (register() of
+ * instrumentation.ts), as samples/nextjs-vercel does to rotate the key while
+ * the server runs (OIDC Core 1.0 §10.1.1): put the new key first, keep the old
+ * ones after it, and call invalidate() of createCachedSigningKeyProvider().
  */
 const signingKeyProvider: SigningKeyProvider = (signingKeyRegistry.__oidcSigningKeyProvider ??=
   createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000));

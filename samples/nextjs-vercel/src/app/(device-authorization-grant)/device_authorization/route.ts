@@ -32,8 +32,8 @@ import {
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
-  verifyClientSecret,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../_oidc-provider/client-auth';
 import { clientResolver, config } from '../../_oidc-provider/provider';
 import { tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
@@ -116,7 +116,7 @@ async function deviceAuthorization(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(client, presentedCredentials);
-    await verifyClientSecret(client, presentedCredentials.clientSecret);
+    await verifyPresentedClientCredential(client, presentedCredentials, '/device_authorization');
 
     // 以下は、デバイス認可のパイプラインである。
     // `@maronn-openid-connect/experimental/device-authorization-grant` の独立した関数を、RFC 8628 §3.1 の順に呼ぶ。

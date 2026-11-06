@@ -109,4 +109,23 @@ describe('createOperatorApp', () => {
     expect(keysAfterOne).toEqual({ request_object: { keys: [key('b')] } });
     expect(db.clients.get('rp-1')?.keys).toBeUndefined();
   });
+
+  // OIDC Core 1.0 §10.1.1: the OP's own signing key.
+  it('should rotate the signing key and answer the kids', async () => {
+    const rotateSigningKey = async () => ({ kid: 'k2', kids: ['k2', 'k1'] });
+    const app = createOperatorApp(createEmptyDatabase(), OPERATOR_TOKEN, rotateSigningKey);
+
+    const response = await app.request('/signing-keys/rotate', { method: 'POST', headers: auth });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ kid: 'k2', kids: ['k2', 'k1'] });
+  });
+
+  it('should not serve the rotation without a rotation function', async () => {
+    const app = createOperatorApp(createEmptyDatabase(), OPERATOR_TOKEN);
+
+    const response = await app.request('/signing-keys/rotate', { method: 'POST', headers: auth });
+
+    expect(response.status).toBe(404);
+  });
 });

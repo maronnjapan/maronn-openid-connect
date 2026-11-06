@@ -42,6 +42,10 @@ export const meta = step({
  * - `id_token_signed_response_alg` と `userinfo_signed_response_alg`: 登録した署名鍵のアルゴリズム（ディスカバリーが公開するものと同じ）
  * - `jwks_uri`: 登録の設定の `acceptJwksUri` が有効なあいだ、宛先をプロバイダーの設定の `allowInsecureClientJwksUri` に照らして検査し、登録する（RFC 7591 §2）。ここでは取得しない
  * - `request_object_signing_alg`: ディスカバリーが `request_object_signing_alg_values_supported` に公開する alg（OIDC Dynamic Client Registration 1.0 §2）。request-object の機能がない OP では、理解しないメタデータとして無視する
+ * - `token_endpoint_auth_method` が `private_key_jwt` の登録: `jwks` か `jwks_uri` を求める（OIDC Core 1.0 §9）
+ * - `token_endpoint_auth_signing_alg`: ディスカバリーが `token_endpoint_auth_signing_alg_values_supported` に公開する alg（`none` は受け付けない）
+ * - `request_uris`: OP が `request_uri` に応答するときだけ（`requestUriRegistrationPolicyOf()`）、https の絶対 URL（フラグメント可）の配列として登録する
+ * - `client_name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`: ログイン画面と同意画面に表示するので、`RegisteredClient` の名前でも持つ
  * - 登録の設定（config.ts）の独自のメタデータ
  *
  * 理解しないメタデータは黙って無視する（RFC 7591 §2 の MUST）。
@@ -59,6 +63,7 @@ export function validateRegistrationMetadata(
   const providerConfig: ProviderConfig = c.get('config');
   const responseTypes = supportedResponseTypes();
   const requestObjectSigningAlgs = registrableRequestObjectSigningAlgs(providerConfig);
+  const requestUris = requestUriRegistrationPolicyOf(providerConfig);
   const validated = validateClientMetadata(metadata, {
     tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
     grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
@@ -71,9 +76,30 @@ export function validateRegistrationMetadata(
     ...(requestObjectSigningAlgs === undefined
       ? {}
       : { requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs }),
+    tokenEndpointAuthSigningAlgValuesSupported: providerConfig.tokenEndpointAuthSigningAlgValuesSupported,
+    acceptRequestUris: requestUris.accept,
+    allowInsecureRequestUris: requestUris.allowInsecure,
     customMetadata: config.customClientMetadata,
   });
   return buildRegisteredClient(validated);
+}
+
+/**
+ * `request_uris` を登録するかどうかと、`http` の URL を許すかどうかを返す。
+ *
+ * 登録するのは、ディスカバリーが `request_uri_parameter_supported: true` を公開するとき（request-object の機能が `request_uri` に応答するとき）だけで、それ以外は理解しないメタデータとして無視させる（RFC 7591 §2）。
+ * `http` の URL は、request-object の機能の設定 `allowInsecureRequestUri`（開発用）が有効なときだけ許す。
+ * その設定はこの機能のものではないので、型ではなく名前で読み、機能がないときは無効として扱う。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec OIDC Discovery 1.0 §3
+ */
+export function requestUriRegistrationPolicyOf(config: ProviderConfig): { accept: boolean; allowInsecure: boolean } {
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_uri_parameter_supported'];
+  return {
+    accept: advertised === true,
+    allowInsecure: (config as unknown as Record<string, unknown>)['allowInsecureRequestUri'] === true,
+  };
 }
 
 /**

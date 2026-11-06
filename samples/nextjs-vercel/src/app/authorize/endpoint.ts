@@ -17,6 +17,7 @@ export const endpoint = defineEndpoint({
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
     { id: 'parse-request', consumes: [], produces: ['params', 'responseMode', 'issuer'] },
     { id: 'resolve-client', consumes: ['params'], produces: ['client'] },
+    { id: 'fetch-request-uri', feature: 'request-object', consumes: ['params', 'client'], produces: ['params'] },
     { id: 'resolve-request-object', feature: 'request-object', consumes: ['params', 'client'], produces: ['effectiveParams', 'requestObjectClaims'] },
     { id: 'resolve-redirect-uri', consumes: ['effectiveParams', 'params', 'client'], produces: ['requestParams', 'redirectUri', 'state'] },
     { id: 'resolve-form-post-response-mode', feature: 'form-post-response-mode', consumes: ['requestParams', 'issuer'], produces: ['responseMode'] },

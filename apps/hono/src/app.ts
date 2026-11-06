@@ -14,7 +14,7 @@ import { idJagConfig } from './oidc-provider/features/id-jag/config.js';
 import { rpInitiatedLogoutConfig } from './oidc-provider/features/rp-initiated-logout/config.js';
 import { createOperatorApp } from './operator.js';
 import {
-  createEphemeralSigningKeyProvider,
+  createRotatingSigningKeyProvider,
   echoRequestedAcr,
   readClientJwksUri,
   readCrossAppAccess,
@@ -47,9 +47,11 @@ export async function createServerApp(env: Environment): Promise<Hono> {
   const app = new Hono();
   app.get('/', (c) => c.text('maronn-openid-connect Hono app'));
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  // The OP's signing keys, which the operator routes rotate while the app runs (OIDC Core 1.0 §10.1.1).
+  const signingKeys = createRotatingSigningKeyProvider(env['OIDC_SIGNING_KEY_ID'] ?? 'app-hono-rs256-key');
   const operatorToken = env['APP_OPERATOR_TOKEN'];
   if (operatorToken) {
-    app.route('/operator', createOperatorApp(db, operatorToken));
+    app.route('/operator', createOperatorApp(db, operatorToken, signingKeys.rotateSigningKey));
   }
 
   const googleClientId = env['GOOGLE_CLIENT_ID'];
@@ -66,7 +68,7 @@ export async function createServerApp(env: Environment): Promise<Hono> {
       // client ID is configured.
       ...(googleClientId ? { googleLogin: { clientId: googleClientId } } : {}),
     },
-    signingKeyProvider: createEphemeralSigningKeyProvider(env['OIDC_SIGNING_KEY_ID'] ?? 'app-hono-rs256-key'),
+    signingKeyProvider: signingKeys.signingKeyProvider,
     acrResolver: echoRequestedAcr,
     dynamicClientRegistration: readDynamicClientRegistration(env),
     corsOrigins: issuer,

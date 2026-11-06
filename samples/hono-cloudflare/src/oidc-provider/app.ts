@@ -87,13 +87,16 @@ export interface OidcProviderOptions {
    */
   clientKeyResolver?: ClientKeyResolver;
   /**
-   * The fetch the OP fetches the jwks_uri of the clients with (RFC 7591 §2).
-   * Defaults to globalThis.fetch. Pass a fetch that goes through an egress
-   * proxy to keep the fetches away from the networks of the OP: the
-   * destination check of client-jwks-uri.ts sees the host of a jwks_uri, not
-   * the addresses its name resolves to.
+   * The fetch the OP sends its requests to URLs a client registered or sent
+   * with: the jwks_uri of the clients (RFC 7591 §2, client-jwks-uri.ts), and
+   * the request_uri of an authorization request (OIDC Core 1.0 §6.2, the
+   * request-object feature). Defaults to globalThis.fetch. Pass a fetch that
+   * goes through an egress proxy to keep the fetches away from the networks
+   * of the OP: the destination checks see the host of a URL, not the
+   * addresses its name resolves to. It replaces clientJwksFetch, which only
+   * the jwks_uri fetch used.
    */
-  clientJwksFetch?: typeof fetch;
+  outboundFetch?: typeof fetch;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -337,7 +340,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
   c.set('clientKeyResolver', options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)));
-  c.set('clientJwksFetch', options.clientJwksFetch);
+  c.set('outboundFetch', options.outboundFetch);
   c.set('stores', stores);
   c.set('transactionStore', stores.transactionStore);
   c.set('authCodeStore', stores.authCodeStore);
@@ -346,6 +349,8 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('authSessionStore', stores.authSessionStore);
   c.set('browserSessionStore', stores.browserSessionStore);
   c.set('userStore', stores.userStore);
+  // private_key_jwt のクライアントアサーションの使用済みの `jti`（client-auth.ts。OIDC Core 1.0 §9）。
+  c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
   c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
   c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
   c.set('userClaimsResolver', storeResolvers.userClaimsResolver);

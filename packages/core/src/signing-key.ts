@@ -205,18 +205,34 @@ export function assertKeyStrength(
 }
 
 /**
+ * {@link createCachedSigningKeyProvider} が返す、キャッシュを捨てられる署名鍵のプロバイダ。
+ */
+export interface CachedSigningKeyProvider extends SigningKeyProvider {
+  /**
+   * キャッシュした鍵を捨てる。次の `getSigningKeys()` は `base.getSigningKeys()` を呼んで読み直す。
+   *
+   * 鍵をローテーションしたとき（新しい鍵を先頭に足し、古い鍵を後ろに残したとき）に呼ぶと、TTL を待たずに、次のリクエストから新しい鍵で署名し、JWKS に公開する（OIDC Core 1.0 §10.1.1）。
+   */
+  invalidate(): void;
+}
+
+/**
  * `base` の署名鍵をキャッシュするプロバイダを返す。
  *
  * 返すプロバイダの `getSigningKeys()` は、キャッシュがないとき、またはキャッシュしてから `ttlMs` ミリ秒を超えたときだけ `base.getSigningKeys()` を呼び、結果をキャッシュしてから返す。
  * それ以外のときは、キャッシュした鍵を返す。
  * `base.getSigningKeys()` が失敗したときは、キャッシュを更新せずにそのエラーを投げる。
+ * `invalidate()` はキャッシュを捨て、次の `getSigningKeys()` に `base` から読み直させる。
  *
  * リクエストのたびにシークレットストアを読みに行くのを避けつつ、ローテーションした鍵を `ttlMs` ミリ秒後には読み込める。
+ * ローテーションをすぐに反映するときは、鍵を変えた後で `invalidate()` を呼ぶ。
+ *
+ * @spec OIDC Core 1.0 §10.1.1
  */
 export function createCachedSigningKeyProvider(
   base: SigningKeyProvider,
   ttlMs: number,
-): SigningKeyProvider {
+): CachedSigningKeyProvider {
   let cache: { keys: SigningKey[]; expiresAt: number } | null = null;
 
   return {
@@ -226,6 +242,9 @@ export function createCachedSigningKeyProvider(
         cache = { keys, expiresAt: Date.now() + ttlMs };
       }
       return cache.keys;
+    },
+    invalidate(): void {
+      cache = null;
     },
   };
 }

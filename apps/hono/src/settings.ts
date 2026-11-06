@@ -190,15 +190,51 @@ export const echoRequestedAcr: AcrResolver = async ({ requestedAcrValues }) => {
 
 /** An RS256 signing key generated at startup: tokens do not survive a restart. */
 export function createEphemeralSigningKeyProvider(keyId: string): SigningKeyProvider {
-  const keyPromise = generateSigningKey(keyId);
-  return createCachedSigningKeyProvider(
+  return createRotatingSigningKeyProvider(keyId).signingKeyProvider;
+}
+
+/** The signing keys of the app and the way to rotate them while it runs. */
+export interface RotatingSigningKeys {
+  signingKeyProvider: SigningKeyProvider;
+  /**
+   * Generate a new RS256 key with a kid of its own, put it first (new tokens
+   * are signed with it) and keep the earlier keys after it (still published
+   * at the JWKS endpoint, so the tokens they signed still verify). Answers
+   * the kids in the order of the JWKS.
+   */
+  rotateSigningKey(): Promise<{ kid: string; kids: string[] }>;
+}
+
+/**
+ * RS256 の署名鍵を起動時に作り、実行中にローテーションできるプロバイダと、ローテーションする関数を返す。
+ *
+ * 最初の鍵の `kid` は `keyId` で、ローテーションのたびに `keyId-rotated-<回数>` の `kid` の鍵を作って先頭に足し、それまでの鍵を後ろに残す（OIDC Core 1.0 §10.1.1）。
+ * プロバイダは 60 秒キャッシュするが、ローテーションした直後にキャッシュを捨てる（core の `createCachedSigningKeyProvider()` の `invalidate()`）ので、次のリクエストから新しい鍵で署名し、JWKS に公開する。
+ * 鍵はメモリにだけあり、再起動で消える。
+ *
+ * @spec OIDC Core 1.0 §10.1.1
+ */
+export function createRotatingSigningKeyProvider(keyId: string): RotatingSigningKeys {
+  const keys: Array<Promise<SigningKey>> = [generateSigningKey(keyId)];
+  let rotations = 0;
+  const signingKeyProvider = createCachedSigningKeyProvider(
     {
       async getSigningKeys(): Promise<SigningKey[]> {
-        return [await keyPromise];
+        return Promise.all(keys);
       },
     },
     60_000,
   );
+  return {
+    signingKeyProvider,
+    async rotateSigningKey() {
+      rotations += 1;
+      const key = await generateSigningKey(`${keyId}-rotated-${rotations}`);
+      keys.unshift(Promise.resolve(key));
+      signingKeyProvider.invalidate();
+      return { kid: key.keyId, kids: (await Promise.all(keys)).map((current) => current.keyId) };
+    },
+  };
 }
 
 async function generateSigningKey(keyId: string): Promise<SigningKey> {

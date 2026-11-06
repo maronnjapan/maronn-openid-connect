@@ -362,6 +362,7 @@ export {
 export type {
   SigningKey,
   SigningKeyProvider,
+  CachedSigningKeyProvider,
   KeyStrengthPolicy,
 } from './signing-key.js';
 

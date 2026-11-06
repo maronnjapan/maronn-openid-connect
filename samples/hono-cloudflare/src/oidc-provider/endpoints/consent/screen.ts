@@ -8,6 +8,7 @@ import {
   type AuthorizationCodeData,
   type AuthorizationResponseParams,
 } from '@maronn-openid-connect/core';
+import type { ClientDisplay } from '../../client-display.js';
 import type { AuthorizationResponse } from '../authorize/response-mode.js';
 
 /** What the consent form needs, prepared for GET /consent. */
@@ -23,6 +24,11 @@ export interface ConsentScreen {
   scopes: string[];
   /** Client requesting the authorization. */
   clientId: string;
+  /**
+   * The client as the page shows it (OIDC Dynamic Client Registration 1.0 §2):
+   * client_name, logo_uri, policy_uri, tos_uri and client_uri (client-display.ts).
+   */
+  client: ClientDisplay;
 }
 
 /** A failure the OP shows on its own error page (never redirected to the client). */

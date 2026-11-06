@@ -4,6 +4,7 @@
  */
 
 import { AuthTransactionError } from '@maronn-openid-connect/core';
+import type { ClientDisplay } from '../../client-display.js';
 import type { ViewResult } from '../../views.js';
 
 /** What the login form needs: prepared for GET /login and again after a failed attempt. */
@@ -20,6 +21,12 @@ export interface LoginScreen {
    * to pre-fill the login form.
    */
   loginHint?: string;
+  /**
+   * The client asking for the authorization, as the page shows it (OIDC
+   * Dynamic Client Registration 1.0 §2): client_name, logo_uri, policy_uri,
+   * tos_uri and client_uri (client-display.ts).
+   */
+  client: ClientDisplay;
   /**
    * The other ways to sign in the features offer (loginMethods of
    * features/feature.ts), rendered for this transaction.

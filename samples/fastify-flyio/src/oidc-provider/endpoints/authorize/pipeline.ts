@@ -2,6 +2,7 @@ import { resolveFormPostResponseContext } from '../../features/form-post-respons
 import { validateHybridRequest } from '../../features/hybrid-flow/steps/validate-hybrid-request.js';
 import { resolveFragmentResponseContext } from '../../features/implicit-flow/steps/resolve-fragment-response-mode.js';
 import { validateImplicitRequest } from '../../features/implicit-flow/steps/validate-implicit-request.js';
+import { fetchRequestUri } from '../../features/request-object/steps/fetch-request-uri.js';
 import { resolveRequestObject } from '../../features/request-object/steps/resolve-request-object.js';
 import type { AuthorizationOutcome } from './outcome.js';
 import type { AuthorizationResponseMode } from './response-mode.js';
@@ -50,6 +51,9 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
 
     // [resolve-client] クライアントを特定する — OAuth 2.1 §4.1.2.1 / RFC 8252 §8
     const client = await resolveAuthorizationClient(c, params);
+
+    // [fetch-request-uri] (feature: request-object) request_uri からリクエストオブジェクトを取得する — OIDC Core 1.0 §6.2
+    params = await fetchRequestUri(c, params, client);
 
     // [resolve-request-object] (feature: request-object) リクエストオブジェクトを検証し、その値で上書きする — OIDC Core 1.0 §6.1
     const { effectiveParams, requestObjectClaims } = await resolveRequestObject(c, params, client);

@@ -309,6 +309,11 @@ export default defineConfig({
               XAA_ACTOR_TOKEN_RESOLVER: 'access-token',
             }
           : {}),
+        // OIDC Core 1.0 §10.1.1: the samples rotate their signing key through
+        // POST /operator/signing-keys/rotate with this token
+        // (specs/signing-key-rotation.spec.ts); apps/hono through its operator
+        // routes, with APP_OPERATOR_TOKEN below.
+        OIDC_SIGNING_KEY_ROTATION_TOKEN: 'e2e-operator-token',
         // apps/hono keeps its data in memory; specs/client-keys.spec.ts
         // changes a client's keys through its operator routes.
         ...(opPackage === '@maronn-openid-connect/app-hono'

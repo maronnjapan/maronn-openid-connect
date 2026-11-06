@@ -28,6 +28,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'resolve-client',
+    'fetch-request-uri',
     'resolve-request-object',
     'resolve-redirect-uri',
     'resolve-form-post-response-mode',

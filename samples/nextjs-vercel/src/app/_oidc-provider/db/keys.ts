@@ -80,6 +80,12 @@ export const keys = {
   browserSession: (sessionId: string) => key('browser_session', sessionId),
   /** Not in the ER model: what a user consented to for a client (ConsentRecord). */
   consent: (subject: string, clientId: string) => key('consent', subject, clientId),
+  /**
+   * Not in the ER model: a private_key_jwt client assertion the OP accepted
+   * (OIDC Core 1.0 §9), under the hash of its client_id and jti, until the
+   * assertion expires (RFC 7523 §3).
+   */
+  clientAssertionJti: (keyHash: string) => key('client_assertion_jti', keyHash),
 };
 
 /** Client: id is the client_id, in the key. The OP does not know a deleted client (is_deleted). */
@@ -126,6 +132,26 @@ export interface ClientRecord {
    * client must be signed with this alg. Absent: any alg the OP accepts.
    */
   request_object_signing_alg?: string;
+  /**
+   * Not in the ER model: the client authenticates with private_key_jwt (OIDC
+   * Core 1.0 §9), with its keys of the private_key_jwt purpose
+   * (keys.clientJwks()) or its jwks_uri. signing_alg is its
+   * token_endpoint_auth_signing_alg (OpenID Connect Dynamic Client
+   * Registration 1.0 §2); null accepts every alg the OP accepts. Absent: no
+   * private_key_jwt.
+   */
+  private_key_jwt?: { signing_alg: string | null };
+  /**
+   * Not in the ER model: the request_uris of the client (OpenID Connect
+   * Dynamic Client Registration 1.0 §2). Absent: none.
+   */
+  request_uris?: string[];
+  /**
+   * Not in the ER model: the URLs the login and consent screens show about the
+   * client (OpenID Connect Dynamic Client Registration 1.0 §2). Its
+   * client_name is name. Absent: none.
+   */
+  display_uris?: { logo_uri?: string; policy_uri?: string; tos_uri?: string; client_uri?: string };
 }
 
 /** One Client_auth of ClientRecord.client_auths, with its Client_secret. */

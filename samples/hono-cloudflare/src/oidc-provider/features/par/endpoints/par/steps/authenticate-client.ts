@@ -1,4 +1,5 @@
 import { authenticateParClient, rejectForbiddenParParams } from '@maronn-openid-connect/experimental/par';
+import { verifyPresentedClientCredential } from '../../../../../client-auth.js';
 import { step } from '../../../../../endpoints/step.js';
 
 export const meta = step({
@@ -19,6 +20,8 @@ export const meta = step({
  *
  * 認証の前に、プッシュされた認可リクエストに含めてはならないパラメータ（`request_uri` と `request`）を拒否する。
  * クライアントの認証は、トークンエンドポイントとまったく同じ規則で行う（パブリッククライアントは `client_id` だけを送る）。
+ * `private_key_jwt` のクライアントアサーションの `aud` には、このエンドポイントの URL か issuer を求める。
+ * 認証に使ったクライアントアサーション（`client_assertion_type` と `client_assertion`）は、プッシュするパラメータに残さない。
  *
  * `client_id` は認可リクエストの必須のパラメータなので、検証の前に、返すパラメータの `client_id` を認証したクライアントの ID に置き換える。
  *
@@ -41,7 +44,10 @@ export async function authenticatePushingClient(
     params,
     authorizationHeader: authorization,
     clientResolver,
+    verifyCredential: (client, presented) => verifyPresentedClientCredential(c, client, presented, '/par'),
   });
 
-  return { clientId, pushedParams: { ...params, client_id: clientId } };
+  // クライアントアサーションは認証に使い終えた認証情報なので、保存するパラメータから除く。
+  const { client_assertion_type: _assertionType, client_assertion: _assertion, ...requestParams } = params;
+  return { clientId, pushedParams: { ...requestParams, client_id: clientId } };
 }

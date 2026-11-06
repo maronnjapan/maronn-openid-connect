@@ -28,6 +28,12 @@
  * - request_object_signing_alg: requestObjectSigningAlg, the alg every Request
  *   Object of the client must be signed with (OIDC Dynamic Client Registration
  *   1.0 §2).
+ * - private_key_jwt: private_key_jwt among the tokenEndpointAuthMethods (OIDC
+ *   Core 1.0 §9), after the methods of client_auths, and its signing_alg as
+ *   tokenEndpointAuthSigningAlg.
+ * - request_uris: requestUris (OIDC Core 1.0 §6.2).
+ * - name and display_uris: clientName, logoUri, policyUri, tosUri and
+ *   clientUri, what the login and consent screens show.
  * - Metadata without a field (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -47,6 +53,7 @@ import {
   hashClientSecret,
   isPublicTokenClient,
   selectRegisteredClientAuthMethods,
+  type ClientAuthMethod,
   type ClientKeyPurpose,
   type ClientKeyResolver,
   type ClientResolver,
@@ -73,6 +80,8 @@ import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord }
  * - `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
  * - `grant_types`、`scopes`、`response_types` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes` にし、空なら設定せずに既定の扱いに任せる。
  * - `jwks_uri` と `request_object_signing_alg` は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
+ * - `private_key_jwt` があれば、`tokenEndpointAuthMethods` の最後に `private_key_jwt` を加え、`signing_alg` を `tokenEndpointAuthSigningAlg` にする。
+ * - `request_uris` は `requestUris` に、`name` は `clientName` に、`display_uris` は `logoUri`、`policyUri`、`tosUri`、`clientUri` にする。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違うエントリーを `client_auths` に持つクライアントを読んだとき
  */
@@ -93,19 +102,37 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       if (typeof client.request_object_signing_alg === 'string') {
         registered.requestObjectSigningAlg = client.request_object_signing_alg;
       }
+      if ((client.request_uris ?? []).length > 0) registered.requestUris = client.request_uris;
+      if (client.name !== null) registered.clientName = client.name;
+      const displayUris = client.display_uris ?? {};
+      if (displayUris.logo_uri !== undefined) registered.logoUri = displayUris.logo_uri;
+      if (displayUris.policy_uri !== undefined) registered.policyUri = displayUris.policy_uri;
+      if (displayUris.tos_uri !== undefined) registered.tosUri = displayUris.tos_uri;
+      if (displayUris.client_uri !== undefined) registered.clientUri = displayUris.client_uri;
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
-      } else if (client.client_auths[0]) {
-        // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
-        // そのため、最初のエントリーとシークレットが違うエントリーがあれば、設定の誤りとして投げる。
-        const secret = client.client_auths[0].secret;
-        if (client.client_auths.some((auth) => auth.secret !== secret)) {
-          throw new Error('Client ' + clientId + ' has client_auths entries with different secrets');
+      } else {
+        const methods: ClientAuthMethod[] = [];
+        if (client.client_auths[0]) {
+          // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
+          // そのため、最初のエントリーとシークレットが違うエントリーがあれば、設定の誤りとして投げる。
+          const secret = client.client_auths[0].secret;
+          if (client.client_auths.some((auth) => auth.secret !== secret)) {
+            throw new Error('Client ' + clientId + ' has client_auths entries with different secrets');
+          }
+          methods.push(...client.client_auths.map((auth) => auth.client_auth_type));
+          registered.clientSecretHash = secret;
         }
-        registered.tokenEndpointAuthMethods = client.client_auths.map((auth) => auth.client_auth_type);
-        registered.clientSecretHash = secret;
+        // `private_key_jwt` は、`client_auths` の方式の後ろに並べる（OIDC Core 1.0 §9）。
+        if (client.private_key_jwt !== undefined) {
+          methods.push('private_key_jwt');
+          if (client.private_key_jwt.signing_alg !== null) {
+            registered.tokenEndpointAuthSigningAlg = client.private_key_jwt.signing_alg;
+          }
+        }
+        if (methods.length > 0) registered.tokenEndpointAuthMethods = methods;
       }
-      // `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
+      // どの方式もないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
       return registered;
     },
   };
@@ -149,6 +176,7 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * 外さなければ、次の登録で鍵が戻る。
  *
  * `jwksUri` と `requestObjectSigningAlg` は、クライアントのレコードの `jwks_uri` と `request_object_signing_alg` に書く。
+ * `tokenEndpointAuthMethods` の `private_key_jwt` は `private_key_jwt`（`tokenEndpointAuthSigningAlg` を含む）に、`requestUris` は `request_uris` に、`clientName`（なければ `name`）は `name` に、`logoUri`、`policyUri`、`tosUri`、`clientUri` は `display_uris` に書く。
  * そのため、これらを持たない登録は、登録済みの値を取り除く。
  * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
  *
@@ -184,8 +212,15 @@ export async function registerClient(
           method === 'client_secret_basic' || method === 'client_secret_post',
       )
       : [];
+  const usesPrivateKeyJwt = clientType === 'confidential' && selectRegisteredClientAuthMethods(client).includes('private_key_jwt');
+  const displayUris = {
+    ...(client.logoUri === undefined ? {} : { logo_uri: client.logoUri }),
+    ...(client.policyUri === undefined ? {} : { policy_uri: client.policyUri }),
+    ...(client.tosUri === undefined ? {} : { tos_uri: client.tosUri }),
+    ...(client.clientUri === undefined ? {} : { client_uri: client.clientUri }),
+  };
   const record: ClientRecord = {
-    name: client.name ?? null,
+    name: client.clientName ?? client.name ?? null,
     client_type: clientType,
     is_deleted: false,
     client_auths:
@@ -198,6 +233,9 @@ export async function registerClient(
     ...(client.requestObjectSigningAlg === undefined
       ? {}
       : { request_object_signing_alg: client.requestObjectSigningAlg }),
+    ...(usesPrivateKeyJwt ? { private_key_jwt: { signing_alg: client.tokenEndpointAuthSigningAlg ?? null } } : {}),
+    ...((client.requestUris ?? []).length === 0 ? {} : { request_uris: [...(client.requestUris ?? [])] }),
+    ...(Object.keys(displayUris).length === 0 ? {} : { display_uris: displayUris }),
   };
   await writeRecord(db, keys.client(client.clientId), record);
 

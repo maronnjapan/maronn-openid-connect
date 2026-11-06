@@ -1,4 +1,5 @@
 import type { AuthTransaction } from '@maronn-openid-connect/core';
+import { resolveClientDisplay } from '../../../client-display.js';
 import { resolveGrantableScopes } from '../../../scopes.js';
 import type { ConsentScreen } from '../screen.js';
 import { step } from '../../step.js';
@@ -8,6 +9,7 @@ export const meta = step({
   endpoint: 'consent',
   kind: 'transform',
   label: '同意画面の表示内容を組み立てる',
+  spec: 'OIDC Dynamic Client Registration 1.0 §2',
   function: 'describeConsentScreen',
   consumes: ['transactionId', 'transaction'],
   produces: ['screen'],
@@ -17,8 +19,11 @@ export const meta = step({
 /**
  * 同意フォームに表示する内容を返す。
  *
- * 内容は、トランザクションの `csrf_token` とクライアント ID、エンドユーザーに許可を求めるスコープである。
+ * 内容は、トランザクションの `csrf_token` とクライアント ID、クライアントの表示、エンドユーザーに許可を求めるスコープである。
+ * クライアントの表示は、`clientResolver` で引いたクライアントの `client_name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` で、表示してよい URL だけに絞る（client-display.ts の `resolveClientDisplay()`、OIDC Dynamic Client Registration 1.0 §2 / §9.1）。
  * スコープは、要求されたもののうち、このエンドユーザーに許可できるものに絞る。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export async function describeConsentScreen(
   c: any,
@@ -41,5 +46,6 @@ export async function describeConsentScreen(
     csrfToken: transaction.csrfToken,
     scopes: displayedScopes,
     clientId: transaction.clientId,
+    client: await resolveClientDisplay(c.get('clientResolver'), c.get('config'), transaction.clientId),
   };
 }

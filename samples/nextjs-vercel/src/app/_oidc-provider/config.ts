@@ -1,7 +1,8 @@
-import type {
-  ClientInfo,
-  ClientKeysByPurpose,
-  TokenClientInfo,
+import {
+  SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS,
+  type ClientInfo,
+  type ClientKeysByPurpose,
+  type TokenClientInfo,
 } from '@maronn-openid-connect/core';
 import { configOf } from './feature';
 import { features } from './features';
@@ -79,8 +80,8 @@ export interface ProviderConfig {
    * loopback, private and link-local addresses. For development only: by
    * default the OP fetches https URLs of public hosts only, so a jwks_uri
    * cannot make it reach into its own network (RFC 8725 §3.10). The names a
-   * DNS host resolves to are not checked; pass a fetch to withRegisteredClientJwksUri()
-   * in provider.ts to send the fetches through an egress proxy that does.
+   * DNS host resolves to are not checked; set outboundFetch in provider.ts to
+   * send the fetches through an egress proxy that does.
    */
   allowInsecureClientJwksUri: boolean;
   /**
@@ -122,6 +123,32 @@ export interface ProviderConfig {
    * jwksPurposes of dynamic client registration by default.
    */
   clientJwksUriPurposes: readonly string[];
+  /**
+   * The JWS algs a private_key_jwt client assertion may be signed with
+   * (OIDC Core 1.0 §9, OIDC Discovery 1.0 §3
+   * token_endpoint_auth_signing_alg_values_supported). Discovery advertises
+   * them for the token endpoint (and the introspection and revocation
+   * endpoints of their features), and dynamic client registration accepts
+   * them as token_endpoint_auth_signing_alg. By default the algs core
+   * verifies: RS256, RS384, RS512 (RFC 7518 §3.3) and ES256, ES384, ES512
+   * (§3.4). none and the HS algs are never accepted.
+   */
+  tokenEndpointAuthSigningAlgValuesSupported: readonly string[];
+  /**
+   * The URLs a client registered for the End-User to see (logo_uri,
+   * policy_uri, tos_uri, client_uri; OIDC Dynamic Client Registration 1.0 §2)
+   * appear on the login and consent pages only when they use https
+   * (client-display.ts). allowInsecureClientDisplayUris lets them use http
+   * too, for development only. Default false.
+   */
+  allowInsecureClientDisplayUris: boolean;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §9.1: show the logo_uri and
+   * policy_uri of a client only when their host is the host of one of its
+   * redirect_uris, so a client cannot borrow the logo or the policy of
+   * another site. Default false (the hosts are not compared).
+   */
+  requireClientDisplayUriHostMatch: boolean;
 }
 
 /**
@@ -154,6 +181,11 @@ const baseProviderConfig = {
   clientJwksUriMaxKeys: 32,
   clientJwksUriCacheMaxEntries: 1000,
   clientJwksUriPurposes: ['request_object', 'private_key_jwt', 'dpop'],
+  // OIDC Core 1.0 §9: the asymmetric algs core verifies (RFC 7518 §3.3 / §3.4).
+  tokenEndpointAuthSigningAlgValuesSupported: [...SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS],
+  // OIDC Dynamic Client Registration 1.0 §2 / §9.1: https only, hosts not compared.
+  allowInsecureClientDisplayUris: false,
+  requireClientDisplayUriHostMatch: false,
 } satisfies Partial<ProviderConfig>;
 
 /**
@@ -221,6 +253,24 @@ export function createProviderConfig(
  * the provider accepts. An alg the provider does not accept is not refused at
  * registration; the Request Objects of the client are.
  *
+ * tokenEndpointAuthSigningAlg (TokenClientInfo; OIDC Dynamic Client
+ * Registration 1.0 §2 — client metadata `token_endpoint_auth_signing_alg`):
+ * the alg every private_key_jwt client assertion of the client must be signed
+ * with (client-auth.ts). A client authenticating with private_key_jwt
+ * (tokenEndpointAuthMethods) registers its keys under the private_key_jwt
+ * purpose, or a jwksUri.
+ *
+ * requestUris (OIDC Dynamic Client Registration 1.0 §2 — client metadata
+ * `request_uris`): the request_uri values the client uses (OIDC Core 1.0
+ * §6.2). The request-object feature fetches a request_uri, and, with its
+ * requireRequestUriRegistration setting, accepts the registered values only.
+ *
+ * clientName, clientUri, logoUri, policyUri and tosUri (OIDC Dynamic Client
+ * Registration 1.0 §2 — client metadata `client_name`, `client_uri`,
+ * `logo_uri`, `policy_uri` and `tos_uri`): what the login and consent pages
+ * show the End-User about the client (app/login/page.tsx,
+ * app/consent/page.tsx), in place of the bare client_id.
+ *
  * A feature that reads client metadata of its own adds it to this interface
  * from its directory (`declare module '../../config'` in features/<id>/), so
  * removing the feature removes the field.
@@ -230,6 +280,12 @@ export interface RegisteredClient extends ClientInfo, TokenClientInfo {
   idTokenSignedResponseAlg?: 'RS256' | 'ES256';
   jwksUri?: string;
   requestObjectSigningAlg?: string;
+  requestUris?: string[];
+  clientName?: string;
+  clientUri?: string;
+  logoUri?: string;
+  policyUri?: string;
+  tosUri?: string;
 }
 
 /**

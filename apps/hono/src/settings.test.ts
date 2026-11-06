@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createEphemeralSigningKeyProvider,
+  createRotatingSigningKeyProvider,
   echoRequestedAcr,
   readClientJwksUri,
   readCrossAppAccess,
@@ -178,6 +179,21 @@ describe('createEphemeralSigningKeyProvider', () => {
     expect(first.map((key) => key.keyId)).toEqual(['app-key-1']);
     expect(first[0]!.publicJwk).toMatchObject({ kty: 'RSA', alg: 'RS256', use: 'sig', kid: 'app-key-1' });
     expect(second[0]).toBe(first[0]);
+  });
+});
+
+// OIDC Core 1.0 §10.1.1: a new key signs, and the old one stays published.
+describe('createRotatingSigningKeyProvider', () => {
+  it('should put a new key with a kid of its own first and keep the old one after it', async () => {
+    const { signingKeyProvider, rotateSigningKey } = createRotatingSigningKeyProvider('app-key-1');
+    const before = await signingKeyProvider.getSigningKeys();
+
+    const rotated = await rotateSigningKey();
+    const after = await signingKeyProvider.getSigningKeys();
+
+    expect(rotated).toEqual({ kid: 'app-key-1-rotated-1', kids: ['app-key-1-rotated-1', 'app-key-1'] });
+    expect(after.map((key) => key.keyId)).toEqual(['app-key-1-rotated-1', 'app-key-1']);
+    expect(after[1]).toBe(before[0]);
   });
 });
 

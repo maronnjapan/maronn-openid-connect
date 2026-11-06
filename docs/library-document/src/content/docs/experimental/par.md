@@ -158,6 +158,11 @@ const pushedParams = await resolvePushedRequestUri({ params: queryParams, store 
 
 ステップ関数（`rejectForbiddenParParams` / `authenticateParClient` / `validatePushedAuthorizationParams` / `createPushedAuthorizationRecord` / `buildPushedAuthorizationResponse`）を個別に呼べば、検証の差し替えや削除ができます。
 
+`authenticateParClient` と `handlePushedAuthorizationRequest` は、クライアントシークレットだけを照合します。
+private_key_jwt（OIDC Core 1.0 §9）のクライアントも受け付けるなら、`resolveParClient` でクライアントと提示された資格情報（`presented`）を受け取り、クライアントアサーションを自分で検証してください。
+検証で投げた core の `TokenError` は、`toParError` で PAR のエラー（`invalid_client` なら 401）にできます。
+生成 OP の PAR エンドポイントは、この形で、トークンエンドポイントと同じ検証を呼びます。
+
 ### ストアの差し替え
 
 契約は 2 メソッドだけです。`get` がないのは意図的で、「読むだけ」の操作を排除して単回使用を型で強制するためです。

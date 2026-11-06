@@ -50,7 +50,7 @@
 |---|---|---|
 | テストが何を対象にし、何を期待しているかを読む | 自前（`packages/map-analysis` の解析器を広げる） | `describe` の名前を関数の id に引く規則と、`expect` を言葉にする規則はこのリポジトリ固有で、既製品に無い |
 | エンドポイントから関数、ユニットテストへの木と、不足の表示 | 自前（`apps/map`） | 木と「外へ出る失敗」を知るのは地図だけである |
-| テストごとに実際に通った関数と分岐 | Istanbul の計測（`@vitest/coverage-istanbul`、`nyc instrument`） | 計測器を自前で書く必要が無い。自前はテストごとの計数の差分を関数の id に対応づける部分だけ |
+| テストごとに実際に通った関数と分岐 | Vitest は Istanbul の計測（`@vitest/coverage-istanbul`）、E2E の OP は V8 の precise coverage（`node:inspector`） | 計測器を自前で書く必要が無い。自前はテストの前後の計数の差分を関数の id に対応づける部分と、E2E の OP で計数を返す数十行だけ |
 | 規則に基づく自然言語のテスト | Gherkin、Cucumber Expressions、playwright-bdd | 型付きの穴を持つ言い回しの照合、曖昧さの検出、日本語のキーワード、表形式の例、エディタの補完、レポートが揃っている。自前はステップ定義（語彙）だけで、これはどの方式でも要る |
 | PR のカバレッジの変化と、テストの結果の変化 | Codecov（patch coverage と Test Analytics） | PR へのコメント、基準との比較、flaky の検出が付いてくる |
 | PR で足した、変えた、消したテストと、変えた実装との対応 | 自前（カタログの差分と「届く経路」の結合） | 「変えた関数に関連するテストが変わっていない」は木を知らないと言えない |
@@ -60,6 +60,9 @@
 既存のテストの名前がすべて英語で、OAuth と OIDC の仕様の語（`invalid_client`、`grant_type`）も英語だからである。
 地図の画面の枠（見出し、札、変更の要約の言い回し）は、いまの地図と同じく日本語のままにする。
 訳の仕組みは「日本語への訳」の項で述べる。
+
+OIDF 適合性スイート（`tests/conformance`）は、この設計の対象外とし、カタログにも地図にも載せない。
+外部のテストプランを Docker で動かす別系統の検査だからである。
 
 残すものは次のとおりである。
 
@@ -86,7 +89,7 @@
   └──────────────────┬─────────────────────────────┘
                      │ 結合（対象の id）
   関数カタログ ───────┤                ◄── 実行結果（Vitest / Playwright の JSON）
-  エンドポイントと    │                ◄── テストごとの到達（Istanbul の計数の差分）
+  エンドポイントと    │                ◄── テストごとの到達（Istanbul と V8 の計数の差分）
   処理の流れの木 ─────┤
                      ▼
         地図のデータ（map.json + tests/*.json）
@@ -112,7 +115,7 @@
 interface TestCase {
   /** 安定な id（「テストの id」の項） */
   id: string;
-  kind: 'unit' | 'api' | 'e2e' | 'conformance' | 'tool';
+  kind: 'unit' | 'api' | 'e2e' | 'tool';
   /** テストコードか、機能ファイルか */
   source: { file: string; lines: [number, number]; form: 'code' | 'feature' };
   /** `it` の名前、またはシナリオの名前。英語で書かれる */
@@ -176,7 +179,6 @@ interface RequestShape {
 | `e2e` | `tests/e2e/specs/` の Playwright のテストと、機能ファイルのうち HTTP の実行先で走るもの。動いている OP に HTTP とブラウザで到達する |
 | `api` | `apps/*` のテストのうち、エンドポイントのパスへリクエストを送るもの（`app.request()`、Next.js の Route Handler に `Request` を渡すもの）と、機能ファイルのうちプロセス内の実行先で走るもの。要件の「API テスト」と「統合テスト」はこの一つにまとめる。どちらもプロセス内で HTTP の形を取り、区別する根拠がコードに無いからである |
 | `unit` | `packages/*` と `apps/*` のテストのうち、対象が関数カタログの関数で、リクエストを送らないもの |
-| `conformance` | `tests/conformance` の OIDF 適合性スイートの module。結果だけを取り込む（「実行結果」の項） |
 | `tool` | CLI、地図、解析パッケージ、`.github/scripts` のテスト。一覧には出すが、エンドポイントの地図には載せない |
 
 ### 対象の解決
@@ -281,29 +283,35 @@ Playwright も同じで、機能ファイルから生成したテストは `@id`
 
 同じ実行で JUnit XML も書き、Codecov の Test Analytics に上げる（「PR でのテストの差分」の節）。
 
-適合性スイートの結果は、runner スクリプトが出す JSON（module の名前と結果）を読み、module の名前からエンドポイントへの対応表（`tests/conformance/modules.yaml`、人が書く固定の表）で結びつける。
-スイートは Docker と外部のテストプランに依るので、結果が無いときは「未実行」と示すだけにする。
-
 ### テストごとの到達
 
 到達の記録は、テストごとに実際に通った関数カタログの関数と、通ったエンドポイントの列である。
-計測は Istanbul に任せ、自前で書くのはテストごとの差分を取って関数の id に対応づける部分だけにする。
+計測はランタイムと既製の計測器に任せ、自前で書くのは、テストの前後の差分を取って関数の id に対応づける部分だけにする。
 
-Istanbul の計測は、関数ごと、文ごと、分岐ごとの計数をプロセスのグローバルなオブジェクトに置く。
-その計数を一つのテストの前後で比べれば、そのテストが通った関数と分岐が分かる。
-これは計測器の仕組みをそのまま使うもので、新しい変換器も、リクエストにテストの id を載せるヘッダーも要らない。
+計測の仕方は、テストが動く場所で二つに分ける。
+どちらも、テストの前に計数を読むか消し、後にもう一度読めば、そのテストが通った関数と分岐が分かる、という同じ考え方による。
 
-- Vitest：`coverage.provider` を `istanbul` にし、到達を取る実行（`MARONN_REACH=1`）でだけ `coverage.enabled` にする。`coverage.include` は関数カタログの根に限る。`setup` ファイルの `beforeEach` で計数の写しを取り、`afterEach` で差分（計数が増えた関数と分岐）をテストの id と共にワーカーごとの JSONL に書く。計数を置くグローバルの名前はプロバイダーの定数で（Vitest 5 では `__VITEST_COVERAGE__`）、版で変わりうるので実装時に確かめる。Vitest はテストを順に走らせるので（`concurrent` を使っていない）、差分が混ざらない
-- E2E の OP：`apps/hono` と各パッケージをビルドした `dist/` を、`nyc instrument` で計測つきに書き換えて起動する。CI ではその場で書き換え（`--in-place`）、手元では別のディレクトリに出す。計測は `globalThis.__coverage__` に計数を置く。`server.ts`（CLI が抽出する根の外）が `MARONN_REACH=1` のときだけ `POST /__coverage__/reset` と `GET /__coverage__` を足し、Playwright の fixture がテストの前に reset を、後に GET を呼んで、そのテストの計数を JSONL に書く。E2E は順に走る（`fullyParallel: false`）ので、テストの間の計数は混ざらない
+- Vitest：Istanbul の計測を使う。`coverage.provider` を `istanbul` にし、到達を取る実行（`MARONN_REACH=1`）でだけ `coverage.enabled` にする。`coverage.include` は関数カタログの根に限る。Istanbul は関数ごと、文ごと、分岐ごとの計数をグローバルなオブジェクトに置くので、`setup` ファイルの `beforeEach` でその写しを取り、`afterEach` で差分（計数が増えた関数と分岐）をテストの id と共にワーカーごとの JSONL に書く。Vitest はテストを順に走らせるので（`concurrent` を使っていない）、差分が混ざらない。`apps/nextjs` の `app/` の関数も Vite が直接変換するので、ユニットと API のテストではここで計測に入る
+- E2E の OP：V8 の precise coverage を使う。OP のプロセスの中で `node:inspector` のセッションを開き、`Profiler.startPreciseCoverage` を `callCount` と `detailed` を有効にして呼ぶ。`Profiler.takePreciseCoverage` は呼ぶたびに計数を返して消すので、テストの前に一度呼んで捨て、後にもう一度呼べば、そのテストの分だけが残る。この開始と、計数を返す口（OP とは別のポートの `reset` と `collect`）は、非公開のパッケージ `@maronn-openid-connect/test-reach` の数十行が受け持つ。OP はこれを `MARONN_REACH=1` のときだけ動的に import する。`apps/hono` は `src/server.ts` から、`apps/nextjs` は既存の `src/instrumentation.ts` の `register()` から呼ぶ。どちらも CLI が抽出する根（`oidc-provider`、`web`、`app`）の外にある。Playwright の fixture がテストの前に `reset`、後に `collect` を呼び、そのテストの計数を JSONL に書く。E2E は順に走る（`fullyParallel: false`）ので、テストの間の計数は混ざらない
+
+E2E の OP に Istanbul を使わないのは、計測つきのコードを作る段が OP の起動の仕方に縛られるからである。
+`apps/hono` はビルドせずに `tsx src/server.ts` で動き、`apps/nextjs` は `next build`（Next.js 16 では既定で Turbopack）がサーバーのコードをバンドルする。
+Istanbul にするには、hono では tsx の変換に、Next.js ではバンドラーに、計測の変換を差し込む必要がある。
+Next.js でその手段になる `swc-plugin-coverage-instrument` は、SWC の Wasm プラグインなので Next.js の版ごとの SWC の版に合わせる必要があり、`babel-plugin-istanbul` は Babel の設定を置いてコンパイルの経路を本番と変えてしまう。
+どちらも Next.js を上げるたびに壊れうる依存で、保守の負担が大きい。
+V8 の計数はランタイムが持つので、起動の仕方とバンドラーに依らず、同じ口で両方の OP を計れる。
 
 通ったエンドポイントの列は、二つの標準の記録から作る。
 ブラウザが通ったリクエスト（リダイレクトを含む）は Playwright の `page.on('request')` と `page.on('response')` で、`request` fixture の呼び出しは fixture を包んで記録する。
 E2E 用の RP（`tests/e2e/apps/client.mjs`）が裏で叩く `/token` と `/userinfo` はブラウザには見えないので、OP のアクセスログ（`hono/logger` を `MARONN_REACH=1` のときにファイルへ出す）を、テストの開始と終了の時刻で切って足す。
 時刻で切れるのは、E2E が順に走るからである。
 
-計数から関数の id への対応づけは、Istanbul の `fnMap`（関数の名前と宣言の位置）を関数カタログの札（ファイルと宣言の行）に引いて行う。
-名前のある関数はファイルと名前で、エンドポイントの処理本体のような無名の関数はファイルと宣言の行で引く。
-位置はソースマップで元の行に戻す（`istanbul-lib-source-maps`）。
+計数から関数の id への対応づけは、計数をまず Istanbul の形にそろえてから行う。
+V8 の計数は `v8-to-istanbul` で Istanbul の形にし、そのときにソースマップで元のファイルと行に戻す。
+ソースマップは、tsx が実行するファイルでは tsx が付けるものを、Next.js では `next build` のサーバーのソースマップを使う（後者は到達を取るビルドでだけ有効にする）。
+Vitest の Istanbul の計数は、`istanbul-lib-source-maps` で元の行に戻す。
+そろえた計数の `fnMap`（関数の名前と宣言の位置）を、関数カタログの札（ファイルと宣言の行の範囲）に引く。
+バンドルで関数の名前が変わることがあるので、名前ではなく、元の位置を含む札のうち最も内側のものを採る。
 分岐の計数（`branchMap`）は、木の決定のノード（`if`、`switch`、`cond-expr`）の行と引けるので、「この決定のこの側を通ったテスト」も同じ記録から求まる。
 この設計では関数の到達までを範囲にし、決定の側の到達は後で足す。
 
@@ -328,17 +336,14 @@ interface ReachRecord {
 - E2E からエンドポイントへ：一つのテストが通ったエンドポイントの列（`/authorize` → `/login` → `/consent` → `/token` → `/userinfo`）。要件の「エンドポイントを利用する一連の処理フロー」はこれで描く
 - 到達していない場所：どのテストも通らない関数、ステップ、エンドポイント
 
-計測つきの `dist/` が生成物や公開物に混ざることはない。
-CLI のテンプレートは `pnpm run build` が `src` から作り、npm への publish は release のワークフローが別にビルドする。
-念のため、テンプレートに `__coverage__` が含まれないことをテストで確かめる。
-
-Next.js の OP は、サーバーのコードを Next.js 側がバンドルするので、`dist/` の書き換えだけでは `app/` の関数が計測に入らない。
-`swc-plugin-coverage-instrument` か `babel-plugin-istanbul` を `next build` に当てる案があるが、この設計では決めない。
-決まるまでの Next.js の到達は、`NODE_V8_COVERAGE` によるプロセス単位の V8 カバレッジ（`c8` でソースマップを戻す）で、テストごとでなく実行全体で求める。
+計測の口は、生成物にも公開物にも混ざらない。
+`test-reach` は devDependency で、それを呼ぶ `server.ts` と `instrumentation.ts` は CLI が抽出する根の外にあり、`MARONN_REACH=1` のときだけ動的に import する。
+念のため、CLI のテンプレートに `test-reach` が含まれないことをテストで確かめる。
 
 ### 行のカバレッジとの関係
 
 同じ計測から、実行全体の行のカバレッジ（lcov）も出る。
+Vitest では coverage のプロバイダーが lcov を書き、E2E ではテストごとの計数を `istanbul-lib-coverage` で足し合わせて `istanbul-lib-report` で lcov にする。
 これは Codecov に上げ、PR のコメントに patch coverage として出す（「PR でのテストの差分」の節）。
 地図はテストごとの到達を関数と決定の単位で見せ、行の割合は Codecov に任せる。
 
@@ -636,6 +641,10 @@ interface TestDiff {
     related: string[];
     /** そのうち、この PR が足した、変えたもの */
     touched: string[];
+    /** 関連するテストを一つも足しも変えもしていない（検査の対象なら CI を落とす） */
+    untouched: boolean;
+    /** 変更メモのその関数の節の `テストを変えない理由:` の行 */
+    reason?: { text: string; note: string };
     /** 新しく外へ出る失敗のうち、期待するテストが無いもの */
     failuresWithoutTest: string[];
     /** 変更前後の、関連するテストの観点と期待するエラーの集合 */
@@ -676,23 +685,60 @@ interface TestDiff {
     - validateClientAuthMethod: ユニット 追加 2
     - validateTokenGrantType: ユニット 変更 1（期待 the HTTP status is 400 → the HTTP status is 401）
 
-関連テストに変更の無い実装の変更:
+関連テストに変更の無い実装の変更（CI を落とす）:
   - verifyClientSecret（条件 `secret.length < 8` を足した）: 関連するテスト 5 件、変更なし
-  - 新しく外へ出る失敗 TokenError(invalid_client, "secret too short") を期待するテストが無い
+テストを変えない理由が書かれた変更:
+  - buildTokenResponse（`.trim()` を足した）: 関連するテスト 12 件。「レスポンスの形は変えていない。既存の 12 件が同じ期待で通る」
 
-結果とカバレッジの変化は Codecov のコメントを参照
+新しく外へ出る失敗を期待するテストが無いもの:
+  - TokenError(invalid_client)（verifyClientSecret から）
+
+結果とカバレッジの変化は Codecov のコメントを参照（リンク）
 ```
 
 数と名前は例である。
 テストの記述は英語のまま載せ、枠の言葉は地図のコメントに合わせて日本語にする。
-PR には地図と Codecov の二つのコメントが付く。
-一つにまとめるには Codecov の API から読んで地図のコメントに引く手があるが、まずは二つのままにする。
+PR には地図と Codecov の二つのコメントが付き、分けたままにする。
+二つは中身が重ならない。
+地図はテストの札の差分と実装の変更との対応を、Codecov はカバレッジと結果の変化を出す。
+一つにまとめるには Codecov の API から読んで地図のコメントに引くコードを持つことになり、その保守に見合う利点が無い。
+地図のコメントからは Codecov のコメントへのリンクを張る。
 
-CI を落とすかどうかは、地図の方針と同じく限定する。
-機能ファイルの lint、ステップの未定義と曖昧さ、テストの id の重複は落とす。
-「関連するテストに変更が無い」と「新しい失敗を期待するテストが無い」は、コメントに出すだけにする。
-テストを足すかどうかは変更の性質によるので、機械で一律に求めると形骸化するからである。
+CI を落とすのは次のものである。
+
+- 機能ファイルの lint、ステップの未定義と曖昧さ、テストの id の重複
+- 関連するテストに変更が無い実装の変更で、理由の書かれていないもの（次の項）
+
+「新しい失敗を期待するテストが無い」は、コメントに出すだけにする。
 patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）で決められるので、地図の検査とは独立に後で選べる。
+
+### 関連するテストに変更が無い実装の変更
+
+この検査は一度 CI を落とし、テストを変えないことが妥当なら、人がその理由を書いて通す。
+テストを足すかどうかは変更の性質によるので機械では決められない。
+しかし黙って通すと、テストが追いついていない変更がレビューで見落とされる。
+一度落とすことで、テストを変えないという判断を毎回人にさせる。
+
+対象は、変更メモが要る変更（`FrameChangeEntry.required`）と同じ範囲で、コードを変えたエンドポイントに届く関数と、エンドポイントの処理本体である。
+コメントや書き方だけの変更、JSDoc だけの変更、移動は対象にしない。
+この PR が足すか変えたテストに、その関数を対象にするか、その関数に到達するものが一つも無いとき、検査が落ちる。
+関連するテストがもともと一つも無い関数も、テストを足さなければ落ちる。
+
+通すには、変更メモのその関数の節に、`テストを変えない理由:` で始まる行を書く。
+
+```md
+## buildTokenResponse <!-- hono:endpoints/token/steps/build-token-response.ts#buildTokenResponse -->
+
+`scope` の値の前後の空白を落としてから返すようにした。
+
+テストを変えない理由: レスポンスの形は変えていない。既存の 12 件が同じ期待で通る。
+```
+
+変更メモはもともと関数ごとに意図を書く場所で、この行もその PR のレビューの対象になる。
+ラベルで PR 全体を通す方法を採らないのは、関数ごとに理由が残らないからである。
+行の中身の質は、説明の無い変更の検査と同じく検査しない。
+PR のコメントでは、理由の書かれた関数を、関連するテストの数と理由と並べて出す。
+`changes:draft` は、この検査で落ちる関数の節に、関連するテストの一覧を HTML コメントで添え、`テストを変えない理由:` の行を書く場所を空けておく。
 
 ## 6. データとビルド
 
@@ -702,11 +748,12 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 - `apps/map`：テストのタブ、テストの一覧のページ、このPRの変更のテストの節
 - `tests/features/`：機能ファイル。エンドポイントごとのディレクトリ
 - `tests/steps/`：英語の式のステップ定義と、日本語の訳の表（`ja.yaml`）。ステップ定義は `apps/hono` と `apps/nextjs` の `test-support` に依る
-- `tests/e2e/fixtures.ts`：到達の記録（`/__coverage__`、リクエストの記録）を足した `test`。既存の spec と生成したテストの両方が使う
-- `apps/hono/src/server.ts` と Vitest の `setup` ファイル：到達の記録の数十行。CLI が抽出する根の外に置く
+- `packages/test-reach`（非公開、devDependency）：E2E の OP の中で V8 の計数を取り、別のポートで `reset` と `collect` に答える数十行。`apps/hono/src/server.ts` と `apps/nextjs/src/instrumentation.ts` が `MARONN_REACH=1` のときだけ動的に import する
+- `tests/e2e/fixtures.ts`：到達の記録（`reset` と `collect` の呼び出し、リクエストの記録）を足した `test`。既存の spec と生成したテストの両方が使う
+- Vitest の `setup` ファイル：Istanbul の計数の差分を書く数十行
 
 解析をパッケージに、表示を `apps/map` に置く分け方は、地図と同じである。
-実行時の計測器は持たない。
+計測器そのものは持たず、V8 と Istanbul を使う。
 
 ### データ
 
@@ -725,7 +772,7 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 地図にテストの結果と到達を載せるには、テストの後に地図を作る必要がある。
 そこで `map-preview.yml` のジョブを `ci.yml` に移し、`test` のジョブの後に `map` のジョブを置く。
 
-1. `test`：`pnpm run test:ci` を `MARONN_REACH=1` で走らせ、Vitest の JSON、JUnit、lcov、到達の JSONL を artifact にする。E2E も同じジョブで、計測つきの `dist/` から `apps/hono` を起動して走らせる。lcov と JUnit は Codecov に上げる
+1. `test`：`pnpm run test:ci` を `MARONN_REACH=1` で走らせ、Vitest の JSON、JUnit、lcov、到達の JSONL を artifact にする。E2E も同じジョブで、`MARONN_REACH=1` で `apps/hono` と `apps/nextjs` を起動して走らせる（Next.js は到達を取るビルドでサーバーのソースマップを有効にする）。lcov と JUnit は Codecov に上げる
 2. `map`：artifact を受け取り、`build:map` がテストカタログと差分も作る。デプロイとコメントはいまのまま
 3. main への push：本番にデプロイする。結果の基準は Codecov が持つので、地図は置かない
 
@@ -741,17 +788,17 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 | テストコードの読み取り | TypeScript のコンパイラ API | 既存（`map-analysis` が使う） |
 | ユニットと API のテストの実行、JSON と JUnit のレポーター、`setup` ファイル | Vitest 5 | 既存 |
 | E2E の実行、JSON と JUnit のレポーター、fixtures、リクエストの記録 | Playwright | 既存 |
-| テストごとの到達の計測 | `@vitest/coverage-istanbul`、`nyc`（`nyc instrument`）、`istanbul-lib-source-maps` | 新規（devDependency） |
+| テストごとの到達の計測（Vitest） | `@vitest/coverage-istanbul`、`istanbul-lib-source-maps` | 新規（devDependency） |
+| テストごとの到達の計測（E2E の OP） | Node の `node:inspector`（V8 の precise coverage）、`v8-to-istanbul` | `node:inspector` は標準、`v8-to-istanbul` は新規（devDependency） |
+| E2E の計数の集計と lcov の出力 | `istanbul-lib-coverage`、`istanbul-lib-report` | 新規（devDependency） |
 | 機能ファイルの読み取りと検査、日本語のキーワード | `@cucumber/gherkin`（言語の辞書を含む）、`gherkin-lint` | 新規（devDependency） |
-| 観点の表、適合性の対応表、日本語の訳の表の読み取り | `yaml` | 新規（devDependency） |
+| 観点の表、日本語の訳の表の読み取り | `yaml` | 新規（devDependency） |
 | 機能ファイルから Playwright のテストの生成、Cucumber Expressions | `playwright-bdd`（`@cucumber/cucumber-expressions` を含む） | 新規（devDependency） |
 | 機能ファイルの編集の補完 | VS Code の Cucumber の拡張 | 任意 |
 | PR のカバレッジの変化、結果の変化、flaky | Codecov（`codecov-action`、`test-results-action`） | 新規（無料、トークンをシークレットに置く） |
-| Next.js の実行全体のカバレッジ（当面） | `c8`、`NODE_V8_COVERAGE` | 新規（devDependency） |
 | 画面 | React、Vite、Dagre、Shiki | 既存 |
 | CI と artifact | GitHub Actions | 既存 |
 | プレビューと本番 | Cloudflare Workers（無料枠） | 既存 |
-| 適合性の結果 | OIDF Conformance Suite の JSON | 既存 |
 
 検討して採らなかったものは次のとおりである。
 
@@ -761,7 +808,9 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 | cucumber-js を runner にする | Vitest と Playwright に加えて三つ目の runner になる。playwright-bdd で Playwright に載せる方が、レポーターと fixture を共有できる |
 | `@amiceli/vitest-cucumber` | Vitest に Gherkin を載せるが、若く、Cucumber Expressions の照合と曖昧さの検出を自前で確かめる必要がある |
 | YAML の独自のケース定義 | この設計の前の版で採っていた。閉じた語彙の照合器、コンパイラ、スキーマ、エディタの補完を自前で持つことになり、Cucumber Expressions と playwright-bdd で同じ性質が得られる |
-| 関数の先頭に印を差し込む自前の変換器 | 同じく前の版。Istanbul の計測の差分で代えられ、分岐の到達も付いてくる |
+| 関数の先頭に印を差し込む自前の変換器 | 同じく前の版。既製の計測の差分で代えられ、分岐の到達も付いてくる |
+| `nyc instrument`（E2E の OP の計測） | 前の版で採っていた。`apps/hono` はビルドせずに tsx で動くので書き換える dist が無い。V8 の計数なら両方の OP を同じ口で計れる |
+| `swc-plugin-coverage-instrument`、`babel-plugin-istanbul`（Next.js の計測） | 「テストごとの到達」の項。Next.js を上げるたびに壊れうる |
 | Coveralls | Codecov と同等。Test Analytics に当たるものが無いので Codecov を選ぶ |
 | Stryker（ミュテーションテスト） | 「テストが実際に振る舞いを固定しているか」の強い信号になるが、実行が重く、この設計の範囲の外に置く。後で「保証範囲」の一つの列として足せる |
 
@@ -775,6 +824,7 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 - 機能ファイルには `@id` と対象のタグ（`@endpoint:` `@function:` `@scenario:`）を書き、ステップ定義は英語の Cucumber Expressions で書く。`gherkin-lint`、`bddgen`、ステップ定義の lint が検査する
 - `// @test-id` で固定した id は一意にする。lint が検査する
 - E2E の spec は `fixtures.ts` の `test` を使う。到達の記録のためで、lint が import を検査する
+- エンドポイントに届く実装の変更で、関連するテストを足しも変えもしないときは、変更メモのその関数の節に `テストを変えない理由:` の行を書く。地図のビルドが検査する
 
 **あれば良くなるもの**
 
@@ -794,20 +844,36 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 前の段が後の段の土台になるよう、五段に分ける。
 
 1. **テストカタログと結合**：テストコードの読み取り（種類、対象、観点、期待結果、id）、関数カタログとの結合、Vitest と Playwright の JSON の取り込み、エンドポイントの画面のテストのタブ、テストの一覧のページ。最優先の要件に、静的な根拠で答える
-2. **到達と Codecov**：Istanbul の計測、テストごとの差分、`apps/hono` の E2E の記録、到達の表示、不足の規則、lcov と JUnit の Codecov へのアップロード。ここで `ci.yml` に地図のジョブを移す
-3. **テストの差分と PR のコメント**：変更前のカタログ、差分、`changes.frames` との突き合わせ、コメントの節
+2. **到達と Codecov**：Vitest の Istanbul の計測、E2E の OP の V8 の計測（`test-reach`、hono と Next.js の両方）、テストごとの差分、到達の表示、不足の規則、lcov と JUnit の Codecov へのアップロード。ここで `ci.yml` に地図のジョブを移す
+3. **テストの差分と PR のコメント**：変更前のカタログ、差分、`changes.frames` との突き合わせ、「関連するテストに変更が無い」の検査と変更メモの理由の行、コメントの節
 4. **機能ファイル**：playwright-bdd の導入、英語のステップ定義、二つの実行先の project、lint。トークンエンドポイントの異常系を機能ファイルに書き写して、既存の API テストと同じ結果になることを確かめる
-5. **残り**：日本語の訳の表と表示の切り替え、Next.js の計測、決定の側の到達、適合性スイートの結果の取り込み、仕様の節ごとの一覧（関数の `@spec` とテストの仕様コメントを節で結ぶ）
+5. **残り**：日本語の訳の表と表示の切り替え、決定の側の到達、仕様の節ごとの一覧（関数の `@spec` とテストの仕様コメントを節で結ぶ）
 
 第 4 段は第 2 段と第 3 段に依らないので、人がいれば並行できる。
 第 1 段が終わった時点で、`/token` のテストのタブに、API、E2E、ユニットの三種類が対象ごとに並ぶことを計測で確認する。
 
-## 10. 決めずに残すこと
+## 10. 決めたこと
 
-- 日本語の訳の欠けを、いずれ CI で落とすか。この設計では数を出すだけにする
-- Next.js の `app/` の関数を計測に入れる方法（`swc-plugin-coverage-instrument` か `babel-plugin-istanbul` か）
-- 「関連するテストに変更が無い」を CI で落とすかどうか。この設計ではコメントに出すだけにする
-- 地図と Codecov の二つのコメントを一つにまとめるか
-- 適合性スイートの module とエンドポイントの対応表を誰が保つか
-- 名前の変更の対応づけの閾値（期待結果の 8 割）。実際の PR で測って決める
-- Vitest の istanbul プロバイダーが計数を置くグローバルの名前と、`isolate` の設定で計数がファイルごとに作り直されるか。実装の最初に確かめる
+設計の相談で決まったことを、実装に入る人のために残す。
+
+- 自前で作るのは、関数カタログと処理の流れの木を知らないと作れないものに限り、ほかは既製品に任せる
+- テストの記述は英語を正とし、日本語は任意の訳として機械的に出す
+- 日本語の訳の欠けは CI を落とさず、数を出すだけにする
+- 関連するテストに変更が無い実装の変更は、CI を一度落とす。テストを変えないことが妥当なら、変更メモのその関数の節に理由を書いて通す
+- E2E の OP の到達は、hono も Next.js も V8 の precise coverage で取る。Next.js のバンドラーに計測のプラグインを当てない
+- 地図と Codecov のコメントは、中身が重ならないので分けたままにする
+- OIDF 適合性スイートは対象外とする
+
+## 11. 確かめてから決めること
+
+実装の最初に確かめる。
+
+- Vitest の istanbul プロバイダーが計数を置くグローバルの名前と、`isolate` の設定で計数がファイルごとに作り直されるか
+- `next start` で、`instrumentation.ts` の `register()` が Route Handler を実行するのと同じプロセスで動くか
+- Turbopack の `next build` でサーバーのソースマップを出す設定と、`v8-to-istanbul` がそれで `app/` の元の行に戻せるか
+- tsx が付けるソースマップを、`v8-to-istanbul` が引けるか（`node:module` の `findSourceMap()`）
+- V8 の分岐（ブロック）の計数の精度。V8 はこれを best effort とするので、決定の側の到達を足す前に測る
+
+実際の PR で測って決める。
+
+- 名前の変更の対応づけの閾値（期待結果の 8 割）

@@ -31,7 +31,7 @@ GET /authorize?client_id=web-app&request_uri=urn:ietf:params:oauth:request_uri:<
 | RFC 9126 §5 | Provider Metadata（`pushed_authorization_request_endpoint` / `require_pushed_authorization_requests`） |
 | RFC 9126 §3 | **非対応**（PAR ボディへの `request` パラメータ、JAR との併用） |
 | RFC 9126 §6 | **非対応**（クライアント単位の `require_pushed_authorization_requests`） |
-| OIDC Core 1.0 §6.2 | **非対応**（URL 形式の `request_uri`。従来どおり `request_uri_not_supported` で拒否） |
+| OIDC Core 1.0 §6.2 | PAR の範囲外（URL 形式の `request_uri` は、安定機能 `request-object` が取得する。`request-object` を外した OP では `request_uri_not_supported` で拒否） |
 
 ## ユースケース
 
@@ -230,7 +230,7 @@ PAR は state / nonce / PKCE を**置き換えません**。認可レスポン�
 ## core 機能との違い
 
 - **`request-object`（安定機能）との違い**: `request-object` は「パラメータを署名付き JWT にして by value で送る」方式です（完全性・否認防止）。PAR は「パラメータをバックチャネルで預ける」方式です（完全性・機密性・事前クライアント認証）。両者は直交します
-- **core の `request_uri` 拒否との関係**: core の拒否ロジックは変更されていません。URN 形式でない `request_uri`（URL 形式など）は前段フックが素通しし、従来どおり core が `request_uri_not_supported` で拒否します
+- **URL 形式の `request_uri` との関係**: URN 形式でない `request_uri`（URL 形式など）は前段フックが素通しします。`request-object` を有効にした OP は、その URL から Request Object を取得し（OIDC Core 1.0 §6.2）、`request-object` を外した OP は core が `request_uri_not_supported` で拒否します
 
 ## トラブルシューティング
 
@@ -240,7 +240,7 @@ PAR は state / nonce / PKCE を**置き換えません**。認可レスポン�
 | `Cannot find module '@maronn-openid-connect/experimental/par'` | `pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental` を実行してください |
 | インストール時に `unmet peer @maronn-openid-connect/core` の警告 | この experimental が要求する core の下限を満たしていません。`@maronn-openid-connect/core` を更新してください（バージョン番号を experimental と揃える必要はありません） |
 | PAR のエラーが期待どおりのレスポンスにならず 500 になる | core が二重にインストールされ、`instanceof` 判定が失敗している可能性があります。`pnpm why @maronn-openid-connect/core` で単一バージョンに解決されているか確認してください |
-| 認可エンドポイントが `request_uri_not_supported` を返す | `request_uri` が URN 形式（`urn:ietf:params:oauth:request_uri:`）になっていません。PAR が返した値をそのまま渡してください |
+| 認可エンドポイントが `request_uri_not_supported` または `invalid_request_uri`（`the request_uri could not be retrieved`）を返す | `request_uri` が URN 形式（`urn:ietf:params:oauth:request_uri:`）になっておらず、URL として扱われています。PAR が返した値をそのまま渡してください |
 | ブラウザバック / リロードで `invalid_request_uri` | 仕様どおりの挙動です（単回使用）。クライアント側で PAR からやり直してください |
 | 60 秒以上経つと `invalid_request_uri` | 有効期限切れです。`parConfig.expiresInSeconds` を延ばすか、PAR 直後に認可エンドポイントへ遷移してください |
 | 起動時に `expiresInSeconds must be an integer between 5 and 600` | `parConfig.expiresInSeconds` が RFC 9126 §2.2 の推奨レンジ外です |

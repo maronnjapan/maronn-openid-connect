@@ -48,13 +48,14 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `id_token_hint` | 署名・クレームを検証（OIDC Core 1.0 §3.1.2.2）。既定では OP 自身の署名鍵で検証 |
 | `claims` | JSON をパースし `userinfo` / `id_token` の個別クレーム要求に対応（OIDC Core 1.0 §5.5） |
 | `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。受け付ける alg は `requestObjectSigningAlgValuesSupported`（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512）で、discovery の `request_object_signing_alg_values_supported` に広告する。クライアントが `request_object_signing_alg` を登録していれば、その alg の Request Object だけを受け付ける（OIDC Core 1.0 §6.3.2）。鍵は、クライアントが `request_object` の用途に登録した公開鍵か、登録した `jwks_uri` から取得した鍵で、使える alg がヘッダーの `alg` と同じ鍵だけを使う（RFC 8725 §3.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理 |
-| `request_uri` | 未対応。仕様通り `request_uri_not_supported` で拒否（OIDC Core 1.0 §6.3） |
+| `request_uri` | URL の `request_uri`（Request Object by reference, OIDC Core 1.0 §6.2）から Request Object を取得し、`request` と同じく検証する。取得は https の公開ホストに限り、512 文字まで、フラグメントを除いて GET し、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB までに制限する。取得に失敗すると、リダイレクトせずに固定文言の `invalid_request_uri` で拒否する。`request` との併用は `invalid_request`。`requireRequestUriRegistration: true` では、クライアントが登録した `request_uris` と完全一致する値だけを取得する。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する。トグル `request-object` を外すと `request_uri_not_supported` で拒否する。PAR の `urn:ietf:params:oauth:request_uri:` は PAR が解決する |
 | `registration` | 未対応。仕様通り `registration_not_supported` で拒否（OIDC Core 1.0 §3.1.2.6） |
 
 ## Token Endpoint
 
 - グラント: `authorization_code` / `refresh_token`
-- クライアント認証: `client_secret_basic` / `client_secret_post` / `none`（public client）。1 つのクライアントに `client_secret_basic` と `client_secret_post` の両方を登録可能。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
+- クライアント認証: `client_secret_basic` / `client_secret_post` / `private_key_jwt`（OIDC Core 1.0 §9） / `none`（public client）。1 つのクライアントに `client_secret_basic` と `client_secret_post` の両方を登録可能。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
+- private_key_jwt: クライアントアサーション（RFC 7523 §3）の alg は RS256 / RS384 / RS512 / ES256 / ES384 / ES512（`none` と HS 系は拒否）。`iss` と `sub` が client_id、`aud` にエンドポイントの URL か issuer、`exp` と `jti` が必須で、同じ `jti` の再送は期限まで拒否する。鍵はクライアントが `private_key_jwt` の用途に登録した公開鍵か `jwks_uri` の鍵。検証の失敗はすべて `invalid_client`、アサーションとシークレットの併用は `invalid_request`。イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントも同じ検証を行う（詳細は [CLI Guide の private_key_jwt](../../guides/cli/#private_key_jwt)）
 - 認可コード: ワンタイム使用、TTL 既定 300 秒、redirect_uri 一致検証、PKCE `code_verifier` の S256 検証
 
 ### Access Token
@@ -112,12 +113,17 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 
 - クライアントの公開鍵は、用途ごとに値で登録するか（`keys`）、クライアントが公開する `jwks_uri`（RFC 7591 §2）を登録する（`jwksUri`）。両方は登録できない
 - `jwks_uri` の鍵は、鍵が必要になったときに取得し、応答の `Cache-Control: max-age` を 30 〜 300 秒に丸めた期間だけキャッシュする。キャッシュに無い kid の署名が届くと取り直す（OIDC Core 1.0 §10.1.1。既定で 30 秒に 1 回まで）
-- 取得は https の公開ホストに限り、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB、鍵 32 個までに制限する。秘密鍵か対称鍵を含む JWK Set は拒否する。取得に失敗した Request Object は、理由を含まない固定文言の `invalid_request_object` で拒否する（詳細は [CLI Guide の jwks_uri](../../guides/cli/#jwks_uri)）
+- 取得は https の公開ホストに限り、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB、鍵 32 個までに制限する。秘密鍵か対称鍵を含む JWK Set は拒否する。取得に失敗した Request Object は、理由を含まない固定文言の `invalid_request_object` で、private_key_jwt のクライアントアサーションは `invalid_client` で拒否する（詳細は [CLI Guide の jwks_uri](../../guides/cli/#jwks_uri)）
+
+## Client Display
+
+- ログイン画面と同意画面は、認可リクエストのクライアントが登録した `client_name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`（OIDC Dynamic Client Registration 1.0 §2）を表示する。`client_name` が無ければ client_id を表示する
+- URL は https のものだけを画面に入れ、OP は取得しない。`allowInsecureClientDisplayUris: true`（開発用）で http も入れる。`requireClientDisplayUriHostMatch: true` では、`logo_uri` と `policy_uri` のホストが `redirect_uris` のどれかのホストと同じときだけ入れる（詳細は [CLI Guide のクライアントの表示](../../guides/cli/#クライアントの表示)）
 
 ## Signing Keys
 
 - ID Token 署名は RS256（Basic OP 必須アルゴリズム）
-- 署名鍵は `SigningKeyProvider` インターフェース（`getSigningKeys()` が鍵の配列を返す）で注入。配列の先頭の鍵で新しいトークンに署名する。TTL 付きキャッシュ（`createCachedSigningKeyProvider`）で鍵ローテーションに追随
+- 署名鍵は `SigningKeyProvider` インターフェース（`getSigningKeys()` が鍵の配列を返す）で注入。配列の先頭の鍵で新しいトークンに署名する。TTL 付きキャッシュ（`createCachedSigningKeyProvider`）で鍵ローテーションに追随し、`invalidate()` でキャッシュを捨てると次の呼び出しから新しい鍵を使う（OIDC Core 1.0 §10.1.1）
 - 配列の 2 本目以降としてローテーション済み鍵・複数アルゴリズムの鍵を JWKS / Discovery で広告可能
 - JWK エクスポートは公開鍵パラメータのみ（秘密鍵パラメータは型レベルで排除）
 
@@ -141,6 +147,13 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `clientJwksUriRefetchIntervalSeconds` | `30` | キャッシュに無い kid で `jwks_uri` を取り直す間隔（秒） |
 | `clientJwksUriTimeoutMs` / `clientJwksUriMaxBytes` / `clientJwksUriMaxKeys` / `clientJwksUriCacheMaxEntries` | `3000` / `65536` / `32` / `1000` | `jwks_uri` の取得のタイムアウト（ミリ秒）、文書の上限（バイト）、鍵の数の上限、キャッシュに持つ `jwks_uri` の数の上限 |
 | `clientJwksUriPurposes` | `['request_object', 'private_key_jwt', 'dpop']` | `jwks_uri` の鍵を返す `ClientKeyResolver` の用途 |
+| `tokenEndpointAuthSigningAlgValuesSupported` | `['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']` | private_key_jwt のクライアントアサーションに受け付ける alg。discovery の `token_endpoint_auth_signing_alg_values_supported` に広告する |
+| `requestUriParameterSupported` | `true` | URL の `request_uri` を取得する（request-object 機能） |
+| `requireRequestUriRegistration` | `false` | クライアントが登録した `request_uris` だけを取得する（request-object 機能） |
+| `allowInsecureRequestUri` | `false` | `request_uri` に、http と `localhost`、ループバック・私設・リンクローカルのアドレスを許す（開発用。request-object 機能） |
+| `requestUriTimeoutMs` / `requestUriMaxBytes` / `requestUriMaxLength` | `3000` / `65536` / `512` | `request_uri` の取得のタイムアウト（ミリ秒）、Request Object の上限（バイト）、`request_uri` の長さの上限（文字。request-object 機能） |
+| `allowInsecureClientDisplayUris` | `false` | ログイン・同意画面に http の `logo_uri` などを入れる（開発用） |
+| `requireClientDisplayUriHostMatch` | `false` | `logo_uri` と `policy_uri` を、`redirect_uris` のホストと同じときだけ画面に入れる |
 
 ## Feature Toggles
 

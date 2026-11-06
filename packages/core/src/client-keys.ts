@@ -17,7 +17,8 @@ import type { JwkSet } from './jwks.js';
  *   持つので、登録した鍵の proof だけを受け付ける OP が使う
  *
  * 文字列なので、ほかの用途も足せる。core で鍵を受け取る処理は署名付き Request Object の検証
- * （`resolveRequestObjectParams()` の `options.loadJwks`）だけで、private_key_jwt と DPoP の検証は持たない。
+ * （`resolveRequestObjectParams()` の `options.loadJwks`）と private_key_jwt のクライアントアサーションの
+ * 検証（`loadClientAssertionKeys()`）で、DPoP の検証は持たない。
  */
 export type ClientKeyPurpose = 'private_key_jwt' | 'request_object' | 'dpop' | (string & {});
 

@@ -424,7 +424,7 @@ maronn-oidc generate express --disable pkce
 | `refresh-token` | 有効 | `refresh_token` grant を `unsupported_grant_type` で拒否。`offline_access` は付与されず、リフレッシュトークンは発行されない。discovery からも除去される |
 | `introspection` | 有効 | RFC 7662 introspection エンドポイント（`/introspect`）を生成しない |
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
-| `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
+| `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で、URL の `request_uri`（by reference, §6.2）を `request_uri_not_supported` で拒否。discovery は `request_parameter_supported: false` と `request_uri_parameter_supported: false` を広告する。有効なときの `request_uri` の取得は [request_uri](#request_uri) を参照 |
 | `form-post-response-mode` | 有効 | `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）を解釈せず、認可レスポンスを従来どおりリダイレクト URI のクエリで返す。discovery の `response_modes_supported` から `form_post` を除く |
 | `implicit-flow` | 有効 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2 の Implicit Flow）を `unsupported_response_type` で拒否し、`response_type=code` だけに答える。discovery の `response_types_supported` からこの 2 つを、`response_modes_supported` から `fragment` を、`grant_types_supported` から `implicit` を除く。`hybrid-flow` が必要とする機能なので、外すときは `hybrid-flow` も一緒に `--disable` に指定する |
 | `hybrid-flow` | 有効 | `response_type=code id_token`、`code token`、`code id_token token`（OIDC Core 1.0 §3.3 の Hybrid Flow）を `unsupported_response_type` で拒否する。discovery の `response_types_supported` からこの 3 つを、`claims_supported` から `c_hash` を除く。有効なときは、認可エンドポイントが認可コードと一緒に ID Token と Access Token の一方または両方をフラグメントで返し、認可コードは Authorization Code Flow と同じくトークンエンドポイントで交換する。`implicit-flow` のフラグメント応答とトークン発行を使うので、`implicit-flow` を有効にしたまま使う |
@@ -539,6 +539,7 @@ Next.js の生成物では、`_oidc-provider/provider.ts` の `acrResolver` が�
 
 ## Client Authentication Methods
 
+生成 OP は、client_secret_basic、client_secret_post、private_key_jwt（OIDC Core 1.0 §9）と、public client の `none` を受け付けます。
 1 つのクライアントに、client_secret_basic と client_secret_post の両方を登録できます。
 登録する方式は、クライアントの `tokenEndpointAuthMethods`（core の `TokenClientInfo`）に一覧で書きます。
 省略すると RFC 7591 §2 の既定どおり `['client_secret_basic']` になり、`['none']` は public client を表します。
@@ -560,17 +561,50 @@ OP はリクエストが送った資格情報から方式を決め、一覧に�
 `registerClient()` はこの形で書き込みます。
 シークレットの異なる行（要素）を持つクライアントは設定の誤りとして扱い、OP はそのクライアントを読むときに例外を投げます。
 
+### private_key_jwt
+
+private_key_jwt のクライアントは、シークレットの代わりに、自分の秘密鍵で署名した JWT（クライアントアサーション、RFC 7523 §3）を `client_assertion` に、`urn:ietf:params:oauth:client-assertion-type:jwt-bearer` を `client_assertion_type` に入れて送ります。
+トークン、イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントが、どれも同じ検証でクライアントを認証します。
+
+```typescript
+{
+  clientId: 'my-client',
+  redirectUris: ['https://client.example.com/callback'],
+  tokenEndpointAuthMethods: ['private_key_jwt'],
+  tokenEndpointAuthSigningAlg: 'ES256', // 省略すると、OP が受け付けるどの alg でもよい
+  keys: {
+    private_key_jwt: { keys: [{ kty: 'EC', kid: '2026-11', crv: 'P-256', x: '...', y: '...' }] },
+  },
+}
+```
+
+OP はアサーションを次の順に検証し、どれかに失敗すると `invalid_client` で拒否します。
+
+- 署名の alg は RS256 / RS384 / RS512 / ES256 / ES384 / ES512 のどれかで、`none` と HS 系は受け付けない。クライアントが `tokenEndpointAuthSigningAlg` を登録していれば、その alg だけを受け付ける
+- `iss` と `sub` がどちらも client_id で、`aud` に、そのエンドポイントの URL（`https://op.example.com/token` など）か issuer を含む
+- `exp` が過ぎておらず、`nbf` と `iat` が未来でない（それぞれ 60 秒の時計のずれを許す）
+- `jti` がある。同じクライアントの同じ `jti` は、アサーションの期限まで 2 回目を拒否する（`--db sql` は `client_assertion_jtis`、`--db kv` は `client_assertion_jti:<hash>` のキー、`--db` 無しはメモリに持つ）
+- 署名を、クライアントが `private_key_jwt` の用途で登録した鍵か、`jwks_uri` の鍵で検証できる。ヘッダーの `kid` があれば、その kid の鍵だけを使う
+
+`client_id` をボディに入れるのは任意で、入れなければアサーションの `sub` をクライアントとして扱います（RFC 7521 §4.2）。
+アサーションと一緒に Basic 認証や `client_secret` を送ったリクエストは、`invalid_request` で拒否します。
+discovery は `token_endpoint_auth_methods_supported` に `private_key_jwt` を、`token_endpoint_auth_signing_alg_values_supported` に受け付ける alg を広告します（イントロスペクションとリボケーションのエンドポイントも同じ）。
+受け付ける alg は `ProviderConfig` の `tokenEndpointAuthSigningAlgValuesSupported` で絞れます。
+
+`--db sql` では `client_private_key_jwt_auths` に 1 行を置き、`signing_alg` に `token_endpoint_auth_signing_alg` を入れます（NULL ならどの alg でもよい）。
+`--db kv` では、クライアントのレコードの `private_key_jwt` に `{ "signing_alg": ... }` を置きます。
+private_key_jwt だけのクライアントは `client_auths` の行もシークレットも持ちません。
+
 ## Client Keys
 
 クライアントの公開鍵は、鍵を使う処理（用途）ごとに登録します。
 鍵を使う処理は、core の `ClientKeyResolver` の `findClientKeys(clientId, purpose)` で、自分の用途の鍵だけを受け取ります。
-生成 OP が鍵を読むのは署名付き Request Object の検証（OIDC Core 1.0 §6.3.2）で、`request_object` の用途の鍵を使います。
+生成 OP が鍵を読むのは、署名付き Request Object の検証（OIDC Core 1.0 §6.3.2）と private_key_jwt のクライアントアサーションの検証（§9）で、それぞれ `request_object` と `private_key_jwt` の用途の鍵を使います。
 鍵は値で登録するほかに、クライアントが公開する `jwks_uri` から取得させることもできます（[jwks_uri](#jwks_uri) を参照）。
 
 用途は文字列で、DB の側にも CHECK を付けていないので、ほかの処理の用途も同じ形で登録できます。
-たとえば、private_key_jwt（OIDC Core 1.0 §9）によるクライアント認証を足すなら、`private_key_jwt` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'private_key_jwt')` を呼びます。
-DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途を使います。
-生成 OP は private_key_jwt によるクライアント認証も DPoP も実装しておらず、`request_object` 以外の用途の鍵を読む処理を持ちません。
+たとえば、DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'dpop')` を呼びます。
+生成 OP は DPoP を実装しておらず、`request_object` と `private_key_jwt` 以外の用途の鍵を読む処理を持ちません。
 
 OP は、クライアントの鍵を発行する機能も、公開鍵を登録する API や画面も持ちません。
 鍵の組はクライアントが自分で作り、運用者が公開鍵を DB に書き込みます。
@@ -671,7 +705,9 @@ applyOidc(app, {
 OP は https の URL だけを取得し、`localhost` と、ループバック・私設・リンクローカルの IP リテラル（`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`0.0.0.0/8`、`::1`、`fc00::/7`、`fe80::/10`、IPv4 射影の IPv6 など）は拒否します。
 リダイレクトには従わず、秘密鍵か対称鍵を含む JWK Set は全体を拒否し、`use` が `sig` 以外の鍵と 2048 ビット未満の RSA 鍵は使いません。
 DNS 名の解決先までは検査しないので、OP の内部ネットワークへの取得を確実に防ぐには、egress プロキシを通る fetch を渡してください。
-Hono / Express / Fastify は `createApp` / `applyOidc` の `clientJwksFetch` オプションに、Next.js は `_oidc-provider/provider.ts` の `withRegisteredClientJwksUri()` の最後の引数（`{ fetch }`）に渡します。
+Hono / Express / Fastify は `createApp` / `applyOidc` の `outboundFetch` オプションに、Next.js は `_oidc-provider/provider.ts` の `outboundFetch` に渡します。
+この fetch は、`request_uri` の取得（OIDC Core 1.0 §6.2、request-object 機能）にも使います。
+以前の `clientJwksFetch` オプションは `outboundFetch` に置き換わりました。
 
 取得に失敗した Request Object は、非リダイレクトの `invalid_request_object` で拒否し、`error_description` は理由によらず `the client jwks_uri could not be retrieved` です。
 理由（取得先のホスト、応答のステータス、タイムアウトなど）は OP のログ（`console.warn`）に出します。
@@ -679,6 +715,53 @@ Hono / Express / Fastify は `createApp` / `applyOidc` の `clientJwksFetch` オ
 `clientKeyResolver` に自前の resolver を渡したときも、生成 OP はそれを包み、`jwksUri` を持つクライアントの対象の用途では `jwks_uri` の鍵を返します。
 それ以外のクライアントと用途は、渡した resolver が答えます（Next.js の `provider.ts` も同じく、機能の context フックを通った resolver を包みます）。
 core を直接使うときは、`withClientJwksUriKeys()` で同じことができます（[core の Client Keys](../core/#client-keys) を参照）。
+
+## request_uri
+
+`request-object` 機能を有効にした生成 OP は、URL の `request_uri`（Request Object by reference、OIDC Core 1.0 §6.2）から Request Object を取得し、`request` で渡されたものと同じく検証します。
+取得は、認可エンドポイントの `[fetch-request-uri]` のブロックで、クライアントを特定した後、Request Object を検証する前に行います。
+取得した Request Object は `request` に置き換わるので、以降の処理は by value と区別しません。
+PAR の `urn:ietf:params:oauth:request_uri:` は PAR の機能が先に解決するので、このブロックは取得しません。
+
+| 項目 | 既定値 | 説明 |
+|---|---|---|
+| `requestUriParameterSupported` | `true` | `false` なら URL の `request_uri` を `request_uri_not_supported` で拒否する。discovery の `request_uri_parameter_supported` にこの値を広告する |
+| `requireRequestUriRegistration` | `false` | `true` なら、クライアントが登録した `request_uris`（`requestUris`）と完全一致する値だけを取得し、それ以外を `invalid_request_uri` で拒否する。discovery の `require_request_uri_registration` にこの値を広告する |
+| `allowInsecureRequestUri` | `false` | http と、`localhost`、ループバック・私設・リンクローカルのアドレスを許す（開発用） |
+| `requestUriTimeoutMs` | `3000` | 応答を待つ時間（ミリ秒） |
+| `requestUriMaxBytes` | `65536` | 読む Request Object の上限（バイト） |
+| `requestUriMaxLength` | `512` | `request_uri` の長さの上限（文字。RFC 9101 §5.2） |
+
+OP は `request_uri` のフラグメントを除いて GET し（`Accept: application/jwt`）、リダイレクトには従いません。
+宛先の検査は `jwks_uri` と同じで、https の公開ホストに限り、DNS 名の解決先までは見ません。
+OP の内部ネットワークへの取得を確実に防ぐには、egress プロキシを通る fetch を `outboundFetch` に渡してください（[jwks_uri](#jwks_uri) を参照）。
+
+取得できない `request_uri` は、リダイレクトせずに `invalid_request_uri` で拒否し、`error_description` は理由によらず `the request_uri could not be retrieved` です。
+理由（取得先のホスト、応答のステータス、タイムアウトなど）は OP のログ（`console.warn`）に出します。
+`request` と `request_uri` を一緒に送ったリクエストは `invalid_request` で拒否します。
+
+`request_uris` は、`registerClient()` に渡すクライアントの `requestUris` か、動的クライアント登録（`--enable dynamic-client-registration`）の `request_uris` で登録します。
+`--db sql` では `client_request_uris` に、`--db kv` ではクライアントのレコードの `request_uris` に保存します。
+
+## クライアントの表示
+
+ログイン画面と同意画面は、認可リクエストのクライアントが登録した名前と URL（OIDC Dynamic Client Registration 1.0 §2）を表示します。
+
+| 登録メタデータ | `ClientRegistration` | 画面 |
+|---|---|---|
+| `client_name` | `clientName` | 文中のクライアント名。無ければ client_id を出す |
+| `logo_uri` | `logoUri` | ロゴの `<img>`（`alt` は「<名前> logo」） |
+| `policy_uri` | `policyUri` | 「Privacy policy」のリンク |
+| `tos_uri` | `tosUri` | 「Terms of service」のリンク |
+| `client_uri` | `clientUri` | 「Home page」のリンク |
+
+OP は URL を画面に入れるだけで、取得しません。
+入れるのは https の URL だけで、`allowInsecureClientDisplayUris: true`（開発用）のときは http も入れます。
+`requireClientDisplayUriHostMatch: true` にすると、`logo_uri` と `policy_uri` は、ホストがクライアントの `redirect_uris` のどれかのホストと同じときだけ入れます（OIDC Dynamic Client Registration 1.0 §9.1）。
+ほかのサイトのロゴやポリシーを名乗るクライアントを画面に出さないための設定で、既定ではホストを比べません。
+
+`--db sql` では、`client_name` を `clients.name` に、ほかの URL を `client_display_uris` に、`--db kv` ではクライアントのレコードの `name` と `display_uris` に保存します。
+画面のマークアップは Hono / Express / Fastify の `views.tsx` の `ClientSummary`、Next.js の `_oidc-provider/client-summary.tsx` にあります。
 
 ## Database (--db)
 
@@ -761,6 +844,10 @@ export function createDatabase(): SqlDatabase {
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[Client Keys](#client-keys) を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
 | `client_jwks_uris`、`client_request_object_signing_algs` | クライアントの `jwks_uri`（[jwks_uri](#jwks_uri) を参照）と、Request Object の署名 alg（`request_object_signing_alg`）。どちらもクライアント 1 つにつき 1 行で、`registerClient()` が行を置き換える |
+| `client_private_key_jwt_auths` | private_key_jwt で認証するクライアントと、その `token_endpoint_auth_signing_alg`（[private_key_jwt](#private_key_jwt) を参照）。クライアント 1 つにつき 1 行 |
+| `client_request_uris` | クライアントが登録した `request_uris`（[request_uri](#request_uri) を参照） |
+| `client_display_uris` | ログイン画面と同意画面に出す `logo_uri`、`policy_uri`、`tos_uri`、`client_uri`（[クライアントの表示](#クライアントの表示) を参照）。`client_name` は `clients.name` に持つ |
+| `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -773,8 +860,7 @@ Sign in with Google（`--enable google-login`）のような外部の IdP での
 
 ID トークンは保存しません。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためです。
-private_key_jwt によるクライアント認証と authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていません。
-private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_jwks` の `private_key_jwt` の用途の鍵でアサーションを検証します。
+authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていません。
 
 `access_tokens.acr` は、トークンに載せた acr（[Authentication Context](#authentication-context-acr_values) を参照）を持ち、acr を決めなかったトークンでは NULL になります。
 
@@ -788,6 +874,8 @@ ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 `client_response_types` は列ではなくテーブルなので、そのテーブルが加わる前の CLI で作ったデータベースでも、`schema.sql` を実行し直せば作られます。
 行の無いクライアントは、これまでどおり `response_type=code` だけを使えます。
 `client_jwks_uris` と `client_request_object_signing_algs` も同じで、`schema.sql` を実行し直せば既存のデータベースに足され、行の無いクライアントは `jwks_uri` も署名 alg の指定も持たないものとして読まれます。
+`client_private_key_jwt_auths`、`client_request_uris`、`client_display_uris`、`client_assertion_jtis` も、`schema.sql` を実行し直せば足されます。
+行の無いクライアントは、private_key_jwt を使わず、`request_uris` も表示用の URL も持たないものとして読まれます。
 
 `transactions.status` は、認可リクエストがどこまで進んだかを表します。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進みます。
@@ -865,7 +953,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 
 | キー | 保存するもの |
 |---|---|
-| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値（`jwks_uri` と `request_object_signing_alg` を含む。この 2 つの項目が無い既存のレコードは、どちらも無いものとして読む） |
+| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値（`jwks_uri`、`request_object_signing_alg`、`private_key_jwt`、`request_uris`、`display_uris` を含む。これらの項目が無い既存のレコードは、どれも無いものとして読む） |
 | `client_jwks:<client_id>:<purpose>` | クライアントの 1 つの用途の公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
@@ -873,6 +961,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | `auth_user:<transaction_id>` | トランザクションでログインしたユーザー |
 | `code:<hash>`、`access_token:<hash>`、`refresh_token:<hash>` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュをキーにする |
 | `code_used:<hash>`、`refresh_token_used:<hash>` | 使用済みの印。`setIfAbsent` で書く |
+| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のクライアントアサーション（client_id と `jti` のハッシュ）。`setIfAbsent` で書き、アサーションの期限まで残す |
 | `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
 | `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
 
@@ -937,6 +1026,7 @@ Next.js の生成コードは、クライアントを環境変数から読みま
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
 テーブルやレコードに無い登録メタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
 `jwks_uri` と Request Object の署名 alg（`jwksUri`、`requestObjectSigningAlg`）は `client_jwks_uris`、`client_request_object_signing_algs` の行（`--db kv` はクライアントのレコード）に保存します。
+private_key_jwt の署名 alg（`tokenEndpointAuthSigningAlg`）、`request_uris`（`requestUris`）、画面に出す名前と URL（`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri`）も、それぞれのテーブル（`--db kv` はクライアントのレコード）に保存します。
 クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに `client_jwks` から読みます（[Client Keys](#client-keys) を参照）。
 
 ユーザーは、`users.ts` の `registerUser()` で DB に入れます。

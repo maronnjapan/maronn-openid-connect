@@ -7,6 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BASIC_OP_TEST_PLAN,
+  CONFIG_OP_TEST_PLAN,
+  DYNAMIC_OP_TEST_PLAN,
   HYBRID_OP_TEST_PLAN,
   IMPLICIT_OP_TEST_PLAN,
   opTestPlan,
@@ -309,7 +311,7 @@ describe('createOpConformanceArtifacts', () => {
       assert.throws(
         () => createOpConformanceArtifacts({ plan: 'fapi' }),
         {
-          message: 'Unsupported CONFORMANCE_PLAN "fapi". Expected one of: basic, implicit, hybrid',
+          message: 'Unsupported CONFORMANCE_PLAN "fapi". Expected one of: basic, implicit, hybrid, dynamic, config',
         },
       );
     });
@@ -413,6 +415,8 @@ describe('run-op.sh', () => {
       assert.match(runScript, /\n  basic\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
       assert.match(runScript, /\n  implicit\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0\n/);
       assert.match(runScript, /\n  hybrid\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
+      assert.match(runScript, /\n  dynamic\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
+      assert.match(runScript, /\n  config\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0\n/);
       assert.match(
         runScript,
         /export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="\$\{OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-\$\{DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW\}\}"/,
@@ -437,6 +441,18 @@ describe('docker-compose.yml', () => {
       assert.match(compose, /\n      - \.\.\/\.\.:\/workspace:ro\n/);
       assert.match(compose, /\n      OIDC_D1_PERSIST_PATH: \/tmp\/maronn-openid-connect-d1\n/);
       assert.match(compose, /\n      OIDC_SQLITE_PATH: \/tmp\/maronn-openid-connect\.sqlite\n/);
+    });
+
+    // The OP fetches the jwks_uri, request_uri and sector_identifier_uri the
+    // suite serves (Dynamic OP plan) over verified TLS: it trusts the CA of the
+    // run, which issued the certificate of conformance-nginx.
+    it('should trust the CA of the run and give the suite proxy a certificate of that CA', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(compose, /\n      NODE_EXTRA_CA_CERTS: \/workspace\/tests\/conformance\/\.generated\/certs\/ca\.crt\n/);
+      assert.match(compose, /\n      - \.\/\.generated\/certs\/conformance-nginx\.crt:\/etc\/ssl\/certs\/nginx-selfsigned\.crt:ro\n/);
+      assert.match(compose, /\n      - \.\/\.generated\/certs\/conformance-nginx\.key:\/etc\/ssl\/private\/nginx-selfsigned\.key:ro\n/);
+      assert.doesNotMatch(compose, /NODE_TLS_REJECT_UNAUTHORIZED/);
     });
   });
 });
@@ -588,6 +604,55 @@ describe('opTestPlan', () => {
       const artifacts = createOpConformanceArtifacts({ plan: 'hybrid', skipManualReview: true });
 
       assert.equal(artifacts.testPlan, opTestPlan({ plan: 'hybrid', skipManualReview: true }));
+    });
+  });
+
+  describe('Dynamic OP plan', () => {
+    it('should run every module of the plan when the manual review ones are kept', () => {
+      assert.equal(
+        DYNAMIC_OP_TEST_PLAN,
+        'oidcc-dynamic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]' +
+          '[client_auth_type=private_key_jwt][response_type=code][response_mode=default]',
+      );
+      assert.equal(opTestPlan({ plan: 'dynamic' }), DYNAMIC_OP_TEST_PLAN);
+    });
+
+    // Six modules wait for a screenshot and oidcc-server-rotate-keys for a
+    // person to rotate the keys and press Start.
+    it('should select the sixteen automated modules when the manual review ones are skipped', () => {
+      assert.equal(
+        opTestPlan({ plan: 'dynamic', skipManualReview: true }),
+        `${DYNAMIC_OP_TEST_PLAN}:` +
+          'oidcc-idtoken-rs256,oidcc-idtoken-unsigned,oidcc-userinfo-rs256,oidcc-redirect-uri-query-OK,' +
+          'oidcc-redirect-uri-regfrag,oidcc-discovery-endpoint-verification,oidcc-server,' +
+          'oidcc-registration-jwks-uri,oidcc-registration-sector-uri,oidcc-registration-sector-bad,' +
+          'oidcc-refresh-token-rp-key-rotation,oidcc-request-uri-unsigned,oidcc-request-uri-signed-rs256,' +
+          'oidcc-ensure-request-object-with-redirect-uri,oidcc-refresh-token,' +
+          'oidcc-ensure-client-assertion-with-iss-aud-succeeds',
+      );
+    });
+
+    // RFC 7591: the suite registers its clients, so the OP has none of its own.
+    it('should register no static client and name the clients the suite registers', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'dynamic' });
+
+      assert.deepEqual(artifacts.clients, []);
+      assert.deepEqual(artifacts.config.client, { client_name: 'maronn-dynamic-op-client' });
+      assert.deepEqual(artifacts.config.client2, { client_name: 'maronn-dynamic-op-client-2' });
+      assert.equal(artifacts.config.alias, 'maronn-dynamic-op');
+      assert.deepEqual(artifacts.config.server, { discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration' });
+      assert.deepEqual(artifacts.config.browser, createOpConformanceArtifacts().config.browser);
+    });
+  });
+
+  describe('Config OP plan', () => {
+    it('should run the discovery module of the plan', () => {
+      assert.equal(CONFIG_OP_TEST_PLAN, 'oidcc-config-certification-test-plan');
+      assert.equal(opTestPlan({ plan: 'config', skipManualReview: true }), `${CONFIG_OP_TEST_PLAN}:oidcc-discovery-endpoint-verification`);
+    });
+
+    it('should register no static client', () => {
+      assert.deepEqual(createOpConformanceArtifacts({ plan: 'config' }).clients, []);
     });
   });
 });

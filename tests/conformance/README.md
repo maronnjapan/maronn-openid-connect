@@ -504,6 +504,41 @@ manual review が必要な9個の module は、CI では `CONFORMANCE_SKIP_MANUA
 screenshot の提出までは、まだ確かめていない。
 手順は `manual-review-screenshots.md` にある。
 
+### Dynamic OP（2026-11-06、CI）
+
+`oidcc-dynamic-certification-test-plan[response_type=code]` は、GitHub Actions の `OpenID Conformance` workflow の手動実行（`plan: dynamic`）で、4つのサンプルのそれぞれについて確認した。
+Conformance Suite は、`registry.gitlab.com/openid/conformance-suite:latest` の Docker image を使った。
+手元の環境では Suite の image を取得できなかったので（GitLab のレジストリへの接続が拒否された）、ローカルでは実行していない。
+
+| サンプル | 自動の16 module | manual review の7 module |
+|---|---|---|
+| `hono-cloudflare` | 13 PASSED、3 SKIPPED（想定どおり）。condition は 823 SUCCESS、FAILURE 0、WARNING 0 | 未実行 |
+| `express-flyio` | exit 0（FAILURE 0、WARNING 0、SKIPPED は想定の3つだけ） | 未実行 |
+| `fastify-flyio` | exit 0（FAILURE 0、WARNING 0、SKIPPED は想定の3つだけ） | 未実行 |
+| `nextjs-vercel` | exit 0（FAILURE 0、WARNING 0、SKIPPED は想定の3つだけ） | 未実行 |
+
+SKIPPED の3つは、`oidcc-idtoken-unsigned`、`oidcc-registration-sector-uri`、`oidcc-registration-sector-bad` である（[Dynamic OP](#dynamic-op) を参照）。
+`oidcc-refresh-token-rp-key-rotation` は、Suite がクライアントの鍵を入れ替えた後の60秒の待ちを含めて、PASSED だった（`jwks_uri` の取り直し）。
+manual review が必要な7個の module は、CI では `CONFORMANCE_SKIP_MANUAL_REVIEW=1` で除いている。
+screenshot の提出と `oidcc-server-rotate-keys` の手動開始は、まだ行っていない。
+手順は `manual-review-screenshots.md` にある。
+
+最初の実行では、2つの構成の不具合が見つかり、直した。
+
+- テストプランの文字列に `server_metadata`、`client_registration`、`client_auth_type`、`response_mode` を付けていたため、Suite がプランを作らなかった（`Variant 'client_auth_type' has been set by user, but test plan already sets this variant`）。これらはプラン自身が決めるので、`response_type=code` だけを付けるようにした
+- 想定どおりの3つの SKIPPED を `run-test-plan.py` が予期しない skip として扱い、FAILURE と WARNING が 0 でも 0 以外で終わった。`expected-skips.json` を渡すようにした
+
+### Config OP（2026-11-06、CI）
+
+`oidcc-config-certification-test-plan` は、同じ workflow の手動実行（`plan: config`）で、4つのサンプルのそれぞれについて確認した。
+どのサンプルでも `oidcc-discovery-endpoint-verification` が PASSED で、exit 0 だった。
+最初の `hono-cloudflare` の実行では、id-jag の2つの discovery の項目に `CheckForUnexpectedParametersInServerMetadata` の WARNING が1つ出た（43 SUCCESS、0 FAILURE）。
+この2つを `server.allow_unexpected_metadata_fields` に並べてからは、WARNING は 0 になった（[discovery の拡張メタデータ](#discovery-の拡張メタデータ) を参照）。
+
+### Basic OP、Implicit OP、Hybrid OP（2026-11-06、CI）
+
+Dynamic OP の変更の後も、3つのプランは4つのサンプルのどれでも exit 0（manual review を除く module で FAILURE 0、WARNING 0、予期しない SKIPPED 0）だった。
+
 ## 実行時間
 
 - `op` サービスは Discovery に応答するまで healthy にならず、`op-tls` と `runner` は healthy になってから起動します。OP が起動しない場合は、約3分で `docker compose up` が失敗します。

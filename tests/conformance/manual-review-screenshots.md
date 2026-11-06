@@ -246,6 +246,7 @@ docker compose -f tests/conformance/docker-compose.yml down -v --remove-orphans
 ### 実行状況
 
 この7つの module の screenshot の提出と `oidcc-server-rotate-keys` の手動開始は、まだ行っていません。
+自動の16個の module は、CI で4つのサンプルのどれでも FAILURE 0、WARNING 0 でした（README の「Dynamic OP（2026-11-06、CI）」）。
 上表の OP の挙動は、E2E（ログイン画面と同意画面の表示は `tests/e2e/specs/client-display.spec.ts`、鍵のローテーションは `signing-key-rotation.spec.ts`）と、core の単体テスト（`redirect_uri` の完全一致と省略の規則は `packages/core/src/authorization-request.test.ts`）で確かめています。
 
 ## acr / request object module（現在は PASS）

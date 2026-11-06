@@ -183,6 +183,7 @@ describe('resolveFlowSelection', () => {
         authorize: [
           'parse-request',
           'resolve-client',
+          'fetch-request-uri',
           'resolve-request-object',
           'resolve-redirect-uri',
           'resolve-form-post-response-mode',
@@ -266,6 +267,7 @@ describe('resolveFlowSelection', () => {
       expect(resolveFlowSelection(doc).steps['authorize']).toEqual([
         'parse-request',
         'resolve-client',
+        'fetch-request-uri',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-form-post-response-mode',

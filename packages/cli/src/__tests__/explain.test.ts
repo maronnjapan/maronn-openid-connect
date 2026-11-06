@@ -49,9 +49,13 @@ describe('stepUses', () => {
     const uses = stepUses(flow);
     const own = uses.get('hono:oidc-provider/endpoints/token/steps/authenticate-client.ts#authenticateTokenClient');
     expect(own?.map((use) => [use.endpoint.id, use.step.id, use.as])).toEqual([['token', 'authenticate-client', 'function']]);
-    const called = uses.get('core:client-auth.ts#verifyClientSecret')?.map((use) => `${use.endpoint.id}/${use.step.id}`);
+    const called = uses.get('core:client-auth.ts#validateClientAuthMethod')?.map((use) => `${use.endpoint.id}/${use.step.id}`);
     expect(called).toContain('token/authenticate-client');
     expect(called).toContain('introspection/authenticate-client');
+    // OIDC Core 1.0 §9: the steps share the check of the credential, private_key_jwt included.
+    const verified = uses.get('hono:oidc-provider/client-auth.ts#verifyPresentedClientCredential')?.map((use) => `${use.endpoint.id}/${use.step.id}`);
+    expect(verified).toContain('token/authenticate-client');
+    expect(verified).toContain('introspection/authenticate-client');
   });
 });
 
@@ -90,7 +94,7 @@ describe('renderEndpoint', () => {
     const text = renderEndpoint(map, endpointOf(flow, 'token'));
     expect(text).toContain('POST /token  トークンエンドポイント');
     expect(text).toMatch(/1\. \[parse-request\] トークンリクエストを解析する/);
-    expect(text).toMatch(/2\. \[authenticate-client\][^\n]*\n\s+authenticateTokenClient\(\)[^\n]*\n[^\n]*\n\s+calls: extractClientCredentials, resolveAuthenticatedTokenClient, validateClientAuthMethod, verifyClientSecret/);
+    expect(text).toMatch(/2\. \[authenticate-client\][^\n]*\n\s+authenticateTokenClient\(\)[^\n]*\n[^\n]*\n\s+calls: extractClientCredentials, resolveAuthenticatedTokenClient, validateClientAuthMethod, verifyPresentedClientCredential/);
   });
 
   it('should mark the dynamic calls of a step', () => {
@@ -134,12 +138,12 @@ describe('renderFunction', () => {
   ];
 
   it('should show the card, its calls and the steps of every feature that use it', () => {
-    const text = renderFunction(map, catalog, functionOf(catalog, 'verifyClientSecret'), { depth: 1, callers: false, everything });
-    expect(text).toContain('verifyClientSecret()  core client-auth.ts');
+    const text = renderFunction(map, catalog, functionOf(catalog, 'validateClientAuthMethod'), { depth: 1, callers: false, everything });
+    expect(text).toContain('validateClientAuthMethod()  core client-auth.ts');
     expect(text).toContain('⇐ called by step [authenticate-client] of POST /token  (every provider)');
     expect(text).toContain('⇐ called by step [authenticate-client] of POST /backchannel_authentication  (--enable ciba)');
     expect(text).toContain('⇐ called by block [authenticate-client] of POST /token  (every provider)  [nextjs token/route.ts]');
-    expect(text).toContain('├─ isPublicTokenClient()');
+    expect(text).toContain('├─ selectRegisteredClientAuthMethods()');
     expect(text).not.toContain('Called by');
   });
 

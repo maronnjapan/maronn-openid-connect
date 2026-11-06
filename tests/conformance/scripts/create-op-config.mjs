@@ -456,6 +456,10 @@ const PLANS = new Map([
       testPlan: DYNAMIC_OP_TEST_PLAN,
       modules: DYNAMIC_OP_MODULES,
       manualReviewModules: DYNAMIC_OP_MANUAL_REVIEW_MODULES,
+      // The suite skips these, and the certification allows it: the OP issues
+      // no unsigned ID Token (id_token_signing_alg_values_supported has no
+      // none) and no pairwise subject (subject_types_supported is public only).
+      expectedSkips: ['oidcc-idtoken-unsigned', 'oidcc-registration-sector-uri', 'oidcc-registration-sector-bad'],
       defaultAlias: 'maronn-dynamic-op',
       // The suite registers its clients at the registration endpoint of the
       // OP (RFC 7591) with their own keys, so the OP has no static client and
@@ -631,6 +635,7 @@ export function createOpConformanceArtifacts(options = {}) {
   return {
     plan: plan.name,
     testPlan: opTestPlan({ plan: plan.name, skipManualReview: options.skipManualReview }),
+    expectedSkips: createExpectedSkips(plan),
     sampleApp,
     config: {
       alias,
@@ -646,6 +651,23 @@ export function createOpConformanceArtifacts(options = {}) {
       createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks }),
     ),
   };
+}
+
+/**
+ * The modules of the plan the suite may skip, in the form of the
+ * --expected-skips-file of run-test-plan.py (the .gitlab-ci/expected-skips-*.json
+ * of the conformance suite). run-test-plan.py fails a run with a skip that is
+ * not listed, and one with a listed skip that did not happen, so a module that
+ * starts to run (pairwise subjects implemented, say) has to leave the list.
+ * run-test-plan.py also takes a listed module that FAILED for a skip; the
+ * FAILURE conditions of such a module still fail the run.
+ */
+function createExpectedSkips(plan) {
+  return (plan.expectedSkips ?? []).map((module) => ({
+    'test-name': module,
+    variant: '*',
+    'configuration-filename': `*${plan.name}-op-config.json`,
+  }));
 }
 
 /**
@@ -691,6 +713,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
   const clientsPath = join(outDir, 'oidc-clients.json');
   const metadataPath = join(outDir, 'metadata.json');
   const testPlanPath = join(outDir, 'test-plan.txt');
+  const expectedSkipsPath = join(outDir, 'expected-skips.json');
 
   await writeJsonFile(configPath, artifacts.config);
   await writeJsonFile(clientsPath, artifacts.clients);
@@ -702,6 +725,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
     clientsPath,
   });
   await writeFile(testPlanPath, `${artifacts.testPlan}\n`);
+  await writeJsonFile(expectedSkipsPath, artifacts.expectedSkips);
 
   return {
     ...artifacts,
@@ -710,6 +734,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
       clientsPath,
       metadataPath,
       testPlanPath,
+      expectedSkipsPath,
     },
   };
 }

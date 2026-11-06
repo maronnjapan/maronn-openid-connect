@@ -76,6 +76,11 @@ Dynamic OP のプランは、次の23個の module からなります（Suite �
 - `oidcc-idtoken-unsigned`：OP は `alg=none` の ID Token を発行せず、`id_token_signing_alg_values_supported` に `none` を広告しない（OAuth 2.1 寄りの方針）
 - `oidcc-registration-sector-uri`、`oidcc-registration-sector-bad`：OP は pairwise の subject を持たず、`subject_types_supported` は `public` だけ
 
+`run-test-plan.py` は、知らされていない SKIPPED があると、FAILURE と WARNING が 0 でも 0 以外で終わります（`** SOME TEST MODULES WERE UNEXPECTEDLY SKIPPED **`）。
+そのため `create-op-config.mjs` は、この3つを `expected-skips.json` に書き、`scripts/run-suite-runner.sh` が `--expected-skips-file` で渡します（Suite 自身の CI の `.gitlab-ci/expected-skips-*.json` と同じ形）。
+`run-test-plan.py` は、書いた module が SKIPPED にならなかったときも 0 以外で終わるので、pairwise を実装して2つの module が動くようになったら、一覧から外します。
+ほかのプランの一覧は空です。
+
 このプランのクライアントは、どれも Suite が module ごとに `POST /register` で登録します。
 登録は `token_endpoint_auth_method: private_key_jwt` と、Suite が作った RS256 の鍵（module によっては `jwks` の代わりに Suite が公開する `jwks_uri`）を送り、トークンエンドポイントでは Suite がその鍵で署名したクライアントアサーションで認証します（OpenID Connect Core 1.0 §9）。
 `create-op-config.mjs` は OP に static client を登録せず（`oidc-clients.json` は空の配列）、Suite の設定には登録に使う `client_name` だけを書きます。
@@ -269,6 +274,8 @@ OIDC Core 1.0 §6.1 / RFC 9101 の Request Object module（`oidcc-ensure-request
 - `tests/conformance/.generated/<plan>-op-config.json`（`basic-op-config.json`、`implicit-op-config.json`、`hybrid-op-config.json`、`dynamic-op-config.json`、`config-op-config.json`）
 - `tests/conformance/.generated/oidc-clients.json`
 - `tests/conformance/.generated/metadata.json`
+- `tests/conformance/.generated/test-plan.txt`（`run-test-plan.py` に渡すテストプランの文字列）
+- `tests/conformance/.generated/expected-skips.json`（Suite が SKIPPED にしてよい module。Dynamic OP の3つのほかは空）
 - `tests/conformance/.generated/certs/`（実行用の CA と、`op-tls`、`conformance-nginx` の証明書）
 
 実行結果は以下に出力されます。
@@ -283,7 +290,7 @@ ZIPファイルはConformance Suiteのエクスポートです。どのmoduleが
 
 このコマンドはConformance runnerの終了ステータスを返します。
 
-- `0`: 設定したtest planが成功した。
+- `0`: 設定したtest planが成功した（FAILURE と WARNING が 0 で、SKIPPED は `expected-skips.json` の module だけ）。
 - `0` 以外: Suiteが失敗した、OPがmoduleで失敗した、またはセットアップが完了しなかった。
 
 `0` 以外で終了しても、runnerが結果ZIPをエクスポートできている場合があります。実行後は必ず

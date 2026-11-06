@@ -396,10 +396,31 @@ describe('writeOpConformanceArtifacts', () => {
         assert.deepEqual(JSON.parse(await readFile(written.paths.configPath, 'utf8')), written.config);
         assert.deepEqual(JSON.parse(await readFile(join(outDir, 'oidc-clients.json'), 'utf8')), written.clients);
         assert.equal(await readFile(join(outDir, 'test-plan.txt'), 'utf8'), `${IMPLICIT_OP_TEST_PLAN}\n`);
+        assert.deepEqual(JSON.parse(await readFile(join(outDir, 'expected-skips.json'), 'utf8')), []);
       } finally {
         await rm(outDir, { recursive: true, force: true });
       }
     });
+
+    it('should write the skips the run expects for run-test-plan.py', async () => {
+      const outDir = await mkdtemp(join(tmpdir(), 'maronn-conformance-'));
+      try {
+        const written = await writeOpConformanceArtifacts({ plan: 'dynamic', outDir });
+
+        assert.equal(written.paths.expectedSkipsPath, join(outDir, 'expected-skips.json'));
+        assert.deepEqual(JSON.parse(await readFile(written.paths.expectedSkipsPath, 'utf8')), written.expectedSkips);
+      } finally {
+        await rm(outDir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+describe('run-suite-runner.sh', () => {
+  it('should hand the expected skips of the run to run-test-plan.py', () => {
+    const runnerScript = readFileSync(join(scriptDir, 'run-suite-runner.sh'), 'utf8');
+
+    assert.match(runnerScript, /--expected-skips-file "\$\{EXPECTED_SKIPS_PATH\}"/);
   });
 });
 
@@ -659,6 +680,17 @@ describe('opTestPlan', () => {
       });
     });
 
+    // The certification allows the three to be skipped: the OP issues no
+    // unsigned ID Token (alg=none) and no pairwise subject. run-test-plan.py
+    // fails a run with a skip it was not told to expect.
+    it('should expect the suite to skip the modules of alg=none ID Tokens and of pairwise subjects', () => {
+      assert.deepEqual(createOpConformanceArtifacts({ plan: 'dynamic' }).expectedSkips, [
+        { 'test-name': 'oidcc-idtoken-unsigned', variant: '*', 'configuration-filename': '*dynamic-op-config.json' },
+        { 'test-name': 'oidcc-registration-sector-uri', variant: '*', 'configuration-filename': '*dynamic-op-config.json' },
+        { 'test-name': 'oidcc-registration-sector-bad', variant: '*', 'configuration-filename': '*dynamic-op-config.json' },
+      ]);
+    });
+
     it('should name no extension metadata for a sample generated without id-jag', () => {
       const artifacts = createOpConformanceArtifacts({ plan: 'dynamic', sampleApp: 'express-flyio' });
 
@@ -674,6 +706,10 @@ describe('opTestPlan', () => {
 
     it('should register no static client', () => {
       assert.deepEqual(createOpConformanceArtifacts({ plan: 'config' }).clients, []);
+    });
+
+    it('should expect no skipped module', () => {
+      assert.deepEqual(createOpConformanceArtifacts({ plan: 'config' }).expectedSkips, []);
     });
 
     it('should let the suite accept the id-jag metadata of hono-cloudflare', () => {

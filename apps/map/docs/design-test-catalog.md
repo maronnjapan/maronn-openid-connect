@@ -11,7 +11,7 @@
 |---|---|---|
 | エンドポイントごとに、どんなテストが何を検証しているかを可視化する | テストカタログを関数カタログに結合し、地図のエンドポイントの画面に「テスト」の欄を足す | 1, 4 |
 | エンドポイントが使う関数と、各関数のユニットテストの対応を可視化する | 対象の静的な解決（`describe` の名前と型）と、Istanbul の計測から取るテストごとの到達 | 1, 2 |
-| 規則に基づく自然言語の記述からテストを機械的に作り、実行する | Gherkin と Cucumber Expressions による閉じた語彙と、playwright-bdd による生成 | 3 |
+| 規則に基づく自然言語の記述からテストを機械的に作り、実行する | Gherkin と Cucumber Expressions による英語の閉じた語彙と、playwright-bdd による生成。日本語は訳の表から機械的に出す | 3 |
 | PR で足した、変えた、消したテストと、関連する実装の変更を把握する | 変更前後のカタログの差分を地図の「届く経路」と突き合わせて PR のコメントに出し、結果とカバレッジは Codecov に任せる | 5 |
 
 ## 現状の計測
@@ -54,6 +54,12 @@
 | 規則に基づく自然言語のテスト | Gherkin、Cucumber Expressions、playwright-bdd | 型付きの穴を持つ言い回しの照合、曖昧さの検出、日本語のキーワード、表形式の例、エディタの補完、レポートが揃っている。自前はステップ定義（語彙）だけで、これはどの方式でも要る |
 | PR のカバレッジの変化と、テストの結果の変化 | Codecov（patch coverage と Test Analytics） | PR へのコメント、基準との比較、flaky の検出が付いてくる |
 | PR で足した、変えた、消したテストと、変えた実装との対応 | 自前（カタログの差分と「届く経路」の結合） | 「変えた関数に関連するテストが変わっていない」は木を知らないと言えない |
+
+テストの記述の言語は英語を正とする。
+シナリオの名前、`it` の名前、ステップ、期待結果の言葉は英語で書き、日本語は訳があれば出す。
+既存のテストの名前がすべて英語で、OAuth と OIDC の仕様の語（`invalid_client`、`grant_type`）も英語だからである。
+地図の画面の枠（見出し、札、変更の要約の言い回し）は、いまの地図と同じく日本語のままにする。
+訳の仕組みは「日本語への訳」の項で述べる。
 
 残すものは次のとおりである。
 
@@ -109,8 +115,10 @@ interface TestCase {
   kind: 'unit' | 'api' | 'e2e' | 'conformance' | 'tool';
   /** テストコードか、機能ファイルか */
   source: { file: string; lines: [number, number]; form: 'code' | 'feature' };
-  /** `it` の名前、またはシナリオの名前 */
+  /** `it` の名前、またはシナリオの名前。英語で書かれる */
   title: string;
+  /** 名前の日本語訳（`ja:` の行かコメント）。無ければ英語のまま出す */
+  ja?: { title?: string };
   /** `describe` の連なり、または機能とシナリオアウトラインの名前 */
   path: string[];
   /** 何を検証するテストか（対象の項） */
@@ -123,7 +131,7 @@ interface TestCase {
   aspects: string[];
   /** 仕様の節（`it` の直上のコメント、機能ファイルの `@spec` タグ） */
   spec: string[];
-  /** 期待結果（`expect` の構造、または「ならば」のステップ） */
+  /** 期待結果（`expect` の構造、または `Then` のステップ） */
   assertions: Assertion[];
   /** 対象を決めた根拠 */
   evidence: Array<'declared' | 'static' | 'coverage'>;
@@ -142,8 +150,10 @@ interface Assertion {
   expected?: unknown;
   negated?: boolean;
   mode?: 'resolves' | 'rejects';
-  /** 画面に出す一行: 「HTTP ステータスが 401 である」 */
+  /** 画面に出す一行: `the HTTP status is 401` */
   text: string;
+  /** 訳の表にある言い回しなら、その日本語: 「HTTP ステータスが 401 である」 */
+  ja?: string;
 }
 
 interface RequestShape {
@@ -195,14 +205,14 @@ interface RequestShape {
 `rejects`、`toThrow`、400 以上のステータス、`error` キーの期待のどれかがあれば異常系、`resolves` や 2xx のステータスや値の一致だけなら正常系である。
 期待結果が読めないテストは `unknown` にし、一覧に出す。
 この規則は語彙に頼らないので、既存のテストにそのまま効く。
-機能ファイルでは、「ならば」のステップが使うステップ定義に、正常と異常のどちらの期待かを付けておく（「HTTP ステータスが {int} である」は値で決め、「エラーコードが {string} である」は異常）。
+機能ファイルでは、`Then` のステップが使うステップ定義に、正常と異常のどちらの期待かを付けておく（`the HTTP status is {int}` は値で決め、`the error code is {string}` は異常）。
 
 境界値、認証、認可、セキュリティなどの観点は、正常か異常かとは別の軸として持つ（`aspects`）。
 境界値のテストは正常系のこともあれば異常系のこともあるからである。
 観点は次の順で決める。
 
 1. 機能ファイルのタグ（`@boundary`、`@auth`）と、テストコードの `// @aspect boundary` コメント（宣言）
-2. 語彙の表（`tests/catalog/aspects.yaml`）。`it` の名前と `describe` の名前に、表の語（`exactly`、`at the limit`、`ちょうど`、`期限`、`上限`、`empty`、`one more`）が含まれれば境界値、`invalid_client`、401、`WWW-Authenticate` の期待があれば認証、`insufficient_scope`、403、`access_denied` なら認可、と表が定める
+2. 語彙の表（`tests/catalog/aspects.yaml`）。`it` の名前と `describe` の名前に、表の語（`exactly`、`at the limit`、`boundary`、`expired`、`maximum`、`empty`、`one more`）が含まれれば境界値、`invalid_client`、401、`WWW-Authenticate` の期待があれば認証、`insufficient_scope`、403、`access_denied` なら認可、と表が定める
 3. どれにも当たらなければ観点なし
 
 語彙による分類は規則であって推論ではないが、表に無い言い回しは拾えない。
@@ -213,17 +223,19 @@ interface RequestShape {
 `expect(actual).matcher(expected)` の形を構造として読み、言葉にする。
 `await expect(...).resolves` / `.rejects` / `.not` も読む。
 
-| コード | 言葉 |
-|---|---|
-| `expect(response.status).toBe(401)` | HTTP ステータスが 401 である |
-| `.rejects.toMatchObject({ error: 'invalid_client' })` | `invalid_client` で失敗する |
-| `expect(response.headers.get('Cache-Control')).toBe('no-store')` | `Cache-Control` ヘッダーが `no-store` である |
-| `expect(body).toMatchObject({ token_type: 'Bearer', expires_in: 3600 })` | ボディの `token_type` が `Bearer`、`expires_in` が 3600 である |
-| `await expect(page).toHaveURL(/\/consent$/)` | URL が `/consent` で終わる |
+| コード | 言葉（正） | 日本語訳 |
+|---|---|---|
+| `expect(response.status).toBe(401)` | the HTTP status is 401 | HTTP ステータスが 401 である |
+| `.rejects.toMatchObject({ error: 'invalid_client' })` | fails with `invalid_client` | `invalid_client` で失敗する |
+| `expect(response.headers.get('Cache-Control')).toBe('no-store')` | the `Cache-Control` header is `no-store` | `Cache-Control` ヘッダーが `no-store` である |
+| `expect(body).toMatchObject({ token_type: 'Bearer', expires_in: 3600 })` | the body has `token_type` `Bearer` and `expires_in` 3600 | ボディの `token_type` が `Bearer`、`expires_in` が 3600 である |
+| `await expect(page).toHaveURL(/\/consent$/)` | the URL ends with `/consent` | URL が `/consent` で終わる |
 
 期待値がリテラルでない（変数や関数の結果）ときは、式をそのまま残す。
 言葉にする規則は表（`words.ts` と同じ考え）に置き、新しいマッチャーは表に足す。
-機能ファイルの「ならば」のステップは、すでに言葉なのでそのまま札に入れる。
+表の言い回しは、同じことを確かめるステップ定義があればその式にそろえる（`the HTTP status is {int}`）。
+そろえておけば、テストコードの期待結果と機能ファイルのステップが一つの訳の表を共有する。
+機能ファイルの `Then` のステップは、すでに言葉なのでそのまま札に入れる。
 
 エラーコードの期待（`error: 'invalid_client'`、`TokenError(invalid_grant)`）は、地図が木から求める「外へ出る失敗」（`FunctionEntry.failures`）と同じ語彙になるので、「不足」の計算に使う（「エンドポイントの画面」の節）。
 
@@ -232,7 +244,7 @@ interface RequestShape {
 API と E2E のテストは、送るリクエストの形も札に持つ。
 ボディが `new URLSearchParams({ grant_type: 'authorization_code', code: 'code-1', ... })` のようなリテラルなら、キーの一覧を取る。
 `Authorization` ヘッダーの作り方（`basicAuthorization()`）から認証の方式を読む。
-機能ファイルでは「もし」のステップの表から取る。
+機能ファイルでは `When` のステップの表から取る。
 これで、エンドポイントの画面に「どの入力で、何を期待したか」の表が作れる。
 
 ### テストの id
@@ -333,77 +345,81 @@ Next.js の OP は、サーバーのコードを Next.js 側がバンドルす�
 ## 3. 規則に基づく自然言語のテスト定義
 
 機能ファイルは、Gherkin で書くテストである。
-人が読める言葉で前提条件、操作、期待結果を書き、playwright-bdd が Playwright のテストに生成する。
+人が読める英語で前提条件、操作、期待結果を書き、playwright-bdd が Playwright のテストに生成する。
 言い回しは Cucumber Expressions で定義し、定義済みのものだけを受け付ける。
+日本語は、英語の言い回しから訳の表で機械的に出す（「日本語への訳」の項）。
 
 ### 記述例
 
-要件の例をそのまま書くと、次のようになる。
+要件の例を英語で書くと、次のようになる。
 
 ```gherkin
-# language: ja
 @endpoint:token
-機能: トークンエンドポイントのクライアント認証
+Feature: Client authentication at the token endpoint
+  ja: トークンエンドポイントのクライアント認証
 
-  背景:
-    前提 登録済みの confidential クライアントがある:
+  Background:
+    Given a registered confidential client:
       | client_id | secret   | redirect_uri                    |
       | client-1  | secret-1 | https://rp.example.com/callback |
-    かつ クライアント "client-1" の認可コード "code-1" が保存されている
+    And the client "client-1" has the authorization code "code-1"
 
   @id:token-invalid-client-secret @spec:RFC6749-5.2 @spec:OAuth2.1-2.3 @auth @hono @nextjs
-  シナリオ: 無効なクライアント認証情報を invalid_client で拒否する
-    前提 クライアント "client-1" の認証情報が無効である
-    もし トークンエンドポイントに grant_type "authorization_code" でリクエストする:
+  Scenario: Reject invalid client credentials with invalid_client
+    ja: 無効なクライアント認証情報を invalid_client で拒否する
+    Given the client "client-1" presents invalid credentials
+    When the client requests the token endpoint with grant_type "authorization_code":
       | code   | redirect_uri                    |
       | code-1 | https://rp.example.com/callback |
-    ならば HTTP ステータスが 401 である
-    かつ エラーコードが "invalid_client" である
-    かつ WWW-Authenticate ヘッダーが "Basic" で始まる
-    かつ 認可コード "code-1" は消費されていない
+    Then the HTTP status is 401
+    And the error code is "invalid_client"
+    And the WWW-Authenticate header starts with "Basic"
+    And the authorization code "code-1" is not consumed
 
   @id:token-missing-required-parameter @spec:RFC6749-5.2 @hono @nextjs
-  シナリオアウトライン: 必須パラメータ <param> が無いと invalid_request で拒否する
-    もし トークンエンドポイントに grant_type "authorization_code" で <param> を省いてリクエストする
-    ならば HTTP ステータスが 400 である
-    かつ エラーコードが "invalid_request" である
+  Scenario Outline: Reject a request without <param> with invalid_request
+    When the client requests the token endpoint with grant_type "authorization_code" without <param>
+    Then the HTTP status is 400
+    And the error code is "invalid_request"
 
-    例:
+    Examples:
       | param        |
       | code         |
       | redirect_uri |
 ```
 
+`ja:` の行は Gherkin の説明（キーワードの行の後の自由な行）で、runner は読まない。
+書くかどうかは任意で、二つ目のシナリオのように無ければ英語の名前をそのまま出す。
+
 複数のエンドポイントをまたぐシナリオも同じ形で書き、HTTP の実行先（`@http`）で走らせる。
 
 ```gherkin
-# language: ja
 @scenario:authorization-code-flow
-機能: 認可コードフロー
+Feature: Authorization code flow
 
   @id:auth-code-flow-online-refresh @spec:OIDC-Core-11 @http
-  シナリオ: offline_access なしでも、ログインセッションに束縛されたリフレッシュトークンが返る
-    前提 登録済みのユーザー "testuser" がパスワード "password" でログインできる
-    もし クライアント "e2e-client" が scope "openid profile" で認可リクエストを送る
-    かつ ログイン画面でユーザー "testuser" とパスワード "password" でログインする
-    かつ 同意画面で承認する
-    かつ 認可コードをトークンに引き換える
-    ならば HTTP ステータスが 200 である
-    かつ ボディに refresh_token がある
-    かつ refresh_token の長さが 43 である
+  Scenario: Return a refresh token bound to the login session without offline_access
+    Given the user "testuser" can log in with the password "password"
+    When the client "e2e-client" sends an authorization request with scope "openid profile"
+    And the user logs in on the login page as "testuser" with the password "password"
+    And the user approves on the consent page
+    And the client redeems the authorization code for tokens
+    Then the HTTP status is 200
+    And the body has a refresh_token
+    And the length of refresh_token is 43
 ```
 
 要件の 4.2 の項目は、Gherkin の要素にそのまま対応する。
 
 | 要件の項目 | Gherkin |
 |---|---|
-| テスト対象 | 機能のタグ（`@endpoint:token`、`@function:verifyClientSecret`、`@scenario:...`） |
-| テストの目的 | シナリオの名前 |
-| 前提条件 | 「前提」と「背景」 |
-| 入力データ | ステップの表（データテーブル）と、シナリオアウトラインの「例」 |
-| 実行する操作 | 「もし」 |
-| 期待する振る舞い、期待する結果 | 「ならば」 |
-| エラー時の振る舞い | 「ならば」の失敗の言い回し（`エラーコードが {string} である`） |
+| テスト対象 | `Feature` のタグ（`@endpoint:token`、`@function:verifyClientSecret`、`@scenario:...`） |
+| テストの目的 | `Scenario` の名前 |
+| 前提条件 | `Given` と `Background` |
+| 入力データ | ステップの表（データテーブル）と、`Scenario Outline` の `Examples` |
+| 実行する操作 | `When` |
+| 期待する振る舞い、期待する結果 | `Then` |
+| エラー時の振る舞い | `Then` の失敗の言い回し（`the error code is {string}`） |
 | 後処理 | ステップ定義の `After` フック。シナリオごとにストアを捨てるので、機能ファイルには書かない |
 | 識別子、仕様、観点、実行先 | タグ（`@id:`、`@spec:`、`@auth` `@boundary`、`@hono` `@nextjs` `@http`） |
 
@@ -415,16 +431,17 @@ Gherkin のステップの文は自由に書けるが、文に対応するステ
 - ステップ定義は Cucumber Expressions で書き、正規表現を使わない。lint（`tests/steps/` の小さな検査）が `Given(/.../)` の形を落とす
 - Cucumber Expressions は、穴（`{int}`、`{string}`、`{word}`、`defineParameterType` で定義した型）を除いて文と一字一句一致する。二つの定義が同じ文に一致すると「ambiguous」として落ちる。`bddgen` の生成時と `cucumber-js --dry-run` が、実行せずに未定義と曖昧なステップを報告する
 - 表記ゆれを許したいときは、定義に別名を足す（`a/b` の選択肢、`(s)` の任意の語）。暗黙の照合はしない
+- 式は英語で書く。lint が、穴の外に ASCII でない文字を含む式を落とす。語彙を一つの言語に保てば、同じ振る舞いの言い回しが英語と日本語の二つに割れず、訳の表も英語から日本語への一方向で済む
 
 ```ts
 import { createBdd } from 'playwright-bdd';
 const { Given, When, Then } = createBdd(test);
 
-Then('HTTP ステータスが {int} である', async ({ run }, status: number) => {
+Then('the HTTP status is {int}', async ({ run }, status: number) => {
   expect(run.response.status).toBe(status);
 });
 
-Given('登録済みの confidential クライアントがある:', async ({ run }, table: DataTable) => {
+Given('a registered confidential client:', async ({ run }, table: DataTable) => {
   for (const row of table.hashes()) await registerClient(run.db, confidentialClient(row));
 });
 ```
@@ -452,10 +469,52 @@ Playwright の runner を使うのは、Vitest に Gherkin を載せる OSS（`@
 - ステップの未定義と曖昧さは `bddgen` が落とす。`pnpm run lint` に入れる
 - 編集は VS Code の Cucumber の拡張（公式の `cucumber-official`）が、ステップ定義から言い回しを補完する。語彙の一覧は、ステップ定義から `cucumber-js --format usage` で出す
 
+### 日本語への訳
+
+日本語は、英語の記述から機械的に組み立てる。
+訳を書く人がいなくても英語で読め、訳があるところだけ日本語になる。
+訳す部分は三つで、どれも決定論的に置き換える。
+
+- **キーワード**：`Feature`、`Scenario`、`Given`、`When`、`Then`、`And` などは、`@cucumber/gherkin` が持つ言語の辞書（`gherkin-languages.json`）の日本語にする（機能、シナリオ、前提、もし、ならば、かつ）。辞書に別名が複数ある語は、表示に使う一つを固定する
+- **ステップと期待結果**：訳の表（`tests/steps/ja.yaml`）が、ステップ定義の式を日本語のひな形に対応づける。ステップの文はちょうど一つの式に一致し、一致すると穴の値が取れるので、その値をひな形に入れる。日本語の語順は英語と違うので、ひな形は穴を `{0}` `{1}` の番号で指す。テストコードの期待結果の言い回し（「期待結果」の項）も、同じ表で訳す
+- **名前**：機能とシナリオの名前は自由な文なので、表では訳せない。キーワードの次の行に `ja:` で書いた説明を訳として使う。テストコードの `it` の名前は、直上の `// ja: ...` コメントを訳として使う。どちらも任意である
+
+```yaml
+# tests/steps/ja.yaml
+'the HTTP status is {int}': 'HTTP ステータスが {0} である'
+'the error code is {string}': 'エラーコードが {0} である'
+'the client {string} has the authorization code {string}': 'クライアント {0} の認可コード {1} が保存されている'
+'the client {string} presents invalid credentials': 'クライアント {0} が無効な認証情報を提示する'
+'the client requests the token endpoint with grant_type {string}:': 'トークンエンドポイントに grant_type {0} でリクエストする:'
+```
+
+記述例の一つ目のシナリオは、この表で次のように出る。
+
+```
+機能: トークンエンドポイントのクライアント認証
+  シナリオ: 無効なクライアント認証情報を invalid_client で拒否する
+    前提 クライアント "client-1" が無効な認証情報を提示する
+    もし トークンエンドポイントに grant_type "authorization_code" でリクエストする:
+      | code   | redirect_uri                    |
+      | code-1 | https://rp.example.com/callback |
+    ならば HTTP ステータスが 401 である
+    かつ エラーコードが "invalid_client" である
+    かつ the WWW-Authenticate header starts with "Basic"      ← 表に訳が無い言い回しは英語のまま
+    かつ the authorization code "code-1" is not consumed
+```
+
+表の行と列の名前（`client_id`、`grant_type`）は仕様の語なので訳さない。
+訳の表に無い式と `ja:` の無い名前は、英語のまま出し、英語であることを画面で示す。
+
+訳の表は lint で検査する。
+キーがどれかのステップ定義の式か期待結果の言い回しであること、ひな形の番号が穴の数の範囲にあり、すべての穴を一度ずつ使うことを確かめる。
+訳の欠けは CI を落とさず、テストの一覧のページに「日本語の訳が無い言い回し」の数として出す。
+訳は望ましいが、無くてもテストの意味は英語で読めるからである。
+
 ### カタログとの関係
 
 機能ファイルはカタログに最も良い札を与える。
-対象、観点、仕様はタグに、入力は表に、期待結果は「ならば」のステップにあり、`@cucumber/gherkin` の parser で構造のまま読める。
+対象、観点、仕様はタグに、入力は表に、期待結果は `Then` のステップにあり、`@cucumber/gherkin` の parser で構造のまま読める。
 既存のテストコードは書き直さず、新しいテストは機能ファイルで書くことを勧める。
 ただし強制はしない。
 語彙に無い振る舞いを確かめるテストは、コードで書いて語彙を後から足せばよい。
@@ -495,6 +554,8 @@ E2E（このエンドポイントを通るシナリオ）
 この節の数は例である。
 行を押すと、そのテストの札（対象、仕様、期待結果の一覧、リクエストの形、根拠、結果）と、コードの Drawer でそのテストのソースを開く。
 機能ファイルのシナリオは、Gherkin をそのまま出す。
+タブの上の「English / 日本語」で、テストの記述（名前、ステップ、期待結果）を英語か日本語訳に切り替える。
+訳の無い部分は英語のまま出し、選んだ表示は「言葉 / コード」と同じくこのブラウザに残す。
 
 ### 関数とユニットテストの木
 
@@ -584,8 +645,8 @@ interface TestDiff {
 }
 ```
 
-変えたテストの中身は、期待結果の構造の差分で言葉にする。
-「期待する HTTP ステータスを 400 から 401 に変えた」「`invalid_client` の期待を足した」である。
+変えたテストの中身は、期待結果の構造の差分で示す。
+足した期待、消した期待、値を変えた期待（`the HTTP status is 400` → `the HTTP status is 401`）である。
 本体だけ変えて期待結果の変わらないテストは `body` とし、hunk を添える。
 
 地図はすでに、PR が変えた関数とエンドポイントの処理本体（`changes.frames`）と、それが届くエンドポイント（`reach`）を持つ。
@@ -608,12 +669,12 @@ interface TestDiff {
 
 変更対象: POST /token（hono, nextjs）
   追加されたテスト:
-    - 不正な認証情報で 401 invalid_client を返す（API, 異常系, 認証）
-    - 未対応の grant_type で 400 unsupported_grant_type を返す（API, 異常系）
-    - 必須パラメータ不足で 400 invalid_request を返す（API, 異常系）
+    - Reject invalid client credentials with invalid_client（API, 異常系, 認証）
+    - Reject an unsupported grant_type with unsupported_grant_type（API, 異常系）
+    - Reject a request without <param> with invalid_request（API, 異常系, 2 行）
   関連する変更関数:
     - validateClientAuthMethod: ユニット 追加 2
-    - validateTokenGrantType: ユニット 変更 1（期待する HTTP ステータスを 400 から 401 に変えた）
+    - validateTokenGrantType: ユニット 変更 1（期待 the HTTP status is 400 → the HTTP status is 401）
 
 関連テストに変更の無い実装の変更:
   - verifyClientSecret（条件 `secret.length < 8` を足した）: 関連するテスト 5 件、変更なし
@@ -623,6 +684,7 @@ interface TestDiff {
 ```
 
 数と名前は例である。
+テストの記述は英語のまま載せ、枠の言葉は地図のコメントに合わせて日本語にする。
 PR には地図と Codecov の二つのコメントが付く。
 一つにまとめるには Codecov の API から読んで地図のコメントに引く手があるが、まずは二つのままにする。
 
@@ -639,7 +701,7 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 - `packages/test-catalog`（非公開）：テストコードの読み取り（コンパイラ API）、機能ファイルの読み取り（`@cucumber/gherkin`）、実行結果と到達の取り込み（Istanbul の計数から関数の id への対応づけを含む）、テストの差分。`packages/map-analysis` に依り、関数カタログの id と木を使う
 - `apps/map`：テストのタブ、テストの一覧のページ、このPRの変更のテストの節
 - `tests/features/`：機能ファイル。エンドポイントごとのディレクトリ
-- `tests/steps/`：ステップ定義。`apps/hono` と `apps/nextjs` の `test-support` に依る
+- `tests/steps/`：英語の式のステップ定義と、日本語の訳の表（`ja.yaml`）。ステップ定義は `apps/hono` と `apps/nextjs` の `test-support` に依る
 - `tests/e2e/fixtures.ts`：到達の記録（`/__coverage__`、リクエストの記録）を足した `test`。既存の spec と生成したテストの両方が使う
 - `apps/hono/src/server.ts` と Vitest の `setup` ファイル：到達の記録の数十行。CLI が抽出する根の外に置く
 
@@ -680,7 +742,8 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 | ユニットと API のテストの実行、JSON と JUnit のレポーター、`setup` ファイル | Vitest 5 | 既存 |
 | E2E の実行、JSON と JUnit のレポーター、fixtures、リクエストの記録 | Playwright | 既存 |
 | テストごとの到達の計測 | `@vitest/coverage-istanbul`、`nyc`（`nyc instrument`）、`istanbul-lib-source-maps` | 新規（devDependency） |
-| 機能ファイルの読み取りと検査 | `@cucumber/gherkin`、`gherkin-lint` | 新規（devDependency） |
+| 機能ファイルの読み取りと検査、日本語のキーワード | `@cucumber/gherkin`（言語の辞書を含む）、`gherkin-lint` | 新規（devDependency） |
+| 観点の表、適合性の対応表、日本語の訳の表の読み取り | `yaml` | 新規（devDependency） |
 | 機能ファイルから Playwright のテストの生成、Cucumber Expressions | `playwright-bdd`（`@cucumber/cucumber-expressions` を含む） | 新規（devDependency） |
 | 機能ファイルの編集の補完 | VS Code の Cucumber の拡張 | 任意 |
 | PR のカバレッジの変化、結果の変化、flaky | Codecov（`codecov-action`、`test-results-action`） | 新規（無料、トークンをシークレットに置く） |
@@ -709,13 +772,14 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 **課す規則**
 
 - トップレベルの `describe` に関数名を書く（README の既存の規則）。ユニットテストの対象はこれで引く
-- 機能ファイルには `@id` と対象のタグ（`@endpoint:` `@function:` `@scenario:`）を書き、ステップ定義は Cucumber Expressions で書く。`gherkin-lint` と `bddgen` が検査する
+- 機能ファイルには `@id` と対象のタグ（`@endpoint:` `@function:` `@scenario:`）を書き、ステップ定義は英語の Cucumber Expressions で書く。`gherkin-lint`、`bddgen`、ステップ定義の lint が検査する
 - `// @test-id` で固定した id は一意にする。lint が検査する
 - E2E の spec は `fixtures.ts` の `test` を使う。到達の記録のためで、lint が import を検査する
 
 **あれば良くなるもの**
 
 - `it` の直上の仕様コメント（既存の習慣）。無くても対象と期待結果は読める
+- 日本語の訳（訳の表の行、`Feature` と `Scenario` の `ja:` の行、`it` の直上の `// ja:` コメント）。無ければ英語のまま読める
 - `// @aspect boundary` や `// @subject <id>` の宣言。語彙や静的な解決が外れたときの補正に使う
 - API テストで、エンドポイントのパスを `TEST_ISSUER` との連結かリテラルで書くこと。動的に組み立てると静的には読めないが、到達の記録が補う
 
@@ -732,15 +796,15 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 1. **テストカタログと結合**：テストコードの読み取り（種類、対象、観点、期待結果、id）、関数カタログとの結合、Vitest と Playwright の JSON の取り込み、エンドポイントの画面のテストのタブ、テストの一覧のページ。最優先の要件に、静的な根拠で答える
 2. **到達と Codecov**：Istanbul の計測、テストごとの差分、`apps/hono` の E2E の記録、到達の表示、不足の規則、lcov と JUnit の Codecov へのアップロード。ここで `ci.yml` に地図のジョブを移す
 3. **テストの差分と PR のコメント**：変更前のカタログ、差分、`changes.frames` との突き合わせ、コメントの節
-4. **機能ファイル**：playwright-bdd の導入、ステップ定義、二つの実行先の project、lint。トークンエンドポイントの異常系を機能ファイルに書き写して、既存の API テストと同じ結果になることを確かめる
-5. **残り**：Next.js の計測、決定の側の到達、適合性スイートの結果の取り込み、仕様の節ごとの一覧（関数の `@spec` とテストの仕様コメントを節で結ぶ）
+4. **機能ファイル**：playwright-bdd の導入、英語のステップ定義、二つの実行先の project、lint。トークンエンドポイントの異常系を機能ファイルに書き写して、既存の API テストと同じ結果になることを確かめる
+5. **残り**：日本語の訳の表と表示の切り替え、Next.js の計測、決定の側の到達、適合性スイートの結果の取り込み、仕様の節ごとの一覧（関数の `@spec` とテストの仕様コメントを節で結ぶ）
 
 第 4 段は第 2 段と第 3 段に依らないので、人がいれば並行できる。
 第 1 段が終わった時点で、`/token` のテストのタブに、API、E2E、ユニットの三種類が対象ごとに並ぶことを計測で確認する。
 
 ## 10. 決めずに残すこと
 
-- 語彙（ステップ定義）を日本語で書くか英語で書くか。要件の例に合わせて日本語を正とし、英語の別名を定義に足す案で進めるが、既存のテストの名前は英語なので、画面の言葉の混在は残る
+- 日本語の訳の欠けを、いずれ CI で落とすか。この設計では数を出すだけにする
 - Next.js の `app/` の関数を計測に入れる方法（`swc-plugin-coverage-instrument` か `babel-plugin-istanbul` か）
 - 「関連するテストに変更が無い」を CI で落とすかどうか。この設計ではコメントに出すだけにする
 - 地図と Codecov の二つのコメントを一つにまとめるか

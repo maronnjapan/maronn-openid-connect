@@ -37,6 +37,15 @@ const startDcrOp =
   opPackage === '@maronn-openid-connect/app-nextjs' ||
   opPackage === '@maronn-openid-connect/sample-hono-cloudflare' ||
   opPackage === '@maronn-openid-connect/sample-express-flyio';
+// OIDC Core 1.0 §10.1.1: an OP instance of its own for
+// specs/signing-key-rotation.spec.ts. A rotation puts a new key first in the
+// JWKS for the rest of the process, and the other specs expect the main
+// instance to sign with e2e-rs256-key, so the rotation never touches it.
+// apps/nextjs has no rotation route, so it runs no such instance and the spec
+// skips itself.
+const rotationOpPort = Number(process.env.E2E_ROTATION_OP_PORT ?? '3060');
+const rotationIssuer = process.env.E2E_ROTATION_ISSUER ?? `http://${host}:${rotationOpPort}`;
+const startRotationOp = opPackage !== '@maronn-openid-connect/app-nextjs';
 const oidcClientsJson = JSON.stringify([
   {
     clientId: 'e2e-client',
@@ -309,11 +318,6 @@ export default defineConfig({
               XAA_ACTOR_TOKEN_RESOLVER: 'access-token',
             }
           : {}),
-        // OIDC Core 1.0 §10.1.1: the samples rotate their signing key through
-        // POST /operator/signing-keys/rotate with this token
-        // (specs/signing-key-rotation.spec.ts); apps/hono through its operator
-        // routes, with APP_OPERATOR_TOKEN below.
-        OIDC_SIGNING_KEY_ROTATION_TOKEN: 'e2e-operator-token',
         // apps/hono keeps its data in memory; specs/client-keys.spec.ts
         // changes a client's keys through its operator routes.
         ...(opPackage === '@maronn-openid-connect/app-hono'
@@ -398,6 +402,39 @@ export default defineConfig({
               OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
                 ? `${process.env.OIDC_SQLITE_PATH}-dcr`
                 : '.data/oidc-e2e-dcr.sqlite',
+            },
+          },
+        ]
+      : []),
+    // OIDC Core 1.0 §10.1.1: the key-rotation OP instance (rotationOpPort
+    // above). The samples rotate their signing key through
+    // POST /operator/signing-keys/rotate with OIDC_SIGNING_KEY_ROTATION_TOKEN,
+    // apps/hono through its operator routes with APP_OPERATOR_TOKEN.
+    ...(startRotationOp
+      ? [
+          {
+            command: `pnpm --filter ${opPackage} start`,
+            url: `${rotationIssuer}/.well-known/openid-configuration`,
+            reuseExistingServer: !process.env.CI,
+            timeout: 30_000,
+            env: {
+              HOST: host,
+              PORT: String(rotationOpPort),
+              ISSUER: rotationIssuer,
+              OIDC_SIGNING_KEY_ID: 'e2e-rotation-rs256-key',
+              OIDC_CLIENTS_JSON: oidcClientsJson,
+              OIDC_SIGNING_KEY_ROTATION_TOKEN: 'e2e-operator-token',
+              ...(opPackage === '@maronn-openid-connect/app-hono'
+                ? { APP_OPERATOR_TOKEN: 'e2e-operator-token' }
+                : {}),
+              OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
+                ? `${process.env.OIDC_D1_PERSIST_PATH}-rotation`
+                : '.wrangler/state-rotation',
+              // A path of its own, as the other instances have: two OP
+              // processes writing one SQLite file fail each other's writes.
+              OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
+                ? `${process.env.OIDC_SQLITE_PATH}-rotation`
+                : '.data/oidc-e2e-rotation.sqlite',
             },
           },
         ]

@@ -3,6 +3,10 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
+// The key-rotation OP instance of playwright.config.ts: a rotation lasts for
+// the rest of the process, so it runs on an OP the other specs do not use.
+const rotationOpPort = Number(process.env.E2E_ROTATION_OP_PORT ?? '3060');
+const rotationIssuer = process.env.E2E_ROTATION_ISSUER ?? `http://${host}:${rotationOpPort}`;
 const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
 
@@ -25,15 +29,19 @@ const operatorToken = 'e2e-operator-token';
  * still verify.
  *
  * apps/hono and the samples rotate through POST /operator/signing-keys/rotate,
- * guarded by a Bearer token. An OP without that route skips the spec.
+ * guarded by a Bearer token. apps/nextjs has neither the route nor the
+ * instance, so the spec skips itself.
  */
 test.describe('signing key rotation (OIDC Core 1.0 §10.1.1)', () => {
+  test.beforeEach(async ({ request }) => {
+    test.skip(!(await isServing(request, rotationIssuer)), 'This OP runs no key-rotation instance');
+  });
+
   test('should publish a new key first, keep the old one and sign new ID Tokens with the new kid', async ({
     page,
     request,
-    baseURL,
   }) => {
-    const issuer = requireBaseUrl(baseURL);
+    const issuer = rotationIssuer;
     const before = await jwksKids(request, issuer);
 
     const rotation = await request.post(`${issuer}/operator/signing-keys/rotate`, {
@@ -51,8 +59,8 @@ test.describe('signing key rotation (OIDC Core 1.0 §10.1.1)', () => {
     expect(jwtHeader(idToken)['kid']).toBe(kid);
   });
 
-  test('should refuse a rotation without the operator token', async ({ request, baseURL }) => {
-    const issuer = requireBaseUrl(baseURL);
+  test('should refuse a rotation without the operator token', async ({ request }) => {
+    const issuer = rotationIssuer;
 
     const rotation = await request.post(`${issuer}/operator/signing-keys/rotate`);
 
@@ -60,6 +68,15 @@ test.describe('signing key rotation (OIDC Core 1.0 §10.1.1)', () => {
     expect(rotation.status()).toBe(401);
   });
 });
+
+/** Whether an OP answers its discovery document at issuer. */
+async function isServing(request: APIRequestContext, issuer: string): Promise<boolean> {
+  try {
+    return (await request.get(`${issuer}/.well-known/openid-configuration`)).ok();
+  } catch {
+    return false;
+  }
+}
 
 /** The kids of the OP's JWKS, in its order. */
 async function jwksKids(request: APIRequestContext, issuer: string): Promise<string[]> {
@@ -111,13 +128,6 @@ async function issueIdToken(page: import('@playwright/test').Page, request: APIR
 
 function jwtHeader(jwt: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(requireString(jwt.split('.')[0], 'header'), 'base64url').toString('utf8')) as Record<string, unknown>;
-}
-
-function requireBaseUrl(baseURL: string | undefined): string {
-  if (!baseURL) {
-    throw new Error('Playwright baseURL is required');
-  }
-  return baseURL.replace(/\/$/, '');
 }
 
 function requireString(value: unknown, label: string): string {

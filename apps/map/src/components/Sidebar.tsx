@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
-import type { FlowEndpoint, MapData, MapFeature, TestsIndex } from '../types';
+import type { FlowEndpoint, MapData, MapFeature } from '../types';
 import { endpointMark, type ChangeIndex } from '../lib/changes';
 import { commandLine } from '../lib/model';
-import { endpointKey, kindsWords, latestOf } from '../lib/tests';
 import { Badge } from './ChangeParts';
 
 export interface SidebarProps {
@@ -15,8 +14,6 @@ export interface SidebarProps {
   selected: string | null;
   onToggleFeature: (id: string, on: boolean) => void;
   onEndpoint: (id: string) => void;
-  /** The index of the tests, once read: each endpoint says how many tests it has and, after a run, whether one failed. */
-  tests?: TestsIndex | undefined;
 }
 
 /** The tier of a feature in words: on by default, of the experimental package, or a login method of an extension. */
@@ -26,12 +23,9 @@ const TIER_LABELS: Record<MapFeature['tier'], string> = { stable: '既定', expe
  * The endpoints of the configuration, grouped by flow, and the features that
  * make the configuration (folded, so the list stays short). In the map of a
  * pull request, an endpoint whose diagram shows a change carries its badge.
- * Each endpoint says how many tests it has and the latest result of a run:
- * red only when one failed, grey otherwise, nothing without a run.
  */
-export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint, tests }: SidebarProps) {
+export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint }: SidebarProps) {
   const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, endpoint)])), [changes, endpoints]);
-  const counts = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, tests?.endpoints[endpointKey(framework, endpoint.id)]?.counts])), [tests, framework, endpoints]);
   const rows: React.ReactNode[] = [];
   let group: string | null = null;
   for (const endpoint of endpoints) {
@@ -45,8 +39,6 @@ export function Sidebar({ data, changes, framework, enabled, endpoints, selected
       );
     }
     const mark = marks.get(endpoint.id);
-    const count = counts.get(endpoint.id);
-    const latest = count === undefined ? undefined : latestOf(count);
     rows.push(
       <li key={endpoint.id}>
         <button type="button" aria-current={endpoint.id === selected ? 'page' : undefined} onClick={() => onEndpoint(endpoint.id)}>
@@ -59,16 +51,8 @@ export function Sidebar({ data, changes, framework, enabled, endpoints, selected
               </>
             )}
           </span>
-          <span className="endpoint-meta">
-            <span className="route mono">
-              {endpoint.methods.join(' | ')} {endpoint.path}
-            </span>
-            {count !== undefined && latest !== undefined ? (
-              <span className="endpoint-tests" title={`${kindsWords(count)}・最新: ${latest.words}`}>
-                テスト {count.total}
-                {latest.state === 'failed' ? <span className="endpoint-failed"> 失敗 {latest.failed}</span> : latest.state === 'passed' ? ' 成功' : null}
-              </span>
-            ) : null}
+          <span className="route mono">
+            {endpoint.methods.join(' | ')} {endpoint.path}
           </span>
         </button>
       </li>,

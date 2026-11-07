@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import type { DiffHunk, FrameTestsRef, MapData, Selection, StepMark, TreeNode } from '../types';
+import type { DiffHunk, MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, frameDiagram, markOfBox, type DiagramGroup, type DiagramNode } from '../lib/diagram';
 import {
@@ -51,20 +51,8 @@ export interface TraceProps {
   onOpenCode: (id: string) => void;
   /** The detail of a step a block row is (the endpoint screen gives the step's facts). */
   renderStep?: (step: StepMark) => ReactNode;
-  /**
-   * Tabs of the pane beside the diagram, the diff and the detail: each is
-   * drawn for the frame the diagram shows (its id), so the pane speaks of one
-   * thing, and is told the row selected in it (the テスト tab speaks of the
-   * function of that row). A tab goes before the diagram, or after the
-   * detail with `place: 'after'`.
-   */
-  tabs?: ReadonlyArray<PaneTab>;
-  /** The tab the pane opens on (a page linked to its tests opens on テスト); the diagram otherwise. */
-  initialTab?: string | undefined;
-  /** The tests of the frames (packages/test-catalog), for the badges of the outline rows: `ユニット 9 到達 38`. */
-  tests?: { frames: Readonly<Record<string, FrameTestsRef>>; measured: boolean } | undefined;
-  /** The function of a step of the root, by step id (an endpoint's steps of Hono), for the badge of a step that is not one call. */
-  stepFunction?: ((step: string) => string | undefined) | undefined;
+  /** Tabs of the pane beside the diagram, the diff and the detail: each is drawn for the frame the diagram shows (its id), so the pane speaks of one thing. */
+  tabs?: ReadonlyArray<{ id: string; label: string; content: (frameId: string) => ReactNode }>;
   /** A step of the root frame a link names (`#hono--token--select-signing-keys`): selected and shown once the tree loads. */
   step?: string | null;
   /** A node a link names, keyed like a decision (`<frame>.<node>`, the root's by the node alone): selected and shown once its frame loads. */
@@ -72,15 +60,6 @@ export interface TraceProps {
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
-
-/** A tab a page adds to the pane (see TraceProps.tabs). */
-export interface PaneTab {
-  id: string;
-  label: string;
-  /** Its content for the frame the diagram shows and the row selected there (its frame key, its node, its frame id), if any. */
-  content: (frameId: string, selected: { frame: string; node: TreeNode; frameId: string } | null) => ReactNode;
-  place?: 'before' | 'after';
-}
 
 /** The node selected: in which frame, and where the reader picked it (a box picked in the diagram scrolls its outline row into view). */
 interface Selected {
@@ -155,11 +134,11 @@ interface PathDiff {
  * always speaks of a frame the outline shows. A narrow screen shows the
  * outline alone and opens the others over it.
  */
-export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], initialTab, tests, stepFunction, step = null, target = null }: TraceProps) {
+export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null }: TraceProps) {
   const { mobile } = useMobileMenu();
   const source = sourceOf(framework);
   const tabsId = useId();
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'diagram');
+  const [tab, setTab] = useState<Tab>('diagram');
   const [overlay, setOverlay] = useState(false);
   // The share of the width the pane takes, set by dragging the splitter (or its keys) and kept for this browser.
   const [paneWidth, setPaneWidth] = useState(readPaneWidth);
@@ -558,10 +537,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     );
   };
 
-  const tabSelection = shown === null ? null : { frame: shown.frame, node: shown.node, frameId: shown.frameId };
-  const extra = (place: 'before' | 'after') => tabs.filter((item) => (item.place ?? 'before') === place).map((item) => ({ id: item.id, label: item.label, content: item.content(focusId, tabSelection) }));
   const panes: Array<{ id: Tab; label: string; content: ReactNode }> = [
-    ...extra('before'),
+    ...tabs.map((extra) => ({ id: extra.id, label: extra.label, content: extra.content(focusId) })),
     {
       id: 'diagram',
       label: '図',
@@ -643,7 +620,6 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
         ),
     },
     { id: 'detail', label: '詳細', content: detail() },
-    ...extra('after'),
   ];
   const current = panes.find((pane) => pane.id === tab) ?? panes[0];
   /** The tabs answer the arrow keys, Home and End, as a tablist does: the tab moved to is shown and takes the focus. */
@@ -683,8 +659,6 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
                 writeShowCode(code);
               }}
               memberDiff={memberDiff}
-              tests={tests}
-              stepFunction={stepFunction}
               selected={outlineSelection}
               onState={onState}
               onSelect={(row) => {

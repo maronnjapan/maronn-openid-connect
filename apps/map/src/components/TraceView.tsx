@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { DiffHunk, ExprChange, FlowTree, FrameChange, FrameTestsRef, MapData, TreeNode } from '../types';
+import type { DiffHunk, ExprChange, FlowTree, FrameChange, MapData, TreeNode } from '../types';
 import { callsBelow, countWords, heldMarks, markOf, startWords, type ChangeIndex } from '../lib/changes';
 import {
   branchesOf,
@@ -19,7 +19,6 @@ import {
   type Row,
   type TraceState,
 } from '../lib/trace';
-import { testBadge } from '../lib/tests';
 import { firstSentence, nodeWords, runWords, sideLabel, sideWords } from '../lib/words';
 import { Badge, DiffView, Inline } from './ChangeParts';
 
@@ -53,10 +52,6 @@ export interface TraceViewProps {
   onShowCode: (code: boolean) => void;
   /** The parts of the diffs of the changed frames below a call of a member (see MemberDiff). */
   memberDiff: (member: string) => MemberDiff[];
-  /** The tests of the frames, for the badge of a row whose call or step is a function with tests (`ユニット 9 到達 38`). */
-  tests?: { frames: Readonly<Record<string, FrameTestsRef>>; measured: boolean } | undefined;
-  /** The function of a step of the root that is not one call (Hono's steps), by step id. */
-  stepFunction?: ((step: string) => string | undefined) | undefined;
   /**
    * The node selected: its frame and its id, and whether it was picked in the
    * diagram (its row then scrolls into view). The row that shows it is
@@ -142,7 +137,7 @@ function exitTags(exits: ReadonlyArray<{ node: TreeNode; on: boolean }>): Array<
  * opens the frame), a removed node shows struck through, and a call that
  * leads to changes, a member's implementations among them, says how many.
  */
-export function TraceView({ data, changes, rootId, source, state, trees, diffs, enabled, rows, onToggle, showCode, onShowCode, memberDiff, tests, stepFunction, selected, onState, onSelect, onOpenFunction }: TraceViewProps) {
+export function TraceView({ data, changes, rootId, source, state, trees, diffs, enabled, rows, onToggle, showCode, onShowCode, memberDiff, selected, onState, onSelect, onOpenFunction }: TraceViewProps) {
   const [details, setDetails] = useState<Set<string>>(() => new Set());
   const [openDiffs, setOpenDiffs] = useState<Set<string>>(() => new Set());
   const ids = frameIds(rootId, state.open, trees);
@@ -189,19 +184,6 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
       ) : null}
     </>
   );
-
-  /** The badge of the tests of the function a row calls or a step is: its unit tests (and their boundary tests), the tests that reached it, the split in the tooltip; grey like every badge. */
-  const testsBadge = (id: string | undefined) => {
-    const found = id === undefined || tests === undefined ? undefined : testBadge(tests.frames[id], tests.measured);
-    if (found === undefined) return null;
-    return (
-      <span className="tests-badge" title={found.title}>
-        {found.unit}
-        {found.detail !== undefined ? <span className="tests-badge-words">{found.detail}</span> : null}
-        {found.reach !== undefined ? <span className="tests-badge-reach"> {found.reach}</span> : null}
-      </span>
-    );
-  };
 
   /** The button that opens the diff of a row under it; `onLine`, one a phone moves from the line under </> (see the row's actions). */
   const diffButton = (key: string, count: number, onLine = false) =>
@@ -258,8 +240,6 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
     const failureList = failures.map((failure) => `${failure.error}${failure.from === callee ? '' : `（${entryOf(data, failure.from)?.name ?? failure.from} から）`}`).join('、');
     const implementers = (member?.implementedBy ?? []).filter((id) => runsFor(id, source));
     const decision = isDecision(node);
-    // The function the tests of the row are of: its call, else the function of a step of the root that is not one call.
-    const tested = callee ?? (frame === '' && node.kind === 'block' && node.step !== undefined ? stepFunction?.(node.step.id) : undefined);
     return (
       <li key={row.key} data-row={row.key} className={classes} style={indent(row.depth)}>
         <div className="trace-line">
@@ -287,7 +267,6 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
             </span>
           ) : null}
           {badges(found)}
-          {testsBadge(tested)}
           {changeLine !== undefined ? (
             <span className="row-change" title={found.exprs.map((expr) => expr.text).join('\n')}>
               <Inline text={changeLine} />

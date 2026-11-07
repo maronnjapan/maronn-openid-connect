@@ -11,7 +11,9 @@
  *   changes in a frame is inside one.
  * - /token with every feature on offers named choices for refresh_token and
  *   authorization_code (the example the map has always given).
- * - In the map of a pull request, every change that needs a note has one.
+ * - In the map of a pull request, every change that needs a note has one,
+ *   and a related test was added or changed for it, or its note says why
+ *   not (MapChanges.untested, from packages/test-catalog).
  * - Wiring outside ordinary call paths retains its source and a reason when
  *   unresolved; claiming a destination requires a target and destinations.
  * - Every unresolved call node explains why it cannot be followed.
@@ -32,6 +34,8 @@ export interface MapMetrics {
   token: Record<string, string[]>;
   /** The changes that need a note and have none. */
   undocumented: string[];
+  /** The changes that need a note whose related tests the pull request did not touch, with no reason given (MapChanges.untested). */
+  untested: string[];
   /** Wiring inventory entries, their unresolved count, and malformed output entries. */
   wiring: { entries: number; untraceable: number; invalid: number };
 }
@@ -86,7 +90,7 @@ function checkTargets(nodes: readonly TreeNode[], frame: string, failures: strin
  * frame files by url, and of the text of the source files by id.
  */
 export async function checkMap(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readSource: (id: string) => Promise<string | undefined>): Promise<CheckResult> {
-  const metrics: MapMetrics = { frames: 0, selections: 0, unnamed: 0, duplicateNames: [], uncovered: [], changedOutside: [], token: {}, undocumented: data.changes?.undocumented ?? [], wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 } };
+  const metrics: MapMetrics = { frames: 0, selections: 0, unnamed: 0, duplicateNames: [], uncovered: [], changedOutside: [], token: {}, undocumented: data.changes?.undocumented ?? [], untested: data.changes?.untested ?? [], wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 } };
   const failures: string[] = [];
   for (const wiring of data.wiring ?? []) {
     const invalid: string[] = [];
@@ -152,6 +156,13 @@ export async function checkMap(data: MapData, readFrame: (url: string) => Promis
   for (const id of metrics.undocumented) {
     const entry = changed.get(id);
     failures.push(`${entry?.body === true ? `the endpoint body ${entry.name}` : `${entry?.name ?? id}()`} (${entry?.package} ${entry?.module}) changed and reaches an endpoint, but no change note explains it: add a section to apps/map/changes/*.md (pnpm --filter @maronn-openid-connect/map changes:draft writes one)`);
+  }
+  for (const id of metrics.untested) {
+    const entry = data.changes?.frames.find((frame) => frame.id === id);
+    failures.push(
+      `${entry?.body === true ? `the endpoint body ${entry.name}` : `${entry?.name ?? id}()`} (${entry?.package} ${entry?.module}) changed and reaches an endpoint, but this pull request adds or changes none of its related tests: ` +
+        `change a test that names or reaches it, or write why the tests stay as they are on a line \`テストを変えない理由: …\` in its section of apps/map/changes/*.md`,
+    );
   }
   return { metrics, failures };
 }

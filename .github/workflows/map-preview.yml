@@ -1,37 +1,16 @@
-# OIDC Provider Map のデプロイ
+# OIDC Provider Map のプレビューの後片付け
 #
-# 地図（apps/map。`maronn-oidc explain --format json` を全機能オンで 4 フレームワーク分まとめた
-# データを読む React + Vite のページ）を、PR ごとと main で Cloudflare Workers に出す。
-#
-# - PR（opened / synchronize / reopened）: その PR のコードから地図をビルドし、同じ Worker の
-#   Worker Preview `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに
-#   固定の URL を持つ隔離されたデプロイで、push のたびに同じ URL が新しくなり、複数の PR が同時に
-#   別々の状態で見られる。URL は PR にコメントする（push ごとに同じコメントを書き換える）。
-#   PR の地図は、base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
-#   何を変えたか（木の差分の要約）、どこに効くか（届くエンドポイントと経路）、PR が足した変更メモ
-#   （apps/map/changes/*.md）の意図を並べる。コメントは先頭に「説明の無い変更」を置き、続けて
-#   変わった関数の表（札・関数・場所・自動要約・届くエンドポイント・メモの一行目）と、新しく外へ出る
-#   失敗が捕まる場所、型で追えない呼び出しを載せる。プレビューの URL とランへのリンクはその後に置く。
-#   エンドポイントに届く変更か、エンドポイントの処理本体の変更に説明の節が無いと、地図のビルド
-#   （`pnpm run build:map` の最後の検査、apps/map/scripts/check-map.mjs）が落ちてこのジョブが失敗する。
-#   そのときも、作ったページのデプロイと PR へのコメントは行う（説明の無い変更とメモの雛形を
-#   コメントで見せるため）。
-#   Worker Previews はオープンベータなので、失敗したときは PR ごとの Worker
-#   `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` する（.github/scripts/map-preview.mjs）。
-# - PR（closed）: その Preview（とフォールバックの Worker）を消す。
-# - main への push: `wrangler deploy` で本番（いまは workers.dev。ドメインは後で）を更新する。
-#
-# どの場合も artifact（oidc-provider-map）にビルド結果を残す。fork からの PR はシークレットが
-# 無いのでデプロイもコメントもせず、artifact だけ残る。
+# 地図（apps/map）のビルド、PR ごとのプレビュー、main の本番へのデプロイ、PR へのコメントは、
+# テストの結果と到達を地図に載せるため ci.yml の map ジョブ（test ジョブの後）が行う
+# （apps/map/docs/design-test-catalog.md「ワークフロー」）。ここは PR を閉じたときに、その PR の
+# Worker Preview `pr-<番号>`（とフォールバックの Worker `maronn-oidc-map-pr-<番号>`）を消し、
+# 地図のコメントを書き換えるだけである（.github/scripts/map-preview.mjs）。
 name: Map Preview
 
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, closed]
-  push:
-    branches: [main]
-  workflow_dispatch:
+    types: [closed]
 
 permissions:
   contents: read
@@ -46,120 +25,8 @@ env:
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
 jobs:
-  build:
-    if: github.event_name != 'pull_request' || github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # PR の地図は、このランがビルドするマージコミットと base ブランチの分岐点（git merge-base）を
-          # 比べて変わった関数を見つけるので、履歴が要る。
-          fetch-depth: 0
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # CLI と解析（packages/map-analysis）をビルドし、全関数とエンドポイントの処理を TypeScript の
-      # コンパイラで木に読んで地図のデータとページを作り、出力を検査する（apps/map/scripts/check-map.mjs）。
-      # PR では MAP_BASE に base ブランチを渡し、変更前の木との差分と変更メモを地図に載せる。
-      # 変わった関数の一覧は dist/data/changes.md にも書かれる。説明の無い変更があると、ページを
-      # 作ったうえでこのステップが落ちる（後のステップはページがあれば続け、ジョブは失敗のまま）。
-      - name: Build the map
-        id: build
-        env:
-          MAP_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
-          MAP_PR: ${{ github.event.pull_request.number }}
-          MAP_PR_TITLE: ${{ github.event.pull_request.title }}
-          MAP_PR_URL: ${{ github.event.pull_request.html_url }}
-        run: pnpm run build:map
-
-      - name: Check map types and layout
-        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
-        run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
-
-      - name: Upload the map
-        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: oidc-provider-map
-          path: apps/map/dist
-          if-no-files-found: error
-
-      - name: Create or update the Preview of the pull request
-        id: preview
-        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && env.CLOUDFLARE_API_TOKEN != '' }}
-        run: node .github/scripts/map-preview.mjs create --pr "${{ github.event.pull_request.number }}" --sha "${{ github.event.pull_request.head.sha }}"
-
-      - name: Deploy main to production
-        id: production
-        if: github.event_name != 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
-        run: node .github/scripts/map-preview.mjs deploy
-
-      - name: Comment the Preview on the pull request
-        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: actions/github-script@v9
-        env:
-          PREVIEW_URL: ${{ steps.preview.outputs.url }}
-          PREVIEW_MODE: ${{ steps.preview.outputs.mode }}
-          PREVIEW_NOTE: ${{ steps.preview.outputs.note }}
-          PREVIEW_OUTCOME: ${{ steps.preview.outcome }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        with:
-          script: |
-            const fs = require('fs');
-            const marker = '<!-- oidc-provider-map-preview -->';
-            const url = process.env.PREVIEW_URL;
-            const outcome = process.env.PREVIEW_OUTCOME;
-            // The functions the pull request changed and what its change notes say (written by the build).
-            const changesFile = 'apps/map/dist/data/changes.md';
-            const changes = fs.existsSync(changesFile) ? fs.readFileSync(changesFile, 'utf8').trim() : '';
-            const how = process.env.PREVIEW_MODE === 'worker'
-              ? 'a Worker of this pull request (Worker Previews failed; see the run)'
-              : 'a Worker Preview of this pull request: the same URL follows every push, and it is removed when the pull request is closed';
-            const status = url
-              ? `Preview: ${url}\n\n(${how})`
-              : outcome === 'skipped'
-                ? 'Preview: not deployed (no Cloudflare secrets for this run). Download the `oidc-provider-map` artifact of the run below and serve `dist/` statically.'
-                : `Preview: the deploy failed; see the run below. (${process.env.PREVIEW_NOTE || ''})`;
-            // The build fails after writing the page when a change that reaches an endpoint has no note.
-            const failed = process.env.BUILD_OUTCOME === 'failure'
-              ? ['', '> [!WARNING]', '> 地図のビルドの検査が落ちました。下の「説明の無い変更」に変更メモの節を足すか、検査の出力を Run で確かめてください（`pnpm --filter @maronn-openid-connect/map changes:draft` で雛形を作れます）。']
-              : [];
-            // The changes come first (they open with 説明の無い変更), then the preview, the run and what the map is.
-            const body = [
-              marker,
-              '## OIDC Provider Map',
-              ...failed,
-              ...(changes ? ['', changes] : []),
-              '',
-              status,
-              ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路）: ${url}#changes`] : []),
-              '',
-              `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
-              '',
-              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches, and what its change notes (\`apps/map/changes/*.md\`) say.`,
-            ].join('\n');
-            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
-            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
-            }
-
   cleanup:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

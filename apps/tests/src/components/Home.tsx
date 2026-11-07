@@ -1,0 +1,168 @@
+/**
+ * The home page: in the build of a pull request a line to its tests; how
+ * many tests there are and of what kind, how the latest run went and how many
+ * expect success or failure; then the endpoints of the chosen source as
+ * cards, each with its own tests at a glance (its API and E2E tests and the
+ * unit tests of its steps).
+ */
+import type { TestCounts, TestDiff } from '@maronn-openid-connect/test-catalog/model';
+import { countsOf, endpointGroups, endpointTests, healthOf, KIND_LABELS, KINDS, type Db } from '../lib/data';
+import { formatCount, formatDate } from '../lib/format';
+import { DIFF_URL } from '../lib/load';
+import { formatHash, type Source } from '../lib/route';
+import { useApp, useJson, useTitle } from './app-context';
+import { HealthMark, Legend, PartsBar, SourceSwitch, type BarPart } from './ui';
+
+/** The kinds of some counts as the parts of a bar; `tool` only when asked, since the endpoints have none. */
+export function kindParts(counts: TestCounts | undefined, withTools = false): BarPart[] {
+  return KINDS.filter((kind) => withTools || kind !== 'tool').map((kind) => ({ key: kind, label: KIND_LABELS[kind], value: counts?.kinds?.[kind] ?? 0 }));
+}
+
+/** In the build of a pull request: how many tests it had and has, a link to them. */
+function PrLine() {
+  const diff = useJson<TestDiff>(DIFF_URL);
+  const counts = diff === undefined || diff instanceof Error ? undefined : diff.counts;
+  const added = diff === undefined || diff instanceof Error ? 0 : (diff.added?.length ?? 0);
+  return (
+    <a className="pr-line" href={formatHash({ page: 'pr' })}>
+      <span className="pr-line-label">この PR</span>
+      {counts === undefined ? (
+        <span>のテスト</span>
+      ) : (
+        <span className="num">
+          テスト {formatCount(counts.before ?? 0)} → {formatCount(counts.after ?? 0)}
+          {added > 0 && `（追加 ${formatCount(added)}）`}
+        </span>
+      )}
+      <span aria-hidden="true">→</span>
+    </a>
+  );
+}
+
+function Tiles({ db }: { db: Db }) {
+  const counts = db.index.counts;
+  const results = counts?.results ?? {};
+  const failed = results.failed ?? 0;
+  const kinds = kindParts(counts, true);
+  const outcomes: BarPart[] = [
+    { key: 'success', label: '正常系', value: counts?.outcomes?.success ?? 0 },
+    { key: 'failure', label: '異常系', value: counts?.outcomes?.failure ?? 0 },
+    { key: 'unknown', label: '判定なし', value: counts?.outcomes?.unknown ?? 0 },
+  ];
+  const ran = (results.passed ?? 0) + failed + (results.skipped ?? 0);
+  const date = formatDate(db.index.run?.at);
+  return (
+    <section className="tiles" aria-label="概要">
+      <div className="tile">
+        <h2 className="tile-label">テスト数</h2>
+        <p className="tile-value">{formatCount(counts?.total ?? db.index.tests.length)}</p>
+        <PartsBar parts={kinds} />
+        <Legend parts={kinds} counts />
+      </div>
+      <div className="tile">
+        <h2 className="tile-label">最新の実行</h2>
+        {ran === 0 ? (
+          <p className="tile-value tile-quiet">結果なし</p>
+        ) : failed > 0 ? (
+          <p className="tile-value tile-failed">
+            <span aria-hidden="true">✗ </span>
+            {formatCount(failed)} 件失敗
+          </p>
+        ) : (
+          <p className="tile-value tile-passed">
+            <span aria-hidden="true">✓ </span>
+            すべて成功
+          </p>
+        )}
+        <ul className="tile-facts">
+          <li>
+            成功 <span className="num">{formatCount(results.passed ?? 0)}</span>
+          </li>
+          {failed > 0 && (
+            <li>
+              失敗 <span className="num">{formatCount(failed)}</span>
+            </li>
+          )}
+          {(results.skipped ?? 0) > 0 && (
+            <li>
+              スキップ <span className="num">{formatCount(results.skipped ?? 0)}</span>
+            </li>
+          )}
+          <li>
+            結果なし <span className="num">{formatCount(results.none ?? 0)}</span>
+          </li>
+        </ul>
+        {date !== '' && <p className="tile-note">{date} の実行</p>}
+      </div>
+      <div className="tile">
+        <h2 className="tile-label">正常系 : 異常系</h2>
+        <p className="tile-value">
+          {formatCount(outcomes[0]?.value ?? 0)} <span className="tile-colon">:</span> {formatCount(outcomes[1]?.value ?? 0)}
+        </p>
+        <PartsBar parts={outcomes} />
+        <Legend parts={outcomes} counts />
+      </div>
+    </section>
+  );
+}
+
+function Endpoints({ db, source }: { db: Db; source: Source }) {
+  const groups = endpointGroups(db, source);
+  if (groups.length === 0) return <p className="note">エンドポイントの一覧（outline.json）がありません。</p>;
+  return (
+    <section className="endpoints" aria-labelledby="endpoints-title">
+      <div className="section-head">
+        <h2 id="endpoints-title">エンドポイント</h2>
+        <Legend parts={kindParts(undefined)} />
+      </div>
+      <SourceSwitch place="body" />
+      <div className="groups">
+        {groups.map((group) => (
+          <section key={group.id} className="group" aria-labelledby={`group-${group.id}`}>
+            <h3 id={`group-${group.id}`} className="group-label">
+              {group.label}
+            </h3>
+            <ul className="cards">
+              {group.endpoints.map((endpoint) => {
+                const counts = countsOf(endpointTests(db, endpoint));
+                return (
+                  <li key={endpoint.key}>
+                    <a className="card" href={formatHash({ page: 'endpoint', source: endpoint.source, endpoint: endpoint.id })}>
+                      <span className="card-top">
+                        <HealthMark health={healthOf(counts.results)} />
+                        <span className="card-label">{endpoint.label}</span>
+                        <span className="card-count num" aria-label={`テスト ${formatCount(counts.total)} 件`}>
+                          {formatCount(counts.total)}
+                        </span>
+                      </span>
+                      <span className="card-path">
+                        <span className="method">{endpoint.methods.join(' · ')}</span> {endpoint.path}
+                      </span>
+                      <PartsBar parts={kindParts(counts)} />
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function Home() {
+  const { db, source } = useApp();
+  useTitle(undefined);
+  return (
+    <div className="page home">
+      {db.index.diff === true && <PrLine />}
+      <Tiles db={db} />
+      <Endpoints db={db} source={source} />
+      <nav className="quiet-links" aria-label="ほかの見方">
+        <a href={formatHash({ page: 'files' })}>ファイルから探す →</a>
+        {db.index.diff === true && <a href={formatHash({ page: 'pr' })}>この PR のテスト →</a>}
+      </nav>
+    </div>
+  );
+}

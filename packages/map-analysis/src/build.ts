@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
-import type { BodyEntry, FlowEndpoint, FrameFile, FunctionEntry, MapChanges, MapData, MemberDoc, OpFlow } from './model.js';
+import type { BodyEntry, Failure, FlowEndpoint, FrameFile, FunctionEntry, MapChanges, MapData, MemberDoc, OpFlow } from './model.js';
 import { escapingFailures } from './failures.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
 import { readRepository, type Repository } from './repository.js';
@@ -74,6 +74,30 @@ export interface BuildOptions {
   pullRequest?: MapChanges['pullRequest'];
   /** The built CLI (packages/cli/dist). */
   cliDist?: string;
+  /**
+   * More work on the analysis before map.json and changes.md are written
+   * (the tests of packages/test-catalog): it may write files of its own (the
+   * data of the tests viewer, apps/tests), add to the changes
+   * (MapChanges.untested), and returns the sections it adds to changes.md.
+   */
+  extend?: (context: BuildContext) => Promise<BuildExtension | void> | BuildExtension | void;
+}
+
+/** What a build hands to its extension (BuildOptions.extend). */
+export interface BuildContext {
+  data: MapData;
+  repository: Repository;
+  changes?: ChangeResult;
+  /** The directory the data is written to. */
+  out: string;
+  /** The failures that leave each frame of the working tree. */
+  failures: ReadonlyMap<string, Failure[]>;
+  log: string[];
+}
+
+/** What an extension adds to the build: sections of changes.md (each under its own `###` heading). */
+export interface BuildExtension {
+  sections?: string[];
 }
 
 export interface BuildResult {
@@ -82,6 +106,8 @@ export interface BuildResult {
   changes?: ChangeResult;
   /** What the build says about itself, one line each. */
   log: string[];
+  /** changes.md as written, in the map of a pull request. */
+  markdown?: string;
 }
 
 /** Build the data of the map (see the module comment) and write it. */
@@ -273,10 +299,12 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     sources,
     ...(changes === undefined ? {} : { changes: changes.changes }),
   };
+  const extension = (await options.extend?.({ data, repository, ...(changes === undefined ? {} : { changes }), out: options.out, failures, log })) ?? {};
   writeFileSync(join(options.out, 'map.json'), JSON.stringify(data));
   const changesFile = join(options.out, 'changes.md');
-  if (changes === undefined) rmSync(changesFile, { force: true });
-  else writeFileSync(changesFile, changesMarkdown(changes.changes));
+  const markdown = changes === undefined ? undefined : changesMarkdown(changes.changes, { sections: extension.sections ?? [] });
+  if (markdown === undefined) rmSync(changesFile, { force: true });
+  else writeFileSync(changesFile, markdown);
 
   const steps = Object.values(flows).reduce((count, flow) => count + flow.endpoints.reduce((sum, endpoint) => sum + endpoint.steps.length, 0), 0);
   const untraceable = [...Object.values(functions), ...Object.values(bodies)].reduce((count, entry) => count + (entry.untraceable ?? 0), 0);
@@ -284,5 +312,5 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     `${cli.frameworks.length} frameworks, ${steps} steps, ${Object.keys(functions).length} functions, ${Object.keys(bodies).length} endpoint bodies, ` +
       `${Object.keys(members).length} interface members, ${untraceable} untraceable calls, ${head.wiring.length} wiring diagnostics, ${Object.keys(sources).length} source files`,
   );
-  return { data, repository, ...(changes === undefined ? {} : { changes }), log };
+  return { data, repository, ...(changes === undefined ? {} : { changes }), log, ...(markdown === undefined ? {} : { markdown }) };
 }

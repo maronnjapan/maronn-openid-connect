@@ -78,7 +78,9 @@
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@maronn-openid-connect/core": "workspace:*",
+    "@maronn-openid-connect/test-reach": "workspace:*",
     "@types/node": "^26.6.6",
+    "@vitest/coverage-istanbul": "5.0.5",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }

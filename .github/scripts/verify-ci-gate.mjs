@@ -246,6 +246,51 @@ export function assertStaticVerificationGate(workflow) {
   }
 }
 
+const MAP_COMMAND = 'pnpm run build:map';
+
+/** The names of the jobs a job waits for (`needs: test` or `needs: [test, lint]`). */
+function needsOf(job) {
+  const needs = job?.needs;
+  if (Array.isArray(needs)) return needs.map(String);
+  return typeof needs === 'string' ? [needs.trim()] : [];
+}
+
+/**
+ * 地図（`pnpm run build:map`）を作るジョブが、テスト（`pnpm run test:ci`）を実行するジョブの後に走ることを要求する。
+ * 同じビルドが作るテストのページ（apps/tests、地図の /tests/。テストの結果とテストごとの到達）は、そのジョブが
+ * 書いた出力を読むためで、並べて走らせると結果の無いページができる（apps/map/docs/design-test-catalog.md「ワークフロー」）。
+ */
+export function assertMapFollowsTests(workflow) {
+  const mapJob = findJobRunning(workflow, MAP_COMMAND);
+  if (mapJob === undefined) return;
+  const testJob = findJobRunning(workflow, TEST_COMMAND);
+  if (testJob === undefined) return;
+  if (mapJob.name === testJob.name) return;
+  if (needsOf(mapJob.job).includes(testJob.name)) return;
+  throw new Error(
+    `CI の ${mapJob.name} ジョブは \`${MAP_COMMAND}\` を実行しますが、\`${TEST_COMMAND}\` を実行する ${testJob.name} ジョブを needs に持っていません。` +
+      '地図はテストの結果と到達をテストのジョブの出力から読むため、そのジョブの後に走らせてください。',
+  );
+}
+
+/**
+ * 地図を作るジョブが、PR を閉じたときにプレビューを消す map-preview.yml と同じ concurrency の group で、
+ * 打ち切らずに順に走ることを要求する。group が分かれると、test ジョブの間に閉じた PR のプレビューを
+ * 削除が先に消し、後から地図のジョブが作り直して、消す者のいないプレビューが残る。
+ */
+export function assertMapSharesPreviewGroup(workflow, previewWorkflow) {
+  const mapJob = findJobRunning(workflow, MAP_COMMAND);
+  if (mapJob === undefined || previewWorkflow === undefined) return;
+  const group = String(mapJob.job?.concurrency?.group ?? '').trim();
+  const previewGroup = String(previewWorkflow?.concurrency?.group ?? '').trim();
+  const queued = (concurrency) => String(concurrency?.['cancel-in-progress'] ?? 'false').trim() === 'false';
+  if (group !== '' && group === previewGroup && queued(mapJob.job.concurrency) && queued(previewWorkflow.concurrency)) return;
+  throw new Error(
+    `CI の ${mapJob.name} ジョブの concurrency の group（${group || 'なし'}）が、map-preview.yml の group（${previewGroup || 'なし'}）と一致していないか、cancel-in-progress が false ではありません。` +
+      'プレビューの作成と削除を同じ group で順に走らせないと、閉じた PR のプレビューが削除の後に作り直されて残ります。',
+  );
+}
+
 export function assertEveryPackageIsTypechecked(packageJsons) {
   const missing = packageJsons
     .filter((packageJson) => packageJson?.scripts?.typecheck === undefined)
@@ -320,9 +365,13 @@ function verifyCiGate() {
   const appPackageJsons = readPackageJsons(join(repositoryRoot, 'apps'));
   const packageJsons = [...readPackageJsons(join(repositoryRoot, 'packages')), ...appPackageJsons];
   const rootPackageJson = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'));
+  const previewPath = join(repositoryRoot, '.github/workflows/map-preview.yml');
+  const previewWorkflow = existsSync(previewPath) ? parseWorkflow(readFileSync(previewPath, 'utf8')) : undefined;
 
   assertWorkflowVerifiesMainPush(workflow);
   assertStaticVerificationGate(workflow);
+  assertMapFollowsTests(workflow);
+  assertMapSharesPreviewGroup(workflow, previewWorkflow);
   assertEveryPackageIsTypechecked(packageJsons);
   assertLintGateIsBacked(workflow, packageJsons, rootPackageJson);
   assertRootScriptsCoverApps(
@@ -331,7 +380,7 @@ function verifyCiGate() {
   );
 
   console.log(
-    'CI gate verified: main push trigger, build / typecheck / test order, typecheck coverage (packages and apps)',
+    'CI gate verified: main push trigger, build / typecheck / test order, the map after the tests and with the preview cleanup, typecheck coverage (packages and apps)',
   );
 }
 

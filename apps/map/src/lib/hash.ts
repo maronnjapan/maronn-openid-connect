@@ -4,6 +4,7 @@
  *     #<framework>--<endpoint>[--<step>][/<frame>]...[;d=<decision>:<side>,...]...[;e][;f=<frame>]
  *     #<framework>--fn--<name>[--<package>--<module>][/<frame>]...[;...]
  *     #<framework>--changes   (#changes too)
+ *     #<framework>--wiring    (#wiring too)
  *
  * A frame is the chain of call nodes that opened it, joined with dots
  * (`/s0b1s0/s0b1s0.s2`); a decision is keyed by its frame and node the same

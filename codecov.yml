@@ -1,0 +1,40 @@
+# Codecov の設定（apps/map/docs/design-test-catalog.md「PR でのテストの差分」）。
+#
+# CI（.github/workflows/ci.yml の test ジョブ）が、Vitest と E2E の行のカバレッジ（lcov）を flag を分けて、
+# テストの結果（JUnit）を Test Analytics に上げる。PR のコメントには、変えた行のうちテストが通った割合
+# （patch coverage）と通っていない行、失敗したテストと flaky なテストが出る。
+# テストの札の差分と実装の変更との対応は、地図のコメント（ci.yml の map ジョブ）が出す。二つは中身が重ならない。
+#
+# patch coverage の閾値で CI を落とすかは、まだ決めていない。決めるまでは状態を informational にして、
+# 地図の検査（関連するテストに変更の無い実装の変更）とは独立に数字だけを出す。
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+# 計測するのは関数カタログの根（packages/map-analysis の roots と同じ）だけ。
+flags:
+  vitest:
+    paths:
+      - packages/core/src/
+      - packages/experimental/src/
+      - packages/google-login/src/
+      - apps/hono/src/oidc-provider/
+      - apps/hono/src/web/
+      - apps/nextjs/src/app/
+  e2e:
+    paths:
+      - packages/core/src/
+      - packages/experimental/src/
+      - packages/google-login/src/
+      - apps/hono/src/oidc-provider/
+      - apps/hono/src/web/
+      - apps/nextjs/src/app/
+
+comment:
+  layout: 'condensed_header, diff, flags, files, footer'
+  require_changes: false

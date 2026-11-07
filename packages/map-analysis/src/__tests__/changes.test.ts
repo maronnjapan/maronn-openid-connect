@@ -166,6 +166,11 @@ describe('changesMarkdown', () => {
     expect(changesMarkdown(changes([frame({ summary: [long], counts: {} })]))).toContain(`| 条件 \`${'a'.repeat(175)}…\` | なし |`);
   });
 
+  it('should end with the sections an extension of the build adds, each after a blank line', () => {
+    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['### テスト\n\nテストケース: 1 → 2（+1）\n', '  '] });
+    expect(markdown.endsWith('\n\n### テスト\n\nテストケース: 1 → 2（+1）\n')).toBe(true);
+  });
+
   it('should say the calls the types do not tell may reach a change', () => {
     const markdown = changesMarkdown(changes([frame({ untraceableCallers: [{ frame: 'hono:a.ts#issue', node: 's11', why: "c.get('consentResolver') の recordGrant がどの型のメンバーか分からない" }] })]));
     expect(markdown).toContain('| 変更 | `f()` | core a.ts:3 | 条件 `x` を足した（条件 +1） | なし（追えない呼び出し 1 箇所） |');

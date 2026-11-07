@@ -18,8 +18,10 @@
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.5",
+    "@maronn-openid-connect/test-reach": "workspace:*",
     "@types/express": "^5.0.5",
     "@types/node": "^26.6.6",
+    "@vitest/coverage-istanbul": "5.0.5",
     "express": "^5.3.0",
     "fastify": "^5.12.2",
     "google-auth-library": "^11.2.0",

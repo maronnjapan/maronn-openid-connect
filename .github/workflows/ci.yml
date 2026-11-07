@@ -90,8 +90,15 @@ jobs:
       - name: Audit high-severity vulnerabilities
         run: pnpm audit --audit-level=high
 
+  # テストの結果（Vitest と Playwright の JSON と JUnit）と、テストごとの到達（MARONN_REACH=1 の計測。
+  # Vitest は Istanbul の計数、E2E は OP の V8 の計数の差分）を work/test-reports に書く。
+  # 次の map ジョブがそれをテストのページ（apps/tests、地図の /tests/）に載せ、カバレッジと結果は Codecov に上げる
+  # （apps/map/docs/design-test-catalog.md「データとビルド」）。計測は CI だけで行い、手元の pnpm test は変わらない。
   test:
     runs-on: ubuntu-latest
+    env:
+      MARONN_TEST_REPORTS: ${{ github.workspace }}/work/test-reports
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -126,7 +133,15 @@ jobs:
         run: pnpm run lint
 
       - name: Unit & Integration tests
+        env:
+          MARONN_REACH: '1'
         run: pnpm run test:ci
+
+      # 機能ファイル（tests/features）のシナリオを、プロセス内の実行先（apps/hono と apps/nextjs を
+      # メモリのストアで立て、リクエストを直接渡す）で走らせる。ブラウザも OP のサーバーも要らない。
+      # HTTP の実行先（@http）は E2E と一緒に走る。
+      - name: Feature tests (in process)
+        run: pnpm run test:features
 
       - name: Install Playwright browsers
         run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
@@ -134,6 +149,8 @@ jobs:
       # PR ごとの E2E は apps/hono と apps/nextjs（CLI が生成コードを抽出する全機能オンのアプリ）を対象にする。
       # samples の E2E は e2e-samples.yml が nightly と手動起動で回す。
       - name: E2E tests
+        env:
+          MARONN_REACH: '1'
         run: pnpm run test:e2e
 
       - name: Upload E2E reports
@@ -145,3 +162,217 @@ jobs:
             tests/e2e/playwright-report
             tests/e2e/test-results
           if-no-files-found: ignore
+
+      # 落ちたテストがあっても、そこまでの結果と到達を地図に載せる。
+      - name: Upload the test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          # v8/（E2E の生の V8 の計数）と access/（OP のアクセスログ）は lcov と到達の行を作る途中のもので、地図は読まない。
+          path: |
+            work/test-reports
+            !work/test-reports/v8
+            !work/test-reports/access
+          if-no-files-found: ignore
+
+      # PR のコメントの patch coverage（変えた行のうちテストが通った割合）と、失敗したテストと flaky なテスト（Test Analytics）。
+      # Vitest と E2E は flag で分ける。fork からの PR はトークンが無いので上げない（地図のプレビューと同じ制限）。
+      - name: Upload the coverage of Vitest to Codecov
+        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          directory: work/test-reports/coverage/vitest
+          flags: vitest
+          fail_ci_if_error: false
+
+      - name: Upload the coverage of E2E to Codecov
+        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          directory: work/test-reports/coverage/e2e
+          flags: e2e
+          fail_ci_if_error: false
+
+      # Codecov は directory の中の名前が *junit*.xml か *test*.xml の JUnit だけを拾う。
+      # Vitest は junit/vitest-<パッケージ>.xml、E2E は junit/e2e-<実行先>.junit.xml、機能ファイルは junit/features-in-process.junit.xml に書く。
+      - name: Upload the test results to Codecov
+        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          report_type: test_results
+          directory: work/test-reports/junit
+          fail_ci_if_error: false
+
+  # OIDC Provider Map（apps/map）と、テストのページ（apps/tests）をビルドし、PR ごとのプレビューと main の本番に出す。
+  # テストのページは地図の dist/tests/ に入り、同じ Worker の <地図の URL>/tests/ で出る（地図はテストを出さず、
+  # ヘッダの「テスト」がそこへのリンク）。テストの後に置くのは、テストのページ（テストカタログ、結果、到達、
+  # PR のテストの差分）と PR のコメントのテストの節が test ジョブの出力を読むため。
+  # テストが落ちても、そこまでの結果で作る（if: !cancelled()）。
+  #
+  # - PR: その PR のコードから地図をビルドし、同じ Worker の Worker Preview `pr-<番号>` を作る・更新する。
+  #   PR の地図は base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
+  #   変更メモ（apps/map/changes/*.md）の意図を並べる。テストの差分（足した、変えた、消したテスト、
+  #   関連するテストが変わっていない実装の変更）は PR のコメントのテストの節とテストのページに出る。URL と変更の表は PR にコメントする
+  #   （push ごとに同じコメントを書き換える）。エンドポイントに届く変更に説明の節が無いとき、
+  #   または関連するテストを足しも変えもせず理由（テストを変えない理由:）も無いとき、地図のビルド
+  #   （pnpm run build:map の最後の検査）が落ちてこのジョブが失敗する。そのときもページのデプロイと
+  #   コメントは行う。Worker Previews が失敗したときは PR ごとの Worker へ wrangler deploy する
+  #   （.github/scripts/map-preview.mjs）。PR を閉じたときのプレビューの削除は map-preview.yml が行う。
+  #   削除とこのジョブは同じ concurrency の group（map-preview-<番号>）で順に走り、このジョブは PR が
+  #   閉じていればプレビューを作らずコメントもしない。test ジョブの間に閉じた PR のプレビューが、
+  #   削除の後に作り直されて残らないようにするため。
+  # - main への push: wrangler deploy で本番を更新する。
+  #
+  # どの場合も artifact（oidc-provider-map、テストのページの tests/ を含む）にビルド結果を残す。fork からの PR はシークレットが
+  # 無いのでデプロイもコメントもせず、artifact だけ残る。
+  map:
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: map-preview-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # PR の地図は、このランがビルドするマージコミットと base ブランチの分岐点（git merge-base）を
+          # 比べて変わった関数とテストを見つけるので、履歴が要る。
+          fetch-depth: 0
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # test ジョブが書いた結果と到達。無ければ（test ジョブが途中で止まった）コードから読めることだけで地図を作る。
+      - name: Download the test reports
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: test-reports
+          path: work/test-reports
+
+      # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）をビルドし、全関数と
+      # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、
+      # 地図のデータとページを作り、テストのページ（apps/tests、データは apps/tests/public/data）をビルドして
+      # 地図の dist/tests/ に入れ（apps/map/scripts/copy-tests-viewer.mjs）、出力を検査する（apps/map/scripts/check-map.mjs）。
+      # PR では MAP_BASE に base ブランチを渡し、変更前の木とテストカタログとの差分と変更メモを地図に載せる。
+      # 変わった関数とテストの一覧は dist/data/changes.md にも書かれる。説明の無い変更か、関連するテストの
+      # 変わっていない変更があると、地図とテストのページを作ったうえでこのステップが落ちる（後のステップはページが
+      # あれば続け、ジョブは失敗のまま）。
+      - name: Build the map
+        id: build
+        env:
+          MAP_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          MAP_PR: ${{ github.event.pull_request.number }}
+          MAP_PR_TITLE: ${{ github.event.pull_request.title }}
+          MAP_PR_URL: ${{ github.event.pull_request.html_url }}
+          MAP_TEST_REPORTS: ${{ github.workspace }}/work/test-reports
+        run: pnpm run build:map
+
+      - name: Check map types and layout
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
+
+      - name: Upload the map
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: oidc-provider-map
+          path: apps/map/dist
+          if-no-files-found: error
+
+      # map-preview.yml がプレビューを消した後に作り直さないよう、PR が今も開いているかを確かめる。
+      - name: Check that the pull request is still open
+        id: pull
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { data } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number });
+            core.setOutput('open', String(data.state === 'open'));
+
+      - name: Create or update the Preview of the pull request
+        id: preview
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.pull.outputs.open == 'true' && env.CLOUDFLARE_API_TOKEN != '' }}
+        run: node .github/scripts/map-preview.mjs create --pr "${{ github.event.pull_request.number }}" --sha "${{ github.event.pull_request.head.sha }}"
+
+      - name: Deploy main to production
+        id: production
+        if: github.event_name != 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
+        run: node .github/scripts/map-preview.mjs deploy
+
+      - name: Comment the Preview on the pull request
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.pull.outputs.open == 'true' }}
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          PREVIEW_MODE: ${{ steps.preview.outputs.mode }}
+          PREVIEW_NOTE: ${{ steps.preview.outputs.note }}
+          PREVIEW_OUTCOME: ${{ steps.preview.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- oidc-provider-map-preview -->';
+            const url = process.env.PREVIEW_URL;
+            const outcome = process.env.PREVIEW_OUTCOME;
+            // The functions and the tests the pull request changed and what its change notes say (written by the build).
+            const changesFile = 'apps/map/dist/data/changes.md';
+            const changes = fs.existsSync(changesFile) ? fs.readFileSync(changesFile, 'utf8').trim() : '';
+            const how = process.env.PREVIEW_MODE === 'worker'
+              ? 'a Worker of this pull request (Worker Previews failed; see the run)'
+              : 'a Worker Preview of this pull request: the same URL follows every push, and it is removed when the pull request is closed';
+            const status = url
+              ? `Preview: ${url}\n\n(${how})`
+              : outcome === 'skipped'
+                ? 'Preview: not deployed (no Cloudflare secrets for this run). Download the `oidc-provider-map` artifact of the run below and serve `dist/` statically.'
+                : `Preview: the deploy failed; see the run below. (${process.env.PREVIEW_NOTE || ''})`;
+            // The build fails after writing the page when a change that reaches an endpoint has no note, or changes no related test without a reason.
+            const failed = process.env.BUILD_OUTCOME === 'failure'
+              ? ['', '> [!WARNING]', '> 地図のビルドの検査が落ちました。下の「説明の無い変更」に変更メモの節を足すか、「テスト」の節の「関連するテストに変更の無い実装の変更」にテストを足すか変更メモに `テストを変えない理由:` を書くか、検査の出力を Run で確かめてください（`pnpm --filter @maronn-openid-connect/map changes:draft` で雛形を作れます）。']
+              : [];
+            const codecov = `${context.serverUrl.replace('github.com', 'app.codecov.io/gh')}/${context.repo.owner}/${context.repo.repo}/pull/${context.issue.number}`;
+            // The changes come first (they open with 説明の無い変更), then the preview, the run and what the map is.
+            const body = [
+              marker,
+              '## OIDC Provider Map',
+              ...failed,
+              ...(changes ? ['', changes] : []),
+              '',
+              status,
+              ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路）: ${url}#changes`] : []),
+              // The tests viewer (apps/tests) is deployed with the map, at /tests/ of the same Worker.
+              ...(url ? [`この PR のテスト: ${url.replace(/\/$/, '')}/tests/#/pr`] : []),
+              `テストの結果とカバレッジ（Codecov）: ${codecov}`,
+              '',
+              `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
+              '',
+              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches and what its change notes (\`apps/map/changes/*.md\`) say. The tests have a page of their own at \`/tests/\` (apps/tests): the test cases of each endpoint and step, their latest results and their code.`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }

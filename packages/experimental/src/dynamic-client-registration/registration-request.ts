@@ -24,6 +24,7 @@ import {
   normalizeResponseType,
   resolveJwkSigningAlg,
   responseTypeIncludes,
+  SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS,
   validateRegisteredRedirectUris,
   type JwkSet,
 } from '@maronn-openid-connect/core';
@@ -181,8 +182,10 @@ export interface ValidateClientMetadataOptions {
   requestObjectSigningAlgValuesSupported?: readonly string[];
   /**
    * token_endpoint_auth_signing_alg（OIDC Dynamic Client Registration 1.0 §2）に受理する alg。
-   * discovery の token_endpoint_auth_signing_alg_values_supported と同じ一覧を渡す（none は
-   * 渡しても受理しない）。省略時はこのメタデータを理解しないものとして無視する。
+   * discovery の token_endpoint_auth_signing_alg_values_supported と同じ一覧を渡す。既定は core の
+   * SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS。none は渡しても受理しない。
+   * 一覧は token_endpoint_auth_method によらず使う。client_secret_jwt を許す OP は、HS256 などの
+   * HMAC の alg もこの一覧に含める（既定の一覧には無いので、省略すると拒否する）。
    */
   tokenEndpointAuthSigningAlgValuesSupported?: readonly string[];
   /**
@@ -230,7 +233,7 @@ export interface ValidatedClientRegistration {
   requestObjectSigningAlg?: string;
   /**
    * OIDC Dynamic Client Registration 1.0 §2 の token_endpoint_auth_signing_alg。
-   * tokenEndpointAuthSigningAlgValuesSupported を渡した OP で登録したときだけ持つ。
+   * 登録したときだけ持つ。
    */
   tokenEndpointAuthSigningAlg?: string;
   /**
@@ -311,7 +314,7 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * 検証は、`redirect_uris`、`token_endpoint_auth_method`、`grant_types`、`response_types`、`grant_types` と `response_types` の対応、`application_type` ごとの `redirect_uris` の制約、`id_token_signed_response_alg` の順に行う。
  * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`jwks_uri`、`default_max_age`、`userinfo_signed_response_alg`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`request_uris`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
  * `token_endpoint_auth_method` が `private_key_jwt` の登録は、`jwks` か `jwks_uri` を求める（OIDC Core 1.0 §9）。
- * `token_endpoint_auth_signing_alg` は `options.tokenEndpointAuthSigningAlgValuesSupported` を渡した OP でだけ、`request_uris` は `options.acceptRequestUris` の OP でだけ登録し、ほかの OP では無視する。
+ * `token_endpoint_auth_signing_alg` は OP が受け付ける alg（既定は core の `SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS`）に照らして登録し、`request_uris` は `options.acceptRequestUris` の OP でだけ登録し、ほかの OP では理解しないメタデータとして無視する（RFC 7591 §2）。
  *
  * `jwks_uri` は宛先を検査して登録するが、登録の時点では取得しない。
  * `options.acceptJwksUri` が `false` の OP（`jwks_uri` を取得しない OP）では、理解しないメタデータとして無視する。
@@ -475,14 +478,14 @@ export function validateClientMetadata(
       'private_key_jwt requires jwks or jwks_uri',
     );
   }
-  // `tokenEndpointAuthSigningAlgValuesSupported` を渡さない OP では、`token_endpoint_auth_signing_alg` を理解しないメタデータとして無視する。
-  const tokenEndpointAuthSigningAlgs = options?.tokenEndpointAuthSigningAlgValuesSupported;
-  if (metadata['token_endpoint_auth_signing_alg'] !== undefined && tokenEndpointAuthSigningAlgs !== undefined) {
+  if (metadata['token_endpoint_auth_signing_alg'] !== undefined) {
     // `none` は署名の無いアサーションなので、一覧にあっても受け付けない（OIDC Dynamic Client Registration 1.0 §2）。
     const alg = validateSigningAlg(
       metadata['token_endpoint_auth_signing_alg'],
       'token_endpoint_auth_signing_alg',
-      tokenEndpointAuthSigningAlgs.filter((supported) => supported !== 'none'),
+      (options?.tokenEndpointAuthSigningAlgValuesSupported ?? SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS).filter(
+        (supported) => supported !== 'none',
+      ),
     );
     // 登録した鍵で検証できない登録に、アサーションを送る前に気づかせる。
     // `jwks_uri` の鍵は登録の時点では取得しないので、照らし合わせない。

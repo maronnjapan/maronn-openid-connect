@@ -1235,14 +1235,28 @@ describe('validateClientMetadata private_key_jwt', () => {
     );
   });
 
-  it('should ignore token_endpoint_auth_signing_alg without the option', () => {
+  it('should register token_endpoint_auth_signing_alg RS256 without the option', () => {
     const validated = validateClientMetadata(
       { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'RS256' },
       { tokenEndpointAuthMethods: ['private_key_jwt'] },
     );
 
-    expect(validated.tokenEndpointAuthSigningAlg).toBeUndefined();
-    expect(validated.metadata['token_endpoint_auth_signing_alg']).toBeUndefined();
+    expect(validated.tokenEndpointAuthSigningAlg).toBe('RS256');
+    expect(validated.metadata['token_endpoint_auth_signing_alg']).toBe('RS256');
+  });
+
+  it('should reject token_endpoint_auth_signing_alg outside the client assertion algs of core without the option', () => {
+    expect(() =>
+      validateClientMetadata(
+        { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'HS256' },
+        { tokenEndpointAuthMethods: ['private_key_jwt'] },
+      ),
+    ).toThrowError(
+      new ClientRegistrationError(
+        'invalid_client_metadata',
+        'token_endpoint_auth_signing_alg must be one of RS256, RS384, RS512, ES256, ES384, ES512',
+      ),
+    );
   });
 });
 

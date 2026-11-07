@@ -59,7 +59,8 @@ export async function writeDraft(options: DraftOptions): Promise<DraftResult> {
     .filter((entry) => (entry.kind === 'added' || entry.kind === 'modified') && (entry.notes ?? []).length === 0)
     .sort((a, b) => Number(b.required) - Number(a.required));
   // The changes with a section that still need a reason for their tests.
-  const reasons = changes.frames.filter((entry) => tests.has(entry.id) && (entry.notes ?? []).length > 0 && entry.testReason === undefined);
+  // A frame whose note already has the place of a reason (an empty `テストを変えない理由:` line of an earlier draft) gets no second one.
+  const reasons = changes.frames.filter((entry) => tests.has(entry.id) && (entry.notes ?? []).length > 0 && entry.testReason === undefined && !(entry.notes ?? []).some((note) => note.reasonLine === true));
   if (sections.length === 0 && reasons.length === 0) return { sections, tests: reasons };
   const existing = changes.notes[0]?.file;
   const file = options.file ?? existing ?? join(NOTES_DIRECTORY, noteName(git(options.repository, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()));

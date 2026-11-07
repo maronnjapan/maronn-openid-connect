@@ -462,6 +462,8 @@ export interface ChangeNoteText {
   text: string;
   /** What its `テストを変えない理由:` line says: why the pull request changes none of the frame's tests. */
   reason?: string;
+  /** It has a `テストを変えない理由:` line, an empty one (the place the draft left) included. */
+  reasonLine?: boolean;
 }
 
 /** A change note of the pull request: what its text before the first heading says the pull request does. */

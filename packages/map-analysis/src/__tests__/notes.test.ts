@@ -72,6 +72,30 @@ describe('the reason not to change the tests', () => {
     ]);
   });
 
+  it('should take the paragraph a reason line starts as the reason, and no reason inside a fence or an HTML comment', () => {
+    const note = parseNote(
+      [
+        '## sign',
+        '',
+        'テストを変えない理由: レスポンスの形は変えていない。',
+        '既存の 12 件が同じ期待で通る。',
+        '',
+        '## verify',
+        '',
+        '```md',
+        'テストを変えない理由: 例の行。',
+        '```',
+        '<!--',
+        'テストを変えない理由: あとで書く',
+        '-->',
+      ].join('\n'),
+    );
+    expect(note.sections.map((section) => [section.text, section.reason, section.reasonLine])).toEqual([
+      ['', 'レスポンスの形は変えていない。\n既存の 12 件が同じ期待で通る。', true],
+      ['```md\nテストを変えない理由: 例の行。\n```', undefined, undefined],
+    ]);
+  });
+
   it('should give a frame the reason of a section that names it, without counting the reason as the explanation of the change', () => {
     const frames = [entry('core:a.ts#sign', 'sign'), entry('core:b.ts#verify', 'verify')];
     const note = { file: 'apps/map/changes/x.md', ...parseNote(['## sign', '', 'テストを変えない理由: 形は同じ。', '', '## verify', '', '短い秘密を拒む。'].join('\n')) };

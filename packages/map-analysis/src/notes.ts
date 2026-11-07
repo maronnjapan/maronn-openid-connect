@@ -40,12 +40,54 @@ export interface NoteSection {
   byId: boolean;
   /** The text of the section, its HTML comments and its `テストを変えない理由:` lines left out. */
   text: string;
-  /** What its first `テストを変えない理由:` line with words after the colon says. */
+  /** What its first `テストを変えない理由:` paragraph with words after the colon says. */
   reason?: string;
+  /** It has a `テストを変えない理由:` line, an empty one (the place the draft left) included. */
+  reasonLine?: boolean;
 }
 
 /** A line that says why the tests stay as they are (see the module comment). */
 const REASON_LINE = /^\s*テストを変えない理由\s*[:：]\s*(.*?)\s*$/;
+
+/**
+ * The text of a section and its reason apart: the paragraph a
+ * `テストを変えない理由:` line starts (up to the next blank line) is the
+ * reason, the rest the text. A reason line inside a fenced block or an HTML
+ * comment is text (an example, a placeholder commented out), and a reason
+ * line with nothing after the colon is the place the draft left for one.
+ */
+export function splitReason(lines: readonly string[]): { text: string; reason?: string; reasonLine: boolean } {
+  const kept: string[] = [];
+  const reasons: string[][] = [];
+  let fenced = false;
+  let comment = false;
+  let paragraph: string[] | undefined;
+  for (const line of lines) {
+    const opensFence = /^\s*(```|~~~)/.test(line);
+    const visible = !fenced && !comment;
+    if (visible && !opensFence && REASON_LINE.test(line)) {
+      paragraph = [(REASON_LINE.exec(line)?.[1] ?? '').trim()];
+      reasons.push(paragraph);
+      continue;
+    }
+    if (paragraph !== undefined && visible && line.trim() !== '' && !opensFence) {
+      paragraph.push(line.trim());
+      continue;
+    }
+    paragraph = undefined;
+    kept.push(line);
+    if (opensFence) fenced = !fenced;
+    // An HTML comment over several lines: the lines until it closes.
+    if (!fenced) {
+      const opens = line.lastIndexOf('<!--');
+      const closes = line.lastIndexOf('-->');
+      if (opens !== -1 && opens > closes) comment = true;
+      else if (comment && closes !== -1) comment = false;
+    }
+  }
+  const words = reasons.map((parts) => withoutComments(parts.filter((part) => part !== '').join('\n'))).find((text) => text !== '');
+  return { text: withoutComments(kept.join('\n')), ...(words === undefined ? {} : { reason: words }), reasonLine: reasons.length > 0 };
+}
 
 export interface ParsedNote {
   title?: string;
@@ -109,10 +151,15 @@ export function parseNote(text: string): ParsedNote {
   note.sections = sections.map(({ heading, lines }) => {
     const ids = [...heading.matchAll(/<!--\s*([^>]*?)\s*-->/g)].flatMap((match) => (match[1] as string).split(/[\s,]+/)).filter((id) => /[:#]/.test(id));
     const visible = heading.replace(/<!--[\s\S]*?-->/g, '').trim();
-    const reasons = lines.map((line) => REASON_LINE.exec(line)?.[1]).filter((reason): reason is string => reason !== undefined);
-    const reason = reasons.find((text) => withoutComments(text) !== '');
-    const text = withoutComments(lines.filter((line) => !REASON_LINE.test(line)).join('\n'));
-    return { heading: visible, references: ids.length > 0 ? ids : referencesOf(visible), byId: ids.length > 0, text, ...(reason === undefined ? {} : { reason: withoutComments(reason) }) };
+    const { text, reason, reasonLine } = splitReason(lines);
+    return {
+      heading: visible,
+      references: ids.length > 0 ? ids : referencesOf(visible),
+      byId: ids.length > 0,
+      text,
+      ...(reason === undefined ? {} : { reason }),
+      ...(reasonLine ? { reasonLine: true } : {}),
+    };
   });
   return note;
 }
@@ -188,7 +235,7 @@ export function attachNotes(
         }
         matched = true;
         for (const target of targets) {
-          const text: ChangeNoteText = { file: note.file, heading: section.heading, text: section.text, ...(section.reason === undefined ? {} : { reason: section.reason }) };
+          const text: ChangeNoteText = { file: note.file, heading: section.heading, text: section.text, ...(section.reason === undefined ? {} : { reason: section.reason }), ...(section.reasonLine === true ? { reasonLine: true } : {}) };
           target.notes ??= [];
           if (!target.notes.some((existing) => existing.file === text.file && existing.text === text.text && existing.reason === text.reason)) target.notes.push(text);
         }

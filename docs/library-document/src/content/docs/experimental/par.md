@@ -135,6 +135,7 @@ Cache-Control: no-cache, no-store
 生成コードを使わず core / experimental を直接組み込む場合は、合成関数かステップ関数を呼び出します。
 
 ```typescript
+import { verifyClientSecret } from '@maronn-openid-connect/core';
 import {
   handlePushedAuthorizationRequest,
   resolvePushedRequestUri,
@@ -144,8 +145,11 @@ import {
 // PAR エンドポイント
 const response = await handlePushedAuthorizationRequest({
   params,                 // フォームボディ（Record<string, string>）
-  authorizationHeader,    // client_secret_basic 用
+  authorizationHeader,    // Authorization ヘッダーの値（必須。無ければ ''）
   clientResolver,         // core の ClientResolver & TokenClientResolver
+  // 提示された資格情報の検証（必須）。シークレットだけを受け付ける OP は core の verifyClientSecret を、
+  // private_key_jwt も受け付ける OP はクライアントアサーションの検証を渡す
+  verifyClientCredential: (client, presented) => verifyClientSecret(client, presented.clientSecret),
   store,                  // PushedAuthorizationRequestStore
   validationOptions: {},  // PushedAuthorizationValidationOptions
 });
@@ -156,12 +160,12 @@ const pushedParams = await resolvePushedRequestUri({ params: queryParams, store 
 // URN 形式でなければ null。展開できた場合は request_uri を除いたパラメータ。
 ```
 
-ステップ関数（`rejectForbiddenParParams` / `authenticateParClient` / `validatePushedAuthorizationParams` / `createPushedAuthorizationRecord` / `buildPushedAuthorizationResponse`）を個別に呼べば、検証の差し替えや削除ができます。
+ステップ関数（`rejectForbiddenParParams` / `resolveParClient` / 呼び出し側の資格情報の検証と `toParError` / `validatePushedAuthorizationParams` / `createPushedAuthorizationRecord` / `buildPushedAuthorizationResponse`）を個別に呼べば、検証の差し替えや削除ができます。
 
-`authenticateParClient` と `handlePushedAuthorizationRequest` は、クライアントシークレットだけを照合します。
-private_key_jwt（OIDC Core 1.0 §9）のクライアントも受け付けるなら、`resolveParClient` でクライアントと提示された資格情報（`presented`）を受け取り、クライアントアサーションを自分で検証してください。
-検証で投げた core の `TokenError` は、`toParError` で PAR のエラー（`invalid_client` なら 401）にできます。
-生成 OP の PAR エンドポイントは、この形で、トークンエンドポイントと同じ検証を呼びます。
+`resolveParClient` はクライアントと提示された資格情報（`presented`）を返すだけで、シークレットもクライアントアサーションも確かめません。
+呼び出し側が `presented.method` に応じて検証し（シークレットは core の `verifyClientSecret`、private_key_jwt（OIDC Core 1.0 §9）は core の `decodeClientAssertion` から `consumeClientAssertionJti` までの関数）、投げた `TokenError` を `toParError` で PAR のエラー（`invalid_client` なら 401）にします。
+`handlePushedAuthorizationRequest` には同じ検証を `verifyClientCredential` で渡します。
+生成 OP の PAR エンドポイントは、トークンエンドポイントと同じ `verifyPresentedClientCredential` を呼びます。
 
 ### ストアの差し替え
 

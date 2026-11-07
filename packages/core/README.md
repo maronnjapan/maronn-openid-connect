@@ -44,7 +44,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 | Hybrid Flow のステップ関数 | `response_type=code id_token`、`code token`、`code id_token token`（OIDC Core 1.0 §3.3）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可コードと一緒に返す認可レスポンスの組み立て。`validateResponseType` の最後の引数に `HYBRID_RESPONSE_TYPES` を加えて渡すと、この 3 つも受け付ける。`requireHybridNonce` は、認可エンドポイントが ID Token を返す `code id_token` と `code id_token token` で `nonce` を必須にする（§3.3.2.11。`code token` では任意のまま）。`validateHybridResponseMode` は `response_mode=query` を拒否し（OAuth 2.0 Multiple Response Type Encoding Practices §5）、`buildHybridResponseParameters` が認可コードとトークンを載せたレスポンスのパラメータを作る。ID Token の `c_hash` は `computeCHash` で求め、`buildIdTokenPayload` の `cHash` に渡す |
 | `normalizeResponseType` / `responseTypeIncludes` / `isImplicitResponseType` / `isHybridResponseType` / `defaultResponseModeOf` | `response_type` の値の正規化（値の順序を問わない。OAuth 2.0 Multiple Response Type Encoding Practices §1.2）と判定、既定の response mode（トークンを返す response type はフラグメント。同 §2.1 / §3 / §5） |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
-| `request_uri` のステップ関数 | Request Object の参照渡し（OIDC Core 1.0 §6.2、RFC 9101 §5.2）。`validateRequestUri`（絶対 URL、https、公開ホスト、長さの上限。既定 512 文字。フラグメントは許す）/ `requestUriFetchUrl`（フラグメントを除いた取得先）/ `fetchRequestObjectByReference`（`GET`、`Accept: application/jwt`、リダイレクトに従わない、タイムアウトと本文の上限。失敗は `RequestUriError`）/ `matchesRegisteredRequestUri`（`require_request_uri_registration` の完全一致）/ `resolveRequestUriParams`（`request` との併用を `invalid_request` で、登録されていない `request_uri` と取得の失敗を理由を出さない `invalid_request_uri` で拒否し、取得した JWT を `request` に置き換えたパラメータを返す。検証は値渡しと同じ `resolveRequestObjectParams` が行う）。`rejectUnsupportedRequestParams` は、`requestUriParameterSupported` を渡さない構成では `request_uri` を `request_uri_not_supported` で拒否する |
+| `request_uri` のステップ関数 | Request Object の参照渡し（OIDC Core 1.0 §6.2、RFC 9101 §5.2）。`validateRequestUri`（絶対 URL、https、公開ホスト、長さの上限。既定 512 文字。フラグメントは許す）/ `requestUriFetchUrl`（フラグメントを除いた取得先）/ `fetchRequestObjectByReference`（`GET`、`Accept: application/jwt`、リダイレクトに従わない、タイムアウトと本文の上限。失敗は `RequestUriError`）/ `matchesRegisteredRequestUri`（`require_request_uri_registration` の完全一致）/ `resolveRequestUriParams`（`request` との併用を `invalid_request` で、登録されていない `request_uri` と取得の失敗を理由を出さない `invalid_request_uri` で拒否し、取得した JWT を `request` に置き換えたパラメータを返す。検証は値渡しと同じ `resolveRequestObjectParams` が行う）。`rejectUnsupportedRequestParams` は、残っている（取得していない）`request_uri` を `request_uri_not_supported` で拒否する（取得する OP は先に `resolveRequestUriParams` で `request` に置き換える） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1）。使える alg がヘッダーの `alg` と同じ鍵だけで検証し（RFC 8725 §3.1。`resolveJwkSigningAlg` / `importJwkForJwsVerification`）、2048 ビット未満の RSA 鍵は使わない |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務。OAuth 2.1 §4.1.2） |
 | `AuthorizationError` / `AuthorizationErrorCode` | 認可エンドポイントのエラー表現 |
@@ -94,7 +94,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| `buildProviderMetadata` | OpenID Provider Metadata の生成（OpenID Connect Discovery 1.0） |
+| `buildProviderMetadata` | OpenID Provider Metadata の生成（OpenID Connect Discovery 1.0）。`tokenEndpointAuthMethodsSupported` に `private_key_jwt` か `client_secret_jwt` があれば、`tokenEndpointAuthSigningAlgValuesSupported` は必須で空にできない（RFC 8414 §2。無いか空なら例外） |
 | `exportPublicJwk` / `exportJwks` / `signingKeysToJwkSet` | 公開鍵の JWK / JWK Set 化（秘密鍵パラメータは型レベルで排除） |
 
 ### 署名鍵管理

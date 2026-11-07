@@ -556,8 +556,9 @@ OP はリクエストが送った資格情報から方式を決め、一覧に�
 ```
 
 どの方式で送られても、OP が照合するシークレットは 1 つです（RFC 7591 §2 の `client_secret`）。
-`--db sql` では `client_auths` に方式ごとの行を置き、どの行の `client_secrets` にも同じシークレットのハッシュを入れます。
-`--db kv` では、クライアントのレコードの `client_auths` に方式ごとの要素を置き、どの要素の `secret` も同じハッシュにします。
+`--db sql` では `client_auths` に方式ごとの行を置き、client_secret_basic と client_secret_post の行の `client_secrets` に同じシークレットのハッシュを入れます。
+`--db kv` では、クライアントのレコードの `client_auths` に方式ごとの要素を置き、client_secret_basic と client_secret_post の要素の `secret` を同じハッシュにします。
+private_key_jwt の行（要素）はシークレットを持ちません（[private_key_jwt](#private_key_jwt) を参照）。
 `registerClient()` はこの形で書き込みます。
 シークレットの異なる行（要素）を持つクライアントは設定の誤りとして扱い、OP はそのクライアントを読むときに例外を投げます。
 
@@ -591,9 +592,8 @@ OP はアサーションを次の順に検証し、どれかに失敗すると `
 discovery は `token_endpoint_auth_methods_supported` に `private_key_jwt` を、`token_endpoint_auth_signing_alg_values_supported` に受け付ける alg を広告します（イントロスペクションとリボケーションのエンドポイントも同じ）。
 受け付ける alg は `ProviderConfig` の `tokenEndpointAuthSigningAlgValuesSupported` で絞れます。
 
-`--db sql` では `client_private_key_jwt_auths` に 1 行を置き、`signing_alg` に `token_endpoint_auth_signing_alg` を入れます（NULL ならどの alg でもよい）。
-`--db kv` では、クライアントのレコードの `private_key_jwt` に `{ "signing_alg": ... }` を置きます。
-private_key_jwt だけのクライアントは `client_auths` の行もシークレットも持ちません。
+`--db sql` では `client_auths` に `client_auth_type = 'private_key_jwt'` の行を置き（`client_secrets` の行は持ちません）、`token_endpoint_auth_signing_alg` を `clients.token_endpoint_auth_signing_alg` に入れます（NULL ならどの alg でもよい）。
+`--db kv` では、レコードの `client_auths` に `{ "client_auth_type": "private_key_jwt" }` の要素を置き、alg をレコードの `token_endpoint_auth_signing_alg` に入れます（null ならどの alg でもよい）。
 
 ## Client Keys
 
@@ -707,7 +707,6 @@ OP は https の URL だけを取得し、`localhost` と、ループバック�
 DNS 名の解決先までは検査しないので、OP の内部ネットワークへの取得を確実に防ぐには、egress プロキシを通る fetch を渡してください。
 Hono / Express / Fastify は `createApp` / `applyOidc` の `outboundFetch` オプションに、Next.js は `_oidc-provider/provider.ts` の `outboundFetch` に渡します。
 この fetch は、`request_uri` の取得（OIDC Core 1.0 §6.2、request-object 機能）にも使います。
-以前の `clientJwksFetch` オプションは `outboundFetch` に置き換わりました。
 
 取得に失敗した Request Object は、非リダイレクトの `invalid_request_object` で拒否し、`error_description` は理由によらず `the client jwks_uri could not be retrieved` です。
 理由（取得先のホスト、応答のステータス、タイムアウトなど）は OP のログ（`console.warn`）に出します。
@@ -760,8 +759,9 @@ OP は URL を画面に入れるだけで、取得しません。
 `requireClientDisplayUriHostMatch: true` にすると、`logo_uri` と `policy_uri` は、ホストがクライアントの `redirect_uris` のどれかのホストと同じときだけ入れます（OIDC Dynamic Client Registration 1.0 §9.1）。
 ほかのサイトのロゴやポリシーを名乗るクライアントを画面に出さないための設定で、既定ではホストを比べません。
 
-`--db sql` では、`client_name` を `clients.name` に、ほかの URL を `client_display_uris` に、`--db kv` ではクライアントのレコードの `name` と `display_uris` に保存します。
+`--db sql` では `clients` の `name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` 列に、`--db kv` ではクライアントのレコードの同名の項目に保存します（`name` が `client_name`）。
 画面のマークアップは Hono / Express / Fastify の `views.tsx` の `ClientSummary`、Next.js の `_oidc-provider/client-summary.tsx` にあります。
+Hono / Express / Fastify の `views` の `loginPage` と `consentPage` は、表示するクライアントを `client`（`ClientDisplay`。client_id の `clientId` を含む）で必ず受け取ります。
 
 ## Database (--db)
 
@@ -839,14 +839,11 @@ export function createDatabase(): SqlDatabase {
 
 | テーブル | 保存するもの |
 |---|---|
-| `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
-| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post。1 つのクライアントに両方を登録できる）と、シークレットのハッシュ |
-| `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[Client Keys](#client-keys) を参照） |
+| `clients` | 登録クライアント（`id` が client_id、`name` が `client_name`）。`is_deleted` を立てたクライアントは OP から見えなくなる。クライアントに 1 つしかない登録メタデータ（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）も列に持ち、登録していない値は NULL になる（[jwks_uri](#jwks_uri)、[private_key_jwt](#private_key_jwt)、[クライアントの表示](#クライアントの表示) を参照） |
+| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post / private_key_jwt。1 つのクライアントにいくつでも登録できる）と、client_secret_basic と client_secret_post のシークレットのハッシュ。private_key_jwt の行はシークレットを持たない |
+| `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を、`private_key_jwt` の用途の鍵でクライアントアサーションを検証する（[Client Keys](#client-keys) を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
-| `client_jwks_uris`、`client_request_object_signing_algs` | クライアントの `jwks_uri`（[jwks_uri](#jwks_uri) を参照）と、Request Object の署名 alg（`request_object_signing_alg`）。どちらもクライアント 1 つにつき 1 行で、`registerClient()` が行を置き換える |
-| `client_private_key_jwt_auths` | private_key_jwt で認証するクライアントと、その `token_endpoint_auth_signing_alg`（[private_key_jwt](#private_key_jwt) を参照）。クライアント 1 つにつき 1 行 |
 | `client_request_uris` | クライアントが登録した `request_uris`（[request_uri](#request_uri) を参照） |
-| `client_display_uris` | ログイン画面と同意画面に出す `logo_uri`、`policy_uri`、`tos_uri`、`client_uri`（[クライアントの表示](#クライアントの表示) を参照）。`client_name` は `clients.name` に持つ |
 | `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
@@ -873,9 +870,6 @@ ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 
 `client_response_types` は列ではなくテーブルなので、そのテーブルが加わる前の CLI で作ったデータベースでも、`schema.sql` を実行し直せば作られます。
 行の無いクライアントは、これまでどおり `response_type=code` だけを使えます。
-`client_jwks_uris` と `client_request_object_signing_algs` も同じで、`schema.sql` を実行し直せば既存のデータベースに足され、行の無いクライアントは `jwks_uri` も署名 alg の指定も持たないものとして読まれます。
-`client_private_key_jwt_auths`、`client_request_uris`、`client_display_uris`、`client_assertion_jtis` も、`schema.sql` を実行し直せば足されます。
-行の無いクライアントは、private_key_jwt を使わず、`request_uris` も表示用の URL も持たないものとして読まれます。
 
 `transactions.status` は、認可リクエストがどこまで進んだかを表します。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進みます。
@@ -953,7 +947,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 
 | キー | 保存するもの |
 |---|---|
-| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値（`jwks_uri`、`request_object_signing_alg`、`private_key_jwt`、`request_uris`、`display_uris` を含む。これらの項目が無い既存のレコードは、どれも無いものとして読む） |
+| `client:<client_id>` | 登録クライアントと、`--db sql` の `clients` の列と `client_*` テーブルに当たる値（`client_auths`（シークレットの方式と `private_key_jwt`）、`redirect_uris`、`grant_types`、`response_types`、`scopes`、`request_uris`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`。値の無い項目は null か空の配列） |
 | `client_jwks:<client_id>:<purpose>` | クライアントの 1 つの用途の公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
@@ -1025,8 +1019,7 @@ Workers はリクエストの処理中にしか D1 を使えないので、起�
 Next.js の生成コードは、クライアントを環境変数から読みません。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
 テーブルやレコードに無い登録メタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
-`jwks_uri` と Request Object の署名 alg（`jwksUri`、`requestObjectSigningAlg`）は `client_jwks_uris`、`client_request_object_signing_algs` の行（`--db kv` はクライアントのレコード）に保存します。
-private_key_jwt の署名 alg（`tokenEndpointAuthSigningAlg`）、`request_uris`（`requestUris`）、画面に出す名前と URL（`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri`）も、それぞれのテーブル（`--db kv` はクライアントのレコード）に保存します。
+`jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri` は `clients` のそれぞれ `jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` 列（`--db kv` はクライアントのレコードの同じ名前の項目）に、`requestUris` は `client_request_uris` の行（`--db kv` はレコードの `request_uris`）に保存します。
 クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに `client_jwks` から読みます（[Client Keys](#client-keys) を参照）。
 
 ユーザーは、`users.ts` の `registerUser()` で DB に入れます。

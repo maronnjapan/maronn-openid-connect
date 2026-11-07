@@ -12,11 +12,9 @@ Suite の `oidcc-registration-sector-uri` と `oidcc-registration-sector-bad` �
 
 ## rejectUnsupportedRequestParams <!-- core:authorization-request.ts#rejectUnsupportedRequestParams -->
 
-<!-- 自動要約: 宣言（引数か戻り値の型）を変えた / 条件 `params.request_uri !== undefined && options.requestUriParameterSuppor…`: `&& options.requestUriParameterSupported…` を足した / 条件 `params.request_uri !== undefined && params.request !== undefined` を足した（失敗で抜ける） / JSDoc を変えた -->
-<!-- 届く先: hono:authorize, hono:par, nextjs:authorize, nextjs:par -->
-`request_uri` を通すかどうかを `requestUriParameterSupported` で選べるようにした。
-既定（オプション無し）は従来どおり `request_uri_not_supported` で拒否するので、request-object 機能を外した OP と、core を直接使う既存の呼び出しの挙動は変わらない。
-`request` と `request_uri` の併用は、ここで `invalid_request` にする（OIDC Core 1.0 §6.2）。この段階ではまだ `redirect_uri` を検証済みなので、エラーはリダイレクトで返る。
+JSDoc だけを変えた。
+`request_uri` は `resolveRequestUriParams` が取得して `request` に置き換えるので、ここに残る `request_uri` は取得していないものとして `request_uri_not_supported` で拒否する、と書いた。
+`request` との併用の拒否は `resolveRequestUriParams` だけが持つ。
 
 ## consumeClientAssertionJti <!-- core:client-assertion.ts#consumeClientAssertionJti -->
 
@@ -118,7 +116,6 @@ client_id をボディに書かないリクエストでは、`resolveClientAsser
 <!-- 届く先: hono:token, hono:introspection, hono:revocation, hono:par, hono:device-authorization, hono:backchannel-authentication, nextjs:token, nextjs:introspection, nextjs:revocation, nextjs:par, nextjs:device-authorization, nextjs:backchannel-authentication -->
 アサーションを先に見て、あれば方式 `private_key_jwt` として返す。
 シークレットとの併用は、どちらで認証したかが曖昧になるので `invalid_request` で拒否する（OAuth 2.1 §2.3 の、1 リクエスト 1 方式）。
-アサーションの無いリクエストの扱いは変えていない。
 
 ## resolveClientAssertionClientId <!-- core:client-auth.ts#resolveClientAssertionClientId -->
 
@@ -138,15 +135,14 @@ Basic 認証か `client_secret` と一緒に送られたアサーションを `i
 <!-- 自動要約: 条件 `presented.method === 'private_key_jwt'` を足した（早期リターン） / JSDoc を変えた -->
 <!-- 届く先: hono:token, hono:introspection, hono:revocation, hono:par, hono:device-authorization, hono:backchannel-authentication, nextjs:token, nextjs:introspection, nextjs:revocation, nextjs:par, nextjs:device-authorization, nextjs:backchannel-authentication -->
 private_key_jwt はシークレットを持たないので、シークレットの登録を求める検査を飛ばす。
-登録した方式の一覧に `private_key_jwt` が無いクライアントは、これまでどおり `invalid_client` になる。
+登録した方式の一覧に無い方式は `invalid_client` になる。
 
 ## buildProviderMetadata <!-- core:discovery.ts#buildProviderMetadata -->
 
-<!-- 自動要約: 条件 `config.tokenEndpointAuthSigningAlgValuesSupported && config.tokenEndp…` を足した / JSDoc を変えた -->
-<!-- 届く先: hono:discovery, nextjs:discovery -->
 `token_endpoint_auth_signing_alg_values_supported` を出せるようにした（OIDC Discovery 1.0 §3）。
 `none` を含む設定は設定の誤りとして例外にする（Discovery が `none` を禁じる）。
-渡さなければ出さないので、既存の呼び出しの文書は変わらない。
+`private_key_jwt` か `client_secret_jwt` を広告する設定に alg の一覧が無ければ例外にする（RFC 8414 §2 は、そのときこの項目を必須とする）。空の一覧も無いものとして例外にする。
+どちらも広告しない設定では任意で、一覧が無いか空なら出さない。
 
 ## discardBody <!-- core:request-uri.ts#discardBody -->
 
@@ -213,7 +209,7 @@ private_key_jwt はシークレットを持たないので、シークレット�
 <!-- 届く先: nextjs:discovery, nextjs:jwks, nextjs:authorize, nextjs:consent, nextjs:token, nextjs:userinfo, nextjs:introspection, nextjs:register, nextjs:logout -->
 キャッシュを捨てる `invalidate()` を足した。
 ローテーションの直後に、TTL を待たずに JWKS と新しい ID Token の `kid` を変えるためである（Suite の `oidcc-server-rotate-keys` は、ローテーションの後すぐに Start を押す）。
-戻り値の型は `SigningKeyProvider` を広げた `CachedSigningKeyProvider` なので、既存の呼び出しはそのまま型に合う。
+戻り値を `invalidate()` 付きの `CachedSigningKeyProvider`（`SigningKeyProvider` の拡張）にした。
 
 ## validateRequestUris <!-- experimental:dynamic-client-registration/metadata-values.ts#validateRequestUris -->
 
@@ -232,10 +228,10 @@ private_key_jwt はシークレットを持たないので、シークレット�
 
 ## validateClientMetadata <!-- experimental:dynamic-client-registration/registration-request.ts#validateClientMetadata -->
 
-<!-- 自動要約: `registered['client_name'] = validateDis…()` を `validateDisplayString()` に置き換えた / `validateDisplayString()` の呼び出し: 受け取る名前を `` から `clientName` に変えた / 処理 `validated.clientName = clientName` を足した / 処理 `registered['client_name'] = clientName` を足した / 処理 `const displayUris = […]` を足した / 繰り返し `for (const [name, field] of displayUris)`: 式を書き換えた -->
-<!-- 届く先: hono:register, nextjs:register -->
 private_key_jwt の登録に `jwks` か `jwks_uri` を求める（鍵の無いクライアントは認証できないので、登録の時点で気づかせる）。
-`token_endpoint_auth_signing_alg` と `request_uris` は、そのオプションを渡した OP でだけ理解し、ほかの OP では従来どおり無視する。
+`token_endpoint_auth_signing_alg` は、OP が受け付ける alg（`tokenEndpointAuthSigningAlgValuesSupported`、省略時は core の `SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS`。`none` は受け付けない）で検証して登録する。
+この一覧は `token_endpoint_auth_method` によらず使うので、client_secret_jwt を許す OP は HS256 などの HMAC の alg も一覧に含める。
+`request_uris` は `request_uri` に応答する OP（`acceptRequestUris`）でだけ登録し、ほかの OP では理解しないメタデータとして無視する（RFC 7591 §2）。
 `client_name` と表示用の URL は、検証した値を OP のクライアントにも渡すため、`validated` に残すようにした。
 
 ## verifyPresentedClientCredential <!-- hono:oidc-provider/client-auth.ts#verifyPresentedClientCredential -->
@@ -243,7 +239,7 @@ private_key_jwt の登録に `jwks` か `jwks_uri` を求める（鍵の無い�
 <!-- 自動要約: 関数を足した -->
 <!-- 届く先: hono:token, hono:introspection, hono:revocation, hono:device-authorization, hono:backchannel-authentication -->
 6 つのエンドポイントの authenticate-client が共有する、方式ごとの振り分け。
-シークレットの方式は従来の `verifyClientSecret`、private_key_jwt は `verifyPrivateKeyJwtAssertion` に渡す。
+シークレットの方式は core の `verifyClientSecret`、private_key_jwt は `verifyPrivateKeyJwtAssertion` に渡す。
 1 か所に集めたので、方式を足すときに 6 か所を書き換えずに済む。
 
 ## verifyPrivateKeyJwtAssertion <!-- hono:oidc-provider/client-auth.ts#verifyPrivateKeyJwtAssertion -->
@@ -285,24 +281,16 @@ egress プロキシを 1 か所で渡せば、OP が外へ出すすべての取�
 
 ## createClientResolver <!-- hono:oidc-provider/db/kv/clients.ts#createClientResolver -->
 
-<!-- 自動要約: `ClientResolver.findClient` の実装: 式を書き換えた / JSDoc を変えた -->
-<!-- 届く先: hono:authorize, hono:login, hono:consent, hono:token, hono:userinfo, hono:introspection, hono:revocation, hono:par, hono:device-authorization, hono:backchannel-authentication -->
-クライアントのレコードの `private_key_jwt`、`request_uris`、`display_uris` を読む。
-これらの項目を持たない既存のレコードは、どれも無いものとして読むので、移行は要らない。
+レコードの `client_auths` から方式の一覧を 1 度に作り（`private_key_jwt` の要素を含む）、シークレットの方式の要素が同じシークレットを持つことを確かめて `clientSecretHash` にする。
+`token_endpoint_auth_signing_alg`、`request_uris`、`name` と表示用の URL の項目を読む。
+レコードはどの項目も必ず持つ（値の無い項目は `null` か空の配列）ので、項目の有無は確かめない。
 
 ## createClientResolver <!-- hono:oidc-provider/db/sql/clients.ts#createClientResolver -->
 
-<!-- 自動要約: `ClientResolver.findClient` の実装: 式を書き換えた / JSDoc を変えた -->
-<!-- 届く先: hono:authorize, hono:login, hono:consent, hono:token, hono:userinfo, hono:introspection, hono:revocation, hono:par, hono:device-authorization, hono:backchannel-authentication -->
-`client_private_key_jwt_auths`、`client_request_uris`、`client_display_uris` を読む。
-private_key_jwt だけのクライアントは `client_auths` の行を持たないので、シークレットの検査をその行がある場合に限った。
-行の無いクライアントの読み方は変わらない。
-
-## isDisplayUriKind <!-- hono:oidc-provider/db/sql/clients.ts#isDisplayUriKind -->
-
-<!-- 自動要約: 関数を足した -->
-<!-- 届く先: hono:authorize, hono:login, hono:consent, hono:token, hono:userinfo, hono:introspection, hono:revocation, hono:par, hono:device-authorization, hono:backchannel-authentication -->
-`client_display_uris.kind` の値を型で絞る。CHECK 制約にない値の行は読み飛ばす。
+`clients` の列（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`name` と表示用の URL）を 1 つの SELECT で読み、`client_auths` の行から方式の一覧を 1 度に作る。
+どれもクライアントに 1 つしかない値なので、別のテーブルではなく `clients` の列に持つ（RFC 7591 §2、OIDC Dynamic Client Registration 1.0 §2）。
+シークレットの検査は、シークレットの方式の行だけで行う（`private_key_jwt` の行はシークレットを持たない）。
+`client_request_uris` を読む。
 
 ## processAuthorizationRequest <!-- hono:oidc-provider/endpoints/authorize/pipeline.ts#processAuthorizationRequest -->
 
@@ -315,9 +303,8 @@ PAR の URN は先の `[resolve-pushed-request]` が展開するので、この�
 
 ## describeConsentScreen <!-- hono:oidc-provider/endpoints/consent/steps/describe-consent-screen.ts#describeConsentScreen -->
 
-<!-- 自動要約: `return { kind, csrfToken, scopes, clientId, … }`: `client: await resolveClientDisplay(c.ge…` を足した / `resolveClientDisplay()` の呼び出し を足した / JSDoc を変えた -->
-<!-- 届く先: hono:consent -->
-同意画面の値に、表示するクライアントを足した。同意する相手の名前が client_id だけでは、End-User は判断できない。
+同意画面の値のクライアントを、client_id だけから、`resolveClientDisplay` が返す表示（`ClientDisplay`。`clientId` を含む）にした。同意する相手の名前が client_id だけでは、End-User は判断できない。
+client_id は `client.clientId` が持つので、画面の値に別の `clientId` は持たない。
 
 ## buildDiscoveryMetadata <!-- hono:oidc-provider/endpoints/discovery/steps/build-metadata.ts#buildDiscoveryMetadata -->
 
@@ -452,21 +439,11 @@ Hono の `verifyPrivateKeyJwtAssertion` と同じ。
 
 ## createClientResolver <!-- nextjs:app/_oidc-provider/db/kv/clients.ts#createClientResolver -->
 
-<!-- 自動要約: `ClientResolver.findClient` の実装: 式を書き換えた / JSDoc を変えた -->
-<!-- 届く先: nextjs:authorize, nextjs:consent, nextjs:token, nextjs:userinfo, nextjs:introspection, nextjs:revocation, nextjs:par, nextjs:device-authorization, nextjs:backchannel-authentication -->
 Hono の kv の `createClientResolver` と同じ変更。
 
 ## createClientResolver <!-- nextjs:app/_oidc-provider/db/sql/clients.ts#createClientResolver -->
 
-<!-- 自動要約: `ClientResolver.findClient` の実装: 式を書き換えた / JSDoc を変えた -->
-<!-- 届く先: nextjs:authorize, nextjs:consent, nextjs:token, nextjs:userinfo, nextjs:introspection, nextjs:revocation, nextjs:par, nextjs:device-authorization, nextjs:backchannel-authentication -->
 Hono の sql の `createClientResolver` と同じ変更。
-
-## isDisplayUriKind <!-- nextjs:app/_oidc-provider/db/sql/clients.ts#isDisplayUriKind -->
-
-<!-- 自動要約: 関数を足した -->
-<!-- 届く先: nextjs:authorize, nextjs:consent, nextjs:token, nextjs:userinfo, nextjs:introspection, nextjs:revocation, nextjs:par, nextjs:device-authorization, nextjs:backchannel-authentication -->
-Hono の `isDisplayUriKind` と同じ。
 
 ## toClientRegistration <!-- nextjs:app/_oidc-provider/features/dynamic-client-registration/store.ts#toClientRegistration -->
 
@@ -491,7 +468,7 @@ Hono の `hostOf` と同じ。
 <!-- 自動要約: `return withRegisteredClientJwksUri(config, (…) =>…`: 引数の `, outboundFetch === undefined ? {} : { …` を足した / `> …, …)()` の呼び出し: 引数の `, outboundFetch === undefined ? {} : { …` を足した / JSDoc を変えた -->
 <!-- 届く先: nextjs:authorize, nextjs:token, nextjs:introspection, nextjs:revocation, nextjs:device-authorization, nextjs:backchannel-authentication -->
 `jwks_uri` の取得に、`request_uri` と共有する `outboundFetch`（`provider.ts` で書き換える）を使うようにした。
-未設定なら従来どおり `globalThis.fetch` を使う。
+未設定なら `globalThis.fetch` を使う。
 
 ## authorize <!-- nextjs:app/authorize/route.ts#authorize -->
 
@@ -507,15 +484,12 @@ Hono の `authenticateTokenClient` と同じ変更。
 
 ## setRequestContext <!-- hono:oidc-provider/app.ts#setRequestContext -->
 
-<!-- 自動要約: 処理 `c.set('outboundFetch', options.outboundFetch)`: 引数 `'outboundFetch'` を足した / 処理 `c.set('outboundFetch', options.outboundFetch)`: 引数 `options.outboundFetch` を足した / 処理 `c.set('outboundFetch', options.outboundFetch)`: 引数 `'clientJwksFetch'` を消した / 処理 `c.set('outboundFetch', options.outboundFetch)`: 引数 `options.clientJwksFetch` を消した / 処理 `c.set(…)` を足した -->
-<!-- 届く先: なし -->
-コンテキストの `clientJwksFetch` を `outboundFetch` に改めた。オプションの名前も同じく改め、changeset に書いた。
+コンテキストとオプションの fetch を `outboundFetch` にし、`jwks_uri` と `request_uri` の取得で共有する。
 
 ## registerClient <!-- hono:oidc-provider/db/kv/clients.ts#registerClient -->
 
-<!-- 自動要約: 条件 `clientType === 'confidential'` を足した / 処理 `const displayUris = { ...(client.logoUri === unde…`: 式を書き換えた / 処理 `const record = { name, client_type, is_deleted, c…` を足した / JSDoc を変えた -->
-<!-- 届く先: なし -->
-private_key_jwt の alg、`request_uris`、表示用の URL をクライアントのレコードに書く。
+private_key_jwt を、シークレットを持たない `client_auths` の要素として書く。
+レコードにはどの項目も書き（渡されない値は `null` か空の配列）、`token_endpoint_auth_signing_alg`、`request_uris`、表示用の URL を足した。`clientName` は `name` に書く。
 `private_key_jwt` はコンフィデンシャルクライアントの方式なので、public client では書かない。
 
 ## createProviderStores <!-- hono:oidc-provider/db/kv/stores.ts#createProviderStores -->
@@ -539,10 +513,8 @@ private_key_jwt の alg、`request_uris`、表示用の URL をクライアン�
 
 ## registerClient <!-- hono:oidc-provider/db/sql/clients.ts#registerClient -->
 
-<!-- 自動要約: `await db.run()` の呼び出し: 引数の `clientName ?? client.` を足した / 条件 `clientType === 'confidential'` を足した / `await db.run()` の呼び出し を足した / 繰り返し `for (const [kind, field] of Object.entries(DISPLA…` を足した / 処理 `const childValues = […]`: `['client_request_uris', 'value', client…` を足した / JSDoc を変えた -->
-<!-- 届く先: なし -->
-`client_private_key_jwt_auths`、`client_request_uris`、`client_display_uris` の行を書き、`client_name` を `clients.name` に入れる。
-既存の列は変えず、テーブルを足すだけにしたので、`schema.sql` を実行し直せば既存のデータベースでも動く。
+private_key_jwt を `client_auths` の方式の行として（`client_secrets` 無し）、`request_uris` を `client_request_uris` に、`client_name`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、表示用の URL を `clients` の 1 つの upsert で書く。
+`clients` の列には、渡されない値を NULL で書く。
 
 ## createProviderStores <!-- hono:oidc-provider/db/sql/stores.ts#createProviderStores -->
 
@@ -568,7 +540,7 @@ private_key_jwt の alg、`request_uris`、表示用の URL をクライアン�
 <!-- 自動要約: 関数を足した -->
 <!-- 届く先: なし -->
 ログイン画面と同意画面の共通の、クライアントの名前、ロゴ、リンクの表示。
-画面の一文（「Sign in to continue to …」）を中に入れ、`<strong>` を 1 つに保つ（既存の E2E が `strong` でクライアント名を読む）。
+画面の一文（「Sign in to continue to …」）を中に入れ、クライアント名を 1 つの `<strong>` で示す。
 リンクは新しいタブで開き、参照元を送らない（`rel="noopener noreferrer"`）。
 
 ## clientDisplayName <!-- hono:oidc-provider/views.tsx#clientDisplayName -->
@@ -579,15 +551,13 @@ private_key_jwt の alg、`request_uris`、表示用の URL をクライアン�
 
 ## defaultConsentPage <!-- hono:oidc-provider/views.tsx#defaultConsentPage -->
 
-<!-- 自動要約: `return (<Layout title="Consent"> <h1>Authorize Ap…`: `p` を `ClientSummary client={params.client ?? …` に変えた / `return (<Layout title="Consent"> <h1>Authorize Ap…`: `params.clientId` を `clientDisplayName(params.client ?? { cl…` に変えた / `return (<Layout title="Consent"> <h1>Authorize Ap…`: `p` を `ClientSummary` に変えた / `clientDisplayName()` の呼び出し を足した / JSDoc を変えた -->
-<!-- 届く先: なし -->
-同意画面に `ClientSummary` を使うようにした。`client` を渡さない既存の呼び出しは client_id を表示する。
+同意画面に `ClientSummary` を使い、クライアントの名前（無ければ client_id）、ロゴ、リンクを出す。
+`ConsentPageParams` は `client`（`ClientDisplay`。`clientId` を含む）を必ず受け取り、別の `clientId` は持たない。
 
 ## defaultLoginPage <!-- hono:oidc-provider/views.tsx#defaultLoginPage -->
 
-<!-- 自動要約: `return (<Layout title="Login"> <h1>Login</h1> {pa…`: 式を書き換えた / 条件 `params.client === undefined` を足した / JSDoc を変えた -->
-<!-- 届く先: なし -->
-ログイン画面に `ClientSummary` を使うようにした。`client` を渡さない既存の呼び出しは、これまでの画面のままにした。
+ログイン画面に `ClientSummary` を使い、クライアントの名前（無ければ client_id）、ロゴ、リンクを出す。
+`LoginPageParams` は `client`（`ClientDisplay`）を必ず受け取る。画面の値を作るステップが、いつも `resolveClientDisplay` でクライアントの表示を決める（クライアントが見つからなくても client_id だけの表示を返す）からである。
 
 ## hostsOf <!-- nextjs:app/_oidc-provider/client-display.ts#hostsOf -->
 
@@ -621,8 +591,6 @@ Hono の `clientDisplayName` と同じ。
 
 ## registerClient <!-- nextjs:app/_oidc-provider/db/kv/clients.ts#registerClient -->
 
-<!-- 自動要約: 条件 `clientType === 'confidential'` を足した / 処理 `const displayUris = { ...(client.logoUri === unde…`: 式を書き換えた / 処理 `const record = { name, client_type, is_deleted, c…` を足した / JSDoc を変えた -->
-<!-- 届く先: なし -->
 Hono の kv の `registerClient` と同じ変更。
 
 ## createProviderStores <!-- nextjs:app/_oidc-provider/db/kv/stores.ts#createProviderStores -->
@@ -645,8 +613,6 @@ Hono の memory の `createProviderStores` と同じ変更。
 
 ## registerClient <!-- nextjs:app/_oidc-provider/db/sql/clients.ts#registerClient -->
 
-<!-- 自動要約: `await db.run()` の呼び出し: 引数の `clientName ?? client.` を足した / 条件 `clientType === 'confidential'` を足した / `await db.run()` の呼び出し を足した / 繰り返し `for (const [kind, field] of Object.entries(DISPLA…` を足した / 処理 `const childValues = […]`: `['client_request_uris', 'value', client…` を足した / JSDoc を変えた -->
-<!-- 届く先: なし -->
 Hono の sql の `registerClient` と同じ変更。
 
 ## createProviderStores <!-- nextjs:app/_oidc-provider/db/sql/stores.ts#createProviderStores -->
@@ -666,25 +632,30 @@ Hono の sql の `createProviderStores` と同じ変更。
 シークレットが無いか空なら、比べずに `invalid_client` にする（`verifyClientSecretHash` と同じ）。
 これまでは「無い」と「無い」を空文字列どうしとして一致させ、提示の有無の確認を `validateClientAuthMethod` に任せていた。
 `validateClientAuthMethod` は private_key_jwt の提示にシークレットを求めないので、そのままでは、core の関数を文書どおりの順に呼んで最後に `verifyClientSecret` を呼ぶコードが、シークレットを登録していない private_key_jwt のクライアントを、アサーションを検証せずに通してしまう。
-experimental の `authenticateParClient` がその形だった（生成 OP は private_key_jwt をアサーションの検証に回すので当たらない）。
 シークレットの照合そのものを閉じる側に倒し、呼び出し側の順序に頼らないようにした。
 
 ## resolveParClient <!-- experimental:par/par-request.ts#resolveParClient -->
 
-<!-- 自動要約: 関数を足した -->
-<!-- 届く先: hono:par, nextjs:par -->
 PAR のクライアント認証のうち、資格情報の取り出し、クライアントの解決、方式の照合までを行い、クライアントと提示された資格情報を返す。
 資格情報そのものの検証は呼び出し側に残す。
-生成 OP の PAR のステップが、ほかの 5 つのエンドポイントと同じ `verifyPresentedClientCredential` を自分で呼べるようにするためである。
-コールバックで渡す形（前の案）では、地図が PAR から鍵の読み込みと `jti` の検査へ辿れなかった。
+生成 OP の PAR のステップが、ほかの 5 つのエンドポイントと同じ `verifyPresentedClientCredential` を直接呼び、地図が PAR から鍵の読み込みと `jti` の検査へ辿れるようにするためである。
+検証をコールバック（`verifyClientCredential`）で受け取るのはライブラリの合成関数 `handlePushedAuthorizationRequest` だけで、どのエンドポイントもそれを通らない。
+`authorizationHeader` は必須の文字列で、ヘッダーが無ければ空文字を渡す（core の `extractClientCredentials` と同じ）。
 
 ## toParError <!-- experimental:par/par-request.ts#toParError -->
 
-<!-- 自動要約: 宣言（引数か戻り値の型）を変えた / JSDoc を変えた -->
-<!-- 届く先: hono:par, nextjs:par -->
 公開した。
-`resolveParClient` の後に生成コードが自分で行う検証（private_key_jwt）の `TokenError` を、PAR の `ParError`（401 と `WWW-Authenticate` 付き）にするためである。
+`resolveParClient` の後に行う資格情報の検証（生成 OP の PAR のステップが呼ぶ `verifyPresentedClientCredential` と、合成関数 `handlePushedAuthorizationRequest` が呼ぶ `verifyClientCredential`）の `TokenError` を、PAR の `ParError`（401 と `WWW-Authenticate` 付き）にするためである。
 変換の規則は変えていない。
+
+## handlePushedAuthorizationRequest <!-- experimental:par/par-request.ts#handlePushedAuthorizationRequest -->
+
+資格情報の検証を、必須の `verifyClientCredential` で受け取るようにした。
+`resolveParClient` の後にこれを呼び、投げた `TokenError` は `toParError` で `ParError` にする。それ以外の例外はそのまま投げ、レコードは保存しない。
+シークレットだけを照合する形では、private_key_jwt のクライアントが必ず `invalid_client` になる。
+シークレットだけを受け付ける OP は core の `verifyClientSecret` を、private_key_jwt も受け付ける OP はクライアントアサーションの検証を渡す。
+`authorizationHeader` は必須の文字列（無ければ空文字）にした。
+生成 OP はこの関数を使わず、PAR のステップが `resolveParClient` と `verifyPresentedClientCredential` を直接呼ぶので、どのエンドポイントにも届かず、地図の到達は変わらない。
 
 ## authenticatePushingClient <!-- hono:oidc-provider/features/par/endpoints/par/steps/authenticate-client.ts#authenticatePushingClient -->
 
@@ -704,12 +675,8 @@ Hono の `authenticatePushingClient` と同じ変更。
 
 ## authenticateParClient <!-- experimental:par/par-request.ts#authenticateParClient -->
 
-<!-- 自動要約: `resolveParClient()` の呼び出し を足した / 例外の捕捉 を足した / `return presented.clientId`: 式を書き換えた / `runClientAuthentication()` の呼び出し を消した / 処理 `const { params, clientResolver } = context` を消した / JSDoc を変えた -->
-<!-- 届く先: なし -->
-`resolveParClient` と `verifyClientSecret` の組み合わせに書き直し、シークレットだけを照合する元の役割に戻した。
-途中で足した `verifyCredential` オプション（未リリース）は消した。
-生成 OP はこの関数を使わなくなったので、エンドポイントには届かない（experimental の `handlePushedAuthorizationRequest` だけが使う）。
-core の `verifyClientSecretValue` の修正により、private_key_jwt のクライアントはここで `invalid_client` になる。
+消した。PAR のクライアント認証は `resolveParClient`（取り出しから方式の照合まで）と、呼び出し側の資格情報の検証（生成 OP は `verifyPresentedClientCredential`、合成関数は `verifyClientCredential`）に分けた。
+シークレットだけを照合する入口を残すと、private_key_jwt を受け付ける OP が誤った入口を選べてしまう。
 
 ## 背景
 
@@ -720,11 +687,11 @@ Suite の Dynamic OP のプランは、クライアントをすべて自分で�
 `request_uri` は、取得した Request Object を `request` に置き換えて既存の `[resolve-request-object]` に渡す設計を選んだ。
 取得と検証を 1 つのステップにまとめる案もあったが、署名と alg の規則を 2 か所に持つことになり、by value と by reference で挙動がずれる危険があるので採らなかった。
 
-外へ出す取得（`jwks_uri`、`request_uri`）の fetch は `outboundFetch` 1 つにまとめた。
-`clientJwksFetch` を残して別の名前を足す案もあったが、egress プロキシを渡し忘れた経路が残る危険があるので、置き換えた。
+外へ出す取得（`jwks_uri`、`request_uri`）の fetch は `outboundFetch` 1 つにまとめ、egress プロキシを 1 か所で渡せるようにした。
 
-PAR のクライアント認証は、最初は experimental の `authenticateParClient` に検証の関数をコールバック（`verifyCredential`）で渡す形にした。
+PAR のクライアント認証は、最初は experimental の関数（今は消した `authenticateParClient`）に検証の関数をコールバックで渡し、生成 OP もそれを呼ぶ形にした。
 地図はコールバックの登録と実行を結ばないので、PAR だけが鍵の読み込みと `jti` の検査に届かない形になっていた。
 地図の側でコールバックの橋を足す案と、コード側で、エンドポイントが型付きの helper を直接呼ぶ形にする案を比べ、後者を選んだ。
 ほかの 5 つのエンドポイントと同じ形になり、手書きの到達先も地図の解析の変更も要らないからである。
+コールバックの形は、ライブラリの合成関数 `handlePushedAuthorizationRequest` の `verifyClientCredential` にだけ残る。生成 OP はこの合成関数を使わないので、地図の到達には関わらない。
 `packages/map-analysis` の到達の検査（`repository.test.ts`）は、Hono と Next.js の両方で、鍵の読み込みに届くエンドポイントが認可、トークン、イントロスペクション、リボケーション、PAR、Device Authorization、CIBA の 7 つであることを確かめる。

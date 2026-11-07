@@ -43,7 +43,7 @@ export interface ClientKeyResolver {
    * クライアントが `purpose` 用に登録した公開鍵を返す。
    *
    * 鍵がないとき（`clientId` のクライアントがないときも含む）は、`keys` が空の JWK Set を返す。
-   * `hint`（{@link ClientKeyLookupHint}）は検証する JWS の手がかりで、省略できる。2 引数の実装もそのまま型に合う。
+   * `hint`（{@link ClientKeyLookupHint}）は検証する JWS の手がかりで、省略できる（`kid` を使う実装は、`jwks_uri` を取り直す合図にする）。
    */
   findClientKeys(clientId: string, purpose: ClientKeyPurpose, hint?: ClientKeyLookupHint): Promise<JwkSet>;
 }

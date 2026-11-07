@@ -147,7 +147,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `clientJwksUriRefetchIntervalSeconds` | `30` | キャッシュに無い kid で `jwks_uri` を取り直す間隔（秒） |
 | `clientJwksUriTimeoutMs` / `clientJwksUriMaxBytes` / `clientJwksUriMaxKeys` / `clientJwksUriCacheMaxEntries` | `3000` / `65536` / `32` / `1000` | `jwks_uri` の取得のタイムアウト（ミリ秒）、文書の上限（バイト）、鍵の数の上限、キャッシュに持つ `jwks_uri` の数の上限 |
 | `clientJwksUriPurposes` | `['request_object', 'private_key_jwt', 'dpop']` | `jwks_uri` の鍵を返す `ClientKeyResolver` の用途 |
-| `tokenEndpointAuthSigningAlgValuesSupported` | `['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']` | private_key_jwt のクライアントアサーションに受け付ける alg。discovery の `token_endpoint_auth_signing_alg_values_supported` に広告する |
+| `tokenEndpointAuthSigningAlgValuesSupported` | `['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']` | private_key_jwt のクライアントアサーションに受け付ける alg。discovery の `token_endpoint_auth_signing_alg_values_supported` に広告する。生成 OP は private_key_jwt を必ず広告するので、空にはできない（RFC 8414 §2。空なら core の `buildProviderMetadata` が例外を投げ、`/.well-known/openid-configuration` は 500 になる） |
 | `requestUriParameterSupported` | `true` | URL の `request_uri` を取得する（request-object 機能） |
 | `requireRequestUriRegistration` | `false` | クライアントが登録した `request_uris` だけを取得する（request-object 機能） |
 | `allowInsecureRequestUri` | `false` | `request_uri` に、http と `localhost`、ループバック・私設・リンクローカルのアドレスを許す（開発用。request-object 機能） |

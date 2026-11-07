@@ -35,7 +35,7 @@ core の純関数            ← このパッケージ
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1）。登録した alg との不一致（`requiredSigningAlg`）、`alg: "none"`、受け付けない alg を、鍵を読む前に拒否する。署名の検証には、使える alg がヘッダーの `alg` と同じ鍵だけを使い（RFC 8725 §3.1）、`use` が `sig` 以外の鍵と 2048 ビット未満の RSA 鍵（RFC 7518 §3.3）は使わない |
 | `resolveJwkSigningAlg` / `importJwkForJwsVerification` | JWK が使える唯一の alg（RSA 鍵は `alg`、無ければ RS256。EC 鍵は `crv` から ES256 / ES384 / ES512）の決定と、その alg のとおりの検証用 import（RFC 8725 §3.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務） |
-| `request_uri` の関数 | Request Object by reference（OIDC Core 1.0 §6.2、RFC 9101 §5.2）。`validateRequestUri`（512 文字まで、https の公開ホスト。`allowInsecure` で開発用に緩める）/ `requestUriFetchUrl`（フラグメントを除く）/ `matchesRegisteredRequestUri`（登録した `request_uris` との完全一致）/ `fetchRequestObjectByReference`（`Accept: application/jwt` の GET、リダイレクトに従わず、タイムアウトと本文の上限を持つ。`fetch` を注入できる）/ `resolveRequestUriParams`（`request` との併用を `invalid_request`、未登録と取得の失敗を `invalid_request_uri` で拒否し、取得した JWT を `request` に置き換えたパラメータを返す）。取得の失敗は `RequestUriError`（`isRequestUriError`）。`rejectUnsupportedRequestParams` は `requestUriParameterSupported: true` のときだけ `request_uri` を通す |
+| `request_uri` の関数 | Request Object by reference（OIDC Core 1.0 §6.2、RFC 9101 §5.2）。`validateRequestUri`（512 文字まで、https の公開ホスト。`allowInsecure` で開発用に緩める）/ `requestUriFetchUrl`（フラグメントを除く）/ `matchesRegisteredRequestUri`（登録した `request_uris` との完全一致）/ `fetchRequestObjectByReference`（`Accept: application/jwt` の GET、リダイレクトに従わず、タイムアウトと本文の上限を持つ。`fetch` を注入できる）/ `resolveRequestUriParams`（`request` との併用を `invalid_request`、未登録と取得の失敗を `invalid_request_uri` で拒否し、取得した JWT を `request` に置き換えたパラメータを返す）。取得の失敗は `RequestUriError`（`isRequestUriError`）。`rejectUnsupportedRequestParams` は、残っている（取得していない）`request_uri` を `request_uri_not_supported` で拒否する（取得する OP は先に `resolveRequestUriParams` で `request` に置き換える） |
 
 ### Auth Transaction (Login / Consent)
 
@@ -74,7 +74,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `buildProviderMetadata` | OpenID Provider Metadata の生成 |
+| `buildProviderMetadata` | OpenID Provider Metadata の生成。`tokenEndpointAuthMethodsSupported` に `private_key_jwt` か `client_secret_jwt` があれば、`tokenEndpointAuthSigningAlgValuesSupported` は必須で空にできない（RFC 8414 §2。無いか空なら例外） |
 | `exportPublicJwk` / `exportJwks` / `signingKeysToJwkSet` | 公開鍵の JWK / JWK Set 化 |
 | `createCachedSigningKeyProvider` | 署名鍵プロバイダーの TTL 付きキャッシュラッパー。返す `CachedSigningKeyProvider` の `invalidate()` でキャッシュを捨てると、次の呼び出しから元のプロバイダーの新しい鍵を使う（運用中の鍵ローテーション。OIDC Core 1.0 §10.1.1） |
 | `selectSigningKeyByAlg` | 登録鍵セットからのアルゴリズム別選択 |
@@ -91,7 +91,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose, hint?)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。任意の第 3 引数 `hint`（`ClientKeyLookupHint`）は検証する JWS の `kid` で、`jwks_uri` を登録したクライアントでは鍵を取り直す合図になる（OIDC Core 1.0 §10.1.1）。2 引数の実装もそのまま型に合う。core で鍵を受け取るのは `resolveRequestObjectParams` と `loadClientAssertionKeys`（private_key_jwt）で、DPoP の検証は持たない |
+| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose, hint?)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。任意の第 3 引数 `hint`（`ClientKeyLookupHint`）は検証する JWS の `kid` で、`jwks_uri` を登録したクライアントでは鍵を取り直す合図になる（OIDC Core 1.0 §10.1.1）。core で鍵を受け取るのは `resolveRequestObjectParams` と `loadClientAssertionKeys`（private_key_jwt）で、DPoP の検証は持たない |
 | `createClientKeyResolver` | クライアントごとの「用途 → JWK Set」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る。設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う。`hint` は無視する |
 | `withClientJwksUriKeys` | `jwks_uri`（RFC 7591 §2）を登録したクライアントの鍵を返すように `ClientKeyResolver` を包む。`purposes` に含まれる用途で `findJwksUri(clientId)` が URI を返したら、`load(uri, hint)` の結果だけを返し、元の resolver の鍵は読まない。それ以外は元の resolver に任せる |
 | `createClientJwksUriCache` | `jwks_uri` ごとに JWK Set を覚えておくキャッシュ。`load(uri, hint, options)` は期限内ならキャッシュから答え、期限切れなら取得する。見慣れない kid は、前回の取得から `refetchIntervalSeconds`（既定 30 秒）が過ぎていれば取り直す。期限内の取り直しが失敗したときは有効なキャッシュで答え、期限切れの鍵は使わない。設定は呼び出しごとに受け取る |

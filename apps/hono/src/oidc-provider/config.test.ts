@@ -29,10 +29,23 @@ describe('createProviderConfig', () => {
       clientJwksUriMaxKeys: 32,
       clientJwksUriCacheMaxEntries: 1000,
       clientJwksUriPurposes: ['request_object', 'private_key_jwt', 'dpop'],
+      // OIDC Core 1.0 §9: private_key_jwt assertions signed with the asymmetric algs core verifies.
+      tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
+      // OIDC Dynamic Client Registration 1.0 §2 / §9.1: the client's URLs shown on https only.
+      allowInsecureClientDisplayUris: false,
+      requireClientDisplayUriHostMatch: false,
       // The request-object feature requires signed Request Objects (OIDC Core 1.0 §6.1)
       // and accepts the algs core verifies (RFC 7518 §3.3 / §3.4).
       allowUnsignedRequestObject: false,
       requestObjectSigningAlgValuesSupported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
+      // OIDC Core 1.0 §6.2: request_uri fetched from https URLs of public hosts,
+      // at most 512 characters, within 3 seconds and 64 KiB.
+      requestUriParameterSupported: true,
+      requireRequestUriRegistration: false,
+      allowInsecureRequestUri: false,
+      requestUriTimeoutMs: 3000,
+      requestUriMaxBytes: 65536,
+      requestUriMaxLength: 512,
     });
   });
 

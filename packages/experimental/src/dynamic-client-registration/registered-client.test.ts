@@ -131,6 +131,33 @@ describe('buildRegisteredClient', () => {
       });
     });
 
+    // OIDC Dynamic Client Registration 1.0 §2: token_endpoint_auth_signing_alg, request_uris
+    // and the metadata the login and consent screens show.
+    it('should carry token_endpoint_auth_signing_alg, request_uris and the display metadata into the record', () => {
+      const client = buildRegisteredClient(
+        {
+          ...CONFIDENTIAL,
+          tokenEndpointAuthSigningAlg: 'RS256',
+          requestUris: ['https://app.example.com/ro#1'],
+          clientName: 'Example RP',
+          clientUri: 'https://app.example.com/',
+          logoUri: 'https://app.example.com/logo.png',
+          policyUri: 'https://app.example.com/privacy',
+          tosUri: 'https://app.example.com/terms',
+        },
+        FIXED,
+      );
+      expect(client).toMatchObject({
+        tokenEndpointAuthSigningAlg: 'RS256',
+        requestUris: ['https://app.example.com/ro#1'],
+        clientName: 'Example RP',
+        clientUri: 'https://app.example.com/',
+        logoUri: 'https://app.example.com/logo.png',
+        policyUri: 'https://app.example.com/privacy',
+        tosUri: 'https://app.example.com/terms',
+      });
+    });
+
     // UC-3 / UC-9
     it('should carry jwks_uri and request_object_signing_alg into the record', () => {
       const client = buildRegisteredClient(

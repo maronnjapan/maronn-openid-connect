@@ -109,6 +109,13 @@ export function toClientRegistration(
     ...(client.jwks === undefined ? {} : { keys: keysByPurpose(client.jwks, options.jwksPurposes) }),
     ...(client.jwksUri === undefined ? {} : { jwksUri: client.jwksUri }),
     ...(client.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: client.requestObjectSigningAlg }),
+    ...(client.tokenEndpointAuthSigningAlg === undefined ? {} : { tokenEndpointAuthSigningAlg: client.tokenEndpointAuthSigningAlg }),
+    ...(client.requestUris === undefined ? {} : { requestUris: [...client.requestUris] }),
+    ...(client.clientName === undefined ? {} : { clientName: client.clientName }),
+    ...(client.clientUri === undefined ? {} : { clientUri: client.clientUri }),
+    ...(client.logoUri === undefined ? {} : { logoUri: client.logoUri }),
+    ...(client.policyUri === undefined ? {} : { policyUri: client.policyUri }),
+    ...(client.tosUri === undefined ? {} : { tosUri: client.tosUri }),
     registrationMetadata: { ...client.metadata },
   };
 }

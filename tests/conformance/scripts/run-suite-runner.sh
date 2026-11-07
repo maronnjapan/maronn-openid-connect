@@ -7,6 +7,9 @@ CONFIG_PATH="${CONFORMANCE_CONFIG_PATH:-/workspace/tests/conformance/.generated/
 RESULTS_DIR="${CONFORMANCE_RESULTS_DIR:-/workspace/tests/conformance/results}"
 TEST_PLAN="${CONFORMANCE_TEST_PLAN:-oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]}"
 CONFORMANCE_SERVER="${CONFORMANCE_SERVER:-https://conformance-nginx:8443/}"
+# The modules the plan may skip (create-op-config.mjs writes the file); an
+# unlisted skip fails the run.
+EXPECTED_SKIPS_PATH="${CONFORMANCE_EXPECTED_SKIPS_PATH:-/workspace/tests/conformance/.generated/expected-skips.json}"
 
 export CONFORMANCE_SERVER
 export CONFORMANCE_SERVER_MTLS="${CONFORMANCE_SERVER_MTLS:-${CONFORMANCE_SERVER}}"
@@ -46,5 +49,6 @@ cd "${SUITE_DIR}"
 python scripts/run-test-plan.py \
   --export-dir "${RESULTS_DIR}" \
   --no-parallel \
+  --expected-skips-file "${EXPECTED_SKIPS_PATH}" \
   "${TEST_PLAN}" \
   "${CONFIG_PATH}"

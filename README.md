@@ -178,7 +178,18 @@ pnpm --filter <package-name> <command>
 - OAuth 2.1（PKCE 必須）
 - OAuth 2.0 Form Post Response Mode（`response_mode=form_post`）
 - OAuth 2.0 Multiple Response Type Encoding Practices（`response_type` の値の組み合わせと `response_mode=fragment`）
-- OpenID Connect Conformance Profiles v3.0（Basic OP、Implicit OP、Hybrid OP）
+- OpenID Connect Conformance Profiles v3.0（Basic OP、Implicit OP、Hybrid OP、Config OP、Dynamic OP）
+
+### クライアント認証と Request Object
+
+- `private_key_jwt`（OpenID Connect Core 1.0 §9、RFC 7523 §3）。クライアントは自分の秘密鍵で署名した JWT を `client_assertion` で送り、OP は登録された公開鍵（`jwks` か `jwks_uri`）で署名を検証し、`iss`、`sub`、`aud`、`exp`、`jti` を確かめ、使用済みの `jti` を拒否する。トークン、イントロスペクション、失効、PAR、デバイス認可、CIBA の各エンドポイントで使える。`client_secret_basic`、`client_secret_post`、`none` も受け付ける
+- Request Object の値渡し（`request`、OpenID Connect Core 1.0 §6.1）と参照渡し（`request_uri`、同 §6.2、RFC 9101 §5.2）。`request_uri` は https の公開ホストの URL だけを、リダイレクトに従わず、タイムアウトと本文の上限を付けて取得し、値渡しと同じ規則で検証する
+
+### Dynamic OP の機能
+
+- 動的クライアント登録（RFC 7591、OpenID Connect Dynamic Client Registration 1.0）。`private_key_jwt`、`jwks` と `jwks_uri`、`request_uris`、`token_endpoint_auth_signing_alg`、`request_object_signing_alg`、`id_token_signed_response_alg`、`userinfo_signed_response_alg` を登録できる
+- ログイン画面と同意画面に、クライアントの `client_name`、`logo_uri`、`policy_uri`、`tos_uri` を表示する（OpenID Connect Dynamic Client Registration 1.0 §2）
+- OP の署名鍵のローテーション（OpenID Connect Core 1.0 §10.1.1）。新しい鍵を JWKS の先頭に足して以後のトークンに署名し、古い鍵は JWKS に残す。各サンプルは実行中にローテーションする手段（`POST /operator/signing-keys/rotate`）を持つ
 
 ### Basic OPの必須機能
 

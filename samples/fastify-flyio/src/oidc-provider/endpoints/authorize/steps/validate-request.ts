@@ -78,8 +78,9 @@ export async function validateAuthorizationRequestParams(
   const effectiveParams = input.effectiveParams ?? params;
   const config = c.get('config');
 
-  // `request_uri` と `registration` には対応していないので拒否する（OIDC Core 1.0 §6.3）。
+  // `registration` には対応していないので拒否する（OIDC Core 1.0 §6.3）。
   // `request` は、前のステップでリクエストオブジェクトを処理したとき（`effectiveParams` があるとき）だけ通し、それ以外は拒否する。
+  // `request_uri` は、request-object の機能の `fetch-request-uri` のステップが取得して `request` に置き換えるので、ここに残っているのは取得しなかった（機能がないか、取得を無効にした）ものであり、`request_uri_not_supported` で拒否する。
   rejectUnsupportedRequestParams(params, redirectUri, state, {
     requestParameterSupported: input.effectiveParams !== undefined,
   });

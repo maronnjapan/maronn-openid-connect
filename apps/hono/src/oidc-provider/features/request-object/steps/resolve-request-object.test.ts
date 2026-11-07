@@ -70,7 +70,7 @@ async function contextWithJwksUriClient(
   const fetch = vi.fn(async () =>
     new Response(JSON.stringify({ keys: (responses.shift() ?? []).map(publishedJwk) }), { status: 200 }),
   );
-  context.c.set('clientJwksFetch', fetch);
+  context.c.set('outboundFetch', fetch);
   return { ...context, fetch };
 }
 

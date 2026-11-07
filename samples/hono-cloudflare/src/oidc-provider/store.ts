@@ -250,6 +250,22 @@ export interface UpstreamLoginStorage {
   delete(nonce: string): Awaitable<void>;
 }
 
+/**
+ * The jti values of the private_key_jwt client assertions the OP accepted
+ * (OIDC Core 1.0 §9 / RFC 7523 §3), kept until the assertion would expire, so
+ * a replayed assertion is rejected. core's consumeClientAssertionJti() calls
+ * consume() with the key of a (client_id, jti) pair.
+ */
+export interface ClientAssertionJtiStorage {
+  /**
+   * `key` を `expiresAt`（Unix epoch 秒）まで覚え、初めての `key` なら `true`、覚えている `key` なら `false` を返す。
+   *
+   * 同じ `key` の二つの呼び出しのうち、`true` を返すのは一方だけにする（アトミックに）。
+   * 期限を過ぎた `key` は、覚えていないものとして扱う。
+   */
+  consume(key: string, expiresAt: number): Awaitable<boolean>;
+}
+
 export interface ProviderStores {
   transactionStore: TransactionStorage;
   authCodeStore: AuthorizationCodeStorage;
@@ -260,6 +276,7 @@ export interface ProviderStores {
   consentStore: ConsentStorage;
   userStore: UserStorage;
   upstreamLoginStore: UpstreamLoginStorage;
+  clientAssertionJtiStore: ClientAssertionJtiStorage;
 }
 
 /** Stores per request: the request context in, the stores of that request out. */

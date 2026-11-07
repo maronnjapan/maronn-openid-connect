@@ -46,4 +46,21 @@ describe('createServerApp', () => {
 
     expect([withoutToken.status, withToken.status]).toEqual([401, 204]);
   });
+
+  // OIDC Core 1.0 §10.1.1: the operator rotates the OP's signing key while the app runs.
+  it('should rotate the signing key behind APP_OPERATOR_TOKEN', async () => {
+    const app = await createServerApp({ ISSUER, APP_OPERATOR_TOKEN: 'operator-token' });
+
+    const withoutToken = await app.request('/operator/signing-keys/rotate', { method: 'POST' });
+    const withToken = await app.request('/operator/signing-keys/rotate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer operator-token' },
+    });
+
+    expect([withoutToken.status, withToken.status]).toEqual([401, 200]);
+    expect(await withToken.json()).toEqual({
+      kid: 'app-hono-rs256-key-rotated-1',
+      kids: ['app-hono-rs256-key-rotated-1', 'app-hono-rs256-key'],
+    });
+  });
 });

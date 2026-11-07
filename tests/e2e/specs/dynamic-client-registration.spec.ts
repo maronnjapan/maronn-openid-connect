@@ -94,7 +94,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     const clientId = requireString(registered.client_id, 'client_id');
     const clientSecret = requireString(registered.client_secret, 'client_secret');
 
-    const { code, state } = await authorizeInBrowser(page, issuer, clientId);
+    const { code, state } = await authorizeInBrowser(page, issuer, clientId, 'E2E Confidential Client');
 
     const tokenResponse = await request.post(`${issuer}/token`, {
       form: {
@@ -141,7 +141,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(Object.hasOwn(registered, 'client_secret')).toBe(false);
     expect(Object.hasOwn(registered, 'client_secret_expires_at')).toBe(false);
 
-    const { code, state } = await authorizeInBrowser(page, issuer, clientId);
+    const { code, state } = await authorizeInBrowser(page, issuer, clientId, 'E2E Public Client');
 
     const tokenResponse = await request.post(`${issuer}/token`, {
       form: {
@@ -189,7 +189,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(registered.grant_types).toEqual(['implicit']);
     expect(registered.application_type).toBe('native');
 
-    const { fragment, nonce } = await authorizeImplicitInBrowser(page, issuer, clientId);
+    const { fragment, nonce } = await authorizeImplicitInBrowser(page, issuer, clientId, 'E2E Implicit Client');
 
     expect(fragment['token_type']).toBe('Bearer');
     const idToken = decodeJwtPayload(requireString(fragment['id_token'], 'id_token'));
@@ -388,13 +388,13 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
 
     const response = await request.post(`${issuer}/register`, {
       headers: { 'Content-Type': 'application/json' },
-      data: { redirect_uris: [registeredRedirectUri], token_endpoint_auth_method: 'private_key_jwt' },
+      data: { redirect_uris: [registeredRedirectUri], token_endpoint_auth_method: 'tls_client_auth' },
     });
     expect(response.status()).toBe(400);
     expect(await response.json()).toEqual({
       error: 'invalid_client_metadata',
       error_description:
-        'token_endpoint_auth_method must be one of client_secret_basic, client_secret_post, none',
+        'token_endpoint_auth_method must be one of client_secret_basic, client_secret_post, private_key_jwt, none',
     });
   });
 
@@ -663,6 +663,7 @@ async function authorizeInBrowser(
   page: Page,
   issuer: string,
   clientId: string,
+  clientName: string,
 ): Promise<{ code: string; state: AuthorizeState }> {
   const codeVerifier = base64Url(randomBytes(32));
   const codeChallenge = base64Url(createHash('sha256').update(codeVerifier).digest());
@@ -679,7 +680,7 @@ async function authorizeInBrowser(
   authorizeUrl.searchParams.set('code_challenge_method', 'S256');
 
   await page.goto(authorizeUrl.toString());
-  await loginAndApprove(page, issuer, clientId);
+  await loginAndApprove(page, issuer, clientName);
 
   await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(registeredRedirectUri)}\\?`));
   const callbackUrl = new URL(page.url());
@@ -699,6 +700,7 @@ async function authorizeImplicitInBrowser(
   page: Page,
   issuer: string,
   clientId: string,
+  clientName: string,
 ): Promise<{ fragment: Record<string, string>; nonce: string }> {
   const requestState = base64Url(randomBytes(16));
   const nonce = base64Url(randomBytes(16));
@@ -712,7 +714,7 @@ async function authorizeImplicitInBrowser(
   authorizeUrl.searchParams.set('nonce', nonce);
 
   await page.goto(authorizeUrl.toString());
-  await loginAndApprove(page, issuer, clientId);
+  await loginAndApprove(page, issuer, clientName);
 
   // OIDC Core 1.0 §3.2.2.5: the tokens ride in the fragment, never in the query.
   await page.waitForURL((url) => url.href.startsWith(registeredRedirectUri));
@@ -724,15 +726,16 @@ async function authorizeImplicitInBrowser(
 }
 
 /** Log in as testuser and approve the consent screen, which names the registered client. */
-async function loginAndApprove(page: Page, issuer: string, clientId: string): Promise<void> {
+async function loginAndApprove(page: Page, issuer: string, clientName: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
 
   await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
-  // The consent screen names the dynamically registered client.
-  await expect(page.locator('strong')).toHaveText(clientId);
+  // The consent screen names the dynamically registered client by its
+  // client_name (OIDC Dynamic Client Registration 1.0 §2).
+  await expect(page.locator('strong')).toHaveText(clientName);
   await page.getByRole('button', { name: 'Approve' }).click();
 }
 

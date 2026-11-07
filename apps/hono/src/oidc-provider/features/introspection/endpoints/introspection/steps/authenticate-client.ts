@@ -2,9 +2,9 @@ import {
   extractClientCredentials,
   resolveAuthenticatedTokenClient,
   validateClientAuthMethod,
-  verifyClientSecret,
   requireConfidentialIntrospectionCaller,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../../../../client-auth.js';
 import { step } from '../../../../../endpoints/step.js';
 
 export const meta = step({
@@ -24,6 +24,7 @@ export const meta = step({
  * クライアントを認証し、パブリッククライアントは拒む。
  *
  * 認証の手順はトークンエンドポイントと同じで、認証したクライアントの `client_id` を返す（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
+ * `private_key_jwt` のクライアントアサーションの `aud` には、このエンドポイントの URL か issuer を求める。
  * 認証に失敗すると、中で呼ぶ core の関数が `TokenError`（`invalid_client` など）を投げる。
  * 呼び出し元がパブリッククライアントなら、`IntrospectionError`（`invalid_client`）を投げる。
  *
@@ -49,7 +50,7 @@ export async function authenticateIntrospectionClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(introspectingClient, presentedCredentials);
-  await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+  await verifyPresentedClientCredential(c, introspectingClient, presentedCredentials, '/introspect');
   requireConfidentialIntrospectionCaller(introspectingClient);
   return presentedCredentials.clientId;
 }

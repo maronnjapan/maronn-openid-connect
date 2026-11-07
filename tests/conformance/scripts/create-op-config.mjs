@@ -11,6 +11,18 @@ export const IMPLICIT_OP_TEST_PLAN =
 export const HYBRID_OP_TEST_PLAN =
   'oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
 
+// The suite registers every client of the Dynamic OP plan itself (RFC 7591),
+// and they authenticate at the token endpoint with private_key_jwt (OIDC Core
+// 1.0 §9). The plan fixes server_metadata=discovery,
+// client_registration=dynamic_client, client_auth_type=private_key_jwt and
+// response_mode=default itself (OIDCCDynamicTestPlan of the conformance
+// suite), and the suite refuses a plan that sets them again, so only
+// response_type is chosen here.
+export const DYNAMIC_OP_TEST_PLAN = 'oidcc-dynamic-certification-test-plan[response_type=code]';
+
+// The Config OP plan fixes its variants (discovery, static_client) itself.
+export const CONFIG_OP_TEST_PLAN = 'oidcc-config-certification-test-plan';
+
 /**
  * The modules of the Basic OP plan, in its order (OIDCCBasicTestPlan of the
  * conformance suite). A run names them only to leave the manual review ones
@@ -244,14 +256,65 @@ const HYBRID_OP_MODULES = [
 ];
 
 /**
- * The modules that wait for a screenshot (manual review; see the README). An
- * unattended run never uploads one, and run-test-plan.py waits 240 s for each
- * before it gives up. Every plan has them.
+ * The modules of the Dynamic OP plan (OIDCCDynamicTestPlan of the
+ * conformance suite): the automated ones, the ones that wait for a
+ * screenshot, and oidcc-server-rotate-keys, which a person starts after
+ * rotating the OP's keys (README).
+ */
+const DYNAMIC_OP_MODULES = [
+  'oidcc-idtoken-rs256',
+  'oidcc-idtoken-unsigned',
+  'oidcc-userinfo-rs256',
+  'oidcc-redirect-uri-query-OK',
+  'oidcc-redirect-uri-regfrag',
+  'oidcc-discovery-endpoint-verification',
+  'oidcc-server',
+  'oidcc-registration-jwks-uri',
+  'oidcc-registration-sector-uri',
+  'oidcc-registration-sector-bad',
+  'oidcc-refresh-token-rp-key-rotation',
+  'oidcc-request-uri-unsigned',
+  'oidcc-request-uri-signed-rs256',
+  'oidcc-ensure-request-object-with-redirect-uri',
+  'oidcc-refresh-token',
+  'oidcc-ensure-client-assertion-with-iss-aud-succeeds',
+  'oidcc-ensure-redirect-uri-in-authorization-request',
+  'oidcc-redirect-uri-query-mismatch',
+  'oidcc-redirect-uri-query-added',
+  'oidcc-registration-logo-uri',
+  'oidcc-registration-policy-uri',
+  'oidcc-registration-tos-uri',
+  'oidcc-server-rotate-keys',
+];
+
+/** The one module of the Config OP plan (OIDCCConfigTestPlan of the conformance suite). */
+const CONFIG_OP_MODULES = ['oidcc-discovery-endpoint-verification'];
+
+/**
+ * The modules that wait for a screenshot (manual review; see the README) in
+ * the Basic OP, Implicit OP and Hybrid OP plans. An unattended run never
+ * uploads one, and run-test-plan.py waits 240 s for each before it gives up.
  */
 export const MANUAL_REVIEW_MODULES = [
   'oidcc-prompt-login',
   'oidcc-max-age-1',
   'oidcc-ensure-registered-redirect-uri',
+];
+
+/**
+ * The modules of the Dynamic OP plan an unattended run leaves out: six wait
+ * for a screenshot (an error page, or the logo and links on the login page),
+ * and oidcc-server-rotate-keys waits for a person to rotate the OP's keys and
+ * press Start (manual-review-screenshots.md).
+ */
+export const DYNAMIC_OP_MANUAL_REVIEW_MODULES = [
+  'oidcc-ensure-redirect-uri-in-authorization-request',
+  'oidcc-redirect-uri-query-mismatch',
+  'oidcc-redirect-uri-query-added',
+  'oidcc-registration-logo-uri',
+  'oidcc-registration-policy-uri',
+  'oidcc-registration-tos-uri',
+  'oidcc-server-rotate-keys',
 ];
 
 /**
@@ -292,6 +355,7 @@ const PLANS = new Map([
       displayName: 'Basic OP',
       testPlan: BASIC_OP_TEST_PLAN,
       modules: BASIC_OP_MODULES,
+      manualReviewModules: MANUAL_REVIEW_MODULES,
       defaultAlias: 'maronn-basic-op',
       // client2 is the second client of oidcc-refresh-token, and
       // client_secret_post the client of oidcc-server-client-secret-post.
@@ -327,6 +391,7 @@ const PLANS = new Map([
       displayName: 'Implicit OP',
       testPlan: IMPLICIT_OP_TEST_PLAN,
       modules: IMPLICIT_OP_MODULES,
+      manualReviewModules: MANUAL_REVIEW_MODULES,
       defaultAlias: 'maronn-implicit-op',
       // OIDC Core 1.0 §3.2: the client of both response types of the Implicit
       // Flow and of the implicit grant type that pairs with them (OIDC Dynamic
@@ -352,6 +417,7 @@ const PLANS = new Map([
       displayName: 'Hybrid OP',
       testPlan: HYBRID_OP_TEST_PLAN,
       modules: HYBRID_OP_MODULES,
+      manualReviewModules: MANUAL_REVIEW_MODULES,
       defaultAlias: 'maronn-hybrid-op',
       // The same three clients as the Basic OP plan, registered for the hybrid
       // response types: client2 is the second client of oidcc-refresh-token,
@@ -382,6 +448,42 @@ const PLANS = new Map([
       ],
     },
   ],
+  [
+    'dynamic',
+    {
+      name: 'dynamic',
+      displayName: 'Dynamic OP',
+      testPlan: DYNAMIC_OP_TEST_PLAN,
+      modules: DYNAMIC_OP_MODULES,
+      manualReviewModules: DYNAMIC_OP_MANUAL_REVIEW_MODULES,
+      // The suite skips these, and the certification allows it: the OP issues
+      // no unsigned ID Token (id_token_signing_alg_values_supported has no
+      // none) and no pairwise subject (subject_types_supported is public only).
+      expectedSkips: ['oidcc-idtoken-unsigned', 'oidcc-registration-sector-uri', 'oidcc-registration-sector-bad'],
+      defaultAlias: 'maronn-dynamic-op',
+      // The suite registers its clients at the registration endpoint of the
+      // OP (RFC 7591) with their own keys, so the OP has no static client and
+      // the suite configuration only names the clients it registers.
+      clients: [],
+      suiteConfig: {
+        client: { client_name: 'maronn-dynamic-op-client' },
+        client2: { client_name: 'maronn-dynamic-op-client-2' },
+      },
+    },
+  ],
+  [
+    'config',
+    {
+      name: 'config',
+      displayName: 'Config OP',
+      testPlan: CONFIG_OP_TEST_PLAN,
+      modules: CONFIG_OP_MODULES,
+      manualReviewModules: [],
+      defaultAlias: 'maronn-config-op',
+      // The plan reads the discovery document and the JWKS only.
+      clients: [],
+    },
+  ],
 ]);
 
 export function resolvePlan(plan = 'basic') {
@@ -401,9 +503,9 @@ export function resolvePlan(plan = 'basic') {
  * (`<plan>:<module>,<module>`).
  */
 export function opTestPlan({ plan = 'basic', skipManualReview = false } = {}) {
-  const { testPlan, modules } = resolvePlan(plan);
+  const { testPlan, modules, manualReviewModules } = resolvePlan(plan);
   if (!skipManualReview) return testPlan;
-  const automated = modules.filter((module) => !MANUAL_REVIEW_MODULES.includes(module));
+  const automated = modules.filter((module) => !manualReviewModules.includes(module));
   return `${testPlan}:${automated.join(',')}`;
 }
 
@@ -463,6 +565,12 @@ const SAMPLE_APPS = new Map([
       displayName: 'Hono Cloudflare',
       packageName: '@maronn-openid-connect/sample-hono-cloudflare',
       defaultStartCommand: 'corepack enable && pnpm --dir samples/hono-cloudflare start',
+      // The sample is generated with --enable id-jag, whose discovery adds
+      // these two fields (draft-ietf-oauth-identity-assertion-authz-grant §7).
+      extensionMetadataFields: [
+        'identity_chaining_requested_token_types_supported',
+        'authorization_grant_profiles_supported',
+      ],
     },
   ],
   [
@@ -527,22 +635,57 @@ export function createOpConformanceArtifacts(options = {}) {
   return {
     plan: plan.name,
     testPlan: opTestPlan({ plan: plan.name, skipManualReview: options.skipManualReview }),
+    expectedSkips: createExpectedSkips(plan),
     sampleApp,
     config: {
       alias,
       description: `maronn-openid-connect ${plan.displayName} certification check for the ${sampleApp.displayName} sample`,
-      server: {
-        discoveryUrl: `${opIssuer}/.well-known/openid-configuration`,
-      },
+      server: createSuiteServer({ opIssuer, plan, sampleApp }),
       ...Object.fromEntries(
         plan.clients.map((client) => [client.configKey, createSuiteClient(client)]),
       ),
+      ...(plan.suiteConfig ?? {}),
       browser: createBrowserAutomation({ opIssuer, suiteBaseUrl }),
     },
     clients: plan.clients.map((client) =>
       createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks }),
     ),
   };
+}
+
+/**
+ * The modules of the plan the suite may skip, in the form of the
+ * --expected-skips-file of run-test-plan.py (the .gitlab-ci/expected-skips-*.json
+ * of the conformance suite). run-test-plan.py fails a run with a skip that is
+ * not listed, and one with a listed skip that did not happen, so a module that
+ * starts to run (pairwise subjects implemented, say) has to leave the list.
+ * run-test-plan.py also takes a listed module that FAILED for a skip; the
+ * FAILURE conditions of such a module still fail the run.
+ */
+function createExpectedSkips(plan) {
+  return (plan.expectedSkips ?? []).map((module) => ({
+    'test-name': module,
+    variant: '*',
+    'configuration-filename': `*${plan.name}-op-config.json`,
+  }));
+}
+
+/**
+ * The server of the suite configuration. oidcc-discovery-endpoint-verification
+ * (the Dynamic OP and Config OP plans) warns about every discovery field
+ * outside RFC 8414 and OpenID Connect Discovery 1.0, unless the configuration
+ * names it in allow_unexpected_metadata_fields (CheckForUnexpectedParameters
+ * InServerMetadata of the conformance suite). Only the extension fields the
+ * sample publishes on purpose are named, so any other unexpected field still
+ * warns.
+ */
+function createSuiteServer({ opIssuer, plan, sampleApp }) {
+  const discoveryUrl = `${opIssuer}/.well-known/openid-configuration`;
+  const extensionFields = sampleApp.extensionMetadataFields ?? [];
+  if (!plan.modules.includes('oidcc-discovery-endpoint-verification') || extensionFields.length === 0) {
+    return { discoveryUrl };
+  }
+  return { discoveryUrl, allow_unexpected_metadata_fields: [...extensionFields] };
 }
 
 // OIDC Core 1.0 §6.1 / RFC 9101: a suite-side static client. `jwks` gives the
@@ -570,6 +713,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
   const clientsPath = join(outDir, 'oidc-clients.json');
   const metadataPath = join(outDir, 'metadata.json');
   const testPlanPath = join(outDir, 'test-plan.txt');
+  const expectedSkipsPath = join(outDir, 'expected-skips.json');
 
   await writeJsonFile(configPath, artifacts.config);
   await writeJsonFile(clientsPath, artifacts.clients);
@@ -581,6 +725,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
     clientsPath,
   });
   await writeFile(testPlanPath, `${artifacts.testPlan}\n`);
+  await writeJsonFile(expectedSkipsPath, artifacts.expectedSkips);
 
   return {
     ...artifacts,
@@ -589,6 +734,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
       clientsPath,
       metadataPath,
       testPlanPath,
+      expectedSkipsPath,
     },
   };
 }
@@ -695,7 +841,7 @@ async function writeJsonFile(path, value) {
 
 async function main() {
   const artifacts = await writeOpConformanceArtifacts({
-    // CONFORMANCE_PLAN: basic (the default), implicit or hybrid.
+    // CONFORMANCE_PLAN: basic (the default), implicit, hybrid, dynamic or config.
     plan: process.env.CONFORMANCE_PLAN,
     alias: process.env.CONFORMANCE_ALIAS,
     opIssuer: process.env.CONFORMANCE_OP_ISSUER,

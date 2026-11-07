@@ -28,6 +28,7 @@
 import type { Child } from 'hono/jsx';
 import type { JSX } from 'hono/jsx/jsx-runtime';
 import { raw } from 'hono/html';
+import type { ClientDisplay } from './client-display.js';
 
 // ============================================================
 // View Parameter Types
@@ -51,6 +52,13 @@ export interface LoginPageParams {
    */
   loginHint?: string;
   /**
+   * The client asking for the authorization (OIDC Dynamic Client
+   * Registration 1.0 §2): its client_id, client_name, logo_uri, policy_uri,
+   * tos_uri and client_uri, already narrowed to the URLs the page may show
+   * (client-display.ts). The page always shows it.
+   */
+  client: ClientDisplay;
+  /**
    * The other ways to sign in that the features offer (the login methods of
    * features/feature.ts, such as Sign in with Google), already rendered.
    * Shown below the password form.
@@ -67,8 +75,12 @@ export interface ConsentPageParams {
   csrfToken: string;
   /** Scopes requested by the client */
   scopes: string[];
-  /** Client ID requesting authorization */
-  clientId: string;
+  /**
+   * The client requesting the authorization (OIDC Dynamic Client
+   * Registration 1.0 §2), as for the login page: its clientId is the
+   * client_id of the request.
+   */
+  client: ClientDisplay;
 }
 
 /**
@@ -265,6 +277,54 @@ export function ScopeList(props: { scopes: string[] }): JSX.Element {
 }
 
 /**
+ * 認可を求めるクライアントのロゴと、画面の文（`children`）と、ポリシーと利用規約のリンクを描画する。
+ *
+ * 画面の文には、クライアントの名前（{@link clientDisplayName}）を入れる。
+ * `logo_uri` は画像（`img`）に、`policy_uri`、`tos_uri`、`client_uri` はリンク（`a`、新しいタブで開き、参照元を送らない）にする（OIDC Dynamic Client Registration 1.0 §2）。
+ * URL は、client-display.ts が表示してよいものに絞ってから渡す。
+ * 値はどれも JSX が属性と本文でエスケープする。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ */
+export function ClientSummary(props: { client: ClientDisplay; children?: Child }): JSX.Element {
+  const { client } = props;
+  const links = [
+    { href: client.clientUri, label: 'Home page' },
+    { href: client.policyUri, label: 'Privacy policy' },
+    { href: client.tosUri, label: 'Terms of service' },
+  ].filter((link): link is { href: string; label: string } => link.href !== undefined);
+  return (
+    <section class="client">
+      {client.logoUri === undefined ? null : (
+        <img src={client.logoUri} alt={`${clientDisplayName(client)} logo`} width="64" height="64" />
+      )}
+      <p>{props.children}</p>
+      {links.length === 0 ? null : (
+        <p>
+          {links.map((link) => (
+            <>
+              {' '}
+              <a href={link.href} target="_blank" rel="noopener noreferrer">{link.label}</a>
+            </>
+          ))}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * 画面に表示するクライアントの名前を返す。
+ *
+ * `client_name` があればそれを、なければ `client_id` を返す（OIDC Dynamic Client Registration 1.0 §2）。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ */
+export function clientDisplayName(client: ClientDisplay): string {
+  return client.name ?? client.clientId;
+}
+
+/**
  * ユーザーが選んだ承認か拒否の結果を描画する。
  *
  * `approved` が `true` なら承認した旨を、`false` なら拒否した旨を、`clientId` とともに表示する。
@@ -290,6 +350,10 @@ export function DecisionOutcome(props: { approved: boolean; clientId: string }):
  *
  * ユーザー名の欄には `login_hint` を初期値として入れる。
  * 前の試行が失敗していれば、フォームの上にエラーと、わかる場合は残りの試行回数を表示する。
+ * フォームの上には、認可を求めるクライアントを、名前（無ければ `client_id`）、ロゴ、ポリシーと利用規約のリンクで示す（`ClientSummary`）。
+ * 名前の `strong` は画面に一つだけ置く。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 function defaultLoginPage(params: LoginPageParams): JSX.Element {
   // ユーザー名の欄に `login_hint` を初期値として入れた画面を返す（OIDC Core 1.0 §3.1.2.1）。
@@ -297,6 +361,9 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
   return (
     <Layout title="Login">
       <h1>Login</h1>
+      <ClientSummary client={params.client}>
+        Sign in to continue to <strong>{clientDisplayName(params.client)}</strong>.
+      </ClientSummary>
       <FormError error={params.error} remainingAttempts={params.remainingAttempts} />
       <form method="post" action="/login">
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
@@ -324,14 +391,19 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
  *
  * 承認と拒否のボタンは、`action=approve` か `action=deny` を、`csrf_token` とともに `/consent` へ POST する。
  * 同意のハンドラは `approve` と `deny` 以外の値を 400 で拒否するので、画面を作り変えるときもボタンの値は変えない。
+ * クライアントは名前（無ければ `client_id`）、ロゴ、ポリシーと利用規約のリンクで示す（`ClientSummary`）。
+ * 名前の `strong` は画面に一つだけ置く。
  *
  * @spec OIDC Core 1.0 §3.1.2.4
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 function defaultConsentPage(params: ConsentPageParams): JSX.Element {
   return (
     <Layout title="Consent">
       <h1>Authorize Application</h1>
-      <p>Client <strong>{params.clientId}</strong> is requesting access to the following scopes:</p>
+      <ClientSummary client={params.client}>
+        Client <strong>{clientDisplayName(params.client)}</strong> is requesting access to the following scopes:
+      </ClientSummary>
       <ScopeList scopes={params.scopes} />
       <form method="post" action="/consent">
         <input type="hidden" name="csrf_token" value={params.csrfToken} />

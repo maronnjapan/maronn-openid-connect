@@ -116,11 +116,16 @@ async function providerMetadata(): Promise<Response> {
     // 認可エンドポイントで扱うグラントタイプ（インプリシットフローとハイブリッドフローの `implicit`）は、その機能が feature.ts の `discovery` で加える。
     grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
     // `none` は、トークンエンドポイントがパブリッククライアント（`client_secret` を持たないクライアント）を受け付けることを示す（RFC 6749 §2.1、OAuth 2.1 §2.4）。
+    // `private_key_jwt` は、クライアントの秘密鍵で署名したクライアントアサーションによる認証である（OIDC Core 1.0 §9、client-auth.ts）。
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
+      'private_key_jwt',
       'none',
     ],
+    // `private_key_jwt` を公開するときに必要な項目である（OIDC Discovery 1.0 §3、RFC 8414 §2）。
+    // `none` は含めない。
+    tokenEndpointAuthSigningAlgValuesSupported: [...config.tokenEndpointAuthSigningAlgValuesSupported],
     // 登録した UserInfo の鍵で署名できるアルゴリズムを、重複を除いて並べる（OIDC Core 1.0 §5.3.2）。
     // `userinfo_signed_response_alg` を使うクライアントは、メタデータの値をそのまま信頼できる。
     userinfoSigningAlgValuesSupported: [

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { providerContext } from '../../../../test-support/context.js';
 import { CSRF_TOKEN, TRANSACTION_ID, sampleTransaction } from '../../../../test-support/screens.js';
 import { renderView } from '../../../views.js';
+import { registerClient } from '../../../db/memory/clients.js';
 import { describeLoginScreen } from './describe-login-screen.js';
 
 describe('describeLoginScreen', () => {
@@ -11,7 +12,13 @@ describe('describeLoginScreen', () => {
 
     const screen = await describeLoginScreen(c, TRANSACTION_ID, sampleTransaction({ loginHint: 'alice' }));
 
-    expect(screen).toEqual({ kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: 'alice', loginMethods: [] });
+    expect(screen).toEqual({
+      kind: 'screen',
+      csrfToken: CSRF_TOKEN,
+      loginHint: 'alice',
+      client: { clientId: 'client-1' },
+      loginMethods: [],
+    });
   });
 
   it('should offer no other login method while none is configured', async () => {
@@ -19,7 +26,38 @@ describe('describeLoginScreen', () => {
 
     const screen = await describeLoginScreen(c, TRANSACTION_ID, sampleTransaction());
 
-    expect(screen).toEqual({ kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: undefined, loginMethods: [] });
+    expect(screen).toEqual({
+      kind: 'screen',
+      csrfToken: CSRF_TOKEN,
+      loginHint: undefined,
+      client: { clientId: 'client-1' },
+      loginMethods: [],
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: the OP SHOULD display the client's name, logo and policies.
+  it('should describe the name, logo and policies of the registered client', async () => {
+    const { c, db } = await providerContext();
+    await registerClient(db, {
+      clientId: 'client-1',
+      redirectUris: ['https://rp.example.com/callback'],
+      clientName: 'Example RP',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://openid.net/terms',
+      clientUri: 'http://rp.example.com/',
+    });
+
+    const screen = await describeLoginScreen(c, TRANSACTION_ID, sampleTransaction());
+
+    // client_uri is http, so it is not shown (client-display.ts).
+    expect(screen.client).toEqual({
+      clientId: 'client-1',
+      name: 'Example RP',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://openid.net/terms',
+    });
   });
 
   describe('Login methods of the features', () => {

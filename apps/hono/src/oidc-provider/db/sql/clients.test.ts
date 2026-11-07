@@ -1,4 +1,4 @@
-import { hashClientSecret, type Jwk } from '@maronn-openid-connect/core';
+import { hashClientSecret, type Jwk, type TokenClientResolver } from '@maronn-openid-connect/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createSqliteDatabase } from '../../../test-support/databases.js';
 import { createClientKeyResolver, createClientResolver, registerClient } from './clients.js';
@@ -22,7 +22,7 @@ describe('registerClient', () => {
     it('should save the hash of the client secret, never the secret itself', async () => {
       await registerClient(db, {
         clientId: 'rp-1',
-        name: 'RP One',
+        clientName: 'RP One',
         clientSecret: 's3cret',
         redirectUris: ['https://rp.example.com/callback'],
         tokenEndpointAuthMethods: ['client_secret_basic'],
@@ -97,6 +97,45 @@ describe('registerClient', () => {
       ).rejects.toThrow('tokenEndpointAuthMethods must not list none together with another method');
       expect(await rows('SELECT COUNT(*) AS count FROM clients')).toEqual([{ count: 0 }]);
     });
+
+    // OIDC Core 1.0 §9: a private_key_jwt client authenticates with a signed assertion, not a secret.
+    it('should save private_key_jwt as a client_auths row without a secret and its alg in clients', async () => {
+      await registerClient(db, {
+        clientId: 'rp-jwt',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['private_key_jwt'],
+        tokenEndpointAuthSigningAlg: 'ES256',
+        keys: { private_key_jwt: { keys: [privateKeyJwtKey] } },
+      });
+
+      expect(await rows('SELECT client_id, client_auth_type FROM client_auths')).toEqual([
+        { client_id: 'rp-jwt', client_auth_type: 'private_key_jwt' },
+      ]);
+      expect(await rows('SELECT COUNT(*) AS count FROM client_secrets')).toEqual([{ count: 0 }]);
+      expect(await rows('SELECT id, token_endpoint_auth_signing_alg FROM clients')).toEqual([
+        { id: 'rp-jwt', token_endpoint_auth_signing_alg: 'ES256' },
+      ]);
+    });
+
+    // RFC 7591 §2: the one client_secret belongs to the secret methods; private_key_jwt has none.
+    it('should save a secret method and private_key_jwt as two client_auths rows with the secret on the secret method only', async () => {
+      await registerClient(db, {
+        clientId: 'rp-both',
+        clientSecret: 's3cret',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_post', 'private_key_jwt'],
+      });
+
+      expect(
+        await rows(
+          'SELECT a.client_auth_type, s.secret FROM client_auths a LEFT JOIN client_secrets s ON s.id = a.id ' +
+            'ORDER BY a.client_auth_type',
+        ),
+      ).toEqual([
+        { client_auth_type: 'client_secret_post', secret: await hashClientSecret('s3cret') },
+        { client_auth_type: 'private_key_jwt', secret: null },
+      ]);
+    });
   });
 
   describe('Client Metadata', () => {
@@ -144,7 +183,7 @@ describe('registerClient', () => {
     });
 
     // RFC 7591 §2 jwks_uri / OIDC Dynamic Client Registration 1.0 §2 request_object_signing_alg.
-    it('should save the jwksUri and the requestObjectSigningAlg as rows of the client', async () => {
+    it('should save the jwksUri and the requestObjectSigningAlg as columns of the client', async () => {
       await registerClient(db, {
         clientId: 'rp-uri',
         redirectUris: ['https://rp.example.com/callback'],
@@ -152,19 +191,41 @@ describe('registerClient', () => {
         requestObjectSigningAlg: 'ES256',
       });
 
-      expect(await rows('SELECT client_id, value FROM client_jwks_uris')).toEqual([
-        { client_id: 'rp-uri', value: 'https://rp.example.com/jwks.json' },
-      ]);
-      expect(await rows('SELECT client_id, alg FROM client_request_object_signing_algs')).toEqual([
-        { client_id: 'rp-uri', alg: 'ES256' },
+      expect(await rows('SELECT id, jwks_uri, request_object_signing_alg FROM clients')).toEqual([
+        { id: 'rp-uri', jwks_uri: 'https://rp.example.com/jwks.json', request_object_signing_alg: 'ES256' },
       ]);
     });
 
-    it('should save no jwks_uri or signing alg rows for a client registered without them', async () => {
+    it('should save NULL for the jwks_uri and the signing algs of a client registered without them', async () => {
       await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
 
-      expect(await rows('SELECT client_id FROM client_jwks_uris')).toEqual([]);
-      expect(await rows('SELECT client_id FROM client_request_object_signing_algs')).toEqual([]);
+      expect(await rows('SELECT jwks_uri, request_object_signing_alg, token_endpoint_auth_signing_alg FROM clients')).toEqual([
+        { jwks_uri: null, request_object_signing_alg: null, token_endpoint_auth_signing_alg: null },
+      ]);
+    });
+
+    // OIDC Dynamic Client Registration 1.0 §2: what the login and consent screens show about the client.
+    it('should save client_name and the display URIs as columns of clients', async () => {
+      await registerClient(db, {
+        clientId: 'rp-display',
+        redirectUris: ['https://rp.example.com/callback'],
+        clientName: 'Display RP',
+        logoUri: 'https://rp.example.com/logo.png',
+        policyUri: 'https://rp.example.com/privacy',
+        tosUri: 'https://rp.example.com/terms',
+        clientUri: 'https://rp.example.com/',
+      });
+
+      expect(await rows('SELECT id, name, logo_uri, policy_uri, tos_uri, client_uri FROM clients')).toEqual([
+        {
+          id: 'rp-display',
+          name: 'Display RP',
+          logo_uri: 'https://rp.example.com/logo.png',
+          policy_uri: 'https://rp.example.com/privacy',
+          tos_uri: 'https://rp.example.com/terms',
+          client_uri: 'https://rp.example.com/',
+        },
+      ]);
     });
 
     it('should reject a jwksUri that is not an absolute http or https URL and save nothing', async () => {
@@ -254,7 +315,7 @@ describe('registerClient', () => {
       expect(await snapshot()).toEqual(first);
     });
 
-    it('should replace the jwksUri and the requestObjectSigningAlg, and remove them when they are left out', async () => {
+    it('should replace the jwksUri and the requestObjectSigningAlg, and set them to NULL when they are left out', async () => {
       await registerClient(db, {
         clientId: 'rp-uri',
         redirectUris: ['https://rp.example.com/callback'],
@@ -268,17 +329,31 @@ describe('registerClient', () => {
         requestObjectSigningAlg: 'ES256',
       });
 
-      expect(await rows('SELECT client_id, value FROM client_jwks_uris')).toEqual([
-        { client_id: 'rp-uri', value: 'https://rp.example.com/jwks.json' },
-      ]);
-      expect(await rows('SELECT client_id, alg FROM client_request_object_signing_algs')).toEqual([
-        { client_id: 'rp-uri', alg: 'ES256' },
+      expect(await rows('SELECT jwks_uri, request_object_signing_alg FROM clients')).toEqual([
+        { jwks_uri: 'https://rp.example.com/jwks.json', request_object_signing_alg: 'ES256' },
       ]);
 
       await registerClient(db, { clientId: 'rp-uri', redirectUris: ['https://rp.example.com/callback'] });
 
-      expect(await rows('SELECT client_id FROM client_jwks_uris')).toEqual([]);
-      expect(await rows('SELECT client_id FROM client_request_object_signing_algs')).toEqual([]);
+      expect(await rows('SELECT jwks_uri, request_object_signing_alg FROM clients')).toEqual([
+        { jwks_uri: null, request_object_signing_alg: null },
+      ]);
+    });
+
+    it('should remove the private_key_jwt row when the client is registered again without it', async () => {
+      const client = { clientId: 'rp-both', clientSecret: 's3cret', redirectUris: ['https://rp.example.com/callback'] };
+      await registerClient(db, {
+        ...client,
+        tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+        tokenEndpointAuthSigningAlg: 'ES384',
+      });
+
+      await registerClient(db, { ...client, tokenEndpointAuthMethods: ['client_secret_basic'] });
+
+      expect(await rows('SELECT client_auth_type FROM client_auths')).toEqual([{ client_auth_type: 'client_secret_basic' }]);
+      expect(await rows('SELECT token_endpoint_auth_signing_alg FROM clients')).toEqual([
+        { token_endpoint_auth_signing_alg: null },
+      ]);
     });
 
     it('should make a deleted client known again when it is registered again', async () => {
@@ -476,6 +551,20 @@ describe('createClientResolver', () => {
       'Client rp-1 has client_auths rows with different secrets',
     );
   });
+
+  // RFC 7591 §2 / OIDC Core 1.0 §9: the one client_secret is that of the secret methods; private_key_jwt has none.
+  it('should not count the private_key_jwt row in the one-secret check', async () => {
+    await registerClient(db, {
+      clientId: 'rp-three',
+      clientSecret: 'shared',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
+    });
+
+    expect(await createClientResolver(db).findClient('rp-three')).toMatchObject({
+      clientSecretHash: await hashClientSecret('shared'),
+    });
+  });
 });
 
 describe('createClientKeyResolver', () => {
@@ -533,5 +622,55 @@ describe('createClientKeyResolver', () => {
     await expect(resolver.findClientKeys('rp-1', 'not-json')).rejects.toThrow(message);
     await expect(resolver.findClientKeys('rp-1', 'array')).rejects.toThrow(message);
     await expect(resolver.findClientKeys('rp-1', 'null')).rejects.toThrow(message);
+  });
+});
+
+// OIDC Core 1.0 §9 / OIDC Dynamic Client Registration 1.0 §2: private_key_jwt, request_uris
+// and what the login and consent screens show about a statically registered client.
+describe('registerClient with private_key_jwt and display metadata', () => {
+  it('should find a private_key_jwt client with its signing alg, request_uris and display metadata', async () => {
+    await registerClient(db, {
+      clientId: 'rp-jwt',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['private_key_jwt'],
+      tokenEndpointAuthSigningAlg: 'ES256',
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestUris: ['https://rp.example.com/ro/1#abc'],
+      clientName: 'Example RP',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://rp.example.com/terms',
+      clientUri: 'https://rp.example.com/',
+    });
+
+    expect(await createClientResolver(db).findClient('rp-jwt')).toEqual({
+      clientId: 'rp-jwt',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['private_key_jwt'],
+      tokenEndpointAuthSigningAlg: 'ES256',
+      jwksUri: 'https://rp.example.com/jwks.json',
+      requestUris: ['https://rp.example.com/ro/1#abc'],
+      clientName: 'Example RP',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://rp.example.com/terms',
+      clientUri: 'https://rp.example.com/',
+    });
+  });
+
+  it('should find every method of a client that registers a secret method and private_key_jwt', async () => {
+    await registerClient(db, {
+      clientId: 'rp-both',
+      clientSecret: 's3cret',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+    });
+
+    const resolver: TokenClientResolver = createClientResolver(db);
+    const client = await resolver.findClient('rp-both');
+
+    // The rows come back in the order of their ids, which is not the order they were registered in.
+    expect([...(client?.tokenEndpointAuthMethods ?? [])].sort()).toEqual(['client_secret_basic', 'private_key_jwt']);
   });
 });

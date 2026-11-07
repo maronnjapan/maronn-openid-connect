@@ -2,9 +2,9 @@ import {
   extractClientCredentials,
   resolveAuthenticatedTokenClient,
   validateClientAuthMethod,
-  verifyClientSecret,
   type TokenClientInfo,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../../../../client-auth.js';
 import { step } from '../../../../../endpoints/step.js';
 
 export const meta = step({
@@ -24,7 +24,7 @@ export const meta = step({
  * クライアントを認証し、認証したクライアントを返す。
  *
  * クライアントは、`client_id` に登録した認証方式で認証しなければならない（CIBA §7.1 の MUST）。
- * そのため、トークンエンドポイントと同じ core の関数を同じ順に呼び、提示された認証情報を読み取り、登録済みのクライアントを取得し、認証方式を確かめ、`client_secret` を比較する。
+ * そのため、トークンエンドポイントと同じ core の関数を同じ順に呼び、提示された認証情報を読み取り、登録済みのクライアントを取得し、認証方式を確かめ、`client_secret` かクライアントアサーション（`private_key_jwt`。`aud` はこのエンドポイントの URL か issuer）を確かめる。
  * 認証に失敗すると、中で呼ぶ core の関数が `TokenError`（`invalid_client` など）を投げる。
  * 認証方式が `none` のパブリッククライアントはここを通るが、後の `create-request` のステップで `unauthorized_client` として拒否される。
  *
@@ -45,6 +45,6 @@ export async function authenticateCibaClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(client, presentedCredentials);
-  await verifyClientSecret(client, presentedCredentials.clientSecret);
+  await verifyPresentedClientCredential(c, client, presentedCredentials, '/backchannel_authentication');
   return client;
 }

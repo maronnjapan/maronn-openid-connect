@@ -79,6 +79,23 @@ describe('createCachedSigningKeyProvider', () => {
     await cached.getSigningKeys();
     expect(base.callCount).toBe(2);
   });
+
+  // OIDC Core 1.0 §10.1.1: a rotated key is signed with and published at once.
+  it('should read the base provider again after invalidate() within the TTL', async () => {
+    const rotated: SigningKey = { ...stubKey, keyId: 'rotated' };
+    const keys: SigningKey[] = [stubKey];
+    const cached = createCachedSigningKeyProvider({ getSigningKeys: async () => [...keys] }, 60000);
+    const before = await cached.getSigningKeys();
+
+    keys.unshift(rotated);
+    const stillCached = await cached.getSigningKeys();
+    cached.invalidate();
+    const after = await cached.getSigningKeys();
+
+    expect(before).toEqual([stubKey]);
+    expect(stillCached).toEqual([stubKey]);
+    expect(after).toEqual([rotated, stubKey]);
+  });
 });
 
 describe('selectSigningKeyByAlg', () => {

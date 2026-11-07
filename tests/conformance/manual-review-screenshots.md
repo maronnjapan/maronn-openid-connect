@@ -1,4 +1,4 @@
-# Basic OP Conformance: manual review module の screenshot 提出手順
+# Conformance: manual review module の screenshot 提出手順
 
 OpenID Connect Basic OP static-client profile の Conformance Suite には、ブラウザ自動化
 だけでは `FINISHED` まで到達せず、**人手での screenshot 提出 / manual review** を前提と
@@ -150,6 +150,104 @@ Web UI の plan 画面で、上表の 4 module が PASS（または許容され�
 ```bash
 docker compose -f tests/conformance/docker-compose.yml down -v --remove-orphans
 ```
+
+## Dynamic OP の manual review module
+
+Dynamic OP のプラン（`pnpm run conformance:dynamic-op`）では、次の7つの module が人手を要します。
+6つは screenshot の提出を、`oidcc-server-rotate-keys` は試験者による鍵のローテーションと開始を待ちます。
+CI（`CONFORMANCE_SKIP_MANUAL_REVIEW=1`）はこの7つを除いて実行します。
+
+| module | Suite がすること | OP が表示する画面 / OP がすること | 提出するもの |
+|---|---|---|---|
+| `oidcc-ensure-redirect-uri-in-authorization-request` | `redirect_uris` を2つ登録し、`redirect_uri` 無しで認可リクエストを送る | redirect せず、`redirect_uri is required when multiple redirect URIs are registered` の error page（HTTP 400） | error page の screenshot |
+| `oidcc-redirect-uri-query-mismatch` | クエリ付きの `redirect_uri` を登録し、クエリの値を変えて送る | 完全一致しないので redirect せず、`redirect_uri not registered` の error page | error page の screenshot |
+| `oidcc-redirect-uri-query-added` | クエリ無しの `redirect_uri` を登録し、クエリを足して送る | 同上 | error page の screenshot |
+| `oidcc-registration-logo-uri` | `logo_uri` を付けて登録し、認可リクエストを送る | ログイン画面に、`client_name` と `logo_uri` の画像（`<img alt="<client_name> logo">`） | ロゴが写ったログイン画面の screenshot |
+| `oidcc-registration-policy-uri` | `policy_uri` を付けて登録する | ログイン画面に「Privacy policy」のリンク | リンクが写ったログイン画面の screenshot |
+| `oidcc-registration-tos-uri` | `tos_uri` を付けて登録する | ログイン画面に「Terms of service」のリンク | リンクが写ったログイン画面の screenshot |
+| `oidcc-server-rotate-keys` | module を作ると JWKS を読み、Start が押されるのを待つ。Start の後に JWKS を読み直し、認可コードフローの ID Token を検証する | `POST /operator/signing-keys/rotate` で、新しい鍵を JWKS の先頭に足し、古い鍵を残す。以降の ID Token は新しい `kid` で署名する | 無し（ローテーションしてから Start を押す） |
+
+ログイン画面と同意画面は、https の URL だけを画面に入れます。
+Suite が登録する `logo_uri` と `policy_uri` は Suite のホスト（`https://conformance-nginx:8443/...`）、`tos_uri` は `https://openid.net/...` です。
+OP は画像を取得せず、`<img src>` とリンクの `href` に入れるだけなので、ロゴが表示されるかは screenshot を撮るブラウザが Suite のホストに届くかで決まります。
+
+### ホストのブラウザから OP と Suite を開く
+
+認可リクエストの URL は compose の中の名前（`https://op-tls:3443`、`https://conformance-nginx:8443`）を使います。
+ホストのブラウザで開くには、2つの名前をループバックに向けます（既定の host port 3443 と 8443 を使う場合）。
+
+```text
+# /etc/hosts
+127.0.0.1 op-tls conformance-nginx
+```
+
+どちらの証明書も実行用の CA（`tests/conformance/.generated/certs/ca.crt`）が発行しているので、ブラウザにこの CA を一時的に信頼させるか、警告を確かめたうえで進みます。
+CA はこの実行のためだけのもので、確認が終わったら信頼を外してください。
+
+### 1. サービスを残したまま実行する
+
+```bash
+CONFORMANCE_KEEP_SERVICES=1 pnpm run conformance:dynamic-op
+```
+
+自動の16個の module は runner が完了させます。
+上表の6つの screenshot module は、runner が240秒ずつ待った後も Suite の上で REVIEW（screenshot 待ち）のまま残ります。
+`oidcc-server-rotate-keys` は、Start が押されないまま打ち切られます。
+
+### 2. error page module の screenshot を提出する
+
+`oidcc-ensure-redirect-uri-in-authorization-request`、`oidcc-redirect-uri-query-mismatch`、`oidcc-redirect-uri-query-added` のログ詳細を開き、Basic OP の手順 3 と同じく、ログに記録された認可リクエストの URL を開いて error page の screenshot を提出します。
+error page には、`invalid_request` と上表の `error_description` が出ます。
+
+### 3. ロゴとリンクの screenshot を提出する
+
+`oidcc-registration-logo-uri`、`oidcc-registration-policy-uri`、`oidcc-registration-tos-uri` のログ詳細を開き、ログに記録された認可リクエストの URL を開きます。
+ログイン画面の「Sign in to continue to <client_name>.」の上下に、ロゴ（logo-uri）か、「Privacy policy」（policy-uri）と「Terms of service」（tos-uri）のリンクが出ます。
+その画面の screenshot を、ログ詳細の screenshot アップロード欄から提出します。
+
+### 4. `oidcc-server-rotate-keys` を進める
+
+1. Suite の Web UI のプランの画面で、`oidcc-server-rotate-keys` を作ります（Run Test）。module は JWKS を読み、Start ボタンを出して待ちます。
+2. ホストから、サンプルOPの署名鍵をローテーションします。トークンは `OIDC_SIGNING_KEY_ROTATION_TOKEN`（既定 `conformance-rotation-token`）です。
+
+   ```bash
+   curl --cacert tests/conformance/.generated/certs/ca.crt \
+     -X POST \
+     -H "Authorization: Bearer conformance-rotation-token" \
+     https://localhost:3443/operator/signing-keys/rotate
+   ```
+
+   応答は `{"kid":"<新しい kid>","kids":["<新しい kid>","<前の kid>", ...]}` です。
+   新しい鍵が JWKS の先頭に入り、前の鍵は残ります。
+   OP は署名鍵のキャッシュを捨てる（`createCachedSigningKeyProvider().invalidate()`）ので、この応答の後に発行する ID Token は新しい `kid` で署名されます。
+   トークンが違えば 401 を返し、何も変えません。
+3. Suite の画面で Start を押します。Suite は JWKS を読み直し、新しい `kid` と鍵素材の鍵が増えていること、前の鍵が残っていることを確かめ、新しい鍵で署名された ID Token を検証します。
+
+ローテーションの手段は、どのサンプルでも同じ `POST /operator/signing-keys/rotate` です。
+生成コード（`src/oidc-provider`、Next.js は `src/app`）には入れず、サンプルの起動側に置いています。
+
+| サンプル | 置き場所 |
+|---|---|
+| `hono-cloudflare` | `src/app.ts`（`OIDC_SIGNING_KEY_ROTATION_TOKEN` は `wrangler dev --var`） |
+| `express-flyio` | `src/app.ts` |
+| `fastify-flyio` | `src/app.ts` |
+| `nextjs-vercel` | `src/proxy.ts`（ローテーションは `src/signing-keys.ts`） |
+
+`OIDC_SIGNING_KEY_ROTATION_TOKEN` が無いサンプルは、このルートを持ちません（404）。
+本番では設定しないでください。
+`apps/hono` の開発サーバーにも、`APP_OPERATOR_TOKEN` で守られた同じルートがあります（`tests/e2e/specs/signing-key-rotation.spec.ts` が検証する）。
+
+### 5. サービスを停止する
+
+```bash
+docker compose -f tests/conformance/docker-compose.yml down -v --remove-orphans
+```
+
+### 実行状況
+
+この7つの module の screenshot の提出と `oidcc-server-rotate-keys` の手動開始は、まだ行っていません。
+自動の16個の module は、CI で4つのサンプルのどれでも FAILURE 0、WARNING 0 でした（README の「Dynamic OP（2026-11-06、CI）」）。
+上表の OP の挙動は、E2E（ログイン画面と同意画面の表示は `tests/e2e/specs/client-display.spec.ts`、鍵のローテーションは `signing-key-rotation.spec.ts`）と、core の単体テスト（`redirect_uri` の完全一致と省略の規則は `packages/core/src/authorization-request.test.ts`）で確かめています。
 
 ## acr / request object module（現在は PASS）
 

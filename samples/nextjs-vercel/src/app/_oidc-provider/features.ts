@@ -18,6 +18,7 @@ import { implicitFlow } from './features/implicit-flow/feature';
 import { hybridFlow } from './features/hybrid-flow/feature';
 import { deviceAuthorizationGrant } from './features/device-authorization-grant/feature';
 import { ciba } from './features/ciba/feature';
+import { dynamicClientRegistration } from './features/dynamic-client-registration/feature';
 import { googleLogin } from './features/google-login/feature';
 
 export const features: readonly Feature[] = [
@@ -31,5 +32,6 @@ export const features: readonly Feature[] = [
   hybridFlow,
   deviceAuthorizationGrant,
   ciba,
+  dynamicClientRegistration,
   googleLogin,
 ];

@@ -22,7 +22,8 @@ describe('revocation', () => {
     it('should advertise the endpoint under the issuer with the confidential client methods', () => {
       expect(discoveryOf([revocation], {}, TEST_ISSUER, createProviderConfig({ issuer: TEST_ISSUER }))).toEqual({
         revocation_endpoint: 'https://op.example.com/revoke',
-        revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+        revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
+        revocation_endpoint_auth_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       });
     });
   });

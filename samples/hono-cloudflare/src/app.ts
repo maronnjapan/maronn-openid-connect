@@ -5,7 +5,6 @@ import {
   selectPreferredAcr,
   type AcrResolver,
   type SigningKey,
-  type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import type { ClientRegistration } from './oidc-provider/config.js';
@@ -32,6 +31,9 @@ interface Bindings {
   OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI?: string;
   OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS?: string;
   OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS?: string;
+  OIDC_ALLOW_INSECURE_REQUEST_URI?: string;
+  OIDC_REQUIRE_REQUEST_URI_REGISTRATION?: string;
+  OIDC_SIGNING_KEY_ROTATION_TOKEN?: string;
 }
 
 const bindings = env as Bindings;
@@ -130,6 +132,32 @@ const clientJwksUri = {
   ...(clientJwksUriRefetchIntervalSeconds === undefined ? {} : { clientJwksUriRefetchIntervalSeconds }),
 };
 
+// OIDC Core 1.0 §6.2 request_uri: the generated OP fetches the Request Object
+// a client passes by reference, from https URLs of public hosts by default.
+// OIDC_ALLOW_INSECURE_REQUEST_URI=1 also lets http and loopback or private
+// addresses through, for development (tests/e2e serves its Request Objects
+// over http on 127.0.0.1), and OIDC_REQUIRE_REQUEST_URI_REGISTRATION=1 fetches
+// only the request_uris a client registered (require_request_uri_registration).
+const requestUri = {
+  allowInsecureRequestUri: bindings.OIDC_ALLOW_INSECURE_REQUEST_URI === '1',
+  requireRequestUriRegistration: bindings.OIDC_REQUIRE_REQUEST_URI_REGISTRATION === '1',
+};
+
+// OIDC Core 1.0 §10.1.1: the signing key is generated when the isolate starts,
+// and POST /operator/signing-keys/rotate (below) rotates it while the sample
+// runs: a new key with a kid of its own signs from the next request on, and
+// the old ones stay in the JWKS. The route answers only a request that
+// presents OIDC_SIGNING_KEY_ROTATION_TOKEN as a Bearer token, and exists only
+// when it is set (the conformance run and tests/e2e set it; never set it in
+// production). The keys live in the isolate: wrangler dev runs one, and a
+// deployment that runs several keeps its keys in a store all of them read.
+const signingKeyId = bindings.OIDC_SIGNING_KEY_ID || 'hono-cloudflare-rs256-key';
+const signingKeys: Array<Promise<SigningKey>> = [generateSigningKey(signingKeyId)];
+const signingKeyProvider = createCachedSigningKeyProvider(
+  { getSigningKeys: () => Promise.all(signingKeys) },
+  60_000,
+);
+
 // OIDC Core 1.0 §2 / §3.1.2.1: when a client requests an acr via `acr_values`
 // (or `claims.id_token.acr.values`), echo the most-preferred requested value back
 // as the `acr` of the ID Token and the access token. The generated OP does that
@@ -150,6 +178,15 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.get('/', (c) => c.text('maronn-openid-connect Hono Cloudflare sample'));
 app.get('/health', (c) => c.json({ status: 'ok' }));
+if (bindings.OIDC_SIGNING_KEY_ROTATION_TOKEN) {
+  const rotationToken = bindings.OIDC_SIGNING_KEY_ROTATION_TOKEN;
+  app.post('/operator/signing-keys/rotate', async (c) => {
+    if (c.req.header('Authorization') !== `Bearer ${rotationToken}`) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    return c.json(await rotateSigningKey());
+  });
+}
 
 // The sample clients (OIDC_CLIENTS_JSON, or the E2E defaults below) and the
 // development users are registered in the D1 tables the generated app reads.
@@ -179,11 +216,9 @@ applyOidc(app, {
     allowUnsignedRequestObject:
       bindings.OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT === '1',
     ...clientJwksUri,
+    ...requestUri,
   },
-  signingKeyProvider: createCachedSigningKeyProvider(
-    createEphemeralRs256KeyProvider(bindings.OIDC_SIGNING_KEY_ID),
-    60_000,
-  ),
+  signingKeyProvider,
   // The generated app keeps its data in the SQL tables of db/ (--db), on the
   // D1 database of db/instance.ts, and reads the clients from the same tables.
   // registerSampleData() below puts OIDC_CLIENTS_JSON there, the keys of each
@@ -209,13 +244,16 @@ async function registerSampleData(db: Database): Promise<void> {
   await registerDevelopmentUsers(db);
 }
 
-function createEphemeralRs256KeyProvider(keyId = 'hono-cloudflare-rs256-key'): SigningKeyProvider {
-  const keyPromise = generateSigningKey(keyId);
-  return {
-    async getSigningKeys(): Promise<SigningKey[]> {
-      return [await keyPromise];
-    },
-  };
+/**
+ * Generates a new RS256 key, puts it first (new tokens are signed with it),
+ * keeps the earlier ones after it, and drops the cached keys so the next
+ * request signs with it and publishes it. Answers the kids in JWKS order.
+ */
+async function rotateSigningKey(): Promise<{ kid: string; kids: string[] }> {
+  const key = await generateSigningKey(`${signingKeyId}-rotated-${signingKeys.length}`);
+  signingKeys.unshift(Promise.resolve(key));
+  signingKeyProvider.invalidate();
+  return { kid: key.keyId, kids: (await Promise.all(signingKeys)).map((current) => current.keyId) };
 }
 
 async function generateSigningKey(keyId: string): Promise<SigningKey> {

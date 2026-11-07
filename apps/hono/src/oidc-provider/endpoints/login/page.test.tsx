@@ -32,7 +32,7 @@ function loginPost(password: string): Request {
 
 describe('renderLoginPage', () => {
   it('should render the default login view with the csrf_token', async () => {
-    const response = renderLoginPage(contextOf(), { csrfToken: 'csrf-1' });
+    const response = renderLoginPage(contextOf(), { csrfToken: 'csrf-1', client: { clientId: 'client-1' } });
 
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('<input type="hidden" name="csrf_token" value="csrf-1"/>');
@@ -41,7 +41,10 @@ describe('renderLoginPage', () => {
   it('should render the login view of the request context', async () => {
     const views = createViews({ loginPage: (params: LoginPageParams) => <form>{params.csrfToken}</form> });
 
-    const response = renderLoginPage(contextOf(undefined, { views }), { csrfToken: 'csrf-1' });
+    const response = renderLoginPage(contextOf(undefined, { views }), {
+      csrfToken: 'csrf-1',
+      client: { clientId: 'client-1' },
+    });
 
     expect(await response.text()).toBe('<form>csrf-1</form>');
   });

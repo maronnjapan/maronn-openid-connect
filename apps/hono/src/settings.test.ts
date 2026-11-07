@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createEphemeralSigningKeyProvider,
+  createRotatingSigningKeyProvider,
   echoRequestedAcr,
   readClientJwksUri,
   readCrossAppAccess,
@@ -8,6 +8,7 @@ import {
   readList,
   readPostLogoutRedirectUris,
   readRegisteredClients,
+  readRequestUri,
   readServerAddress,
 } from './settings.js';
 
@@ -167,15 +168,42 @@ describe('echoRequestedAcr', () => {
   });
 });
 
-describe('createEphemeralSigningKeyProvider', () => {
-  it('should provide one RS256 key with the key id, the same key on every call', async () => {
-    const provider = createEphemeralSigningKeyProvider('app-key-1');
+// OIDC Core 1.0 §10.1.1: a new key signs, and the old one stays published.
+describe('createRotatingSigningKeyProvider', () => {
+  it('should provide one RS256 key with the key id, the same key on every call before a rotation', async () => {
+    const { signingKeyProvider } = createRotatingSigningKeyProvider('app-key-1');
 
-    const first = await provider.getSigningKeys();
-    const second = await provider.getSigningKeys();
+    const first = await signingKeyProvider.getSigningKeys();
+    const second = await signingKeyProvider.getSigningKeys();
 
     expect(first.map((key) => key.keyId)).toEqual(['app-key-1']);
     expect(first[0]!.publicJwk).toMatchObject({ kty: 'RSA', alg: 'RS256', use: 'sig', kid: 'app-key-1' });
     expect(second[0]).toBe(first[0]);
+  });
+
+  it('should put a new key with a kid of its own first and keep the old one after it', async () => {
+    const { signingKeyProvider, rotateSigningKey } = createRotatingSigningKeyProvider('app-key-1');
+    const before = await signingKeyProvider.getSigningKeys();
+
+    const rotated = await rotateSigningKey();
+    const after = await signingKeyProvider.getSigningKeys();
+
+    expect(rotated).toEqual({ kid: 'app-key-1-rotated-1', kids: ['app-key-1-rotated-1', 'app-key-1'] });
+    expect(after.map((key) => key.keyId)).toEqual(['app-key-1-rotated-1', 'app-key-1']);
+    expect(after[1]).toBe(before[0]);
+  });
+});
+
+describe('readRequestUri', () => {
+  it('should keep the defaults of the request-object feature when nothing is set', () => {
+    expect(readRequestUri({})).toEqual({});
+  });
+
+  // OIDC Core 1.0 §6.2 / OIDC Discovery 1.0 §3.
+  it('should allow insecure request_uris and require their registration when the variables are 1', () => {
+    expect(readRequestUri({ OIDC_ALLOW_INSECURE_REQUEST_URI: '1', OIDC_REQUIRE_REQUEST_URI_REGISTRATION: '1' })).toEqual({
+      allowInsecureRequestUri: true,
+      requireRequestUriRegistration: true,
+    });
   });
 });

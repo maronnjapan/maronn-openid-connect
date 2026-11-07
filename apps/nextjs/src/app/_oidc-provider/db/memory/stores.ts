@@ -28,6 +28,7 @@ import type {
   AuthSessionStorage,
   AuthorizationCodeStorage,
   BrowserSessionStorage,
+  ClientAssertionJtiStorage,
   ConsentStorage,
   ProviderStores,
   RefreshTokenStorage,
@@ -40,7 +41,7 @@ import { verifyPassword } from './users';
 /**
  * メモリ上のデータに読み書きする OP のストアを返す。
  *
- * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログインのストアである。
+ * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログイン、使用済みのクライアントアサーションの `jti` のストアである。
  * 有効期限のあるエントリーは読むときに有効期限を確かめ、期限切れなら返さずに取り除く。
  *
  * 返したストアの `authCodeStore.consume()` と `refreshTokenStore.consume()` は、使用済みか見つからない認可コードとトークンには `TokenError`（`invalid_grant`）を投げる。
@@ -253,6 +254,21 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
     },
   };
 
+  // 使用済みの `jti` を、アサーションが期限切れになるまで覚える（RFC 7523 §3）。
+  // 読み書きは同じ同期の処理の中で行うので、同じキーで `true` を返すのは一度だけである。
+  const clientAssertionJtiStore: ClientAssertionJtiStorage = {
+    consume(key, expiresAt) {
+      const now = nowSeconds();
+      const remembered = db.clientAssertionJtis.get(key);
+      if (remembered !== undefined && remembered > now) return false;
+      for (const [other, otherExpiresAt] of db.clientAssertionJtis) {
+        if (otherExpiresAt <= now) db.clientAssertionJtis.delete(other);
+      }
+      db.clientAssertionJtis.set(key, expiresAt);
+      return true;
+    },
+  };
+
   return {
     transactionStore,
     authCodeStore,
@@ -263,6 +279,7 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
     consentStore,
     userStore,
     upstreamLoginStore,
+    clientAssertionJtiStore,
   };
 }
 

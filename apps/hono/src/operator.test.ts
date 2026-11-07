@@ -1,5 +1,5 @@
 import type { Jwk } from '@maronn-openid-connect/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createEmptyDatabase } from './oidc-provider/db/memory/database.js';
 import { addClientKey, clearClientKeys, createOperatorApp, presentsOperatorToken, removeClientKey } from './operator.js';
 
@@ -64,9 +64,10 @@ describe('clearClientKeys', () => {
 
 describe('createOperatorApp', () => {
   const auth = { Authorization: `Bearer ${OPERATOR_TOKEN}` };
+  const rotateSigningKey = async () => ({ kid: 'k1', kids: ['k1'] });
 
   it('should answer 401 to a request without the operator token', async () => {
-    const app = createOperatorApp(databaseWithClient(), OPERATOR_TOKEN);
+    const app = createOperatorApp(databaseWithClient(), OPERATOR_TOKEN, rotateSigningKey);
 
     const response = await app.request('/clients/rp-1/keys', { method: 'DELETE' });
 
@@ -76,7 +77,7 @@ describe('createOperatorApp', () => {
 
   it('should add a posted key to the client and answer 204', async () => {
     const db = databaseWithClient();
-    const app = createOperatorApp(db, OPERATOR_TOKEN);
+    const app = createOperatorApp(db, OPERATOR_TOKEN, rotateSigningKey);
 
     const response = await app.request('/clients/rp-1/keys/request_object', {
       method: 'POST',
@@ -89,7 +90,7 @@ describe('createOperatorApp', () => {
   });
 
   it('should answer 404 for a client that is not registered', async () => {
-    const app = createOperatorApp(createEmptyDatabase(), OPERATOR_TOKEN);
+    const app = createOperatorApp(createEmptyDatabase(), OPERATOR_TOKEN, rotateSigningKey);
 
     const response = await app.request('/clients/unknown/keys/request_object/a', { method: 'DELETE', headers: auth });
 
@@ -99,7 +100,7 @@ describe('createOperatorApp', () => {
 
   it('should remove one key by kid, and every key, with 204', async () => {
     const db = databaseWithClient([key('a'), key('b')]);
-    const app = createOperatorApp(db, OPERATOR_TOKEN);
+    const app = createOperatorApp(db, OPERATOR_TOKEN, rotateSigningKey);
 
     const removeOne = await app.request('/clients/rp-1/keys/request_object/a', { method: 'DELETE', headers: auth });
     const keysAfterOne = db.clients.get('rp-1')?.keys;
@@ -108,5 +109,26 @@ describe('createOperatorApp', () => {
     expect([removeOne.status, removeAll.status]).toEqual([204, 204]);
     expect(keysAfterOne).toEqual({ request_object: { keys: [key('b')] } });
     expect(db.clients.get('rp-1')?.keys).toBeUndefined();
+  });
+
+  // OIDC Core 1.0 §10.1.1: the OP's own signing key.
+  it('should rotate the signing key and answer the kids', async () => {
+    const rotateToSecondKey = async () => ({ kid: 'k2', kids: ['k2', 'k1'] });
+    const app = createOperatorApp(createEmptyDatabase(), OPERATOR_TOKEN, rotateToSecondKey);
+
+    const response = await app.request('/signing-keys/rotate', { method: 'POST', headers: auth });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ kid: 'k2', kids: ['k2', 'k1'] });
+  });
+
+  it('should refuse the rotation with 401 and keep the signing key without the operator token', async () => {
+    const rotateWithoutToken = vi.fn(async () => ({ kid: 'k3', kids: ['k3', 'k1'] }));
+    const app = createOperatorApp(createEmptyDatabase(), OPERATOR_TOKEN, rotateWithoutToken);
+
+    const response = await app.request('/signing-keys/rotate', { method: 'POST' });
+
+    expect(response.status).toBe(401);
+    expect(rotateWithoutToken).not.toHaveBeenCalled();
   });
 });

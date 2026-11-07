@@ -52,7 +52,7 @@ import {
 } from '../_oidc-provider/features/implicit-flow/authorize';
 import { resolveJarmResponseContext } from '../_oidc-provider/features/jarm/authorize';
 import { resolvePushedAuthorizationRequest } from '../_oidc-provider/features/par/authorize';
-import { resolveRequestObject } from '../_oidc-provider/features/request-object/authorize';
+import { fetchRequestUri, resolveRequestObject } from '../_oidc-provider/features/request-object/authorize';
 import { responseTypesOf, tokenGrantsOf } from '../_oidc-provider/feature';
 import { features } from '../_oidc-provider/features';
 import {
@@ -160,6 +160,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // 登録済みのリダイレクト URI に設定の誤り（フラグメント、`javascript:` などの危険なスキーム、ループバック以外の `http`）があれば、この時点で `server_error` を投げる（OIDC Core 1.0 §3.1.2.1、RFC 8252 §8）。
     validateRegisteredRedirectUris(client.redirectUris);
 
+    // [fetch-request-uri] (feature: request-object) request_uri からリクエストオブジェクトを取得する — OIDC Core 1.0 §6.2
+    params = await fetchRequestUri(params, client);
+
     // [resolve-request-object] (feature: request-object) リクエストオブジェクトを検証し、その値で上書きする — OIDC Core 1.0 §6.1
     const { effectiveParams, requestObjectClaims } = await resolveRequestObject(params, client);
 
@@ -181,8 +184,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     responseMode ??= resolveFragmentResponseContext(requestParams, issuer);
 
     // [validate-request] リクエストのパラメータを検証する — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
-    // `request_uri` と `registration` には対応していないので拒否する（OIDC Core 1.0 §6.3）。
+    // `registration` には対応していないので拒否する（OIDC Core 1.0 §6.3）。
     // `request` は、上でリクエストオブジェクトを処理したとき（`effectiveParams` があるとき）だけ通し、それ以外は拒否する。
+    // `request_uri` は、request-object の機能の `fetch-request-uri` のブロックが取得して `request` に置き換えるので、ここに残っているのは取得しなかったものであり、`request_uri_not_supported` で拒否する。
     rejectUnsupportedRequestParams(params, redirectUri, state, {
       requestParameterSupported: effectiveParams !== undefined,
     });

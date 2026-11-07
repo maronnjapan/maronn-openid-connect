@@ -12,7 +12,7 @@ import { rs256Key } from '../../../../test-support/keys';
 import type { RegisteredClient } from '../../config';
 import { createDatabase, registerClient } from '../../db';
 import { clientKeyResolver, config } from '../../provider';
-import { resolveRequestObject } from './authorize';
+import { fetchRequestUri, resolveRequestObject } from './authorize';
 
 // provider.ts reads the clients' keys from the key-value store of db/ (in
 // memory for the tests, vitest.config.ts), so the clients are registered there.
@@ -282,6 +282,48 @@ describe('resolveRequestObject', () => {
         },
         requestObjectClaims: CLAIMS,
       });
+    });
+  });
+});
+
+// OIDC Core 1.0 §6.2: the Request Object of a request_uri, fetched with
+// globalThis.fetch (provider.ts sets no outboundFetch).
+describe('fetchRequestUri', () => {
+  const REQUEST_URI = 'https://rp.example.com/request-objects/1#content-hash';
+  const JWT = 'eyJhbGciOiJub25lIn0.eyJpc3MiOiJyby1jbGllbnQifQ.';
+  const roClient: RegisteredClient = { clientId: 'ro-client', redirectUris: [REDIRECT_URI] };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('should return the parameters as they are when there is no request_uri', async () => {
+    const params: AuthorizationRequestParams = { ...QUERY };
+
+    expect(await fetchRequestUri(params, roClient)).toBe(params);
+  });
+
+  it('should fetch the request_uri without its fragment and put the Request Object into request', async () => {
+    const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response(JWT, { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    const resolved = await fetchRequestUri({ ...QUERY, request_uri: REQUEST_URI }, roClient);
+
+    expect(resolved).toEqual({ ...QUERY, request: JWT });
+    expect(fetch.mock.calls.map(([input]) => input)).toEqual(['https://rp.example.com/request-objects/1']);
+  });
+
+  it('should answer invalid_request_uri without redirecting when the request_uri cannot be fetched', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('gone', { status: 404 })));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const resolving = fetchRequestUri({ ...QUERY, request_uri: REQUEST_URI }, roClient);
+
+    await expect(resolving).rejects.toBeInstanceOf(AuthorizationError);
+    await expect(resolving).rejects.toMatchObject({
+      error: 'invalid_request_uri',
+      errorDescription: 'the request_uri could not be retrieved',
+      redirectable: false,
     });
   });
 });

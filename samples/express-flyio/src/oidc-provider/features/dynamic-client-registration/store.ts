@@ -76,7 +76,7 @@ export const dynamicClientStore: DynamicallyRegisteredClientStore =
 /**
  * 登録したクライアントから保存用のレコードを作る。
  *
- * レコードには、OP が読むフィールド（db/ の `registerClient()` が受け取るもの。`jwksUri` と `requestObjectSigningAlg` も含む）、`jwks` の公開鍵を `jwksPurposes` のすべての用途に割り当てたもの（`keys`）、プロジェクト独自のコードが読むための登録したメタデータ（`RegisteredClient.registrationMetadata`）を入れる。
+ * レコードには、OP が読むフィールド（db/ の `registerClient()` が受け取るもの。`jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`requestUris`、画面に表示する `clientName` などのメタデータも含む）、`jwks` の公開鍵を `jwksPurposes` のすべての用途に割り当てたもの（`keys`）、プロジェクト独自のコードが読むための登録したメタデータ（`RegisteredClient.registrationMetadata`）を入れる。
  * `client_secret` は平文では入れず、`clientSecretHash` に渡されたハッシュだけを入れる。
  *
  * experimental パッケージは、認証方式と署名アルゴリズムを文字列の型で表す。
@@ -109,6 +109,13 @@ export function toClientRegistration(
     ...(client.jwks === undefined ? {} : { keys: keysByPurpose(client.jwks, options.jwksPurposes) }),
     ...(client.jwksUri === undefined ? {} : { jwksUri: client.jwksUri }),
     ...(client.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: client.requestObjectSigningAlg }),
+    ...(client.tokenEndpointAuthSigningAlg === undefined ? {} : { tokenEndpointAuthSigningAlg: client.tokenEndpointAuthSigningAlg }),
+    ...(client.requestUris === undefined ? {} : { requestUris: [...client.requestUris] }),
+    ...(client.clientName === undefined ? {} : { clientName: client.clientName }),
+    ...(client.clientUri === undefined ? {} : { clientUri: client.clientUri }),
+    ...(client.logoUri === undefined ? {} : { logoUri: client.logoUri }),
+    ...(client.policyUri === undefined ? {} : { policyUri: client.policyUri }),
+    ...(client.tosUri === undefined ? {} : { tosUri: client.tosUri }),
     registrationMetadata: { ...client.metadata },
   };
 }

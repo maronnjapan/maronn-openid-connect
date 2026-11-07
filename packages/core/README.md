@@ -28,7 +28,8 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 - RFC 7662 Token Introspection
 - RFC 7009 Token Revocation
 - RFC 9068 JWT Access Token（`jwt` 形式選択時）
-- OIDC Core 1.0 §6.1 Request Object（by value・署名付き JWS。`request_uri` は非対応として仕様通り `request_uri_not_supported` を返す）
+- OIDC Core 1.0 §6.1 Request Object（by value・署名付き JWS）と §6.2 Request Object by reference（`request_uri`。RFC 9101 §5.2）
+- OIDC Core 1.0 §9 / RFC 7523 クライアント認証（`client_secret_basic`、`client_secret_post`、`private_key_jwt`、public client の `none`）
 
 ## 提供機能（API 概要）
 
@@ -43,6 +44,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 | Hybrid Flow のステップ関数 | `response_type=code id_token`、`code token`、`code id_token token`（OIDC Core 1.0 §3.3）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可コードと一緒に返す認可レスポンスの組み立て。`validateResponseType` の最後の引数に `HYBRID_RESPONSE_TYPES` を加えて渡すと、この 3 つも受け付ける。`requireHybridNonce` は、認可エンドポイントが ID Token を返す `code id_token` と `code id_token token` で `nonce` を必須にする（§3.3.2.11。`code token` では任意のまま）。`validateHybridResponseMode` は `response_mode=query` を拒否し（OAuth 2.0 Multiple Response Type Encoding Practices §5）、`buildHybridResponseParameters` が認可コードとトークンを載せたレスポンスのパラメータを作る。ID Token の `c_hash` は `computeCHash` で求め、`buildIdTokenPayload` の `cHash` に渡す |
 | `normalizeResponseType` / `responseTypeIncludes` / `isImplicitResponseType` / `isHybridResponseType` / `defaultResponseModeOf` | `response_type` の値の正規化（値の順序を問わない。OAuth 2.0 Multiple Response Type Encoding Practices §1.2）と判定、既定の response mode（トークンを返す response type はフラグメント。同 §2.1 / §3 / §5） |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
+| `request_uri` のステップ関数 | Request Object の参照渡し（OIDC Core 1.0 §6.2、RFC 9101 §5.2）。`validateRequestUri`（絶対 URL、https、公開ホスト、長さの上限。既定 512 文字。フラグメントは許す）/ `requestUriFetchUrl`（フラグメントを除いた取得先）/ `fetchRequestObjectByReference`（`GET`、`Accept: application/jwt`、リダイレクトに従わない、タイムアウトと本文の上限。失敗は `RequestUriError`）/ `matchesRegisteredRequestUri`（`require_request_uri_registration` の完全一致）/ `resolveRequestUriParams`（`request` との併用を `invalid_request` で、登録されていない `request_uri` と取得の失敗を理由を出さない `invalid_request_uri` で拒否し、取得した JWT を `request` に置き換えたパラメータを返す。検証は値渡しと同じ `resolveRequestObjectParams` が行う）。`rejectUnsupportedRequestParams` は、残っている（取得していない）`request_uri` を `request_uri_not_supported` で拒否する（取得する OP は先に `resolveRequestUriParams` で `request` に置き換える） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1）。使える alg がヘッダーの `alg` と同じ鍵だけで検証し（RFC 8725 §3.1。`resolveJwkSigningAlg` / `importJwkForJwsVerification`）、2048 ビット未満の RSA 鍵は使わない |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務。OAuth 2.1 §4.1.2） |
 | `AuthorizationError` / `AuthorizationErrorCode` | 認可エンドポイントのエラー表現 |
@@ -63,7 +65,8 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`。OAuth 2.1 §2.3）。`extractClientCredentials`（提示された資格情報と使用方式の抽出） / `resolveAuthenticatedTokenClient`（登録クライアントの解決） / `validateClientAuthMethod`（使われた方式が `TokenClientInfo.tokenEndpointAuthMethods` のどれかであることの検証。省略すると `['client_secret_basic']`、`['none']` は public client で、`client_secret_basic` と `client_secret_post` のように複数の方式を並べられる。public client かどうかは `isPublicTokenClient` で判定する） / `verifyClientSecret`（定数時間比較。`clientSecretHash` を登録したクライアントは、提示値の SHA-256 ハッシュと比べる。どの方式で提示されても同じシークレットと比べる）。CLI 生成コードはこれらを個別に呼び出すため、`private_key_jwt` などの独自方式へ差し替えやすい |
+| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`。OAuth 2.1 §2.3、OIDC Core 1.0 §9）。`extractClientCredentials`（提示された資格情報と使用方式の抽出。`client_assertion_type` と `client_assertion` があれば `private_key_jwt` で、シークレットとの併用は `invalid_request`。`client_id` がなければアサーションの `sub` をクライアント ID にする） / `resolveAuthenticatedTokenClient`（登録クライアントの解決） / `validateClientAuthMethod`（使われた方式が `TokenClientInfo.tokenEndpointAuthMethods` のどれかであることの検証。省略すると `['client_secret_basic']`、`['none']` は public client で、`client_secret_basic` と `client_secret_post` のように複数の方式を並べられる。public client かどうかは `isPublicTokenClient` で判定する） / `verifyClientSecret`（定数時間比較。`clientSecretHash` を登録したクライアントは、提示値の SHA-256 ハッシュと比べる。どの方式で提示されても同じシークレットと比べる）。CLI 生成コードはこれらを個別に呼び出し、使われた方式が `private_key_jwt` なら下の行の関数でアサーションを検証する |
+| `private_key_jwt` のステップ関数 | クライアントアサーション（OIDC Core 1.0 §9 / RFC 7523 §3）の検証を責務ごとに分けたもの。`decodeClientAssertion`（JWS のコンパクト形式の分解とヘッダーの検査）/ `validateClientAssertionAlg`（OP が受け付ける alg だけを通し、`none` と HS 系は常に拒否し、クライアントが `token_endpoint_auth_signing_alg`（`TokenClientInfo.tokenEndpointAuthSigningAlg`）を登録していればその alg だけを通す）/ `validateClientAssertionClaims`（`iss` と `sub` が `client_id`、`aud` に呼ばれたエンドポイントの URL か issuer、`exp` は必須、`iat` と `nbf` は時計のずれを許して確かめ、`jti` は必須。個別の `validateClientAssertionSubject` / `validateClientAssertionAudience` / `validateClientAssertionTimes` / `requireClientAssertionJti` も使える）/ `loadClientAssertionKeys`（`ClientKeyResolver` から `private_key_jwt` の用途の鍵を `kid` を手がかりに読む。`jwks_uri` の取得の失敗は理由を出さない `invalid_client`）/ `verifyClientAssertionSignature` / `consumeClientAssertionJti`（`ClientAssertionJtiStore` に `client_id` と `jti` の組を期限まで覚えさせ、再利用を拒否する）。失敗はどれも `invalid_client` |
 | トークンリクエスト検証のステップ関数 | `validateGrantTypeSupported`（OP 全体での grant_type サポート判定） / `resolveAuthenticatedTokenClient`（認証済みクライアントの解決） / `validateClientGrantType`（クライアント単位の grant_type 認可）。CLI 生成コードはこれらを個別に呼び出す |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
 | refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenSession` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
@@ -91,14 +94,14 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| `buildProviderMetadata` | OpenID Provider Metadata の生成（OpenID Connect Discovery 1.0） |
+| `buildProviderMetadata` | OpenID Provider Metadata の生成（OpenID Connect Discovery 1.0）。`tokenEndpointAuthMethodsSupported` に `private_key_jwt` か `client_secret_jwt` があれば、`tokenEndpointAuthSigningAlgValuesSupported` は必須で空にできない（RFC 8414 §2。無いか空なら例外） |
 | `exportPublicJwk` / `exportJwks` / `signingKeysToJwkSet` | 公開鍵の JWK / JWK Set 化（秘密鍵パラメータは型レベルで排除） |
 
 ### 署名鍵管理
 
 | API | 役割 |
 |---|---|
-| `createCachedSigningKeyProvider` | 署名鍵プロバイダーのキャッシュラッパー（TTL 付きで鍵ローテーションに追随） |
+| `createCachedSigningKeyProvider` | 署名鍵プロバイダーのキャッシュラッパー（TTL 付きで鍵ローテーションに追随）。返す `CachedSigningKeyProvider` の `invalidate()` はキャッシュを捨てるので、ローテーションした直後に呼べば次のリクエストから新しい鍵で署名し、JWKS に公開する（OIDC Core 1.0 §10.1.1） |
 | `selectSigningKeyByAlg` | 登録済み鍵セットからのアルゴリズム別の鍵選択 |
 | `assertHasRs256Key` / `assertKeyStrength` / `assertKidStrategyConsistent` | RS256 鍵の存在・鍵強度・kid 戦略の整合性チェック |
 
@@ -115,7 +118,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose, hint?)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。`hint` は検証する JWS の `kid` で、`jwks_uri` から鍵を取り直す合図になる（OIDC Core 1.0 §10.1.1）。core で鍵を受け取るのは `resolveRequestObjectParams` だけで、private_key_jwt と DPoP の検証は持たない |
+| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose, hint?)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。`hint` は検証する JWS の `kid` で、`jwks_uri` から鍵を取り直す合図になる（OIDC Core 1.0 §10.1.1）。core で鍵を受け取るのは `resolveRequestObjectParams`（`request_object`）と `loadClientAssertionKeys`（`private_key_jwt`）で、DPoP の検証は持たない |
 | `createClientKeyResolver` | クライアントごとの「用途 → JWK Set」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る。設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う |
 | `withClientJwksUriKeys` / `createClientJwksUriCache` / `fetchClientJwkSet` | クライアントの `jwks_uri`（RFC 7591 §2）から鍵を返す。`withClientJwksUriKeys` が `jwks_uri` を登録したクライアントの鍵を `jwks_uri` から返すように `ClientKeyResolver` を包み、`createClientJwksUriCache` が期限（`Cache-Control: max-age` を下限 30 秒・上限 300 秒に丸める）と見慣れない kid での取り直しを持つキャッシュ、`fetchClientJwkSet` がリダイレクトに従わずタイムアウトと本文の上限を持つ 1 回の取得を受け持つ |
 | `validateClientJwksUri` / `parseClientJwkSet` / `resolveClientJwksTtlSeconds` | `jwks_uri` の宛先の検査（https、`localhost` とループバック・私設・リンクローカルの IP リテラルの拒否）、取得した文書の検査（秘密鍵と対称鍵を含む JWK Set の拒否、署名用の公開鍵への正規化）、応答の `Cache-Control` からの期限の算出。既定値は `DEFAULT_CLIENT_JWKS_URI_OPTIONS` で、どれも引数で上書きできる |
@@ -180,7 +183,7 @@ await verifyPkceCodeVerifier(
 | 同意結果の適用 | `filterOfflineAccessScope`。判定済みの真偽値を渡す |
 | 認可コードの検証 | `requireAuthorizationCode`、`requireStoredAuthorizationCode`、`validateAuthorizationCodeNotUsed`、`requireTokenRequestRedirectUri`、`validateAuthorizationCodeRedirectUriMatch`、`hasPkceBinding`、`requirePkceBinding`、`requireCodeVerifier`、`validateCodeVerifier`、`verifyCodeChallenge`、`verifyPkceCodeVerifier` |
 | リフレッシュトークンの検証 | `requireRefreshToken`、`requireStoredRefreshToken`、`validateRefreshTokenNotUsed`、`requireRefreshTokenSession`、`validateRefreshTokenSessionSubject`、`parseScope`、`validateRefreshTokenScopeNotEmpty`、`validateRefreshTokenScopeWithinGrant`。ストアから読み取った値を渡す |
-| クライアント資格情報の処理 | `parseBasicClientCredentials`、`validateSingleClientAuthMethod`、`validateClientIdConsistency`、`requireClientId`、`selectPresentedClientAuthMethod`、`selectRegisteredClientAuthMethods`、`isPublicTokenClient`、`validateClientAuthMethodAllowed`、`requireClientSecret`、`verifyClientSecretValue`、`verifyClientSecretHash`。登録用のハッシュは `hashClientSecret` で作る |
+| クライアント資格情報の処理 | `parseBasicClientCredentials`、`validateSingleClientAuthMethod`、`validateClientIdConsistency`、`requireClientId`、`selectPresentedClientAuthMethod`、`selectRegisteredClientAuthMethods`、`isPublicTokenClient`、`validateClientAuthMethodAllowed`、`requireClientSecret`、`verifyClientSecretValue`、`verifyClientSecretHash`、`extractClientAssertion`、`validateClientAssertionNotCombined`、`resolveClientAssertionClientId`。登録用のハッシュは `hashClientSecret` で作る |
 | 認証トランザクション | `buildAuthTransaction`、`validateAuthTransactionExpiration`、`evaluateLoginFailure`、`computeAuthTransactionTtlSeconds`、`buildAuthorizationResponseParams`。保存や削除は行わない |
 | prompt=none の判定 | `requirePromptNoneSession`、`validatePromptNoneConsentGranted`。解決済みのセッションと同意の照会結果を渡す |
 | 認可コードの発行 | `buildAuthorizationCodeData`。生成済みの認可コード、grantId、現在時刻を渡す |
@@ -198,7 +201,7 @@ ID Token hint の各関数を組み合わせる場合は、上表の順に検証
 時刻を受け取る関数には固定値やアプリケーションの時計を渡せる。
 トークン、認可コード、再認証の時刻は Unix epoch 秒、認証トランザクションの関数（`buildAuthTransaction`、`validateAuthTransactionExpiration`、`computeAuthTransactionTtlSeconds`）はミリ秒で指定する。
 
-注入インターフェースの例: `ClientResolver`（クライアント情報）、`AuthorizationCodeResolver` / `RefreshTokenResolver` / `AccessTokenResolver`（トークン引き当て）、`SessionResolver` / `ConsentResolver`（セッション・同意状態）、`AuthTransactionStore`（認証トランザクション）、`SigningKeyProvider`（署名鍵）。
+注入インターフェースの例: `ClientResolver`（クライアント情報）、`ClientKeyResolver`（クライアントの公開鍵）、`ClientAssertionJtiStore`（使用済みのクライアントアサーションの `jti`）、`AuthorizationCodeResolver` / `RefreshTokenResolver` / `AccessTokenResolver`（トークン引き当て）、`SessionResolver` / `ConsentResolver`（セッション・同意状態）、`AuthTransactionStore`（認証トランザクション）、`SigningKeyProvider`（署名鍵）。
 
 実際の配線例は [`@maronn-openid-connect/cli`](../cli) が生成するコード、および本リポジトリの `samples/*` を参照。
 

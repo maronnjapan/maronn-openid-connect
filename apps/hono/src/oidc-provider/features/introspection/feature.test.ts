@@ -24,7 +24,8 @@ describe('introspection', () => {
     it('should advertise the endpoint under the issuer with the confidential client methods', () => {
       expect(discoveryOf([introspection], {}, TEST_ISSUER, createProviderConfig({ issuer: TEST_ISSUER }))).toEqual({
         introspection_endpoint: 'https://op.example.com/introspect',
-        introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+        introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
+        introspection_endpoint_auth_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       });
     });
   });

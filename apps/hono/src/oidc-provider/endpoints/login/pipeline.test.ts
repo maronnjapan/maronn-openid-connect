@@ -37,7 +37,13 @@ describe('prepareLogin', () => {
     await storeTransaction(db, sampleTransaction({ loginHint: 'alice' }));
     const { c } = await providerContext({ db, request: requestTo('/login', { headers: { Cookie: transactionCookie() } }) });
 
-    expect(await prepareLogin(c)).toEqual({ kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: 'alice', loginMethods: [] });
+    expect(await prepareLogin(c)).toEqual({
+      kind: 'screen',
+      csrfToken: CSRF_TOKEN,
+      loginHint: 'alice',
+      client: { clientId: 'client-1' },
+      loginMethods: [],
+    });
   });
 
   it('should answer the error page when the browser is in no transaction', async () => {
@@ -82,7 +88,7 @@ describe('submitLogin', () => {
 
       expect(await submitLogin(c, submission('wrong-password'))).toEqual({
         kind: 'invalid_credentials',
-        screen: { kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: undefined, loginMethods: [] },
+        screen: { kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: undefined, client: { clientId: 'client-1' }, loginMethods: [] },
         remainingAttempts: 4,
       });
     });

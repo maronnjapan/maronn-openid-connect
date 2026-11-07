@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { DiffHunk, FunctionEntry, MapData, OpFlow } from '../types';
+import type { DiffHunk, FunctionEntry, MapData, OpFlow, TestsIndex } from '../types';
 import { allHunks, frameMark, markOf, type ChangeIndex } from '../lib/changes';
 import { callersOf, endpointsInModule, endpointsRootedAt, endpointsUsing, locationOf, type EndpointUse } from '../lib/model';
 import { frameSources } from '../lib/source';
@@ -8,8 +8,10 @@ import { Badge, ChangeDetail } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
 import { Chips, Description } from './Parts';
 import { ScreenHeader } from './ScreenHeader';
+import { TestsTab } from './TestsTab';
 import { Trace } from './Trace';
 import { fetchFrame } from './useFrames';
+import type { Loaded } from './useTests';
 
 export interface FunctionScreenProps {
   data: MapData;
@@ -26,6 +28,10 @@ export interface FunctionScreenProps {
   onOpenStep: (endpoint: string, step: string) => void;
   onOpenEndpoint: (endpoint: string) => void;
   onFramework: (framework: string) => void;
+  /** The index of the tests (tests.json): the テスト tab and the badges of the outline read it. */
+  tests: Loaded<TestsIndex>;
+  /** The tab of the pane the page opens on (テスト from the list of the tests). */
+  tab?: string | undefined;
 }
 
 /** How a step reaches the function, in words. */
@@ -40,7 +46,7 @@ function wayOf(use: EndpointUse): string {
  * whose file holds it, the steps that reach it, and the functions that call
  * it. Moving up to a caller starts a new trace (a trace goes down).
  */
-function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOpenEndpoint, onFramework }: Omit<FunctionScreenProps, 'changes' | 'trace' | 'enabled' | 'canGoBack' | 'onTrace' | 'onBack'>) {
+function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOpenEndpoint, onFramework }: Omit<FunctionScreenProps, 'changes' | 'trace' | 'enabled' | 'canGoBack' | 'onTrace' | 'onBack' | 'tests' | 'tab'>) {
   const uses = useMemo(() => endpointsUsing(data, flow, card.id), [data, flow, card]);
   const homes = useMemo(() => [...new Set([...endpointsRootedAt(flow, card.id), ...endpointsInModule(flow, card)])], [flow, card]);
   const callers = callersOf(data, card);
@@ -121,8 +127,9 @@ function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOp
  * dives into a call).
  */
 export function FunctionScreen(props: FunctionScreenProps) {
-  const { data, changes, card, trace, enabled, onTrace, onBack, onOpenFunction, canGoBack } = props;
+  const { data, changes, card, trace, enabled, onTrace, onBack, onOpenFunction, canGoBack, tests } = props;
   const [code, setCode] = useState<string | null>(null);
+  const badges = useMemo(() => (tests.state === 'ready' ? { frames: tests.value.frames, measured: tests.value.measured } : undefined), [tests]);
   const sources = useMemo(() => frameSources(data, card.id), [data, card]);
   const change = changes?.byId.get(card.id);
   const mark = frameMark(changes, card.id);
@@ -205,7 +212,22 @@ export function FunctionScreen(props: FunctionScreenProps) {
                 return shown === undefined ? <p className="note">図に出しているのはエンドポイントの処理の本体です。</p> : <Callers {...props} card={shown} />;
               },
             },
+            ...(data.tests === undefined
+              ? []
+              : [
+                  {
+                    id: 'tests',
+                    label: 'テスト',
+                    place: 'after' as const,
+                    // The tests of the function the diagram shows, or of the function of the row selected.
+                    content: (frameId: string, selected: Parameters<typeof TestsTab>[0]['selected']) => (
+                      <TestsTab data={data} index={tests} framework={props.framework} rootId={card.id} frameId={frameId} selected={selected} enabled={enabled} onOpenFunction={onOpenFunction} onOpenEndpoint={props.onOpenEndpoint} />
+                    ),
+                  },
+                ]),
           ]}
+          initialTab={props.tab}
+          tests={badges}
         />
       )}
       {code !== null ? <CodeDrawer data={data} changes={changes} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}

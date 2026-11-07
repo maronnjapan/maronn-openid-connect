@@ -5,6 +5,8 @@ import { FunctionScreen } from './components/FunctionScreen';
 import { MobileMenu, MobileMenuSection, useMobileMenu } from './components/MobileMenu';
 import { Search } from './components/Search';
 import { Sidebar } from './components/Sidebar';
+import { TestsScreen } from './components/TestsScreen';
+import { useTestsIndex } from './components/useTests';
 import { WiringScreen } from './components/WiringScreen';
 import { indexChanges } from './lib/changes';
 import { buildHash, parseHash, plainView, type View } from './lib/hash';
@@ -85,10 +87,13 @@ function historyDepth(): number {
 /**
  * The map: the endpoints of a configuration on the left, the open endpoint or
  * function filling the rest. The map of a pull request opens on the changes
- * of the pull request.
+ * of the pull request. The tests (tests.json) are read after the map, so the
+ * first view never waits for them, and the page is whole without them.
  */
 function ProviderMap({ data }: { data: MapData }) {
   const { mobile, close: closeMenu } = useMobileMenu();
+  const tests = useTestsIndex(data);
+  const testsIndex = tests.state === 'ready' ? tests.value : undefined;
   // Whether the map is of a pull request is known before a view is: the changes as the default framework reaches them.
   const anyChanges = useMemo(() => indexChanges(data), [data]);
   const fallbackEndpoint = useCallback(
@@ -102,7 +107,7 @@ function ProviderMap({ data }: { data: MapData }) {
     (framework: string): View => {
       const view = parseHash(location.hash, data, { framework, endpoint: null, step: null, fn: null, trace: EMPTY_TRACE });
       if (view.changes === true && anyChanges === undefined) view.changes = false;
-      if (view.endpoint === null && view.fn === null && view.changes !== true && view.wiring !== true) {
+      if (view.endpoint === null && view.fn === null && view.changes !== true && view.wiring !== true && view.tests !== true) {
         if (anyChanges !== undefined) view.changes = true;
         else view.endpoint = fallbackEndpoint(view.framework);
       }
@@ -170,17 +175,20 @@ function ProviderMap({ data }: { data: MapData }) {
   const card = view.fn === null ? undefined : data.functions[view.fn];
   const onWiring = card === undefined && view.wiring === true;
   const onChanges = card === undefined && !onWiring && view.changes === true && changes !== undefined;
-  const endpoint = onChanges || onWiring ? undefined : (endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined));
+  const onTests = card === undefined && !onWiring && !onChanges && view.tests === true;
+  const endpoint = onChanges || onWiring || onTests ? undefined : (endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined));
   const narrow = () => !window.matchMedia('(min-width: 900px)').matches;
 
-  const openEndpoint = (id: string) => {
-    navigate({ ...plainView(view), endpoint: id, step: null, fn: null, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
+  /** Open an endpoint, on the tab of the pane a page asks for (テスト from the list of the tests). */
+  const openEndpoint = (id: string, tab?: string) => {
+    navigate({ ...plainView(view), endpoint: id, step: null, fn: null, changes: false, wiring: false, tests: false, trace: EMPTY_TRACE, ...(tab === undefined ? {} : { tab }) }, 'push');
     if (narrow()) setSidebar(false);
   };
-  const openStep = (endpointId: string, step: string) => navigate({ ...plainView(view), endpoint: endpointId, step, fn: null, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
-  const openFunction = (id: string) => navigate({ ...plainView(view), fn: id, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
-  const openChanges = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: true, wiring: false, trace: EMPTY_TRACE }, 'push');
-  const openWiring = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: false, wiring: true, trace: EMPTY_TRACE }, 'push');
+  const openStep = (endpointId: string, step: string) => navigate({ ...plainView(view), endpoint: endpointId, step, fn: null, changes: false, wiring: false, tests: false, trace: EMPTY_TRACE }, 'push');
+  const openFunction = (id: string, tab?: string) => navigate({ ...plainView(view), fn: id, changes: false, wiring: false, tests: false, trace: EMPTY_TRACE, ...(tab === undefined ? {} : { tab }) }, 'push');
+  const openChanges = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: true, wiring: false, tests: false, trace: EMPTY_TRACE }, 'push');
+  const openWiring = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: false, wiring: true, tests: false, trace: EMPTY_TRACE }, 'push');
+  const openTests = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: false, wiring: false, tests: true, trace: EMPTY_TRACE }, 'push');
   /** Open an endpoint's trace along a way to a change: its frames open, its sides chosen, the features it needs on, the diagram on the changed frame. */
   const openWay = (way: Reach) => {
     // A way through a feature that is off turns it on: the trace shows only the frames of the features that are on.
@@ -229,6 +237,11 @@ function ProviderMap({ data }: { data: MapData }) {
           <button type="button" className="changes-button" aria-pressed={onWiring} onClick={openWiring} title="型や呼び出しから届く先を確定できない配線">
             追えない配線<span className="count">{data.wiring?.length ?? 0}</span>
           </button>
+          {data.tests !== undefined ? (
+            <button type="button" className="changes-button" aria-pressed={onTests} onClick={openTests} title="テストの一覧: エンドポイントと機能ごとの数、不足、規則で読めなかったテスト">
+              テスト<span className="count">{data.tests.count}</span>
+            </button>
+          ) : null}
           <div className="seg" role="group" aria-label="フレームワーク">
             {data.frameworks.map((name) => (
               <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...plainView(view), framework: name, step: null, trace: EMPTY_TRACE }, 'replace')}>
@@ -256,7 +269,8 @@ function ProviderMap({ data }: { data: MapData }) {
                 save(FEATURES_KEY, JSON.stringify([...next]));
                 setEnabled(next);
               }}
-              onEndpoint={openEndpoint}
+              onEndpoint={(id) => openEndpoint(id)}
+              tests={testsIndex}
             />
           </MobileMenuSection>
         ) : null}
@@ -274,15 +288,19 @@ function ProviderMap({ data }: { data: MapData }) {
               canGoBack={depth > 0}
               onTrace={onTrace}
               onBack={() => history.back()}
-              onOpenFunction={openFunction}
+              onOpenFunction={(id) => openFunction(id)}
               onOpenStep={openStep}
-              onOpenEndpoint={openEndpoint}
+              onOpenEndpoint={(id) => openEndpoint(id)}
               onFramework={(framework) => navigate({ ...view, framework }, 'replace')}
+              tests={tests}
+              tab={view.tab}
             />
           ) : onWiring ? (
-            <WiringScreen data={data} framework={view.framework} onOpenFunction={openFunction} />
+            <WiringScreen data={data} framework={view.framework} onOpenFunction={(id) => openFunction(id)} />
           ) : onChanges ? (
-            <ChangesScreen data={data} index={changes} framework={view.framework} onOpenFunction={openFunction} onOpenEndpoint={openEndpoint} onOpenWay={openWay} />
+            <ChangesScreen data={data} index={changes} framework={view.framework} tests={testsIndex} onOpenFunction={(id) => openFunction(id)} onOpenEndpoint={(id) => openEndpoint(id)} onOpenWay={openWay} />
+          ) : onTests ? (
+            <TestsScreen data={data} index={tests} framework={view.framework} onOpenEndpoint={(id) => openEndpoint(id, 'tests')} onOpenFunction={(id) => openFunction(id, 'tests')} />
           ) : endpoint !== undefined ? (
             <EndpointScreen
               key={`${view.framework}/${endpoint.id}`}
@@ -295,7 +313,10 @@ function ProviderMap({ data }: { data: MapData }) {
               step={view.step}
               target={view.target ?? null}
               onTrace={onTrace}
-              onOpenFunction={openFunction}
+              onOpenFunction={(id) => openFunction(id)}
+              onOpenEndpoint={(id) => openEndpoint(id)}
+              tests={tests}
+              tab={view.tab}
             />
           ) : (
             <p className="empty">左の一覧からエンドポイントを選んでください。</p>

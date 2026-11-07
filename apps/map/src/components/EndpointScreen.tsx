@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { FlowEndpoint, MapData } from '../types';
+import { useCallback, useMemo, useState } from 'react';
+import type { FlowEndpoint, MapData, TestsIndex } from '../types';
 import { frameMark, waySelections, type ChangeIndex } from '../lib/changes';
 import { generatedWhen } from '../lib/model';
 import { endpointSources } from '../lib/source';
@@ -8,7 +8,9 @@ import { Badge } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
 import { ScreenHeader } from './ScreenHeader';
 import { StepPanel } from './StepPanel';
-import { Trace } from './Trace';
+import { TestsTab } from './TestsTab';
+import { Trace, type PaneTab } from './Trace';
+import type { Loaded } from './useTests';
 
 /** The endpoint an endpoint screen shows, its trace, and what a link asks it to select (see EndpointScreen). */
 export interface EndpointScreenProps {
@@ -24,6 +26,11 @@ export interface EndpointScreenProps {
   target?: string | null;
   onTrace: (next: TraceState) => void;
   onOpenFunction: (id: string) => void;
+  /** The index of the tests (tests.json), read after the map: the テスト tab and the badges of the outline read it. */
+  tests: Loaded<TestsIndex>;
+  /** The tab of the pane the page opens on (テスト from the list of the tests). */
+  tab?: string | undefined;
+  onOpenEndpoint?: ((id: string) => void) | undefined;
 }
 
 /**
@@ -33,8 +40,24 @@ export interface EndpointScreenProps {
  * A step selected shows its facts beside the outline; a step or a node a
  * link names is selected and shown.
  */
-export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, step = null, target = null, onTrace, onOpenFunction }: EndpointScreenProps) {
+export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, step = null, target = null, onTrace, onOpenFunction, tests, tab, onOpenEndpoint }: EndpointScreenProps) {
   const [code, setCode] = useState<string | null>(null);
+  const stepFunction = useCallback((id: string) => endpoint.steps.find((candidate) => candidate.id === id)?.functionId, [endpoint]);
+  const badges = useMemo(() => (tests.state === 'ready' ? { frames: tests.value.frames, measured: tests.value.measured } : undefined), [tests]);
+  // The テスト tab after the detail: the endpoint's tests at its root, the function of the row selected, or the frame the diagram shows.
+  const tabs: PaneTab[] =
+    data.tests === undefined
+      ? []
+      : [
+          {
+            id: 'tests',
+            label: 'テスト',
+            place: 'after',
+            content: (frameId, selected) => (
+              <TestsTab data={data} index={tests} framework={framework} endpoint={endpoint} rootId={endpoint.root} frameId={frameId} selected={selected} enabled={enabled} onOpenFunction={onOpenFunction} onOpenEndpoint={onOpenEndpoint} />
+            ),
+          },
+        ];
   const sources = useMemo(() => endpointSources(data, endpoint), [data, endpoint]);
   const extra = useMemo(() => waySelections(data, changes, framework, endpoint.id, enabled), [data, changes, framework, endpoint.id, enabled]);
   const root = entryOf(data, endpoint.root);
@@ -80,6 +103,10 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
           enabled={enabled}
           onOpenFunction={onOpenFunction}
           onOpenCode={setCode}
+          tabs={tabs}
+          initialTab={tab}
+          tests={badges}
+          stepFunction={stepFunction}
           renderStep={(mark) => {
             const step = endpoint.steps.find((candidate) => candidate.id === mark.id);
             if (step === undefined) return <p className="note">{mark.label}（このフレームワークの構成には無いステップです）</p>;

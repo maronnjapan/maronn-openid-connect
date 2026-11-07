@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowEndpoint, FunctionEntry, MapData, OpFlow } from '../types';
-import { buildHash, parseHash, parseTrace, traceHash, type View } from './hash';
+import { buildHash, parseHash, parseTrace, plainView, traceHash, type View } from './hash';
 import { EMPTY_TRACE, type TraceState } from './trace';
 
 const token = { id: 'token', steps: [{ id: 'respond' }], root: 'endpoint:token' } as unknown as FlowEndpoint;
@@ -66,5 +66,18 @@ describe('the view in a hash', () => {
     expect(buildHash(wiring, data)).toBe('nextjs--wiring');
     expect(parseHash('#nextjs--wiring', data, defaults)).toEqual(wiring);
     expect(parseHash('#wiring', data, defaults)).toEqual({ ...defaults, wiring: true });
+  });
+
+  it('should link the list of the tests independently of a PR and an endpoint', () => {
+    const tests = { ...defaults, framework: 'nextjs', tests: true };
+    expect(buildHash(tests, data)).toBe('nextjs--tests');
+    expect(parseHash('#nextjs--tests', data, defaults)).toEqual(tests);
+    expect(parseHash('#tests', data, defaults)).toEqual({ ...defaults, tests: true });
+  });
+
+  it('should keep the tab a page asked to open on out of the hash and out of the next page', () => {
+    const view: View = { ...defaults, endpoint: 'token', tab: 'tests' };
+    expect(buildHash(view, data)).toBe('hono--token');
+    expect(plainView(view)).toEqual({ ...defaults, endpoint: 'token' });
   });
 });

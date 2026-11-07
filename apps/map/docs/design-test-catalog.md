@@ -1,9 +1,12 @@
 # 設計案: テストの地図
 
-テストの可視化、管理、自動化の要件を、このリポジトリの上でどう実現するかの設計案である。
-実装はしていない。
+テストの可視化、管理、自動化の要件を、このリポジトリの上でどう実現するかの設計である。
 既存の実装に合わせる前提は外し、必要なところは破壊的に変える。
 使う道具は OSS か無料のものに限り、生成 AI には頼らない。
+
+この設計は実装した。
+テストカタログは `packages/test-catalog`、テストごとの到達の計測は `packages/test-reach` と `tests/e2e/fixtures.ts`、機能ファイルは `tests/features` と `tests/steps`、画面は `apps/map`、CI は `.github/workflows/ci.yml` にある。
+実装で決めた細部と、設計の案から変えたところは「決めたこと」に、確かめた結果は「確かめたこと」に記す。
 
 要件が最も重視する四つの項目に、この設計は次の仕組みで答える。
 
@@ -21,10 +24,10 @@
 | 観点 | 計測結果 |
 |---|---|
 | テストファイル | 433 個（`packages/core` 38、`packages/experimental` 25、`packages/google-login` 8、`apps/hono` 227、`apps/nextjs` 67、`tests/e2e/specs` 21、ほかは CLI、地図、スクリプト） |
-| `it` / `test` の数 | Vitest 約 5,300 個（`it.each` は一つと数える）、Playwright 222 個 |
+| `it` / `test` の数 | Vitest 約 5,300 個（`it.each` は一つと数える）、Playwright 117 個（`playwright test --list`。最初の計測の 222 は本文の中の `test.skip(` を数えていた） |
 | `describe` の数 | 約 1,700 個。トップレベルは関数名（README の命名規則） |
 | `it` の直上の仕様コメント | `packages/core` と `apps/hono` で 610 箇所（`// RFC 6749 §5.2: ...` の形） |
-| エンドポイントを HTTP で叩くテスト | `apps/hono` の 17 ファイルが `app.request()` で叩く（`pipeline.test.ts` など）。E2E は `request.get()` / `page.goto()` を約 180 箇所 |
+| エンドポイントを HTTP で叩くテスト | `apps/hono` の 23 ファイルが `app.request()`、`fastify.inject()`、`fetch()` で叩き（`pipeline.test.ts` など。多くは `requestTo()` や `formPost()`、ファイルの中の関数でリクエストを作る）、`apps/nextjs` の 1 ファイルが Route Handler に `Request` を渡す。E2E は `request.get()` / `page.goto()` を約 180 箇所 |
 | 実行の種類 | Vitest（edge-runtime 環境の core を含む）、Playwright（apps と samples の OP）、OIDF 適合性スイート（Docker）、CLI の生成物の型検査（`test:matrix`）、`node --test`（スクリプト） |
 
 書き方には、地図が使っている規則と同じ種類の規則がすでにある。
@@ -192,11 +195,11 @@ interface RequestShape {
 **静的**（`static`）は、テストコードを読んで決めた対象である。
 規則は種類ごとに次のとおりで、どれもコンパイラ API で決定論的に読む。
 
-- ユニットテスト：トップレベルの `describe` の名前を、そのファイルの import から型で引き、関数カタログの id にする。`describe('authenticateTokenClient')` が `hono:endpoints/token/steps/authenticate-client.ts#authenticateTokenClient` になる。名前が関数に引けなければ「対象不明」として一覧に出す
+- ユニットテスト：トップレベルの `describe` の名前を、そのファイルの import から型で引き、関数カタログの id にする。`describe('authenticateTokenClient')` が `hono:oidc-provider/endpoints/token/steps/authenticate-client.ts#authenticateTokenClient` になる。名前の後ろの言葉（`validateX with a minimal resolver`）と `()` は読み飛ばし、中の `describe` も同じように引く。名前が関数に引けなければ「対象不明」として一覧に出す
 - ステップのテスト：関数が解決できれば、ステップの `meta`（`function: 'authenticateTokenClient'`）を通ってエンドポイントとステップにも結びつく
-- API テスト：`it` の本体と、同じファイルのヘルパー関数の中で送るリクエスト（`app.request(url, init)`、Route Handler の呼び出し）の URL の末尾の固定部分（`${TEST_ISSUER}/token` の `/token`）を、エンドポイントのパスと照合する。メソッドは `init.method` のリテラルから取る。複数のエンドポイントへ送るテストは、その全部を対象にする
+- API テスト：`it` の本体と、同じファイルのヘルパー関数の中で送るリクエスト（`app.request(url, init)`、`app.fetch()`、`fastify.inject()`、`fetch()`、Route Handler の呼び出し）の URL の固定部分（`${TEST_ISSUER}/token` の `/token`）を、エンドポイントのパスと照合する。URL を第一引数に取ってリクエストを作るヘルパー（`requestTo('/userinfo')`、`formPost('/introspect', fields)`）と、リクエストを返すファイルの中の関数はたどる。メソッドは `init.method` のリテラルから取り、名前に `post` を含むヘルパーは POST とする。ボディのキーは `new URLSearchParams({...})`、`JSON.stringify({...})`、Playwright の `form` と、テストがヘルパーに渡したオブジェクトから取る。複数のエンドポイントへ送るテストは、その全部を対象にする
 - E2E テスト：`request.get()` / `request.post()` / `page.goto()` の URL と、`toHaveURL()` が期待する URL を同じ規則で読む。ブラウザのリダイレクトで通るエンドポイント（`/authorize` から `/login` へ）は静的には読めないので、到達の記録に任せる
-- `it` の本体が直接呼ぶ関数カタログの関数も、`how: 'call'` の対象として持つ。`describe` の名前と違う関数を呼ぶテストや、`describe` の無いテストの受け皿である
+- `it` の本体が確かめるところで呼ぶ関数カタログの関数も、`how: 'call'` の対象として持つ。`expect(...)` の中と、`expect` が読む変数の初期化で呼ぶ関数に限る。テストは状態を用意するためにもカタログの関数（`registerClient`、`createEmptyDatabase`）を多く呼ぶので、本体のすべての呼び出しを対象にすると、対象が用意の関数で埋まるからである
 
 **到達**（`coverage`）は、実行時に実際に通った関数とエンドポイントである（「テストごとの到達」の節）。
 静的な対象と一致すれば根拠が二つになり、静的に読めなかった到達（リダイレクト、resolver や store の実装）は到達の記録だけが与える。
@@ -234,7 +237,10 @@ interface RequestShape {
 | `await expect(page).toHaveURL(/\/consent$/)` | the URL ends with `/consent` | URL が `/consent` で終わる |
 
 期待値がリテラルでない（変数や関数の結果）ときは、式をそのまま残す。
-言葉にする規則は表（`words.ts` と同じ考え）に置き、新しいマッチャーは表に足す。
+ただし enum のメンバー（`TokenErrorCode.InvalidClient`）は、型が与える値（`invalid_client`）にする。
+期待結果をファイルの中のヘルパーで確かめるテスト（`expectGrantError(input, 'slow_down')`）は、ヘルパーの中の `expect` を二段まで読み、ヘルパーの引数をテストが渡した値に置き換える。
+言葉にする規則は表（`packages/test-catalog/src/words.ts`）に置き、新しいマッチャーは表に足す。
+表が作れる言い回しの一覧（`expectationPhrases()`）は、規則を全部のマッチャーと `.not`、`.resolves`、`.rejects` に当てて作り、訳の表の lint がそれを使う。
 表の言い回しは、同じことを確かめるステップ定義があればその式にそろえる（`the HTTP status is {int}`）。
 そろえておけば、テストコードの期待結果と機能ファイルのステップが一つの訳の表を共有する。
 機能ファイルの `Then` のステップは、すでに言葉なのでそのまま札に入れる。
@@ -253,7 +259,7 @@ API と E2E のテストは、送るリクエストの形も札に持つ。
 
 id は、ファイルの移動で変わらず、同じテストを二つのビルドで同じ id にする。
 
-- テストコードのテストは、`<root> | describe の連なり | it の名前` のハッシュを id にする。root（core、hono、nextjs、e2e）はファイルを動かしても変わらず、トップレベルの `describe` は関数名なので、ファイルの分割や移動で id は変わらない。名前を変えると id は変わるが、PR の差分が「名前を変えた」として対応づける（「テストの差分」の節）
+- テストコードのテストは、`<root> | describe の連なり | it の名前` のハッシュを id にする。`describe` の名前が関数カタログの関数に引けるときは、名前の代わりにその関数の id を使う。root（core、hono、nextjs、e2e）はファイルを動かしても変わらず、トップレベルの `describe` は関数名なので、ファイルの分割や移動で id は変わらない。関数の id で塩をするのは、同じ名前の関数を持つ並んだモジュール（`db/kv` と `db/sql` の `registerClient`、`web/express` と `web/fastify` の `applyOidc`）のテストが、名前だけでは hono で 111 件、nextjs で 78 件重なるからである。名前を変えると id は変わるが、PR の差分が「名前を変えた」として対応づける（「テストの差分」の節）
 - 機能ファイルのシナリオは、`@id:token-invalid-client-secret` のタグをそのまま使う。シナリオアウトラインの例の行は、タグに行の番号を足す。重複は lint で落とす
 - 名前に頼らず固定したいテストコードのテストは、`it` の直上に `// @test-id token-invalid-client-secret` と書く。lint が重複を検査する
 
@@ -382,16 +388,19 @@ Feature: Client authentication at the token endpoint
     And the authorization code "code-1" is not consumed
 
   @id:token-missing-required-parameter @spec:RFC6749-5.2 @hono @nextjs
-  Scenario Outline: Reject a request without <param> with invalid_request
+  Scenario Outline: Reject a request without <param> with <error>
     When the client requests the token endpoint with grant_type "authorization_code" without <param>
     Then the HTTP status is 400
-    And the error code is "invalid_request"
+    And the error code is "<error>"
 
     Examples:
-      | param        |
-      | code         |
-      | redirect_uri |
+      | param        | error           |
+      | code         | invalid_request |
+      | redirect_uri | invalid_grant   |
 ```
+
+`redirect_uri` の無いリクエストが `invalid_grant` になるのは、認可リクエストに `redirect_uri` があったコードの交換では、それを欠いたリクエストを認可コードの検証の失敗として扱うからである（OIDC Core 1.0 §3.1.3.2）。
+実際の機能ファイルは `tests/features/token/` にあり、既存の API テストと同じ結果になることを両方のアプリで確かめた。
 
 `ja:` の行は Gherkin の説明（キーワードの行の後の自由な行）で、runner は読まない。
 書くかどうかは任意で、二つ目のシナリオのように無ければ英語の名前をそのまま出す。
@@ -452,7 +461,9 @@ Given('a registered confidential client:', async ({ run }, table: DataTable) => 
 ```
 
 ステップ定義は `tests/steps/` に置き、`apps/hono` と `apps/nextjs` の `test-support` のヘルパー（`providerApp()`、`registerClient()`）を使う。
-一つの定義は、プロセス内と HTTP のどちらの実行先で使えるかを fixture で宣言し、対応の無い実行先のシナリオは生成時に落ちる。
+`tests/steps` はワークスペースのパッケージ（`@maronn-openid-connect/test-steps`）にし、`playwright-bdd` と `@playwright/test` を `tests/e2e` と同じものに解決する。
+一つの定義は、プロセス内と HTTP のどちらの実行先で使えるかを `createBdd()` に渡す `test` とタグで宣言し、対応の無い実行先のシナリオは生成時に落ちる。
+ステップ定義の第一引数は一行の文字列のリテラルにする。テストカタログがステップ定義をそのまま読み、言い回しと訳を引くからで、lint が検査する。
 
 ### 生成と実行
 
@@ -462,15 +473,16 @@ playwright-bdd の `bddgen` が、機能ファイルから Playwright のテス�
 
 実行先は Playwright の project で分ける。
 
-- **プロセス内**（`in-process-hono`、`in-process-nextjs`）：ブラウザを使わず、`createApp()` をメモリの DB で立てて `app.request()` で叩く、または Route Handler に `Request` を渡す。既存の API テストと同じ形である。`@hono` と `@nextjs` のタグで選ぶ
-- **HTTP**（`http`）：動いている OP に `request` とブラウザで到達する。既存の E2E と同じ `playwright.config.ts` の `webServer` を使う。前提条件は環境変数と運用者の API で用意できるものに限る
+- **プロセス内**（`in-process-hono`、`in-process-nextjs`）：ブラウザを使わず、`createApp()` をメモリの DB で立てて `app.request()` で叩く、または Route Handler に `Request` を渡す。既存の API テストと同じ形である。`@hono` と `@nextjs` のタグで選ぶ。OP のサーバーを立てないので、設定は `tests/steps/playwright.config.ts` に分け、`pnpm run test:features` で走らせる
+- **HTTP**（`http`）：動いている OP に `request` とブラウザで到達する。既存の E2E と同じ `tests/e2e/playwright.config.ts` の `webServer` を使い、その `http` の project として E2E と一緒に走る。前提条件は環境変数と運用者の API で用意できるものに限る
 
 Playwright の runner を使うのは、Vitest に Gherkin を載せる OSS（`@amiceli/vitest-cucumber`）が若く、cucumber-js を足すと runner が三つになるからである。
 同じ機能ファイルをプロセス内と HTTP の両方で走らせられるので、プロセス内で確かめた振る舞いが生成物の OP でも同じかを、定義を書き直さずに確かめられる。
 
 ### 検証と編集
 
-- 機能ファイルの形は `gherkin-lint` で検査する。`@id` と対象のタグの必須、シナリオの名前の重複、未使用の背景を規則にする
+- 機能ファイルの形は `.github/scripts/lint-features.mjs` が `@cucumber/gherkin` で読んで検査する。`@id`（一つ、kebab-case、リポジトリで一意）と対象のタグと実行先のタグの必須、シナリオの名前の重複、空のファイル、アウトラインの未使用と未定義の列を規則にする。`gherkin-lint` は、依存（古い `gherkin` を通る `protobufjs`）に修正版の無い high の勧告が六つあり、CI の `pnpm audit --audit-level=high` が落ちるので使わない
+- ステップ定義の形は `.github/scripts/lint-steps.mjs` が検査する（正規表現、テンプレート、変数、二重引用符の式、複数行の式、穴の外の ASCII でない文字を落とす）
 - ステップの未定義と曖昧さは `bddgen` が落とす。`pnpm run lint` に入れる
 - 編集は VS Code の Cucumber の拡張（公式の `cucumber-official`）が、ステップ定義から言い回しを補完する。語彙の一覧は、ステップ定義から `cucumber-js --format usage` で出す
 
@@ -511,7 +523,7 @@ Playwright の runner を使うのは、Vitest に Gherkin を載せる OSS（`@
 表の行と列の名前（`client_id`、`grant_type`）は仕様の語なので訳さない。
 訳の表に無い式と `ja:` の無い名前は、英語のまま出し、英語であることを画面で示す。
 
-訳の表は lint で検査する。
+訳の表は lint（`.github/scripts/lint-tests.mjs`、規則は `packages/test-catalog/src/lint.ts`）で検査する。
 キーがどれかのステップ定義の式か期待結果の言い回しであること、ひな形の番号が穴の数の範囲にあり、すべての穴を一度ずつ使うことを確かめる。
 訳の欠けは CI を落とさず、テストの一覧のページに「日本語の訳が無い言い回し」の数として出す。
 訳は望ましいが、無くてもテストの意味は英語で読めるからである。
@@ -611,8 +623,9 @@ PR で変わったものは三種類あり、担うものを分ける。
 
 ### Codecov に任せるもの
 
-- **patch coverage**：Vitest と E2E の lcov を `codecov/codecov-action` で上げる。PR のコメントに、変えた行のうちテストが通った割合と、通っていない行が出る。要件 5.2 の「実装が変更されたのに、テストが通っていない」の行の単位の答えである。Vitest と E2E は flag で分け、どちらが通したかを見分ける
-- **Test Analytics**：JUnit XML を `codecov/test-results-action` で上げる。PR のコメントに失敗したテスト、新しく失敗したテスト、flaky なテストが出る。main との比較を Codecov が持つので、基準の結果を自前で置く必要が無い
+- **patch coverage**：Vitest と E2E の lcov を `codecov/codecov-action@v7` で上げる。PR のコメントに、変えた行のうちテストが通った割合と、通っていない行が出る。要件 5.2 の「実装が変更されたのに、テストが通っていない」の行の単位の答えである。Vitest と E2E は flag で分け、どちらが通したかを見分ける
+- **Test Analytics**：JUnit XML を同じ `codecov/codecov-action@v7` の `report_type: test_results` で上げる（`codecov/test-results-action` はこれに置き換えられた）。PR のコメントに失敗したテスト、新しく失敗したテスト、flaky なテストが出る。main との比較を Codecov が持つので、基準の結果を自前で置く必要が無い
+- 状態（`codecov.yml`）は、閾値を決めるまで informational にして、数字だけを出す
 
 公開リポジトリは無料で、アップロードにはリポジトリのトークンが要る。
 fork からの PR はトークンが無いので上がらないが、これは地図のプレビューと同じ制限である。
@@ -697,6 +710,7 @@ interface TestDiff {
 ```
 
 数と名前は例である。
+実際の節は `packages/test-catalog` の markdown.ts が changes.md の末尾に `### テスト` として書き（コメントの `## OIDC Provider Map` の下に入るため一段下げる）、ほかの節と同じく一覧は 20 行で区切る。
 テストの記述は英語のまま載せ、枠の言葉は地図のコメントに合わせて日本語にする。
 PR には地図と Codecov の二つのコメントが付き、分けたままにする。
 二つは中身が重ならない。
@@ -727,7 +741,7 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 通すには、変更メモのその関数の節に、`テストを変えない理由:` で始まる行を書く。
 
 ```md
-## buildTokenResponse <!-- hono:endpoints/token/steps/build-token-response.ts#buildTokenResponse -->
+## buildTokenResponse <!-- hono:oidc-provider/endpoints/token/steps/build-token-response.ts#buildTokenResponse -->
 
 `scope` の値の前後の空白を落としてから返すようにした。
 
@@ -739,6 +753,12 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 行の中身の質は、説明の無い変更の検査と同じく検査しない。
 PR のコメントでは、理由の書かれた関数を、関連するテストの数と理由と並べて出す。
 `changes:draft` は、この検査で落ちる関数の節に、関連するテストの一覧を HTML コメントで添え、`テストを変えない理由:` の行を書く場所を空けておく。
+すでに節がある関数には、同じ見出しの節をもう一つ足してそこに置く。
+
+理由の行は、なぜ変えたかの説明とは別に読む（`packages/map-analysis` の notes.ts）。
+理由の行だけの節は説明の無い節として数え、コロンの後が空の行は理由として数えない。
+関連するテストは、その関数を名指すか確かめるところで呼ぶテスト、計測した実行でその関数に到達したテスト、計測が無いときは変更が届くエンドポイントへリクエストする API と E2E のテストである。
+検査の結果は `MapChanges.untested` に載り、`checkMap` が説明の無い変更と同じように落とす。
 
 ## 6. データとビルド
 
@@ -759,21 +779,25 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 
 地図のデータに次を足す。
 
-- `data/tests.json`：テストの索引。id、種類、対象、観点、結果の要約。期待結果と本文は含めない
+- `data/tests.json`：テストの索引。id、種類、対象、観点、結果の要約。期待結果と本文は含めない。フレームとエンドポイントごとの数、不足、訳の無い言い回しもここに置く
 - `data/tests/by-frame/<hash>.json`：フレーム（関数、エンドポイントの処理本体）ごとの、関連するテストの札の全文。テストのタブを開いたときに読む
-- `data/tests/results.json`：最新の実行の結果と到達の要約
+- `data/tests/by-endpoint/<hash>.json`：エンドポイント（ソースごと）の、リクエストするテスト（API、E2E、シナリオ）の札の全文と、届くフレームごとのユニットテストの id
+- `data/tests/sources/<hash>.json`：テストファイルの本文（ハイライトしない。テストは検証するコードより大きく、ハイライトすると 20 MB を超えるため）
+- `data/tests/results.json`：最新の実行の結果
 - `data/tests/diff.json`：PR の地図の、テストの差分
 
-テストの札は約 5,500 個あるので、索引を小さく保ち、全文はフレームごとに分けて読む。
+テストの札は約 5,800 個あるので、索引を小さく保ち、全文はフレームごとに分けて読む。
+エンドポイントのファイルにユニットテストの全文を入れないのは、全機能オンの `/token` が 1,200 件を超えるユニットテストに届き、全文を写すとデータが 19 MB になったからである（id だけにして 8 MB）。
 
 ### ワークフロー
 
-いまは `ci.yml` がテストを走らせ、`map-preview.yml` が別に地図を作る。
 地図にテストの結果と到達を載せるには、テストの後に地図を作る必要がある。
-そこで `map-preview.yml` のジョブを `ci.yml` に移し、`test` のジョブの後に `map` のジョブを置く。
+そこで地図のジョブを `map-preview.yml` から `ci.yml` に移し、`test` のジョブの後に `map` のジョブを置いた。
+`map-preview.yml` には、PR を閉じたときにプレビューを消すジョブだけが残る。
+`map` のジョブが `test` のジョブを `needs` に持つことは CI の検査（`.github/scripts/verify-ci-gate.mjs`）が確かめる。
 
 1. `test`：`pnpm run test:ci` を `MARONN_REACH=1` で走らせ、Vitest の JSON、JUnit、lcov、到達の JSONL を artifact にする。E2E も同じジョブで、`MARONN_REACH=1` で `apps/hono` と `apps/nextjs` を起動して走らせる（Next.js は到達を取るビルドでサーバーのソースマップを有効にする）。lcov と JUnit は Codecov に上げる
-2. `map`：artifact を受け取り、`build:map` がテストカタログと差分も作る。デプロイとコメントはいまのまま
+2. `map`：artifact を受け取り（`MAP_TEST_REPORTS`）、`build:map` がテストカタログと差分も作る。テストが落ちても、そこまでの結果で地図を作る。デプロイとコメントは前のとおりで、コメントにはテストの一覧と Codecov のコメントへのリンクを足した
 3. main への push：本番にデプロイする。結果の基準は Codecov が持つので、地図は置かない
 
 計測つきの実行は遅くなる。
@@ -791,11 +815,11 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 | テストごとの到達の計測（Vitest） | `@vitest/coverage-istanbul`、`istanbul-lib-source-maps` | 新規（devDependency） |
 | テストごとの到達の計測（E2E の OP） | Node の `node:inspector`（V8 の precise coverage）、`v8-to-istanbul` | `node:inspector` は標準、`v8-to-istanbul` は新規（devDependency） |
 | E2E の計数の集計と lcov の出力 | `istanbul-lib-coverage`、`istanbul-lib-report` | 新規（devDependency） |
-| 機能ファイルの読み取りと検査、日本語のキーワード | `@cucumber/gherkin`（言語の辞書を含む）、`gherkin-lint` | 新規（devDependency） |
+| 機能ファイルの読み取りと検査、日本語のキーワード | `@cucumber/gherkin`（言語の辞書を含む） | 新規（devDependency） |
 | 観点の表、日本語の訳の表の読み取り | `yaml` | 新規（devDependency） |
 | 機能ファイルから Playwright のテストの生成、Cucumber Expressions | `playwright-bdd`（`@cucumber/cucumber-expressions` を含む） | 新規（devDependency） |
 | 機能ファイルの編集の補完 | VS Code の Cucumber の拡張 | 任意 |
-| PR のカバレッジの変化、結果の変化、flaky | Codecov（`codecov-action`、`test-results-action`） | 新規（無料、トークンをシークレットに置く） |
+| PR のカバレッジの変化、結果の変化、flaky | Codecov（`codecov-action@v7` の coverage と test_results） | 新規（無料、トークン `CODECOV_TOKEN` をシークレットに置く） |
 | 画面 | React、Vite、Dagre、Shiki | 既存 |
 | CI と artifact | GitHub Actions | 既存 |
 | プレビューと本番 | Cloudflare Workers（無料枠） | 既存 |
@@ -812,6 +836,7 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 | `nyc instrument`（E2E の OP の計測） | 前の版で採っていた。`apps/hono` はビルドせずに tsx で動くので書き換える dist が無い。V8 の計数なら両方の OP を同じ口で計れる |
 | `swc-plugin-coverage-instrument`、`babel-plugin-istanbul`（Next.js の計測） | 「テストごとの到達」の項。Next.js を上げるたびに壊れうる |
 | Coveralls | Codecov と同等。Test Analytics に当たるものが無いので Codecov を選ぶ |
+| `gherkin-lint` | 依存に修正版の無い high の勧告がある（「検証と編集」）。同じ規則を `@cucumber/gherkin` で書いた |
 | Stryker（ミュテーションテスト） | 「テストが実際に振る舞いを固定しているか」の強い信号になるが、実行が重く、この設計の範囲の外に置く。後で「保証範囲」の一つの列として足せる |
 
 ## 8. 貢献者に課す規則
@@ -821,10 +846,10 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 **課す規則**
 
 - トップレベルの `describe` に関数名を書く（README の既存の規則）。ユニットテストの対象はこれで引く
-- 機能ファイルには `@id` と対象のタグ（`@endpoint:` `@function:` `@scenario:`）を書き、ステップ定義は英語の Cucumber Expressions で書く。`gherkin-lint`、`bddgen`、ステップ定義の lint が検査する
-- `// @test-id` で固定した id は一意にする。lint が検査する
+- 機能ファイルには `@id` と対象のタグ（`@endpoint:` `@function:` `@scenario:`）と実行先のタグ（`@hono` `@nextjs` `@http`）を書き、ステップ定義は英語の Cucumber Expressions を一行の文字列のリテラルで書く。`lint-features.mjs`、`bddgen`、`lint-steps.mjs` が検査する。実行先のタグの無いシナリオはどの project も生成せず、走らないからである
+- `// @test-id` で固定した id は一意にする。`lint-tests.mjs` が検査する
 - E2E の spec は `fixtures.ts` の `test` を使う。到達の記録のためで、lint が import を検査する
-- エンドポイントに届く実装の変更で、関連するテストを足しも変えもしないときは、変更メモのその関数の節に `テストを変えない理由:` の行を書く。地図のビルドが検査する
+- エンドポイントに届く実装の変更で、関連するテストを足しも変えもしないときは、変更メモのその関数の節に `テストを変えない理由:` の行を書く。地図のビルドが検査する（`MapChanges.untested`）
 
 **あれば良くなるもの**
 
@@ -841,7 +866,8 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 
 ## 9. 進め方
 
-前の段が後の段の土台になるよう、五段に分ける。
+前の段が後の段の土台になるよう、五段に分けた。
+五段とも実装した。
 
 1. **テストカタログと結合**：テストコードの読み取り（種類、対象、観点、期待結果、id）、関数カタログとの結合、Vitest と Playwright の JSON の取り込み、エンドポイントの画面のテストのタブ、テストの一覧のページ。最優先の要件に、静的な根拠で答える
 2. **到達と Codecov**：Vitest の Istanbul の計測、E2E の OP の V8 の計測（`test-reach`、hono と Next.js の両方）、テストごとの差分、到達の表示、不足の規則、lcov と JUnit の Codecov へのアップロード。ここで `ci.yml` に地図のジョブを移す
@@ -863,6 +889,16 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 - E2E の OP の到達は、hono も Next.js も V8 の precise coverage で取る。Next.js のバンドラーに計測のプラグインを当てない
 - 地図と Codecov のコメントは、中身が重ならないので分けたままにする
 - OIDF 適合性スイートは対象外とする
+
+実装で決めたこと。
+
+- テストの id は、`describe` の名前が引ける関数の id で塩をする（「テストの id」の項）
+- `how: 'call'` の対象は、確かめるところで呼ぶ関数に限る（「対象の解決」の項）
+- 観点の語彙の表に、このリポジトリのテストの名前に多く現れて観点を区別しない語（`scope`、`state`、`nonce`、`signature`）を入れない
+- 外へ出る失敗のうち「不足」に数えるのは、OAuth のエラーコードを持つもの（`TokenError(invalid_target)`）に限る。コードの無い失敗（`Error`、`RangeError`）は、どのテストが期待しているかを言い当てる規則が無いからである
+- 関数にユニットテストが無いことは、計測の無い実行でも「不足」に出す。計測があれば到達するテストの数を添える
+- `MapChanges.otherFiles` はテストの変更を数えず、テストファイルの変更は `testFiles` に数える
+- 地図のデータを読む `packages/test-catalog` は `packages/map-analysis` の上に置き、`buildMap` の拡張（`BuildOptions.extend`）として map.json と changes.md を書く前に走る。解析がテストを知らずに済み、データの書き出しは一度で済む
 
 ## 11. 確かめてから決めること
 

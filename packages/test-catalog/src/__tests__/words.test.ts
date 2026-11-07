@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actualWords, expectedErrors, expectsFailure, sayExpectation, valueWords, type Expectation, type Value } from '../words.js';
+import { actualWords, expectationPhrases, expectedErrors, expectsFailure, sayExpectation, valueWords, type Expectation, type Value } from '../words.js';
 
 const string = (value: string): Value => ({ kind: 'string', value });
 const number = (value: number): Value => ({ kind: 'number', value });
@@ -26,6 +26,7 @@ describe('sayExpectation', () => {
       holes: ['Cache-Control', 'no-store'],
     });
     expect(sayExpectation(expectation("res.headers['www-authenticate']", 'toBeUndefined')).text).toBe('there is no `www-authenticate` header');
+    expect(sayExpectation(expectation("response.headers.get('Set-Cookie')", 'toMatch', [string('HttpOnly')], { negated: true })).phrase).toBe('the {string} header does not match {string}');
   });
 
   it('should say an object that names an error as the error code, and other objects key by key', () => {
@@ -44,6 +45,8 @@ describe('sayExpectation', () => {
     expect(sayExpectation(expectation('result', 'toBeUndefined', [], { mode: 'resolves' })).text).toBe('`result` resolves to undefined');
     expect(sayExpectation(expectation('lookup()', 'toMatchObject', [{ kind: 'object', entries: [['sub', string('u-1')]] }], { mode: 'resolves' })).text).toBe('`lookup()` resolves to a value with `sub` `u-1`');
     expect(sayExpectation(expectation('tokens', 'toHaveLength', [number(43)])).text).toBe('the length of `tokens` is 43');
+    expect(sayExpectation(expectation('lookup()', 'toBeNull', [], { mode: 'resolves', negated: true })).text).toBe('`lookup()` does not resolve to null');
+    expect(sayExpectation(expectation('rows', 'toHaveCount', [number(2)], { negated: true })).text).toBe('`rows` does not have 2 elements');
     expect(sayExpectation(expectation('ratio', 'toBeCloseTo', [number(3)]))).toEqual({ text: '`ratio` toBeCloseTo 3', phrase: '', holes: [] });
   });
 });
@@ -81,5 +84,13 @@ describe('actualWords and valueWords', () => {
 
   it('should show strings and code in backticks, numbers as they are, and regular expressions between slashes', () => {
     expect([valueWords(string('a')), valueWords(number(1)), valueWords({ kind: 'regexp', source: 'x$' }), valueWords({ kind: 'array', items: [string('code')] })]).toEqual(['`a`', '1', '/x$/', '[`code`]']);
+  });
+});
+
+describe('expectationPhrases', () => {
+  it('should list each phrase the rules say once, the holes as the translation table writes them', () => {
+    const phrases = expectationPhrases();
+    expect([phrases.has('the HTTP status is {int}'), phrases.has('{code} is {value}'), phrases.has('the {string} header does not match {string}'), phrases.has('')]).toEqual([true, true, true, false]);
+    expect([...phrases].filter((phrase) => /\b(matche|has not)\b/.test(phrase))).toEqual([]);
   });
 });

@@ -172,8 +172,8 @@ export function sayExpectation(expectation: Expectation): Said {
     if (matcher === 'toBeNull' || matcher === 'toBeUndefined') return say(negated ? `there is a \`${header}\` header` : `there is no \`${header}\` header`, negated ? 'there is a {string} header' : 'there is no {string} header', header);
     if ((matcher === 'toBe' || matcher === 'toEqual') && first !== undefined) return say(`the \`${header}\` header is${NOT(negated)} ${valueWords(first)}`, `the {string} header is${NOT(negated)} {string}`, header, hole(first));
     if ((matcher === 'toContain' || matcher === 'toMatch') && first !== undefined) {
-      const verb = matcher === 'toContain' ? 'contains' : 'matches';
-      return say(`the \`${header}\` header ${negated ? `does not ${verb.slice(0, -1)}` : verb} ${valueWords(first)}`, `the {string} header ${negated ? `does not ${verb.slice(0, -1)}` : verb} {string}`, header, hole(first));
+      const verb = matcher === 'toContain' ? (negated ? 'does not contain' : 'contains') : negated ? 'does not match' : 'matches';
+      return say(`the \`${header}\` header ${verb} ${valueWords(first)}`, `the {string} header ${verb} {string}`, header, hole(first));
     }
   }
 
@@ -203,8 +203,9 @@ export function sayExpectation(expectation: Expectation): Said {
   // A promise that resolves: what it resolves to.
   if (mode === 'resolves') {
     const word = { toBeUndefined: 'undefined', toBeNull: 'null', toBeDefined: 'a value', toBeTruthy: 'a truthy value', toBeFalsy: 'a falsy value' }[matcher];
-    if (word !== undefined) return say(`${subject} resolves to${NOT(negated)} ${word}`, `{code} resolves to${NOT(negated)} ${word}`, subject);
-    if (matcher === 'toBe' || matcher === 'toEqual' || matcher === 'toStrictEqual') return say(`${subject} resolves to${NOT(negated)} ${value}`, `{code} resolves to${NOT(negated)} {value}`, subject, value);
+    const resolves = negated ? 'does not resolve to' : 'resolves to';
+    if (word !== undefined) return say(`${subject} ${resolves} ${word}`, `{code} ${resolves} ${word}`, subject);
+    if (matcher === 'toBe' || matcher === 'toEqual' || matcher === 'toStrictEqual') return say(`${subject} ${resolves} ${value}`, `{code} ${resolves} {value}`, subject, value);
     if (matcher === 'toMatchObject') return say(`${subject} resolves to a value${negated ? ' without' : ' with'} ${value}`, `{code} resolves to a value${negated ? ' without' : ' with'} {value}`, subject, value);
   }
   switch (matcher) {
@@ -253,7 +254,7 @@ export function sayExpectation(expectation: Expectation): Said {
     case 'toBeVisible':
       return say(`${subject} is${NOT(negated)} visible`, `{code} is${NOT(negated)} visible`, subject);
     case 'toHaveCount':
-      return say(`${subject} has${negated ? ' not' : ''} ${value} elements`, `{code} has${negated ? ' not' : ''} {int} elements`, subject, hole(first));
+      return say(`${subject} ${negated ? 'does not have' : 'has'} ${value} elements`, `{code} ${negated ? 'does not have' : 'has'} {int} elements`, subject, hole(first));
     case 'toHaveValue':
       return say(`${subject}${negated ? ' does not have' : ' has'} the value ${value}`, `{code}${negated ? ' does not have' : ' has'} the value {value}`, subject, value);
     default:

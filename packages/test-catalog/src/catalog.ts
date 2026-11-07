@@ -198,7 +198,7 @@ function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, end
     .filter((step) => step.type === 'action')
     .map((step) => {
       const target = endpoint ?? endpoints.endpointOfPath(/\/[\w./-]+/.exec(step.text)?.[0] ?? '');
-      const params = [...new Set([...(step.table?.[0] ?? []), ...[...(step.phrase ?? '').matchAll(/\b([a-z][a-z0-9_]*) \{(?:string|word|int)\}/g)].map((match) => match[1] as string)])];
+      const params = [...new Set([...(step.table?.[0] ?? []), ...[...(step.phrase ?? '').matchAll(/\b([a-z][a-z0-9]*_[a-z0-9_]+) \{(?:string|word|int)\}/g)].map((match) => match[1] as string)])];
       return {
         ...(target === undefined ? {} : { endpoint: target }),
         method: (target === undefined ? undefined : endpoints.methods.get(target)?.[0]) ?? 'POST',

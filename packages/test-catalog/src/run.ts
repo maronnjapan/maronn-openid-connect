@@ -235,7 +235,9 @@ export function readRun(directory: string, repository: string, tests: readonly T
             continue;
           }
           const last = run.results?.[run.results.length - 1];
-          record(test, target, statusOf(run.status === 'expected' || run.status === 'flaky' ? 'passed' : run.status === 'skipped' ? 'skipped' : (last?.status ?? run.status)), (run.results ?? []).reduce((sum, attempt) => sum + (attempt.duration ?? 0), 0), run.results?.length ?? 1);
+          // The in-process projects of the feature files name their app (in-process-hono); the E2E runs are named by their file.
+          const projectTarget = /^in-process-(.+)$/.exec(run.projectName ?? '')?.[1] ?? target;
+          record(test, projectTarget, statusOf(run.status === 'expected' || run.status === 'flaky' ? 'passed' : run.status === 'skipped' ? 'skipped' : (last?.status ?? run.status)), (run.results ?? []).reduce((sum, attempt) => sum + (attempt.duration ?? 0), 0), run.results?.length ?? 1);
         }
       }
       for (const child of suite.suites ?? []) visit(child, child.file !== undefined && child.title === child.file ? titles : [...titles, child.title], child.file ?? here);

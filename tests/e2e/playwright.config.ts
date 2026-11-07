@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { defineBddProject } from 'playwright-bdd';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const opPort = Number(process.env.E2E_OP_PORT ?? '3010');
@@ -207,6 +208,20 @@ const oidcClientsJson = JSON.stringify([
     tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code id_token token', 'code id_token', 'code token'],
   },
+  {
+    // The client of the feature files on the http target (the http project
+    // below, tests/steps/support/http.ts). A client of its own: the consent a
+    // scenario records must not skip the consent page another spec expects.
+    // Nothing serves the redirect URI: the steps read the code from the URL
+    // the browser lands on.
+    clientId: 'e2e-features-client',
+    clientSecret: 'e2e-features-client-secret',
+    redirectUris: [`${clientBaseURL}/features-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code', 'refresh_token'],
+    tokenEndpointAuthMethods: ['client_secret_basic'],
+    responseTypes: ['code'],
+  },
 ]);
 
 // EXPERIMENTAL (ID-JAG draft §4.4): the client registrations of the SECOND OP
@@ -402,6 +417,25 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    // The http target of the feature files (tests/features): the scenarios
+    // tagged @http, against the OP above. bddgen writes them into
+    // .features-gen/http (never committed); the in-process targets run from
+    // tests/steps/playwright.config.ts with the same features and steps.
+    {
+      ...defineBddProject({
+        name: 'http',
+        features: '../features/**/*.feature',
+        featuresRoot: '../features',
+        steps: [
+          '../steps/support/*.ts',
+          '../steps/common/*.steps.ts',
+          '../steps/in-process/*.steps.ts',
+          '../steps/http/*.steps.ts',
+        ],
+        tags: '@http',
+      }),
       use: { ...devices['Desktop Chrome'] },
     },
   ],

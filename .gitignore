@@ -12,6 +12,10 @@ dist/
 coverage/
 tests/e2e/playwright-report/
 tests/e2e/test-results/
+tests/steps/test-results/
+
+# The Playwright tests bddgen generates from tests/features (every run writes them anew)
+.features-gen/
 
 # Editor
 .vscode/

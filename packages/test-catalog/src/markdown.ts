@@ -107,7 +107,8 @@ export function testsMarkdown(diff: TestDiff, data: MapData, aspects: AspectTabl
     const endpoint = data.flows[source]?.endpoints.find((candidate) => candidate.id === id);
     return endpoint === undefined ? id : `${endpoint.methods.join(' | ')} ${endpoint.path}`;
   };
-  const changed = new Set(diff.modified.map((change) => change.id));
+  // A renamed test is a changed one in the comment, not an added one.
+  const changed = new Set([...diff.modified.map((change) => change.id), ...diff.renamed.map(([, after]) => after)]);
   const groups = new Map<string, { keys: Set<string>; added: string[]; changed: string[] }>();
   for (const id of [...diff.added, ...diff.renamed.map(([, after]) => after), ...diff.modified.map((change) => change.id)]) {
     for (const key of diff.cards[id]?.endpoints ?? []) {
@@ -144,7 +145,9 @@ export function testsMarkdown(diff: TestDiff, data: MapData, aspects: AspectTabl
           group.changed.map((id) => {
             const change = diff.modified.find((candidate) => candidate.id === id);
             const pair = change?.assertions === undefined ? '' : `（期待 ${[...change.assertions.removed.map((assertion) => `~~${cell(assertion.text)}~~`), ...change.assertions.added.map((assertion) => cell(assertion.text))].slice(0, 4).join(' → ')}）`;
-            return `- ${testWords(diff.cards[id], id, labels)}${pair}`;
+            const before = diff.renamed.find(([, after]) => after === id)?.[0];
+            const renamed = before === undefined ? '' : `（名前の変更: ${diff.cards[before]?.title ?? before} から）`;
+            return `- ${testWords(diff.cards[id], id, labels)}${renamed}${pair}`;
           }),
         ),
       );

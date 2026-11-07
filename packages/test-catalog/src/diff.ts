@@ -74,7 +74,8 @@ export function changesOf(before: TestCase, after: TestCase): TestDiff['modified
 
 /** The endpoint keys (`hono:token`) a test requests or declares. */
 function endpointKeys(test: TestCase): string[] {
-  return [...new Set(test.subjects.filter((subject) => subject.kind === 'endpoint').map((subject) => `${(subject as { source: string }).source}:${subject.id}`))];
+  // The endpoints the code or the tags say; those a measured run added (`coverage`) exist on one side of the diff only, the side the run measured.
+  return [...new Set(test.subjects.filter((subject) => subject.kind === 'endpoint' && subject.how !== 'coverage').map((subject) => `${(subject as { source: string }).source}:${subject.id}`))];
 }
 
 /** The endpoint key of a body (`endpoint:token` → `hono:token`, `endpoint:nextjs:userinfo` → `nextjs:userinfo`). */
@@ -186,7 +187,8 @@ export function diffCatalogs(before: readonly TestCase[], after: readonly TestCa
   for (const entry of changes.frames) {
     if (entry.kind !== 'added' && entry.kind !== 'modified') continue;
     const related = relatedTests(entry, after, data, measured);
-    const relatedBefore = relatedTests(entry, before, data, false);
+    // The same rule on both sides: an unchanged test keeps its reach in the base, a test the pull request changed falls back to the endpoints it requests.
+    const relatedBefore = relatedTests(entry, before, data, measured);
     const expected = new Set(related.flatMap((test) => test.errors ?? []));
     const frame: TestDiff['frames'][number] = {
       frame: entry.id,

@@ -152,6 +152,13 @@ describe('readRun', () => {
     expect([run.measured, run.unmatched]).toEqual([true, { results: 0, reach: 0 }]);
   });
 
+  it('should find a row of an outline by its title before its place, so a skipped row moves no result', () => {
+    const first = card('token-z-1', { title: 'Reject without code', source: { file: 'tests/features/token/a.feature', lines: [1, 1], form: 'feature' }, path: ['Feature', 'Outline'] });
+    const second = card('token-z-2', { title: 'Reject without redirect_uri', source: { file: 'tests/features/token/a.feature', lines: [2, 2], form: 'feature' }, path: ['Feature', 'Outline'] });
+    const finder = new CaseFinder([first, second]);
+    expect([finder.scenario('token-z', 1, 'Reject without redirect_uri')?.id, finder.scenario('token-z', 2, 'Example #2')?.id]).toEqual(['token-z-2', 'token-z-2']);
+  });
+
   it('should find a scenario by its id, a row of an outline by its number', () => {
     const scenario = card('token-x', { source: { file: 'tests/features/token/a.feature', lines: [1, 1], form: 'feature' }, path: ['Feature'] });
     const row = card('token-y-2', { source: { file: 'tests/features/token/a.feature', lines: [2, 2], form: 'feature' }, path: ['Feature', 'Outline'] });
@@ -172,6 +179,20 @@ describe('diffCatalogs', () => {
   it('should pair a removed and an added test in one file with the same subjects and expectations as a rename', () => {
     const diff = diffCatalogs([named('old', { title: 'should reject' })], [named('new', { title: 'should refuse' })], DATA, changes([]), false);
     expect([diff.added, diff.removed, diff.renamed]).toEqual([[], [], [['old', 'new']]]);
+  });
+
+  it('should list a renamed test of an endpoint as changed in the comment, not as added', () => {
+    const api = (id: string, title: string) => card(id, { kind: 'api', root: 'hono', title, subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }], assertions: [said('a')] });
+    const diff = diffCatalogs([api('old', 'should reject')], [api('new', 'should refuse')], DATA, changes([]), false);
+    const markdown = testsMarkdown(diff, { ...DATA, changes: changes([]) } as MapData, ASPECTS);
+    expect([markdown.includes('追加されたテスト:'), markdown.includes('変更されたテスト:\n- should refuse（API, 正常系）（名前の変更: should reject から）')]).toEqual([false, true]);
+  });
+
+  it('should count the endpoints a measured run added on neither side, and relate the tests of both sides by the same rule', () => {
+    const measuredApi = card('token-401', { kind: 'api', root: 'hono', subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }, { kind: 'endpoint', id: 'userinfo', source: 'hono', how: 'coverage' }], reach: [{ target: 'hono', functions: [] }] });
+    const diff = diffCatalogs([measuredApi], [measuredApi], DATA, changes([entry({})]), true);
+    expect(Object.keys(diff.counts.byEndpoint)).toEqual(['hono:token']);
+    expect([diff.frames[0]?.before, diff.frames[0]?.after]).toEqual([diff.frames[0]?.after, { outcomes: [], aspects: [], errors: [] }]);
   });
 
   it('should tell what changed in a test kept under its id: its expectations, or only its body', () => {

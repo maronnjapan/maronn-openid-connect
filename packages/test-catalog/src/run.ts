@@ -81,9 +81,13 @@ export class CaseFinder {
   }
 
   /** The card of a scenario by its `@id` tag, and for an outline the number of its row. */
-  scenario(id: string, row?: number): TestCase | undefined {
-    if (row !== undefined) return this.outlines.get(id)?.[row - 1] ?? this.byId.get(`${id}-${row}`);
-    return this.byId.get(id);
+  scenario(id: string, row?: number, title?: string): TestCase | undefined {
+    if (row === undefined) return this.byId.get(id);
+    // A row of an outline by its title (its columns put in, which playwright-bdd names it by), else by its place.
+    const rows = this.outlines.get(id) ?? [];
+    const named = title === undefined ? [] : rows.filter((candidate) => candidate.title === title);
+    if (named.length === 1) return named[0];
+    return rows[row - 1] ?? this.byId.get(`${id}-${row}`);
   }
 }
 
@@ -240,7 +244,7 @@ export function readRun(directory: string, repository: string, tests: readonly T
           const outline = finder.scenario(id) === undefined;
           const row = outline ? (rows.get(`${specFile}\u0000${id}`) ?? 0) + 1 : undefined;
           if (row !== undefined) rows.set(`${specFile}\u0000${id}`, row);
-          test = finder.scenario(id, row);
+          test = finder.scenario(id, row, spec.title);
         } else if (specFile !== undefined) {
           test = finder.code(repositoryPath(repository, join(rootDir, specFile)), titles, spec.title);
         }
@@ -281,15 +285,18 @@ export function readRun(directory: string, repository: string, tests: readonly T
   }
   const reachRows = new Map<string, number>();
   for (const raw of lines.values()) {
-    if (raw.status === 'skipped') continue;
-    // A scenario is named by its `@id` tag (and the row of an outline, in the order of the lines).
+    // A scenario is named by its `@id` tag (and a row of an outline by its title, else by the order of the lines; a skipped row still takes its place).
     const id = raw.tags?.map((tag) => tag.replace(/^@/, '')).find((tag) => tag.startsWith('id:'))?.slice('id:'.length);
     let test: TestCase | undefined;
     if (id !== undefined) {
       const row = finder.scenario(id) === undefined ? (reachRows.get(`${raw.target ?? ''}\u0000${id}`) ?? 0) + 1 : undefined;
       if (row !== undefined) reachRows.set(`${raw.target ?? ''}\u0000${id}`, row);
-      test = finder.scenario(id, row);
-    } else test = finder.code(raw.file, raw.path, raw.title);
+      if (raw.status === 'skipped') continue;
+      test = finder.scenario(id, row, raw.title);
+    } else {
+      if (raw.status === 'skipped') continue;
+      test = finder.code(raw.file, raw.path, raw.title);
+    }
     if (test === undefined) {
       unmatched.reach += 1;
       continue;

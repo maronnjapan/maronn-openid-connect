@@ -5,7 +5,7 @@
  * bodies (`endpoint:<id>`), with the results and the reach of a run and, in
  * the map of a pull request, the diff of the tests.
  *
- * The page (apps/map) imports these types as
+ * The tests viewer (apps/tests) imports these types as
  * `@maronn-openid-connect/test-catalog/model`, so this module has no code and
  * imports nothing.
  */
@@ -225,11 +225,9 @@ export interface TestEntry {
   card?: string;
 }
 
-/** The tests of a frame in the index: where its cards are, and the counts the outline shows. */
+/** The tests of a frame in the index: the counts the viewer shows beside a step. */
 export interface FrameTestsRef {
-  /** The url of its FrameTests (`./data/tests/by-frame/<hash>.json`). */
-  url: string;
-  /** The unit tests whose describe names it. */
+  /** The unit tests whose describe names it, or whose expectations call it. */
   unit: number;
   /** Of those, the ones that expect success, failure, and check a boundary. */
   success: number;
@@ -241,15 +239,22 @@ export interface FrameTestsRef {
   related: number;
 }
 
-/** The tests of an endpoint of a source (hono, nextjs) in the index. */
+/**
+ * The tests of an endpoint of a source (hono, nextjs) in the index, by id:
+ * the entries of tests.json hold every case once, so an endpoint names its
+ * tests instead of copying them (a function every endpoint reaches would
+ * otherwise carry a thousand cards in each of the files of its endpoints).
+ */
 export interface EndpointTestsRef {
-  /** The url of its FrameTests (`./data/tests/by-endpoint/<hash>.json`). */
-  url: string;
   counts: TestCounts;
   gaps: number;
+  /** Its API and E2E tests: those that request it, by their code or in the measured run. */
+  tests: string[];
+  /** The unit tests of each frame it reaches, by frame id; frames without a unit test are left out. */
+  units: Record<string, string[]>;
 }
 
-/** tests.json: the index of the tests the page reads after map.json. */
+/** tests.json: the index of the tests viewer (apps/tests), every case once. */
 export interface TestsIndex {
   version: 1;
   /** The run the results and the reach come from, when the build had one. */
@@ -257,7 +262,7 @@ export interface TestsIndex {
   /** Whether the reach of a run is in (MARONN_REACH=1). */
   measured: boolean;
   tests: TestEntry[];
-  /** By frame id. */
+  /** By frame id: the frames with a test. */
   frames: Record<string, FrameTestsRef>;
   /** By `<source>:<endpoint>` (`hono:token`, `nextjs:token`). */
   endpoints: Record<string, EndpointTestsRef>;
@@ -267,17 +272,19 @@ export interface TestsIndex {
   /** The phrases (step expressions and the words of expectations) the translation table has no Japanese for. */
   untranslated: string[];
   /**
-   * The gaps of every endpoint and feature, for the list of the tests: a
-   * function without a unit test once, with the endpoints that reach it; the
-   * other gaps of an endpoint with its source and id.
+   * The gaps of every endpoint and feature: a function without a unit test
+   * once, with the endpoints that reach it; the other gaps of an endpoint
+   * with its source and id.
    */
   gaps: Array<Gap & { source?: string; endpoint?: string; endpoints?: string[] }>;
   /** The aspects aspects.yaml asks every endpoint to have. */
   requiredAspects: string[];
-  /** The text of each test file (TestSource), by its path, for the code drawer: plain, not highlighted (the tests are larger than the code they test). */
+  /** The url of the text of each test file (TestSource), by its path. */
   sources: Record<string, string>;
   /** The labels of the aspects (`boundary` → `境界値`). */
   aspectLabels: Record<string, string>;
+  /** Whether tests/diff.json is there (a build of a pull request). */
+  diff?: boolean;
 }
 
 /** tests/sources/<hash>.json: the text of a test file. */
@@ -286,20 +293,59 @@ export interface TestSource {
   text: string;
 }
 
-/**
- * tests/by-frame/<hash>.json and tests/by-endpoint/<hash>.json: the cards of
- * the tests of a frame or an endpoint. An endpoint's file has the cards of
- * the tests that request it (API, E2E, scenarios) and names its unit tests by
- * the frames it reaches: their cards are in the files of those frames.
- */
-export interface FrameTests {
+/** tests/by-file/<hash>.json: the cards of the tests of one file (the url is TestEntry.card). */
+export interface FileTests {
   version: 1;
-  /** The frame id, `<source>:<endpoint>`, or the path of a test file. */
+  /** The path of the test file. */
   key: string;
   tests: TestCase[];
-  /** For an endpoint: the unit tests of each frame it reaches, by id. */
-  units?: Record<string, string[]>;
-  gaps: Gap[];
+}
+
+/** A step of an endpoint in the outline: its name, and the function it calls when it has one of its own (hono). */
+export interface OutlineStep {
+  id: string;
+  /** Its name in Japanese (`クライアントを認証する`). */
+  label: string;
+  /** The frame id of the function of the step; absent for a step of Next.js, a block of its Route Handler. */
+  function?: string;
+}
+
+/** An endpoint of a source in the outline, in the order of the map. */
+export interface OutlineEndpoint {
+  /** `<source>:<endpoint>`, the key of TestsIndex.endpoints. */
+  key: string;
+  source: 'hono' | 'nextjs';
+  id: string;
+  /** Its name in Japanese (`トークンエンドポイント`). */
+  label: string;
+  summary?: string;
+  path: string;
+  methods: string[];
+  group: { id: string; label: string };
+  layer: 'api' | 'browser' | 'metadata';
+  /** The frame of its body (`endpoint:token`, `endpoint:nextjs:token`). */
+  root: string;
+  steps: OutlineStep[];
+}
+
+/** A function of the catalog the viewer names. */
+export interface OutlineFunction {
+  id: string;
+  name: string;
+  package: string;
+  module: string;
+  summary?: string;
+}
+
+/**
+ * outline.json: what the viewer needs of the function catalog to name what
+ * the tests test, so it reads no map.json: the endpoints of hono and Next.js
+ * with their steps, and the functions the tests and the steps name.
+ */
+export interface TestsOutline {
+  version: 1;
+  endpoints: OutlineEndpoint[];
+  functions: Record<string, OutlineFunction>;
 }
 
 /** The diff of the test catalog of a pull request (tests/diff.json). */

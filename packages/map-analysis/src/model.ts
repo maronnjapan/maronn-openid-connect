@@ -378,22 +378,6 @@ export interface MapData {
   sources: Record<string, { path: string; url: string }>;
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
-  /** The tests of the map (packages/test-catalog): where the page reads them and how many there are. */
-  tests?: TestsPointer;
-}
-
-/**
- * Where the data of the tests is (packages/test-catalog writes it next to
- * map.json) and how many tests the catalog holds; the page shows the tests
- * when it is there and stays whole without it.
- */
-export interface TestsPointer {
-  /** The url of the index (`./data/tests.json`). */
-  index: string;
-  /** How many test cases the catalog holds. */
-  count: number;
-  /** The url of the diff of the tests, in the map of a pull request. */
-  diff?: string;
 }
 
 // ---------------------------------------------------------------------------

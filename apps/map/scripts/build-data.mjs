@@ -8,17 +8,19 @@
  * MAP_PR_TITLE and MAP_PR_URL name the pull request. The changes in Markdown
  * also go to the summary of the run on GitHub Actions.
  *
- * The tests (packages/test-catalog) are written beside the map: tests.json and
- * the cards of each frame and endpoint under tests/, and in the map of a pull
- * request the diff of the tests. MAP_TEST_REPORTS names the directory a run of
- * the tests wrote with MARONN_TEST_REPORTS (the JSON reports of Vitest and
- * Playwright, the reach of MARONN_REACH=1): its results and reach join the
- * cards. Without it the cards are those the code says.
+ * The same analysis reads the tests (packages/test-catalog): in the map of a
+ * pull request their diff goes into changes.md and fails the check of a
+ * change whose related tests did not change, and the data of the tests viewer
+ * (apps/tests) is written to apps/tests/public/data. The map itself shows no
+ * test. MAP_TEST_REPORTS names the directory a run of the tests wrote with
+ * MARONN_TEST_REPORTS (the JSON reports of Vitest and Playwright, the reach of
+ * MARONN_REACH=1): its results and reach join the cards. Without it the cards
+ * are those the code says.
  *
  * Reads the built CLI and the built analysis, so run
  * `pnpm run build:map` at the root (it builds both first).
  */
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, pullRequestOf } from '@maronn-openid-connect/map-analysis';
@@ -28,6 +30,11 @@ const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = resolve(appRoot, '../..');
 const out = join(appRoot, 'public', 'data');
 mkdirSync(out, { recursive: true });
+// The data of the tests viewer, built by the same analysis; the map wrote its tests beside map.json before.
+const testsOut = join(repository, 'apps', 'tests', 'public', 'data');
+mkdirSync(testsOut, { recursive: true });
+rmSync(join(out, 'tests'), { recursive: true, force: true });
+rmSync(join(out, 'tests.json'), { force: true });
 const base = process.env.MAP_BASE?.trim() || undefined;
 const pullRequest = pullRequestOf(process.env);
 const started = Date.now();
@@ -37,7 +44,7 @@ const result = await buildMap({
   out,
   ...(base === undefined ? {} : { base }),
   ...(pullRequest === undefined ? {} : { pullRequest }),
-  extend: (context) => buildTests(context, reports === undefined ? {} : { reports }),
+  extend: (context) => buildTests(context, { out: testsOut, ...(reports === undefined ? {} : { reports }) }),
 });
 for (const line of result.log) console.log(`Wrote ${join(out, 'map.json')}: ${line} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
 const changes = result.data.changes;

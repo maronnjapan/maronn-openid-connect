@@ -1,19 +1,25 @@
 /**
- * The tests of the map, written beside map.json by the build of the map
- * (an extension of buildMap, see apps/map/scripts/build-data.mjs):
+ * The tests, read by the build of the map (an extension of buildMap, see
+ * apps/map/scripts/build-data.mjs), which gives the analysis the reader
+ * needs. Two things come out of it:
  *
- * - tests.json: the index (model.ts TestsIndex): every case without what it
- *   expects, the counts of each frame and endpoint, the gaps;
- * - tests/by-frame/<hash>.json and tests/by-endpoint/<hash>.json: the cards
- *   of the tests of a frame and of an endpoint, read when its tab opens;
- * - tests/results.json: the results of the run the build was given;
- * - tests/diff.json: in the map of a pull request, the diff of the tests.
+ * - for the map of a pull request, the diff of the tests: the section of the
+ *   comment (changes.md) and MapChanges.untested, which fails the check;
+ * - with `out`, the data of the tests viewer (apps/tests/public/data):
+ *   - tests.json: the index (model.ts TestsIndex), every case once, the
+ *     counts and the tests of each frame and endpoint by id, the gaps;
+ *   - outline.json: the endpoints with their steps and the functions the
+ *     viewer names (TestsOutline);
+ *   - tests/by-file/<hash>.json: the cards of the tests of a file, read when
+ *     the reader opens one of them;
+ *   - tests/sources/<hash>.json: the text of a test file;
+ *   - tests/diff.json: in the build of a pull request, the diff of the tests.
  *
  * The run (MAP_TEST_REPORTS: the directory a run with MARONN_TEST_REPORTS
  * wrote, see run.ts) is optional: without it the cards are those of the
  * code, their evidence static. In the map of a pull request the catalog of
  * the fork point is read too (the test files the pull request changed, as
- * they were there), and the changes that need a test get MapChanges.untested.
+ * they were there).
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,13 +30,16 @@ import { diffCatalogs } from './diff.js';
 import { listFiles, testFileOf, testFiles, type TestFile } from './discover.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown } from './markdown.js';
-import type { FrameTests, FrameTestsRef, Subject, TestCase, TestsIndex } from './model.js';
+import type { MapData } from '@maronn-openid-connect/map-analysis';
+import type { FileTests, FrameTestsRef, OutlineFunction, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { readRun } from './run.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
 export interface TestBuildOptions {
   /** The directory of a run of the tests (MAP_TEST_REPORTS). */
   reports?: string;
+  /** The data directory of the tests viewer (apps/tests/public/data); without it the build writes no file. */
+  out?: string;
 }
 
 /** The cards with what a run says: their results, their reach, and the subjects the reach confirms or adds. */
@@ -63,16 +72,12 @@ export function withRun(tests: TestCase[], run: ReturnType<typeof readRun>): voi
   }
 }
 
-/** The files of the cards of a join, written under their hashes; the refs of the frames and endpoints for the index. */
-function writeCards(out: string, joined: Joined): { frames: TestsIndex['frames']; endpoints: TestsIndex['endpoints'] } {
-  const written = { frames: new Set<string>(), endpoints: new Set<string>() };
+/** The counts of each frame and the tests of each endpoint by id, for the index. */
+export function indexRefs(joined: Joined): { frames: TestsIndex['frames']; endpoints: TestsIndex['endpoints'] } {
   const frames: TestsIndex['frames'] = {};
   for (const [id, frame] of [...joined.frames].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    if (frame.tests.length === 0 && frame.gaps.length === 0) continue;
-    const file: FrameTests = { version: 1, key: id, tests: frame.tests, gaps: frame.gaps };
-    const name = writeHashed(join(out, 'tests', 'by-frame'), id, JSON.stringify(file), written.frames);
+    if (frame.tests.length === 0) continue;
     const ref: FrameTestsRef = {
-      url: `./data/tests/by-frame/${name}`,
       unit: frame.unit.length,
       success: frame.unit.filter((test) => test.outcome === 'success').length,
       failure: frame.unit.filter((test) => test.outcome === 'failure').length,
@@ -84,18 +89,19 @@ function writeCards(out: string, joined: Joined): { frames: TestsIndex['frames']
   }
   const endpoints: TestsIndex['endpoints'] = {};
   for (const [key, endpoint] of [...joined.endpoints].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const own = new Set(endpoint.tests);
     const units: Record<string, string[]> = {};
-    for (const [id, frame] of joined.frames) {
-      if (!endpoint.reachable.has(id)) continue;
-      const own = frame.unit.filter((test) => endpoint.tests.includes(test)).map((test) => test.id);
-      if (own.length > 0) units[id] = own;
+    for (const id of [...endpoint.reachable].sort()) {
+      const tests = (joined.frames.get(id)?.unit ?? []).filter((test) => own.has(test)).map((test) => test.id);
+      if (tests.length > 0) units[id] = tests;
     }
-    const file: FrameTests = { version: 1, key, tests: endpoint.tests.filter((test) => test.kind !== 'unit'), units, gaps: endpoint.gaps };
-    const name = writeHashed(join(out, 'tests', 'by-endpoint'), key, JSON.stringify(file), written.endpoints);
-    endpoints[key] = { url: `./data/tests/by-endpoint/${name}`, counts: countTests(endpoint.tests), gaps: endpoint.gaps.length };
+    endpoints[key] = {
+      counts: countTests(endpoint.tests),
+      gaps: endpoint.gaps.length,
+      tests: endpoint.tests.filter((test) => test.kind !== 'unit').map((test) => test.id),
+      units,
+    };
   }
-  removeStale(join(out, 'tests', 'by-frame'), written.frames);
-  removeStale(join(out, 'tests', 'by-endpoint'), written.endpoints);
   return { frames, endpoints };
 }
 
@@ -106,11 +112,55 @@ function writeFileCards(out: string, tests: readonly TestCase[]): Map<string, st
   for (const test of tests) byFile.set(test.source.file, [...(byFile.get(test.source.file) ?? []), test]);
   const urls = new Map<string, string>();
   for (const [path, cards] of [...byFile].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const file: FrameTests = { version: 1, key: path, tests: cards, gaps: [] };
+    const file: FileTests = { version: 1, key: path, tests: cards };
     urls.set(path, `./data/tests/by-file/${writeHashed(join(out, 'tests', 'by-file'), path, JSON.stringify(file), written)}`);
   }
   removeStale(join(out, 'tests', 'by-file'), written);
   return urls;
+}
+
+/** The endpoints of hono and Next.js with their steps, and the functions the index and the steps name (TestsOutline). */
+export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string>): TestsOutline {
+  const endpoints: TestsOutline['endpoints'] = [];
+  const named = new Set(frames);
+  for (const source of ['hono', 'nextjs'] as const) {
+    for (const endpoint of data.flows[source]?.endpoints ?? []) {
+      const key = `${source}:${endpoint.id}`;
+      if (!joined.endpoints.has(key)) continue;
+      const root = joined.endpoints.get(key)?.root ?? endpoint.root;
+      named.add(root);
+      const steps = endpoint.steps.map((step) => {
+        if (step.functionId !== undefined) named.add(step.functionId);
+        return { id: step.id, label: step.label, ...(step.functionId === undefined ? {} : { function: step.functionId }) };
+      });
+      endpoints.push({
+        key,
+        source,
+        id: endpoint.id,
+        label: endpoint.label,
+        ...(endpoint.summary === undefined ? {} : { summary: endpoint.summary }),
+        path: endpoint.path,
+        methods: endpoint.methods,
+        group: endpoint.group,
+        layer: endpoint.layer,
+        root,
+        steps,
+      });
+    }
+  }
+  const functions: TestsOutline['functions'] = {};
+  for (const id of [...named].sort()) {
+    const fn = data.functions[id];
+    const body = data.bodies[id];
+    const entry: OutlineFunction | undefined =
+      fn !== undefined
+        ? { id, name: fn.name, package: fn.package, module: fn.module, ...(fn.summary ? { summary: fn.summary } : {}) }
+        : body !== undefined
+          ? { id, name: body.name, package: body.package, module: body.module, ...(body.summary ? { summary: body.summary } : {}) }
+          : undefined;
+    if (entry !== undefined) functions[id] = entry;
+  }
+  return { version: 1, endpoints, functions };
 }
 
 /** What reading a catalog needs besides the revision: the tables of the repository. */
@@ -162,10 +212,10 @@ export function readBaseCatalog(context: BuildContext, head: readonly TestCase[]
   return [...unchanged, ...base.tests];
 }
 
-/** Write the tests of the map (see the module comment); the hook of buildMap. */
+/** Read the tests, diff them in a pull request, and write the data of the viewer to `out` (see the module comment); the hook of buildMap. */
 export async function buildTests(context: BuildContext, options: TestBuildOptions = {}): Promise<BuildExtension> {
   const started = Date.now();
-  const { repository, data, out } = context;
+  const { repository, data } = context;
   const root = repository.repository;
   const tables = readTables(root);
   const files = testFiles(repository.roots, listFiles(root));
@@ -180,9 +230,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   const measured = run?.measured ?? false;
 
   const joined = joinTests(tests, data, tables.aspects, measured);
-  mkdirSync(join(out, 'tests'), { recursive: true });
-  const refs = writeCards(out, joined);
-  const fileCards = writeFileCards(out, tests);
+  const refs = indexRefs(joined);
   // A function without a unit test once, with the endpoints that reach it; the other gaps by endpoint.
   const untested = new Map<string, TestsIndex['gaps'][number] & { endpoints: string[] }>();
   const gaps: TestsIndex['gaps'] = [];
@@ -196,19 +244,24 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     }
   }
   gaps.push(...untested.values(), ...joined.features);
-  // The text of each test file, for the code drawer.
+  const out = options.out;
+  if (out !== undefined) mkdirSync(join(out, 'tests'), { recursive: true });
+  const fileCards = out === undefined ? new Map<string, string>() : writeFileCards(out, tests);
+  // The text of each test file, for the code of a test.
   const writtenSources = new Set<string>();
   const sources: TestsIndex['sources'] = {};
-  for (const file of files) {
-    let text: string;
-    try {
-      text = read(file.path);
-    } catch {
-      continue;
+  if (out !== undefined) {
+    for (const file of files) {
+      let text: string;
+      try {
+        text = read(file.path);
+      } catch {
+        continue;
+      }
+      sources[file.path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), file.path, JSON.stringify({ path: file.path, text }), writtenSources)}`;
     }
-    sources[file.path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), file.path, JSON.stringify({ path: file.path, text }), writtenSources)}`;
+    removeStale(join(out, 'tests', 'sources'), writtenSources);
   }
-  removeStale(join(out, 'tests', 'sources'), writtenSources);
   const index: TestsIndex = {
     version: 1,
     ...(run === undefined ? {} : { run: run.run.run }),
@@ -231,23 +284,21 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     sources,
     aspectLabels: Object.fromEntries(tables.aspects.aspects.map((rule) => [rule.id, rule.label])),
   };
-  writeFileSync(join(out, 'tests.json'), JSON.stringify(index));
-  const resultsFile = join(out, 'tests', 'results.json');
-  if (run === undefined) rmSync(resultsFile, { force: true });
-  else writeFileSync(resultsFile, JSON.stringify(run.run));
-  data.tests = { index: './data/tests.json', count: tests.length };
 
   const sections: string[] = [];
-  const diffFile = join(out, 'tests', 'diff.json');
   if (context.changes !== undefined && data.changes !== undefined) {
     const before = readBaseCatalog(context, tests, tables);
     const diff = diffCatalogs(before, tests, data, data.changes, measured);
-    writeFileSync(diffFile, JSON.stringify(diff));
-    data.tests.diff = './data/tests/diff.json';
+    if (out !== undefined) writeFileSync(join(out, 'tests', 'diff.json'), JSON.stringify(diff));
+    index.diff = true;
     data.changes.untested = diff.frames.filter((frame) => frame.untouched && frame.reason === undefined).map((frame) => frame.frame);
     sections.push(testsMarkdown(diff, data, tables.aspects));
     context.log.push(`tests: ${diff.counts.before} → ${diff.counts.after} cases, ${diff.added.length} added, ${diff.removed.length} removed, ${diff.renamed.length} renamed, ${diff.modified.length} changed; ${data.changes.untested.length} changes need a test or a reason`);
-  } else rmSync(diffFile, { force: true });
+  } else if (out !== undefined) rmSync(join(out, 'tests', 'diff.json'), { force: true });
+  if (out !== undefined) {
+    writeFileSync(join(out, 'tests.json'), JSON.stringify(index));
+    writeFileSync(join(out, 'outline.json'), JSON.stringify(outlineOf(data, joined, Object.keys(refs.frames))));
+  }
 
   const kinds = Object.entries(index.counts.kinds).map(([kind, count]) => `${kind} ${count}`).join(', ');
   context.log.push(

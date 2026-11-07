@@ -29,7 +29,7 @@ describe('registerClient', () => {
     it('should save the hash of the client secret, never the secret itself', async () => {
       await registerClient(db, {
         clientId: 'rp-1',
-        name: 'RP One',
+        clientName: 'RP One',
         clientSecret: 's3cret',
         redirectUris: ['https://rp.example.com/callback'],
         tokenEndpointAuthMethods: ['client_secret_basic'],
@@ -45,6 +45,14 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        jwks_uri: null,
+        request_object_signing_alg: null,
+        token_endpoint_auth_signing_alg: null,
+        request_uris: [],
+        logo_uri: null,
+        policy_uri: null,
+        tos_uri: null,
+        client_uri: null,
       });
     });
 
@@ -98,6 +106,14 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        jwks_uri: null,
+        request_object_signing_alg: null,
+        token_endpoint_auth_signing_alg: null,
+        request_uris: [],
+        logo_uri: null,
+        policy_uri: null,
+        tos_uri: null,
+        client_uri: null,
       });
     });
 
@@ -113,6 +129,14 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        jwks_uri: null,
+        request_object_signing_alg: null,
+        token_endpoint_auth_signing_alg: null,
+        request_uris: [],
+        logo_uri: null,
+        policy_uri: null,
+        tos_uri: null,
+        client_uri: null,
       });
     });
 
@@ -177,12 +201,10 @@ describe('registerClient', () => {
       });
     });
 
-    it('should leave them out of the record of a client registered without them', async () => {
+    it('should write null for a jwksUri and a requestObjectSigningAlg the client did not register', async () => {
       await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
 
-      const record = await clientRecord('rp-1');
-      expect(Object.hasOwn(record ?? {}, 'jwks_uri')).toBe(false);
-      expect(Object.hasOwn(record ?? {}, 'request_object_signing_alg')).toBe(false);
+      expect(await clientRecord('rp-1')).toMatchObject({ jwks_uri: null, request_object_signing_alg: null });
     });
 
     // UC-20 / D-17: one source of keys per client, as RFC 7591 §2 asks of jwks and jwks_uri.
@@ -230,6 +252,14 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        jwks_uri: null,
+        request_object_signing_alg: null,
+        token_endpoint_auth_signing_alg: null,
+        request_uris: [],
+        logo_uri: null,
+        policy_uri: null,
+        tos_uri: null,
+        client_uri: null,
       });
     });
 
@@ -351,26 +381,6 @@ describe('createClientResolver', () => {
     });
   });
 
-  // A record written before response_types existed keeps the default of code only.
-  it('should leave responseTypes out for a record without response_types', async () => {
-    const record: ClientRecord = {
-      name: null,
-      client_type: 'confidential',
-      is_deleted: false,
-      client_auths: [],
-      redirect_uris: ['https://rp.example.com/callback'],
-      grant_types: [],
-      scopes: [],
-    };
-    await writeRecord(db, keys.client('rp-1'), record);
-
-    expect(await createClientResolver(db).findClient('rp-1')).toEqual({
-      clientId: 'rp-1',
-      clientType: 'confidential',
-      redirectUris: ['https://rp.example.com/callback'],
-    });
-  });
-
   it('should find the jwksUri and the requestObjectSigningAlg of a client', async () => {
     await registerClient(db, {
       clientId: 'rp-uri',
@@ -435,12 +445,56 @@ describe('createClientResolver', () => {
       redirect_uris: ['https://rp.example.com/callback'],
       grant_types: [],
       scopes: [],
+      response_types: [],
+      jwks_uri: null,
+      request_object_signing_alg: null,
+      token_endpoint_auth_signing_alg: null,
+      request_uris: [],
+      logo_uri: null,
+      policy_uri: null,
+      tos_uri: null,
+      client_uri: null,
     };
     await writeRecord(db, keys.client('rp-1'), record);
 
     await expect(createClientResolver(db).findClient('rp-1')).rejects.toThrow(
       'Client rp-1 has client_auths entries with different secrets',
     );
+  });
+
+  // RFC 7591 §2 / OIDC Core 1.0 §9: the one client_secret is that of the secret methods; private_key_jwt has none.
+  it('should check the one secret over the secret entries only', async () => {
+    const record: ClientRecord = {
+      name: null,
+      client_type: 'confidential',
+      is_deleted: false,
+      client_auths: [
+        { client_auth_type: 'client_secret_basic', secret: 'hash-1' },
+        { client_auth_type: 'private_key_jwt' },
+        { client_auth_type: 'client_secret_post', secret: 'hash-1' },
+      ],
+      redirect_uris: ['https://rp.example.com/callback'],
+      grant_types: [],
+      scopes: [],
+      response_types: [],
+      jwks_uri: null,
+      request_object_signing_alg: null,
+      token_endpoint_auth_signing_alg: null,
+      request_uris: [],
+      logo_uri: null,
+      policy_uri: null,
+      tos_uri: null,
+      client_uri: null,
+    };
+    await writeRecord(db, keys.client('rp-1'), record);
+
+    expect(await createClientResolver(db).findClient('rp-1')).toEqual({
+      clientId: 'rp-1',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt', 'client_secret_post'],
+      clientSecretHash: 'hash-1',
+    });
   });
 });
 
@@ -499,6 +553,16 @@ describe('registerClient with private_key_jwt and display metadata', () => {
       clientUri: 'https://rp.example.com/',
     });
 
+    expect(await clientRecord('rp-jwt')).toMatchObject({
+      name: 'Example RP',
+      client_auths: [{ client_auth_type: 'private_key_jwt' }],
+      token_endpoint_auth_signing_alg: 'ES256',
+      request_uris: ['https://rp.example.com/ro/1#abc'],
+      logo_uri: 'https://rp.example.com/logo.png',
+      policy_uri: 'https://rp.example.com/privacy',
+      tos_uri: 'https://rp.example.com/terms',
+      client_uri: 'https://rp.example.com/',
+    });
     expect(await createClientResolver(db).findClient('rp-jwt')).toEqual({
       clientId: 'rp-jwt',
       clientType: 'confidential',
@@ -515,16 +579,22 @@ describe('registerClient with private_key_jwt and display metadata', () => {
     });
   });
 
-  it('should list private_key_jwt after the secret methods of a client that registers both', async () => {
+  it('should find every method of a client that registers a secret method and private_key_jwt', async () => {
     await registerClient(db, {
       clientId: 'rp-both',
       clientSecret: 's3cret',
       redirectUris: ['https://rp.example.com/callback'],
-      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+      tokenEndpointAuthMethods: ['private_key_jwt', 'client_secret_basic'],
     });
 
+    expect((await clientRecord('rp-both'))?.client_auths).toEqual([
+      { client_auth_type: 'private_key_jwt' },
+      { client_auth_type: 'client_secret_basic', secret: await hashClientSecret('s3cret') },
+    ]);
+    // The entries keep the order the methods were registered in.
     expect(await createClientResolver(db).findClient('rp-both')).toMatchObject({
-      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+      tokenEndpointAuthMethods: ['private_key_jwt', 'client_secret_basic'],
+      clientSecretHash: await hashClientSecret('s3cret'),
     });
   });
 });

@@ -36,13 +36,9 @@ describe('SCHEMA_SQL', () => {
         'browser_sessions',
         'client_assertion_jtis',
         'client_auths',
-        'client_display_uris',
         'client_grant_types',
         'client_jwks',
-        'client_jwks_uris',
-        'client_private_key_jwt_auths',
         'client_redirect_uris',
-        'client_request_object_signing_algs',
         'client_request_uris',
         'client_response_types',
         'client_scopes',
@@ -71,6 +67,31 @@ describe('SCHEMA_SQL', () => {
       insertClient('rp-1');
 
       expect(sqlite.prepare('SELECT is_deleted FROM clients').all()).toEqual([{ is_deleted: 0 }]);
+    });
+
+    // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: NULL is metadata the client did not register.
+    it('should default the single-valued metadata of a client to NULL', () => {
+      insertClient('rp-1');
+
+      expect(
+        sqlite
+          .prepare(
+            'SELECT name, jwks_uri, request_object_signing_alg, token_endpoint_auth_signing_alg, ' +
+              'logo_uri, policy_uri, tos_uri, client_uri FROM clients',
+          )
+          .all(),
+      ).toEqual([
+        {
+          name: null,
+          jwks_uri: null,
+          request_object_signing_alg: null,
+          token_endpoint_auth_signing_alg: null,
+          logo_uri: null,
+          policy_uri: null,
+          tos_uri: null,
+          client_uri: null,
+        },
+      ]);
     });
   });
 
@@ -112,25 +133,34 @@ describe('SCHEMA_SQL', () => {
       ).toThrow('FOREIGN KEY constraint failed');
     });
 
-    // RFC 7591 §2: a client has one jwks_uri; OIDC Dynamic Client Registration 1.0 §2:
-    // one request_object_signing_alg.
-    it('should keep one jwks_uri and one request object signing alg per client', () => {
+    // OIDC Core 1.0 §9: private_key_jwt is a method of the client, like the secret methods.
+    it('should accept a private_key_jwt client_auths row', () => {
       insertClient('rp-1');
-      sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('rp-1', 'https://rp.example.com/jwks')").run();
-      sqlite.prepare("INSERT INTO client_request_object_signing_algs (client_id, alg) VALUES ('rp-1', 'RS256')").run();
+      sqlite.prepare("INSERT INTO client_auths (id, client_id, client_auth_type) VALUES ('auth-1', 'rp-1', 'private_key_jwt')").run();
 
-      expect(() =>
-        sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('rp-1', 'https://rp.example.com/other')").run(),
-      ).toThrow('UNIQUE constraint failed: client_jwks_uris.client_id');
-      expect(() =>
-        sqlite.prepare("INSERT INTO client_request_object_signing_algs (client_id, alg) VALUES ('rp-1', 'ES256')").run(),
-      ).toThrow('UNIQUE constraint failed: client_request_object_signing_algs.client_id');
+      expect(sqlite.prepare('SELECT client_id, client_auth_type FROM client_auths').all()).toEqual([
+        { client_id: 'rp-1', client_auth_type: 'private_key_jwt' },
+      ]);
     });
 
-    it('should reject a jwks_uri of a client that does not exist', () => {
+    // OIDC Core 1.0 §9: a private_key_jwt client proves itself with a signed assertion, not a secret.
+    it('should reject a client secret for a private_key_jwt row', () => {
+      insertClient('rp-1');
+      sqlite.prepare("INSERT INTO client_auths (id, client_id, client_auth_type) VALUES ('auth-1', 'rp-1', 'private_key_jwt')").run();
+
       expect(() =>
-        sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('unknown', 'https://rp.example.com/jwks')").run(),
-      ).toThrow('FOREIGN KEY constraint failed');
+        sqlite.prepare("INSERT INTO client_secrets (id, client_auth_type, secret) VALUES ('auth-1', 'private_key_jwt', 'hash')").run(),
+      ).toThrow('CHECK constraint failed');
+    });
+
+    it('should reject a client_auth_type the OP does not support', () => {
+      insertClient('rp-1');
+
+      expect(() =>
+        sqlite
+          .prepare("INSERT INTO client_auths (id, client_id, client_auth_type) VALUES ('auth-1', 'rp-1', 'client_secret_jwt')")
+          .run(),
+      ).toThrow('CHECK constraint failed');
     });
 
     it('should keep one federated identity per account at a provider', () => {
@@ -163,8 +193,6 @@ describe('SCHEMA_SQL', () => {
       sqlite.prepare("INSERT INTO client_redirect_uris (id, client_id, value) VALUES ('uri-1', 'rp-1', 'https://rp.example.com/cb')").run();
       sqlite.prepare("INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES ('jwk-1', 'rp-1', 'request_object', '{}')").run();
       sqlite.prepare("INSERT INTO client_response_types (id, client_id, response_type) VALUES ('rt-1', 'rp-1', 'id_token')").run();
-      sqlite.prepare("INSERT INTO client_jwks_uris (client_id, value) VALUES ('rp-1', 'https://rp.example.com/jwks')").run();
-      sqlite.prepare("INSERT INTO client_request_object_signing_algs (client_id, alg) VALUES ('rp-1', 'RS256')").run();
 
       sqlite.prepare("DELETE FROM clients WHERE id = 'rp-1'").run();
 
@@ -172,14 +200,10 @@ describe('SCHEMA_SQL', () => {
         .prepare(
           'SELECT (SELECT COUNT(*) FROM client_auths) AS auths, (SELECT COUNT(*) FROM client_secrets) AS secrets, ' +
             '(SELECT COUNT(*) FROM client_redirect_uris) AS redirect_uris, (SELECT COUNT(*) FROM client_jwks) AS jwks, ' +
-            '(SELECT COUNT(*) FROM client_response_types) AS response_types, ' +
-            '(SELECT COUNT(*) FROM client_jwks_uris) AS jwks_uris, ' +
-            '(SELECT COUNT(*) FROM client_request_object_signing_algs) AS request_object_signing_algs',
+            '(SELECT COUNT(*) FROM client_response_types) AS response_types',
         )
         .all();
-      expect(counts).toEqual([
-        { auths: 0, secrets: 0, redirect_uris: 0, jwks: 0, response_types: 0, jwks_uris: 0, request_object_signing_algs: 0 },
-      ]);
+      expect(counts).toEqual([{ auths: 0, secrets: 0, redirect_uris: 0, jwks: 0, response_types: 0 }]);
     });
 
     it('should keep a code without its transaction when the transaction is deleted', () => {

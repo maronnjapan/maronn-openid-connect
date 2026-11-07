@@ -27,33 +27,55 @@ export const SCHEMA_SQL = `-- Tables of the generated OpenID Provider (stores.ts
 -- Expired rows are not deleted by the OP. Delete them on a schedule if needed,
 -- e.g. DELETE FROM transactions WHERE expired_at <= <now in epoch seconds>.
 
--- Client: a registered client, id being its client_id. The OP does not know a
--- deleted client (is_deleted).
+-- Client: a registered client, id being its client_id and name its
+-- client_name. The OP does not know a deleted client (is_deleted).
 CREATE TABLE IF NOT EXISTS clients (
-  id          TEXT PRIMARY KEY,
-  name        VARCHAR(1000),
-  client_type VARCHAR(1000) NOT NULL CHECK (client_type IN ('public', 'confidential')),
-  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE
+  id                              TEXT PRIMARY KEY,
+  name                            VARCHAR(1000),
+  client_type                     VARCHAR(1000) NOT NULL
+    CHECK (client_type IN ('public', 'confidential')),
+  is_deleted                      BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Not in the ER model: the single-valued metadata of the client (RFC 7591
+  -- §2, OpenID Connect Dynamic Client Registration 1.0 §2), each NULL when
+  -- the client did not register it. jwks_uri is the URL of the JWK Set the OP
+  -- fetches the client's public keys from: the keys of the purposes of
+  -- clientJwksUriPurposes come from it, not from client_jwks, and a client
+  -- with one registers no client_jwks rows. Every Request Object of the
+  -- client must be signed with request_object_signing_alg, and every
+  -- private_key_jwt client assertion (OIDC Core 1.0 §9) with
+  -- token_endpoint_auth_signing_alg; NULL accepts any alg the OP accepts.
+  -- logo_uri, policy_uri, tos_uri and client_uri are what the login and
+  -- consent screens show about the client.
+  jwks_uri                        VARCHAR(5000),
+  request_object_signing_alg      VARCHAR(100),
+  token_endpoint_auth_signing_alg VARCHAR(100),
+  logo_uri                        VARCHAR(5000),
+  policy_uri                      VARCHAR(5000),
+  tos_uri                         VARCHAR(5000),
+  client_uri                      VARCHAR(5000)
 );
 
 -- Client_auth: a method the client may authenticate with at the token
 -- endpoint. A public client has none. A confidential client has one row per
--- method it may use: client_secret_basic, client_secret_post or both. Every
--- row of a client carries the same secret in client_secrets, because a client
--- has one client_secret (RFC 7591 §2). Another method (such as
--- private_key_jwt) is added here when the OP supports it.
+-- method it may use: client_secret_basic, client_secret_post, private_key_jwt,
+-- or several of them. The rows of the secret methods carry the client's one
+-- secret in client_secrets, because a client has one client_secret (RFC 7591
+-- §2). A private_key_jwt row has no secret: its client assertion (OIDC Core
+-- 1.0 §9) is verified with the client_jwks keys of the private_key_jwt
+-- purpose, or the keys of clients.jwks_uri.
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
   client_auth_type VARCHAR(1000) NOT NULL
-    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
+    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt')),
   UNIQUE (id, client_auth_type)
 );
 CREATE INDEX IF NOT EXISTS client_auths_client_id_idx ON client_auths (client_id);
 
 -- Client_secret: the secret of a client_secret_basic / client_secret_post
 -- row. client_auth_type is part of the foreign key, so it always equals the
--- type of its client_auths row. secret is the hash from hashClientSecret().
+-- type of its client_auths row, and its CHECK keeps a private_key_jwt row from
+-- having a secret. secret is the hash from hashClientSecret().
 CREATE TABLE IF NOT EXISTS client_secrets (
   id               TEXT PRIMARY KEY,
   client_auth_type VARCHAR(1000) NOT NULL
@@ -65,12 +87,12 @@ CREATE TABLE IF NOT EXISTS client_secrets (
 
 -- Client_jwk: a public key of the client for one purpose, one JWK (RFC 7517)
 -- as JSON. purpose names the process that uses the key: request_object for
--- the signed Request Objects the OP verifies (OIDC Core 1.0 §6.3.2), or
--- another one such as private_key_jwt (OIDC Core 1.0 §9) or dpop (RFC 9449)
--- for a process a project adds. It has no CHECK, so a new purpose needs no
--- migration. A key used for two purposes is two rows. The OP reads the keys
--- of a purpose each time a process needs them, so a key inserted or deleted
--- here takes effect at once. Never store a private key.
+-- signed Request Objects (OIDC Core 1.0 §6.3.2) and private_key_jwt for
+-- client assertions (§9), which the OP verifies, or another one such as dpop
+-- (RFC 9449) for a process a project adds. It has no CHECK so a project can
+-- add a purpose of its own. A key used for two purposes is two rows. The OP
+-- reads the keys of a purpose each time a process needs them, so a key
+-- inserted or deleted here takes effect at once. Never store a private key.
 CREATE TABLE IF NOT EXISTS client_jwks (
   id        TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -107,35 +129,6 @@ CREATE TABLE IF NOT EXISTS client_response_types (
 );
 CREATE INDEX IF NOT EXISTS client_response_types_client_id_idx ON client_response_types (client_id);
 
--- Not in the ER model: the jwks_uri of the client (RFC 7591 §2), the URL of
--- the JWK Set the OP fetches its public keys from. A client with one gets the
--- keys of its jwks_uri for the purposes it serves, not those of client_jwks,
--- and registers no client_jwks rows. One per client.
-CREATE TABLE IF NOT EXISTS client_jwks_uris (
-  client_id TEXT PRIMARY KEY REFERENCES clients (id) ON DELETE CASCADE,
-  value     VARCHAR(5000) NOT NULL
-);
-
--- Not in the ER model: the request_object_signing_alg of the client (OpenID
--- Connect Dynamic Client Registration 1.0 §2). Every Request Object of the
--- client must be signed with this alg. A client without a row may use any
--- alg the OP accepts. One per client.
-CREATE TABLE IF NOT EXISTS client_request_object_signing_algs (
-  client_id TEXT PRIMARY KEY REFERENCES clients (id) ON DELETE CASCADE,
-  alg       VARCHAR(100) NOT NULL
-);
-
--- Not in the ER model: the client authenticates with private_key_jwt (OIDC
--- Core 1.0 §9), with the keys it registered for the private_key_jwt purpose
--- (client_jwks) or its jwks_uri. signing_alg is its
--- token_endpoint_auth_signing_alg (OpenID Connect Dynamic Client Registration
--- 1.0 §2): every client assertion must be signed with it; NULL accepts every
--- alg the OP accepts. One per client, beside the client_auths rows.
-CREATE TABLE IF NOT EXISTS client_private_key_jwt_auths (
-  client_id   TEXT PRIMARY KEY REFERENCES clients (id) ON DELETE CASCADE,
-  signing_alg VARCHAR(100)
-);
-
 -- Not in the ER model: the request_uris of the client (OpenID Connect Dynamic
 -- Client Registration 1.0 §2), the URLs of the Request Objects it passes by
 -- reference (OIDC Core 1.0 §6.2). With require_request_uri_registration, the
@@ -146,16 +139,6 @@ CREATE TABLE IF NOT EXISTS client_request_uris (
   value     VARCHAR(5000) NOT NULL
 );
 CREATE INDEX IF NOT EXISTS client_request_uris_client_id_idx ON client_request_uris (client_id);
-
--- Not in the ER model: the URLs the login and consent screens show about the
--- client (OpenID Connect Dynamic Client Registration 1.0 §2): its logo_uri,
--- policy_uri, tos_uri and client_uri. Its client_name is clients.name.
-CREATE TABLE IF NOT EXISTS client_display_uris (
-  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
-  kind      VARCHAR(100) NOT NULL CHECK (kind IN ('logo_uri', 'policy_uri', 'tos_uri', 'client_uri')),
-  value     VARCHAR(5000) NOT NULL,
-  PRIMARY KEY (client_id, kind)
-);
 
 -- Scope: the scopes the client may request. A request for any other scope is
 -- rejected with invalid_scope. A client without rows may request every scope

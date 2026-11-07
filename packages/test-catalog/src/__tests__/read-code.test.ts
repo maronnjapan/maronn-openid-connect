@@ -81,6 +81,10 @@ const TEST = [
   "  it.skip('should be skipped', () => {});",
   "  it('should fail through a helper of the file', () => {",
   "    expectCode(() => authenticate(''), 'invalid_client');",
+  "    expectCode(() => authenticate('x'), 'invalid_grant');",
+  '  });',
+  "  it('should expect a part of an error', () => {",
+  "    expect(() => authenticate('')).toThrow(expect.objectContaining({ error: 'invalid_client' }));",
   '  });',
   '});',
 ].join('\n');
@@ -100,6 +104,7 @@ describe('readCodeTests', () => {
       [['authenticate'], 'should answer the token endpoint with 401', false],
       [['authenticate'], 'should be skipped', true],
       [['authenticate'], 'should fail through a helper of the file', false],
+      [['authenticate'], 'should expect a part of an error', false],
     ]);
     expect(tests[0]?.lines).toEqual([17, 20]);
   });
@@ -131,10 +136,42 @@ describe('readCodeTests', () => {
   it('should read a request a helper of the file sends: its endpoint, method, params and authentication', () => {
     const tests = fixture.read('auth.test.ts');
     expect(tests[2]?.requests).toEqual([{ endpoint: 'token', method: 'POST', path: '/token', params: ['grant_type', 'code'], auth: 'client_secret_basic', line: 7 }]);
-    expect(tests[4]?.assertions.map((assertion) => assertion.text)).toEqual(['the error code is `invalid_client`']);
+    expect(tests[4]?.assertions.map((assertion) => assertion.text)).toEqual(['the error code is `invalid_client`', 'the error code is `invalid_grant`']);
+    expect(tests[5]?.assertions.map((assertion) => assertion.text)).toEqual(['fails with `invalid_client`']);
     expect(codeSubjects(tests[2] as CodeTest, ['hono'], () => true)).toEqual([
       { kind: 'function', id: 'lib:auth.ts#authenticate', how: 'describe' },
       { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' },
+    ]);
+  });
+});
+
+describe('ownRoutes', () => {
+  let fixture: ReturnType<typeof compileTests>;
+  beforeAll(() => {
+    fixture = compileTests({
+      'router.test.ts': [
+        "import { describe, expect, it } from 'vitest';",
+        'declare const router: { post(path: string, handler: () => unknown): void; mount(path: string, child: unknown): void; request(url: string): Promise<Response> };',
+        "router.post('/token', () => 'own');",
+        "router.mount('/login/google', {});",
+        "describe('router', () => {",
+        "  it('should answer its own route', async () => {",
+        "    expect((await router.request('/token')).status).toBe(200);",
+        "    expect((await router.request('/login/google')).status).toBe(200);",
+        "    expect((await router.request('/userinfo')).status).toBe(401);",
+        '  });',
+        '});',
+      ].join('\n'),
+    });
+  });
+  afterAll(() => fixture.dispose());
+
+  it('should not take a request to a route the test registers or mounts itself for a request to the endpoint', () => {
+    const [test] = fixture.read('router.test.ts');
+    expect(test?.requests.map((request) => [request.path, request.endpoint])).toEqual([
+      ['/token', undefined],
+      ['/login/google', undefined],
+      ['/userinfo', 'userinfo'],
     ]);
   });
 });

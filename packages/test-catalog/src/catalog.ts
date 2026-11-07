@@ -197,6 +197,7 @@ function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, end
   const endpoint = tags.endpoints[0];
   const requests: RequestShape[] = steps
     .filter((step) => step.type === 'action')
+    .filter((step) => endpoint !== undefined || endpoints.endpointOfPath(/\/[\w./-]+/.exec(step.text)?.[0] ?? '') !== undefined)
     .map((step) => {
       const target = endpoint ?? endpoints.endpointOfPath(/\/[\w./-]+/.exec(step.text)?.[0] ?? '');
       const params = [...new Set([...(step.table?.[0] ?? []), ...[...(step.phrase ?? '').matchAll(/\b([a-z][a-z0-9]*_[a-z0-9_]+) \{(?:string|word|int)\}/g)].map((match) => match[1] as string)])];
@@ -211,7 +212,7 @@ function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, end
   const outcomes = assertions.map((assertion) => stepOutcome(assertion.text));
   const errors = assertions.flatMap((assertion) => [...assertion.text.matchAll(/error code is "([^"]+)"/g)].map((match) => match[1] as string));
   const statuses = assertions.flatMap((assertion) => [...assertion.text.matchAll(/HTTP status is (\d{3})/g)].map((match) => Number(match[1])));
-  const headers = assertions.flatMap((assertion) => [...assertion.text.matchAll(/(?:the )?([A-Za-z-]+) header/g)].map((match) => match[1] as string));
+  const headers = assertions.flatMap((assertion) => [...assertion.text.matchAll(/(?:the )?["`]?([A-Za-z-]+)["`]? header/g)].map((match) => match[1] as string));
   const kind: TestKind = inProcess.length > 0 || !tags.targets.includes('http') ? 'api' : 'e2e';
   return {
     id: test.id ?? hashedTestId('features', test.path, test.title),

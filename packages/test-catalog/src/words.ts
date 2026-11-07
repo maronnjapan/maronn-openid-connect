@@ -111,13 +111,14 @@ export function actualWords(code: string): string {
 
 /** The name of a header an actual reads (`response.headers.get('Cache-Control')`, `headers['cache-control']`), or undefined. */
 export function headerOf(code: string): string | undefined {
-  const match = /\.headers(?:\.get\(\s*['"`]([^'"`]+)['"`]\s*\)|\[\s*['"`]([^'"`]+)['"`]\s*\])$/.exec(code.trim());
+  // `response.headers.get('X')`, `res.headers['x']`, and Playwright's `response.headers()['x']`.
+  const match = /\.headers(?:\(\))?(?:\.get\(\s*['"`]([^'"`]+)['"`]\s*\)|\[\s*['"`]([^'"`]+)['"`]\s*\])$/.exec(code.trim());
   return match?.[1] ?? match?.[2];
 }
 
-/** Whether an actual is the status of a response (`response.status`, `res.statusCode`). */
+/** Whether an actual is the status of a response (`response.status`, `res.statusCode`, Playwright's `response.status()`). */
 export function isStatus(code: string): boolean {
-  return /(^|\.)status(Code)?$/.test(code.trim().replace(/\?\./g, '.'));
+  return /(^|\.)status(Code)?(\(\))?$/.test(code.trim().replace(/\?\./g, '.'));
 }
 
 /** The literal an argument is when it is a string or a number, for the holes of a phrase. */
@@ -132,8 +133,11 @@ function hole(value: Value | undefined): string {
 export function errorNamed(value: Value | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (value.kind === 'object') {
-    const entry = value.entries.find(([key]) => key === 'error' || key === 'code');
-    return entry?.[1].kind === 'string' ? entry[1].value : undefined;
+    // The `error` of an object, or its `code` when that is a code in snake_case (a `code` also names authorization codes, `code-1`).
+    const error = value.entries.find(([key]) => key === 'error')?.[1];
+    if (error?.kind === 'string') return error.value;
+    const code = value.entries.find(([key]) => key === 'code')?.[1];
+    return code?.kind === 'string' && ERROR_CODE.test(code.value) ? code.value : undefined;
   }
   if (value.kind === 'string') return value.value;
   if (value.kind !== 'code') return undefined;
@@ -283,8 +287,11 @@ export function isErrorCode(actual: string, value: Value | undefined): boolean {
   if (value?.kind !== 'string') return false;
   const code = actual.trim().replace(/\?\./g, '.');
   if (/(^|\.)error$/.test(code)) return true;
-  return /(^|\.)code$/.test(code) && /^[a-z]+(_[a-z0-9]+)+$/.test(value.value);
+  return /(^|\.)code$/.test(code) && ERROR_CODE.test(value.value);
 }
+
+/** An OAuth error code: lower case words joined by underscores (`invalid_client`, `slow_down`). */
+const ERROR_CODE = /^[a-z]+(_[a-z0-9]+)+$/;
 
 /** The errors an expectation expects: the codes (`invalid_client`) and the classes (`TokenError`) it names. */
 export function expectedErrors(expectation: Expectation): string[] {

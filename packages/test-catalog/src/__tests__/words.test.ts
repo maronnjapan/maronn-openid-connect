@@ -9,6 +9,8 @@ describe('sayExpectation', () => {
   it('should say the status of a response with the phrase the steps use', () => {
     expect(sayExpectation(expectation('response.status', 'toBe', [number(401)]))).toEqual({ text: 'the HTTP status is 401', phrase: 'the HTTP status is {int}', holes: ['401'] });
     expect(sayExpectation(expectation('res.statusCode', 'toBe', [number(200)], { negated: true })).text).toBe('the HTTP status is not 200');
+    expect(sayExpectation(expectation('forged.status()', 'toBe', [number(403)])).text).toBe('the HTTP status is 403');
+    expect(sayExpectation(expectation("res.headers()['cache-control']", 'toBe', [string('no-store')])).text).toBe('the `cache-control` header is `no-store`');
   });
 
   it('should say a failure by the error it names: a code of an object, a class, or nothing', () => {
@@ -33,6 +35,8 @@ describe('sayExpectation', () => {
     expect(sayExpectation(expectation('await response.json()', 'toEqual', [{ kind: 'object', entries: [['error', string('invalid_grant')]] }])).text).toBe('the error code is `invalid_grant`');
     const token: Value = { kind: 'object', entries: [['token_type', string('Bearer')], ['expires_in', number(3600)]] };
     expect(sayExpectation(expectation('body', 'toMatchObject', [token])).text).toBe('the body has `token_type` `Bearer` and `expires_in` 3600');
+    const response: Value = { kind: 'object', entries: [['code', string('code-1')], ['state', string('state-1')]] };
+    expect(sayExpectation(expectation('parameters', 'toEqual', [response])).text).toBe('`parameters` equals `code` `code-1` and `state` `state-1`');
   });
 
   it('should say the URL a page ends on from the regular expression it is matched with', () => {

@@ -149,6 +149,16 @@ export function readBaseCatalog(context: BuildContext, head: readonly TestCase[]
   if (files.length === 0) return unchanged;
   const read = (path: string) => git(root, ['show', `${forkPoint}:${path}`]);
   const base = readCatalog({ repository, data: context.data, files, read, overlay, ...tables });
+  // A test of a changed file that the head has under the same file, path and title is the same test: it keeps the head's id, which the head may have given it among more files than the base read (two tests of one id are told apart by their files).
+  const headIds = new Map(head.map((test) => [`${test.source.file}\u0000${test.path.join('\u0000')}\u0000${test.title}`, test.id]));
+  const taken = new Set(unchanged.map((test) => test.id));
+  for (const test of base.tests) {
+    const id = headIds.get(`${test.source.file}\u0000${test.path.join('\u0000')}\u0000${test.title}`);
+    if (id !== undefined && !taken.has(id)) {
+      test.id = id;
+      taken.add(id);
+    }
+  }
   return [...unchanged, ...base.tests];
 }
 

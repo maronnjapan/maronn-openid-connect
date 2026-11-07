@@ -216,6 +216,11 @@ export function valueOf(file: SourceFile, node: Node | undefined, constants: Rea
   if (literal !== undefined) return { kind: 'string', value: literal };
   const constant = constants.get(value);
   if (constant !== undefined) return /^-?\d+(\.\d+)?$/.test(constant) ? { kind: 'number', value: Number(constant) } : { kind: 'string', value: constant };
+  // `expect.objectContaining({...})` and `expect.arrayContaining([...])` expect what their literal says (a part of the value).
+  if (is(value, SyntaxKind.CallExpression) && /^expect\.(objectContaining|arrayContaining)$/.test(textOf(file, value['expression'] as Node).replace(/\s+/g, ''))) {
+    const inner = (value['arguments'] as Node[] | undefined)?.[0];
+    if (inner !== undefined) return valueOf(file, inner, constants, bound);
+  }
   switch (value.kind) {
     case SyntaxKind.NumericLiteral:
       return { kind: 'number', value: Number(any(value)['text']) };
@@ -436,9 +441,10 @@ function paramsIn(file: SourceFile, nodes: readonly Node[], locals: ReadonlyMap<
         const object = unwrap(node['initializer'] as Node);
         if (is(object, SyntaxKind.ObjectLiteralExpression)) add(object);
       } else if (is(node, SyntaxKind.Identifier) || is(node, SyntaxKind.ShorthandPropertyAssignment)) {
+        // A name of the file whose value is a body (an object, `new URLSearchParams(...)`, `JSON.stringify(...)`); a value computed from another request is not this request's body.
         const name = is(node, SyntaxKind.Identifier) ? (node['text'] as string) : (nameOf(node['name'] as Node) ?? '');
         const local = locals.get(name);
-        if (local !== undefined && !seen.has(name)) {
+        if (local !== undefined && !seen.has(name) && isBodyBuilder(file, local)) {
           seen.add(name);
           visit(local);
         }
@@ -447,6 +453,15 @@ function paramsIn(file: SourceFile, nodes: readonly Node[], locals: ReadonlyMap<
     });
   for (const node of nodes) visit(node);
   return keys;
+}
+
+/** Whether an expression builds a body or a query: an object literal, `new URLSearchParams(...)` or `JSON.stringify(...)`. */
+function isBodyBuilder(file: SourceFile, node: Node): boolean {
+  const value = unwrap(node);
+  if (is(value, SyntaxKind.ObjectLiteralExpression)) return true;
+  if (is(value, SyntaxKind.NewExpression)) return nameOf(unwrap(value['expression'] as Node)) === 'URLSearchParams';
+  if (is(value, SyntaxKind.CallExpression)) return /^JSON\.stringify$|\.toString$/.test(textOf(file, value['expression'] as Node)) && (!/\.toString$/.test(textOf(file, value['expression'] as Node)) || isBodyBuilder(file, any(value['expression'])['expression'] as Node));
+  return false;
 }
 
 /** How a request authenticates its client, from its headers and body. */
@@ -504,14 +519,27 @@ function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: Cod
   const requests: RequestShape[] = [];
   const routes: string[] = [];
   const visited = new Set<Node>();
+  const own = ownRoutes(file);
   const push = (shape: Omit<RequestShape, 'line'>, at: Node) => {
     const line = startLine(file, at);
-    if (!requests.some((known) => known.method === shape.method && known.path === shape.path && known.line === line)) requests.push({ ...shape, line });
+    const known = requests.find((request) => request.method === shape.method && request.path === shape.path && request.line === line);
+    if (known === undefined) {
+      requests.push({ ...shape, line });
+      return;
+    }
+    // The same request read again through another call: what that call adds (its fields) joins it.
+    const params = [...new Set([...(known.params ?? []), ...(shape.params ?? [])])];
+    if (params.length > 0) known.params = params;
+    if (known.auth === undefined && shape.auth !== undefined) known.auth = shape.auth;
   };
-  const read = (root: Node, callers: readonly Node[]) => {
-    if (visited.has(root)) return;
+  const read = (root: Node, callers: readonly Node[], depth = 0) => {
+    const helper = root !== body;
+    // A helper is read again for each call with fields of its own (its params), three helpers deep at most (helpers may call one another).
+    if ((visited.has(root) && callers.length === 0) || depth > 3) return;
     visited.add(root);
     walk(root, (node) => {
+      // A helper's own body runs when it is called; the functions it only defines (`const post = ...` in a factory) run when they are called.
+      if (helper && node !== root && (is(node, SyntaxKind.ArrowFunction) || is(node, SyntaxKind.FunctionExpression) || is(node, SyntaxKind.FunctionDeclaration))) return false;
       if (is(node, SyntaxKind.CallExpression)) {
         const callee = unwrap(node['expression'] as Node);
         const args = (node['arguments'] as Node[] | undefined) ?? [];
@@ -525,7 +553,7 @@ function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: Cod
           const fields = callers[0] === undefined ? undefined : unwrap(callers[0]);
           const params = [...new Set([...paramsIn(file, nodes, scope.constants), ...(is(fields, SyntaxKind.ObjectLiteralExpression) ? ((fields['properties'] as Node[]) ?? []).map((property) => nameOf(any(property)['name'] as Node | undefined)).filter((key): key is string => key !== undefined) : [])])];
           const auth = authOf(file, nodes, params);
-          const endpoint = options.endpointOfPath(url.path);
+          const endpoint = own.has(url.path) ? undefined : options.endpointOfPath(url.path);
           push({ ...(endpoint === undefined ? {} : { endpoint }), method: verb, path: url.path, ...(params.length === 0 ? {} : { params }), ...(auth === undefined ? {} : { auth }) }, node);
         };
         if ((method === 'request' || method === 'fetch' || method === 'inject') && args.length > 0 && !/^(request|api|context)$/i.test(textOf(file, any(callee)['expression'] as Node))) {
@@ -552,7 +580,7 @@ function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: Cod
             push({ endpoint, method: /^(GET|POST|PUT|PATCH|DELETE|HEAD)$/.test(name) ? name : (built?.method ?? 'POST'), path: built?.path ?? '', ...(params.length === 0 ? {} : { params }), ...(auth === undefined ? {} : { auth }) }, node);
           }
           const local = scope.functions.get(name);
-          if (local !== undefined) read(local, [...callers, ...args]);
+          if (local !== undefined) read(local, [...callers, ...args], depth + 1);
         }
       }
       return true;
@@ -560,6 +588,28 @@ function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: Cod
   };
   read(body, []);
   return { requests, routes };
+}
+
+/**
+ * The paths a test file registers a handler of its own on (`router.post('/token', (c) => ...)`):
+ * a request to one of them reaches the test's route, not the endpoint of the provider.
+ */
+export function ownRoutes(file: SourceFile): Set<string> {
+  const routes = new Set<string>();
+  walk(file, (node) => {
+    if (!is(node, SyntaxKind.CallExpression)) return true;
+    const callee = unwrap(node['expression'] as Node);
+    const method = is(callee, SyntaxKind.PropertyAccessExpression) ? (nameOf(callee['name']) ?? '') : '';
+    if (!/^(get|post|put|patch|delete|all|on|use|mount|route)$/.test(method)) return true;
+    const args = (node['arguments'] as Node[] | undefined) ?? [];
+    const path = stringOf(args[0] === undefined ? undefined : unwrap(args[0]));
+    const handler = args[args.length - 1] === undefined ? undefined : unwrap(args[args.length - 1] as Node);
+    // A handler of the test's own, or a router of its own mounted on the path.
+    const owned = handler !== undefined && (is(handler, SyntaxKind.ArrowFunction) || is(handler, SyntaxKind.FunctionExpression) || method === 'mount' || method === 'route');
+    if (path !== undefined && path.startsWith('/') && args.length > 1 && owned) routes.add(path);
+    return true;
+  });
+  return routes;
 }
 
 /** The URL of a `fastify.inject({ method, url })`. */
@@ -652,10 +702,8 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
       const actuals: Node[] = [];
       const checked = new Set<string>();
       /** Read the expectations of a body, and of the helpers of the file it calls (two levels), their parameters bound to the values it hands them. */
-      const visited = new Set<Node>();
+      // A helper is read again at each call (its parameters bound to that call's values); the depth stops a helper that calls itself.
       const collect = (root: Node, bound: ReadonlyMap<string, Value>, depth: number) => {
-        if (visited.has(root)) return;
-        visited.add(root);
         walk(root, (node) => {
           if (!is(node, SyntaxKind.CallExpression)) return true;
           const found = expectationOf(file, node, constants, bound);
@@ -677,7 +725,10 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
           expectations.push(expectation);
           actuals.push(actualNode);
           walk(actualNode, (inner) => {
-            if (is(inner, SyntaxKind.Identifier)) checked.add(inner['text'] as string);
+            // The names the actual reads; the name of a property (`.payload`) is no variable of the test.
+            const parent = inner.parent;
+            const isPropertyName = parent !== undefined && (is(parent, SyntaxKind.PropertyAccessExpression) || is(parent, SyntaxKind.PropertyAssignment)) && any(parent)['name'] === inner;
+            if (is(inner, SyntaxKind.Identifier) && !isPropertyName) checked.add(inner['text'] as string);
             return true;
           });
           const said = sayExpectation(expectation);

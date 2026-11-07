@@ -171,6 +171,19 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     }
   }
   gaps.push(...untested.values(), ...joined.features);
+  // The text of each test file, for the code drawer.
+  const writtenSources = new Set<string>();
+  const sources: TestsIndex['sources'] = {};
+  for (const file of files) {
+    let text: string;
+    try {
+      text = read(file.path);
+    } catch {
+      continue;
+    }
+    sources[file.path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), file.path, JSON.stringify({ path: file.path, text }), writtenSources)}`;
+  }
+  removeStale(join(out, 'tests', 'sources'), writtenSources);
   const index: TestsIndex = {
     version: 1,
     ...(run === undefined ? {} : { run: run.run.run }),
@@ -187,6 +200,8 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     untranslated: catalog.untranslated,
     gaps,
     requiredAspects: tables.aspects.required,
+    sources,
+    aspectLabels: Object.fromEntries(tables.aspects.aspects.map((rule) => [rule.id, rule.label])),
   };
   writeFileSync(join(out, 'tests.json'), JSON.stringify(index));
   const resultsFile = join(out, 'tests', 'results.json');

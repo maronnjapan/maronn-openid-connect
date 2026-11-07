@@ -272,6 +272,16 @@ export interface TestsIndex {
   gaps: Array<Gap & { source?: string; endpoint?: string; endpoints?: string[] }>;
   /** The aspects aspects.yaml asks every endpoint to have. */
   requiredAspects: string[];
+  /** The text of each test file (TestSource), by its path, for the code drawer: plain, not highlighted (the tests are larger than the code they test). */
+  sources: Record<string, string>;
+  /** The labels of the aspects (`boundary` → `境界値`). */
+  aspectLabels: Record<string, string>;
+}
+
+/** tests/sources/<hash>.json: the text of a test file. */
+export interface TestSource {
+  path: string;
+  text: string;
 }
 
 /**

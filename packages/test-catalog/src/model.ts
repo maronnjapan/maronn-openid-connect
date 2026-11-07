@@ -1,9 +1,9 @@
 /**
- * The data of the tests on the map (apps/map/docs/design-test-catalog.md):
+ * The data of the tests viewer (apps/tests, apps/map/docs/design-test-catalog.md):
  * the test catalog, a card a test case, joined to the function catalog of
- * the map by the ids of its functions (`<root>:<module>#<name>`) and endpoint
- * bodies (`endpoint:<id>`), with the results and the reach of a run and, in
- * the map of a pull request, the diff of the tests.
+ * the OIDC Provider map by the ids of its functions (`<root>:<module>#<name>`)
+ * and endpoint bodies (`endpoint:<id>`), with the results and the reach of a
+ * run and, in the build of a pull request, the diff of the tests.
  *
  * The tests viewer (apps/tests) imports these types as
  * `@maronn-openid-connect/test-catalog/model`, so this module has no code and
@@ -20,8 +20,8 @@
  *   that runs in the process (`@hono`, `@nextjs`).
  * - `unit`: a test of packages/* or apps/* whose subject is a function of the
  *   catalog and that sends no request.
- * - `tool`: a test of the CLI, the map, the analysis, the test catalog and
- *   the scripts; listed, never on the map of the endpoints.
+ * - `tool`: a test of the CLI, the map, the analysis, the test catalog, the
+ *   tests viewer and the scripts; listed, never under an endpoint.
  */
 export type TestKind = 'unit' | 'api' | 'e2e' | 'tool';
 
@@ -91,7 +91,7 @@ export interface TestCase {
   /** A stable id (see id.ts): the `@id` tag, the `// @test-id` comment, else a hash of the root, the describe path and the title. */
   id: string;
   kind: TestKind;
-  /** The root it belongs to: core, experimental, google-login, hono, nextjs, e2e, features, or the tool (cli, map, map-analysis, test-catalog, test-reach, scripts). */
+  /** The root it belongs to: core, experimental, google-login, hono, nextjs, e2e, features, or the tool (cli, map, map-analysis, test-catalog, test-reach, tests-viewer, scripts). */
   root: string;
   source: { file: string; lines: [number, number]; form: 'code' | 'feature' };
   /** The name of the `it`, or of the scenario, in English. */
@@ -248,7 +248,12 @@ export interface FrameTestsRef {
 export interface EndpointTestsRef {
   counts: TestCounts;
   gaps: number;
-  /** Its API and E2E tests: those that request it, by their code or in the measured run. */
+  /**
+   * Its tests that are no unit test of a frame of `units`: the API and E2E
+   * tests that request it, by their code or in the measured run, and the
+   * unit tests whose measured run reached its body without naming a frame it
+   * reaches. With `units` it lists every test `counts` counts.
+   */
   tests: string[];
   /** The unit tests of each frame it reaches, by frame id; frames without a unit test are left out. */
   units: Record<string, string[]>;
@@ -308,6 +313,12 @@ export interface OutlineStep {
   label: string;
   /** The frame id of the function of the step; absent for a step of Next.js, a block of its Route Handler. */
   function?: string;
+  /**
+   * For a step without `function` (a block of a Route Handler): the frames
+   * the block calls that have unit tests among the endpoint's
+   * (EndpointTestsRef.units), so the step has unit tests like a step of hono.
+   */
+  calls?: string[];
 }
 
 /** An endpoint of a source in the outline, in the order of the map. */

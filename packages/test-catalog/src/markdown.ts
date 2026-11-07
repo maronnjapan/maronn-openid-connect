@@ -66,7 +66,7 @@ function testLines(ids: readonly string[], diff: TestDiff, labels: ReadonlyMap<s
 
 /** The lines of a list, at most LIMIT, the rest counted. */
 function listed(lines: readonly string[]): string[] {
-  return lines.length <= LIMIT ? [...lines] : [...lines.slice(0, LIMIT), `- ほか ${lines.length - LIMIT} 件は地図で見てください。`];
+  return lines.length <= LIMIT ? [...lines] : [...lines.slice(0, LIMIT), `- ほか ${lines.length - LIMIT} 件は、テストの画面（地図の \`/tests/\` の「この PR のテスト」）で見てください。`];
 }
 
 /** The section (see the module comment). */

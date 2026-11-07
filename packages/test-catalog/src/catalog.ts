@@ -35,7 +35,7 @@ import type { Assertion, FeatureStep, RequestShape, Subject, TestCase, TestKind,
 import { codeSubjects, readCodeTests, type CodeTest } from './read-code.js';
 import { readFeatureTags, readFeatureTests, type FeatureTest } from './read-feature.js';
 import { holesOf, type Translations, type Vocabulary } from './vocabulary.js';
-import { expectedErrors, expectsFailure, headerOf, isStatus } from './words.js';
+import { expectedErrors, expectsFailure, headerOf, isStatus, japaneseHole } from './words.js';
 
 /** The virtual tsconfig the E2E specs and the tests of the tools are read in. */
 const OTHER_CONFIG = 'tsconfig.test-catalog.json';
@@ -112,10 +112,10 @@ export function outcomeOf(expectsAnyFailure: boolean, expectsAnything: boolean):
   return expectsAnything ? 'success' : 'unknown';
 }
 
-/** The phrase holes of a said expectation as the Japanese shows them: a string or a header in backticks, the rest as they are. */
+/** The phrase holes of a said expectation as the Japanese shows them (words.ts japaneseHole). */
 function japaneseHoles(phrase: string, holes: readonly string[]): string[] {
   const kinds = holesOf(phrase);
-  return holes.map((hole, index) => (kinds[index] === 'string' ? `\`${hole}\`` : hole));
+  return holes.map((hole, index) => japaneseHole(kinds[index], hole));
 }
 
 /** A hash of a text with its whitespace aside. */

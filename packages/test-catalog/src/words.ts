@@ -44,11 +44,40 @@ export interface Said {
   holes: string[];
 }
 
-/** A value as the page shows it: a string or code in backticks, a number as it is, a regular expression between slashes. */
+/**
+ * Code as a code span of CommonMark, which the page and the comment of a pull
+ * request both read: in a fence of backticks one longer than the longest run
+ * of backticks inside it (a template literal, `` `${issuer}/authorize` ``),
+ * with a space inside the fence when it starts or ends with a backtick.
+ */
+export function codeSpan(code: string): string {
+  const longest = Math.max(0, ...[...code.matchAll(/`+/g)].map((run) => run[0].length));
+  const fence = '`'.repeat(longest + 1);
+  const pad = code.startsWith('`') || code.endsWith('`') || (code.startsWith(' ') && code.endsWith(' ') && code.trim() !== '') ? ' ' : '';
+  return `${fence}${pad}${code}${pad}${fence}`;
+}
+
+/** The words of an empty string, which a code span cannot show. */
+export const EMPTY_STRING = 'an empty string';
+
+/** The English of the values valueWords writes in words, as the Japanese shows them. */
+const JAPANESE_VALUES: Record<string, string> = { [EMPTY_STRING]: '空文字列', 'an empty list': '空の配列', 'an empty object': '空のオブジェクト' };
+
+/**
+ * A hole of a said expectation as its Japanese shows it: a `{string}` hole
+ * (the raw literal) as code, an empty one as 空文字列; a value written in
+ * words (`an empty string`) in Japanese; the rest as it is.
+ */
+export function japaneseHole(kind: string | undefined, hole: string): string {
+  if (kind === 'string') return hole === '' ? (JAPANESE_VALUES[EMPTY_STRING] as string) : codeSpan(hole);
+  return JAPANESE_VALUES[hole] ?? hole;
+}
+
+/** A value as the page shows it: a string or code as a code span, a number as it is, a regular expression between slashes. */
 export function valueWords(value: Value): string {
   switch (value.kind) {
     case 'string':
-      return `\`${value.value}\``;
+      return value.value === '' ? EMPTY_STRING : codeSpan(value.value);
     case 'number':
       return String(value.value);
     case 'boolean':
@@ -60,11 +89,11 @@ export function valueWords(value: Value): string {
     case 'regexp':
       return `/${value.source}/`;
     case 'object':
-      return value.entries.length === 0 ? 'an empty object' : value.entries.map(([key, entry]) => `\`${key}\` ${valueWords(entry)}`).join(' and ');
+      return value.entries.length === 0 ? 'an empty object' : value.entries.map(([key, entry]) => `${codeSpan(key)} ${valueWords(entry)}`).join(' and ');
     case 'array':
       return value.items.length === 0 ? 'an empty list' : `[${value.items.map(valueWords).join(', ')}]`;
     case 'code':
-      return `\`${shortCode(value.code)}\``;
+      return codeSpan(shortCode(value.code));
   }
 }
 
@@ -100,13 +129,13 @@ export function shortCode(code: string): string {
   return flat.length > 80 ? `${flat.slice(0, 79)}…` : flat;
 }
 
-/** The checked value in words: `the body` for the parsed body of a response, else its code in backticks. */
+/** The checked value in words: `the body` for the parsed body of a response, else its code as a code span. */
 export function actualWords(code: string): string {
   const flat = shortCode(code)
     .replace(/^\(\s*await\s+([\s\S]*)\)$/, '$1')
     .replace(/^await\s+/, '');
   if (/^(body|json|payload)$/.test(flat) || /\.json\(\)$/.test(flat) || /^[A-Za-z_$][\w$]*\.body$/.test(flat)) return 'the body';
-  return `\`${flat}\``;
+  return codeSpan(flat);
 }
 
 /** The name of a header an actual reads (`response.headers.get('Cache-Control')`, `headers['cache-control']`), or undefined. */
@@ -163,7 +192,7 @@ export function sayExpectation(expectation: Expectation): Said {
     if (negated && mode !== 'rejects') return say('does not fail', 'does not fail');
     const error = errorNamed(first) ?? (first?.kind === 'regexp' ? valueWords(first) : undefined);
     if (mode === 'rejects' && matcher === 'toBeInstanceOf' && first !== undefined) return say(`fails with ${valueWords(first)}`, 'fails with {string}', hole(first));
-    if (error !== undefined) return say(`fails with \`${error.replace(/^`|`$/g, '')}\``, 'fails with {string}', error);
+    if (error !== undefined) return say(`fails with ${codeSpan(error.replace(/^`|`$/g, ''))}`, 'fails with {string}', error);
     if (first !== undefined && first.kind === 'object') return say(`fails with ${valueWords(first)}`, 'fails with {value}', valueWords(first));
     return say('fails', 'fails');
   }
@@ -173,22 +202,23 @@ export function sayExpectation(expectation: Expectation): Said {
     return say(`the HTTP status is${NOT(negated)} ${first.value}`, `the HTTP status is${NOT(negated)} {int}`, String(first.value));
   }
   if (header !== undefined) {
-    if (matcher === 'toBeNull' || matcher === 'toBeUndefined') return say(negated ? `there is a \`${header}\` header` : `there is no \`${header}\` header`, negated ? 'there is a {string} header' : 'there is no {string} header', header);
-    if ((matcher === 'toBe' || matcher === 'toEqual') && first !== undefined) return say(`the \`${header}\` header is${NOT(negated)} ${valueWords(first)}`, `the {string} header is${NOT(negated)} {string}`, header, hole(first));
+    const name = codeSpan(header);
+    if (matcher === 'toBeNull' || matcher === 'toBeUndefined') return say(negated ? `there is a ${name} header` : `there is no ${name} header`, negated ? 'there is a {string} header' : 'there is no {string} header', header);
+    if ((matcher === 'toBe' || matcher === 'toEqual') && first !== undefined) return say(`the ${name} header is${NOT(negated)} ${valueWords(first)}`, `the {string} header is${NOT(negated)} {string}`, header, hole(first));
     if ((matcher === 'toContain' || matcher === 'toMatch') && first !== undefined) {
       const verb = matcher === 'toContain' ? (negated ? 'does not contain' : 'contains') : negated ? 'does not match' : 'matches';
-      return say(`the \`${header}\` header ${verb} ${valueWords(first)}`, `the {string} header ${verb} {string}`, header, hole(first));
+      return say(`the ${name} header ${verb} ${valueWords(first)}`, `the {string} header ${verb} {string}`, header, hole(first));
     }
   }
 
   // The error code of a body or a result.
   const code = errorNamed(first);
   if ((matcher === 'toMatchObject' || matcher === 'toEqual' || matcher === 'toStrictEqual') && code !== undefined && first?.kind === 'object' && !negated) {
-    return say(`the error code is \`${code}\``, 'the error code is {string}', code);
+    return say(`the error code is ${codeSpan(code)}`, 'the error code is {string}', code);
   }
   if (isErrorCode(actual, first) && (matcher === 'toBe' || matcher === 'toEqual')) {
     const code = (first as { value: string }).value;
-    return say(`the error code is${NOT(negated)} \`${code}\``, `the error code is${NOT(negated)} {string}`, code);
+    return say(`the error code is${NOT(negated)} ${code === '' ? EMPTY_STRING : codeSpan(code)}`, `the error code is${NOT(negated)} {string}`, code);
   }
 
   // The URL of a page.
@@ -197,7 +227,7 @@ export function sayExpectation(expectation: Expectation): Said {
       const ending = /^(?:\^?\.\*)?((?:\\\/|[\w-])+)\$$/.exec(first.source);
       if (ending !== undefined && ending !== null) {
         const tail = (ending[1] as string).replace(/\\\//g, '/');
-        return say(`the URL${negated ? ' does not end' : ' ends'} with \`${tail}\``, `the URL${negated ? ' does not end' : ' ends'} with {string}`, tail);
+        return say(`the URL${negated ? ' does not end' : ' ends'} with ${codeSpan(tail)}`, `the URL${negated ? ' does not end' : ' ends'} with {string}`, tail);
       }
       return say(`the URL${negated ? ' does not match' : ' matches'} ${valueWords(first)}`, `the URL${negated ? ' does not match' : ' matches'} {value}`, valueWords(first));
     }

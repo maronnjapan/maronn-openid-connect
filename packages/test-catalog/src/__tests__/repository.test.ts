@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -37,6 +39,29 @@ describe('testFileOf', () => {
       undefined,
       undefined,
     ]);
+  });
+});
+
+describe('listFiles', () => {
+  it('should list the files of the working tree on the disk, the untracked ones too, and those of a commit as they were', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'list-files-'));
+    try {
+      const run = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-C', directory, ...args], { encoding: 'utf8' });
+      run('init', '-q');
+      writeFileSync(join(directory, 'a.test.ts'), '');
+      writeFileSync(join(directory, 'b.test.ts'), '');
+      run('add', '.');
+      run('commit', '-q', '-m', 'init');
+      // a.test.ts deleted in the working tree without `git rm`: the index still has it.
+      rmSync(join(directory, 'a.test.ts'));
+      writeFileSync(join(directory, 'c.test.ts'), '');
+      expect([listFiles(directory), listFiles(directory, 'HEAD')]).toEqual([
+        ['b.test.ts', 'c.test.ts'],
+        ['a.test.ts', 'b.test.ts'],
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

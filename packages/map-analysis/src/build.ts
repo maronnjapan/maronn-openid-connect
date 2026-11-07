@@ -75,10 +75,10 @@ export interface BuildOptions {
   /** The built CLI (packages/cli/dist). */
   cliDist?: string;
   /**
-   * More data written beside the map before map.json and changes.md (the
-   * tests of packages/test-catalog): it may add to `data` (MapData.tests) and
-   * to the changes (MapChanges.untested), and returns the sections it adds to
-   * changes.md.
+   * More work on the analysis before map.json and changes.md are written
+   * (the tests of packages/test-catalog): it may write files of its own (the
+   * data of the tests viewer, apps/tests), add to the changes
+   * (MapChanges.untested), and returns the sections it adds to changes.md.
    */
   extend?: (context: BuildContext) => Promise<BuildExtension | void> | BuildExtension | void;
 }

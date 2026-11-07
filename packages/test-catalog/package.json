@@ -2,7 +2,7 @@
   "name": "@maronn-openid-connect/test-catalog",
   "version": "0.0.0",
   "private": true,
-  "description": "The tests on the OIDC Provider Map: every test case read as a card (what it tests, what it expects, the requests it sends) joined to the function catalog, with the results and the reach of a run and the diff of a pull request; apps/map shows what it writes",
+  "description": "The test catalog of the OIDC Provider: every test case read as a card (what it tests, what it expects, the requests it sends) joined to the function catalog of the map, with the results and the reach of a run and the diff of a pull request; the tests viewer (apps/tests) shows what it writes",
   "type": "module",
   "exports": {
     ".": {

@@ -8,14 +8,16 @@
  * - tests/e2e/specs belongs to e2e, and the feature files of tests/features
  *   to features.
  * - The tests of the tools belong to the tool (cli, map-analysis, map,
- *   test-catalog, test-reach, scripts for .github/scripts); they are listed,
- *   never on the map of the endpoints.
+ *   test-catalog, test-reach, tests-viewer for apps/tests, scripts for
+ *   .github/scripts); they are listed, never under an endpoint.
  * - The OpenID Conformance Suite (tests/conformance) is a check of its own
  *   that runs outside plans in Docker: it is not in the catalog.
  *
  * The files are those git knows of in the working tree (tracked or untracked
- * and not ignored), or those of a commit.
+ * and not ignored) that are on the disk, or those of a commit.
  */
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { git, isTestPath, type AnalysisRoot } from '@maronn-openid-connect/map-analysis';
 
 /** A test file: its path from the root of the repository and the root it belongs to. */
@@ -36,6 +38,7 @@ export const TOOL_ROOTS: ReadonlyArray<{ directory: string; root: string }> = [
   { directory: 'packages/test-catalog/', root: 'test-catalog' },
   { directory: 'packages/test-reach/', root: 'test-reach' },
   { directory: 'apps/map/', root: 'map' },
+  { directory: 'apps/tests/', root: 'tests-viewer' },
   { directory: '.github/scripts/', root: 'scripts' },
   { directory: 'scripts/', root: 'scripts' },
 ];
@@ -43,10 +46,15 @@ export const TOOL_ROOTS: ReadonlyArray<{ directory: string; root: string }> = [
 export const E2E_DIRECTORY = 'tests/e2e/specs/';
 export const FEATURES_DIRECTORY = 'tests/features/';
 
-/** The paths git lists: the working tree's (tracked and untracked, not ignored), or a commit's. */
+/**
+ * The paths git lists: the working tree's (tracked and untracked, not
+ * ignored, without the tracked files the working tree deleted and the index
+ * still has), or a commit's.
+ */
 export function listFiles(repository: string, commit?: string): string[] {
   const output = commit === undefined ? git(repository, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']) : git(repository, ['ls-tree', '-r', '--name-only', '-z', commit]);
-  return [...new Set(output.split('\0').filter((path) => path !== ''))].sort();
+  const paths = [...new Set(output.split('\0').filter((path) => path !== ''))].sort();
+  return commit === undefined ? paths.filter((path) => existsSync(join(repository, path))) : paths;
 }
 
 /** The test file a path is, or undefined (see the module comment). */

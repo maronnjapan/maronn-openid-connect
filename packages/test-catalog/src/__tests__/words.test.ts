@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actualWords, expectationPhrases, expectedErrors, expectsFailure, sayExpectation, valueWords, type Expectation, type Value } from '../words.js';
+import { actualWords, codeSpan, expectationPhrases, expectedErrors, expectsFailure, japaneseHole, sayExpectation, valueWords, type Expectation, type Value } from '../words.js';
 
 const string = (value: string): Value => ({ kind: 'string', value });
 const number = (value: number): Value => ({ kind: 'number', value });
@@ -91,6 +91,37 @@ describe('actualWords and valueWords', () => {
 
   it('should show strings and code in backticks, numbers as they are, and regular expressions between slashes', () => {
     expect([valueWords(string('a')), valueWords(number(1)), valueWords({ kind: 'regexp', source: 'x$' }), valueWords({ kind: 'array', items: [string('code')] })]).toEqual(['`a`', '1', '/x$/', '[`code`]']);
+  });
+});
+
+describe('codeSpan', () => {
+  it('should fence code in one backtick more than the longest run inside it, with a space when it starts or ends with a backtick', () => {
+    expect(codeSpan('claims.sub')).toBe('`claims.sub`');
+    // A template literal (an E2E test's URL).
+    expect(codeSpan('`${issuer}/authorize`')).toBe('`` `${issuer}/authorize` ``');
+    // A template literal inside a call.
+    expect(codeSpan('new RegExp(`^${escapeRegExp(issuer)}/login$`)')).toBe('``new RegExp(`^${escapeRegExp(issuer)}/login$`)``');
+    expect(codeSpan('a ``b`` c')).toBe('```a ``b`` c```');
+    expect(codeSpan(' x ')).toBe('`  x  `');
+  });
+
+  it('should write an empty string in words, and a template literal as one code span', () => {
+    expect(valueWords(string(''))).toBe('an empty string');
+    expect(sayExpectation(expectation('await response.text()', 'toBe', [string('')])).text).toBe('`response.text()` is an empty string');
+    expect(sayExpectation(expectation('page.url()', 'toBe', [{ kind: 'code', code: '`${issuer}/authorize`' }])).text).toBe('`page.url()` is `` `${issuer}/authorize` ``');
+    expect(actualWords('`${issuer}/token`')).toBe('`` `${issuer}/token` ``');
+  });
+
+  it('should give the Japanese of a hole: a string as code, an empty one and the values in words in Japanese', () => {
+    expect([japaneseHole('string', 'no-store'), japaneseHole('string', ''), japaneseHole('value', 'an empty string'), japaneseHole('value', 'an empty list'), japaneseHole('code', '`x`'), japaneseHole('int', '401')]).toEqual([
+      '`no-store`',
+      '空文字列',
+      '空文字列',
+      '空の配列',
+      '`x`',
+      '401',
+    ]);
+    expect(japaneseHole('string', 'a`b')).toBe('``a`b``');
   });
 });
 

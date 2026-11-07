@@ -31,7 +31,7 @@ import { listFiles, testFileOf, testFiles, type TestFile } from './discover.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown } from './markdown.js';
 import type { MapData } from '@maronn-openid-connect/map-analysis';
-import type { FileTests, FrameTestsRef, OutlineFunction, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
+import type { FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { readRun } from './run.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
@@ -91,14 +91,18 @@ export function indexRefs(joined: Joined): { frames: TestsIndex['frames']; endpo
   for (const [key, endpoint] of [...joined.endpoints].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const own = new Set(endpoint.tests);
     const units: Record<string, string[]> = {};
+    const listed = new Set<string>();
     for (const id of [...endpoint.reachable].sort()) {
       const tests = (joined.frames.get(id)?.unit ?? []).filter((test) => own.has(test)).map((test) => test.id);
-      if (tests.length > 0) units[id] = tests;
+      if (tests.length === 0) continue;
+      units[id] = tests;
+      for (const test of tests) listed.add(test);
     }
     endpoints[key] = {
       counts: countTests(endpoint.tests),
       gaps: endpoint.gaps.length,
-      tests: endpoint.tests.filter((test) => test.kind !== 'unit').map((test) => test.id),
+      // Every test it counts is listed: a unit test its measured run brought in (it reached the body) without naming a frame it reaches is one of its own.
+      tests: endpoint.tests.filter((test) => test.kind !== 'unit' || !listed.has(test.id)).map((test) => test.id),
       units,
     };
   }
@@ -119,8 +123,13 @@ function writeFileCards(out: string, tests: readonly TestCase[]): Map<string, st
   return urls;
 }
 
-/** The endpoints of hono and Next.js with their steps, and the functions the index and the steps name (TestsOutline). */
-export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string>): TestsOutline {
+/**
+ * The endpoints of hono and Next.js with their steps, and the functions the
+ * index and the steps name (TestsOutline). A step without a function of its
+ * own (a block of a Route Handler) names the frames it calls that have unit
+ * tests of the endpoint (`refs`, the endpoints of the index).
+ */
+export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string>, refs: TestsIndex['endpoints'] = indexRefs(joined).endpoints): TestsOutline {
   const endpoints: TestsOutline['endpoints'] = [];
   const named = new Set(frames);
   for (const source of ['hono', 'nextjs'] as const) {
@@ -129,9 +138,15 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
       if (!joined.endpoints.has(key)) continue;
       const root = joined.endpoints.get(key)?.root ?? endpoint.root;
       named.add(root);
-      const steps = endpoint.steps.map((step) => {
-        if (step.functionId !== undefined) named.add(step.functionId);
-        return { id: step.id, label: step.label, ...(step.functionId === undefined ? {} : { function: step.functionId }) };
+      const units = refs[key]?.units ?? {};
+      const steps = endpoint.steps.map((step): OutlineStep => {
+        if (step.functionId !== undefined) {
+          named.add(step.functionId);
+          return { id: step.id, label: step.label, function: step.functionId };
+        }
+        const calls = [...new Set(step.calls ?? [])].filter((id) => units[id] !== undefined);
+        for (const id of calls) named.add(id);
+        return { id: step.id, label: step.label, ...(calls.length === 0 ? {} : { calls }) };
       });
       endpoints.push({
         key,
@@ -297,7 +312,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   } else if (out !== undefined) rmSync(join(out, 'tests', 'diff.json'), { force: true });
   if (out !== undefined) {
     writeFileSync(join(out, 'tests.json'), JSON.stringify(index));
-    writeFileSync(join(out, 'outline.json'), JSON.stringify(outlineOf(data, joined, Object.keys(refs.frames))));
+    writeFileSync(join(out, 'outline.json'), JSON.stringify(outlineOf(data, joined, Object.keys(refs.frames), refs.endpoints)));
   }
 
   const kinds = Object.entries(index.counts.kinds).map(([kind, count]) => `${kind} ${count}`).join(', ');

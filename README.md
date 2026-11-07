@@ -1,17 +1,15 @@
 # maronn-openid-connect
 
-最新の OpenID Connect（OIDC）および OAuth 仕様を、早く、仕様に忠実に、JavaScript が動く環境で検証するための OSS ライブラリです。
+最新の OpenID Connect（OIDC）および OAuth 仕様をJavaScript が動く環境で検証するための OSS ライブラリです。
 
 ## プロジェクトについて
 
 ### コンセプト
 
-**「最新の OIDC/OAuth 仕様を誰よりも早く、忠実に、どこでも動く形で検証できる OSS ライブラリ」**
+**「最新の OIDC/OAuth 仕様を簡単に動く形で検証できる OSS ライブラリ」**
 
 OAuth/OIDC 周辺の認証および認可技術をすぐに試せるツールとして開発しています。
-Keycloak は構築コストが重く、Auth0 などの IDaaS はエンタープライズ向けで気軽に試しにくいという問題があります。
-このライブラリは「自分の要件がこの仕様で実現できるか」を素早く検証するための橋渡しをします。
-検証後は、本格的な IDaaS や OSS へ移行する利用形態を想定しています。
+IDaaSや有名
 
 ### ターゲットユーザー
 
@@ -31,186 +29,6 @@ Keycloak は構築コストが重く、Auth0 などの IDaaS はエンタープ�
 主要フローの7割から8割が動く状態になったら先にリリースし、オプショナルな実装と Conformance 通過はその後に追加します。
 「完璧になってから出す」より「動くものを早く出して改善する」ことを優先します。
 ただし、テストコードで主要ケースを網羅し、仕様参照を明記することは必須です。
-
-### 利用者の入口
-
-CLI コマンドでフローの実装コードを生成し、利用者はそのコードを変更しながら仕様を検証します。
-`core` は高度な組み込み用途のロジック層です。
-`samples/*` は CLI 生成コードを実行する内部動作確認用であり、利用者が直接触るものではありません。
-
-## 実装におけるルール
-
-実装時は次のルールを守ります。
-
-- コマンドには pnpm を使用する
-- 関数は検証、取得、保存、変換などの責務ごとに分け、個別に組み合わせて呼び出せるようにする。引数は文字列、数値、真偽値、配列、必要な項目だけのオブジェクトを優先し、関係のないリクエスト情報やストア操作を要求しない
-- export する関数は `function` 宣言で書く。関数はすべて（export しない関数、Next.js の Route Handler、React コンポーネントを含む）宣言の直上に JSDoc を置き、1 行目にその関数の振る舞い（何を受け取り、何を返し、何を書き換え、どんなときに失敗するか）を 1 文で書く。使われる場所や実装の手順ではなく振る舞いを書く。仕様の節は `@spec OIDC Core 1.0 §9` のタグに書き、ステップの番号（「ステップ 3:」）は書かない。ステップの `meta` の `calls` には、ソースに呼び出しとして現れないもの（`'consentResolver.recordConsent'`）だけを書く。`maronn-oidc explain` と Provider Map はこの JSDoc と呼び出しを関数カタログとして読む。`pnpm run lint`（`.github/scripts/lint-function-docs.mjs`）が検査する
-- `dependencies` にはモノレポ内のライブラリだけを使用し、外部ライブラリを追加しない。例外は `packages/google-login` の `google-auth-library` だけで、Google の ID トークン検証（公開鍵の取得・署名検証）の仕様変更へ自前で追随しないために Google 公式ライブラリへ委ねている
-- `devDependencies` には外部ライブラリを使用してよい
-- t_wada が提唱する方法でテスト駆動開発を行う
-- 機能追加または修正を実ブラウザや実 HTTP フローで検証できる場合は、原則として `tests/e2e` に Playwright E2E テストも追加する
-- E2E で使う OpenID Provider は、PR ごとに `apps/*` の全機能オンのアプリを、nightly と手動起動で `samples/*` の CLI 生成アプリを対象とする。E2E 専用のクライアントとリソースサーバーは `tests/e2e` 配下に置き、`apps/*` と `samples/*` には OP 以外の役割を混在させない
-- `apps/hono/src/oidc-provider` と `apps/nextjs/src/app` の base（機能と db の種類が持つファイル以外）は、機能のディレクトリと experimental パッケージを import しない。機能は `features/feature.ts`（Next.js は `_oidc-provider/feature.ts`）のフックか、パイプライン（`pipeline.ts`、Next.js は `route.ts`）の所有者付きブロック（`// [step-id] (feature: <id>) ...`）で base に差し込む。この境界は `pnpm run lint`（`.github/scripts/lint-import-boundaries.mjs`）が検査する
-- 関数カタログの関数（`packages/core`、`packages/experimental`、`packages/google-login`、`apps/hono`、`apps/nextjs` の関数）かエンドポイントの処理本体を変える PR では、`apps/map/changes/` に変更メモ（Markdown）を 1 つ足し、変えた関数ごとに、なぜ変えたかを書く。何を変えたかとどこに効くかは PR の地図（`ci.yml` の `map` ジョブ）が計算して並べる。エンドポイントに届く関数とエンドポイントの処理本体の変更に説明の節が無いと、地図のビルドが落ちる。同じ変更で、その関数に関連するテストを一つも足しも変えもしないときも落ちるので、テストを変えないのが妥当ならその節に `テストを変えない理由:` で始まる行を書く。節の雛形は `pnpm --filter @maronn-openid-connect/map changes:draft` で作れる。変更メモはマージ後も残す。書き方は `apps/map/changes/README.md` を参照する
-- `packages/experimental/src` の変更に対して changeset を手で書かない。main への push で CI が patch の changeset を自動生成する。experimental の bump はどの変更でも patch 固定であり、minor または major を指定すると `pnpm run test:release-contract` が失敗する。詳細は `RELEASE.md` の「experimental の自動 publish」を参照する
-- `packages/experimental` の機能を実装し終えたら、作業用 notes リポジトリの `implementation-guides/experimental/` に実装解説の日本語版と英語版を作成する。`packages/experimental/src` または CLI 統合を変更した場合は、該当解説の掲載コードと説明も同じ変更内で更新する
-
-## ドキュメント作成の規約
-
-README、実装解説、タスク文書などの Markdown 資料を作成または改稿するときは、次の規約を守ります。
-
-- 日本語の文書を書く、または推敲するときは、作業用 notes リポジトリの `claude/skills/japanese-tech-writing/` にあるスキルを使用する
-- 論点を足さない定型句を避け、人間が読みやすい文章にする
-- 実装解説では対象コードを抜粋せず、notes リポジトリの `implementation-guides/experimental/` にある既存解説と同じく全文を掲載する
-
-## テストコードの書き方
-
-`apps/*` の実コードには単体テストを書きます。
-ステップは `steps/<id>.ts` の隣に `<id>.test.ts` を置き、機能は `features/<id>/` の中で同じように置きます。
-テストは CLI の抽出範囲から除外されるので、生成物には含まれません。
-
-生成物の文字列やファイル構成を検査するテストは書きません。
-CLI が生成した機能の組合せは型検査だけで確かめ、生成 OP の挙動は `tests/e2e` の E2E テストと `tests/conformance` の OpenID Conformance Suite で確認します。
-CLI 自体の入力検証、エラー処理、既存ファイルの保護は `packages/cli` の単体テストで検証します。
-
-### テストの地図
-
-地図のビルド（`apps/map`）は、テストをテストカタログ（`packages/test-catalog`）に読み、テストの画面（`apps/tests`）に出す。
-テストの画面は地図とは別のアプリで、地図と同じ Worker の `/tests/` に出る（地図のヘッダの「テスト」から開く）。
-テストを実行せずにコードから読み、何を検証するか（対象）、正常系か異常系か、観点、期待結果、送るリクエストを札にする。
-そのために次の書き方を前提にする。
-
-- トップレベルの `describe` に関数名を書く（次の項）。対象の関数はこの名前を、そのファイルの import から型で引いて決める
-- E2E の spec は `tests/e2e/fixtures.ts` の `test` を使う。CI の計測（`MARONN_REACH=1`）がテストごとに通った関数とエンドポイントを記録するためで、lint が検査する
-- `// @test-id <id>` でテストの id を固定したときは、リポジトリで一意にする。lint が検査する
-
-次のものは、あればテストの画面の表示が良くなる。
-無くても画面は欠けず、読めなかったテストも、対象や観点の無いテストとしてファイルと検索に出る。
-
-- `it` の直上の仕様のコメント（`// RFC 6749 §5.2: ...`、次の「コメントの記述」）
-- `it` の直上の `// ja: ...`（テストの名前の日本語訳）
-- `it` の直上の `// @aspect boundary`（観点の宣言）と `// @subject <関数の id>`（対象の宣言）。観点は語彙の表 `tests/catalog/aspects.yaml` で決まり、表で拾えないときの補正に使う
-
-### テストケースの命名規則
-
-テストケースは次のルールに従って記述します。
-
-1. テストケース名を「should + 動詞」形式で記述する
-2. 主語と動詞を明確にし、名前だけで検証内容が分かるようにする
-3. トップレベルを関数名の `describe`、中間レベルをテストカテゴリの `describe`、最下層を具体的な `it` とする。中間レベルは省略してよい
-
-```typescript
-describe('generateIdToken', () => {
-  describe('JOSE Header', () => {
-    it('should set alg claim to RS256', () => {});
-    it('should include kid claim when keyId is provided', () => {});
-    it('should set typ claim to JWT', () => {});
-  });
-
-  describe('Required Claims', () => {
-    it('should include iss matching configured issuer', () => {});
-    it('should reject missing iss', () => {});
-  });
-});
-```
-
-### コメントの記述
-
-標準化されたクレームや特別な理由がある場合は、コメントに理由を記載します。
-仕様書のセクション番号を参照する場合も、コメントに記載します。
-
-```typescript
-// Standard profile claims (profile scope) - OIDC Core Section 5.4
-// These are standardized claims that require specific handling
-it('should include name claim when profile scope is requested', () => {});
-```
-
-### テストケース内では条件分岐を書かない
-
-テストケースの `it` ブロックに `if` 文を書かず、判定は `expect` で行います。
-判別共用体の型ナローイングに `if` を使うと、条件が偽のときにアサーションが一つも実行されず、テストが通るおそれがあります。
-
-```typescript
-// 悪い例：if が偽のとき expect が実行されない
-it('should resolve the refresh token first when token_type_hint is refresh_token', async () => {
-  const resolved = await resolveIntrospectionToken(options);
-  if (resolved?.tokenType === 'refresh_token') {
-    expect(resolved.refreshToken.grantId).toBe('grant-1');
-  }
-});
-
-// 良い例：判別フィールドを含めて expect で検証する
-it('should resolve the refresh token first when token_type_hint is refresh_token', async () => {
-  const resolved = await resolveIntrospectionToken(options);
-  expect(resolved).toMatchObject({
-    tokenType: 'refresh_token',
-    refreshToken: { grantId: 'grant-1' },
-  });
-});
-```
-
-### アサーションは合格値を一意に固定する
-
-合格しうる値が複数あるマッチャーは可能な限り使いません。
-期待値を確定できる場合は、`toBe` または `toEqual` で具体値を固定します。
-配列は `toContain` ではなく、要素と順序を `toEqual` で固定します。
-大きなオブジェクトの一部だけを検証する場合は `toMatchObject` を使えますが、各キーの値は具体値で固定します。
-
-```typescript
-// 悪い例：誤った文字列や余分な配列要素を許す
-expect(metadata.issuer).toEqual(expect.any(String));
-expect(metadata.response_types_supported).toContain('code');
-
-// 良い例：期待値を一意に固定する
-expect(metadata.issuer).toBe('http://localhost:3000');
-expect(metadata.response_types_supported).toEqual(['code']);
-```
-
-### 実装不可能なテストケースの扱い
-
-外部依存が必要で関数単体では検証できないテストケースは、単体テストに記述しません。
-リクエスト情報が必要な検証などは、`tests/e2e` の E2E テストに記述します。
-
-## コマンド
-
-```bash
-# 依存関係のインストール
-pnpm install
-
-# テストの実行
-pnpm test
-
-# 特定のパッケージでコマンドを実行
-pnpm --filter <package-name> <command>
-```
-
-## アーキテクチャ
-
-- **モノレポ構成**：`packages/*` にパッケージを、`apps/*` に CLI が生成コードを抽出する元のアプリを配置する
-- **Web 標準技術のみ**：Node.js 固有の API ではなく、Fetch API や Web Crypto API などの Web 標準 API を使用する
-- **外部依存なし**：production の `dependencies` には外部ライブラリを使用しない（例外は `packages/google-login` の `google-auth-library`。同パッケージのみ Node.js 22 以上限定になる）
-
-## 準拠仕様
-
-- OpenID Connect Core 1.0
-- OAuth 2.1（PKCE 必須）
-- OAuth 2.0 Form Post Response Mode（`response_mode=form_post`）
-- OAuth 2.0 Multiple Response Type Encoding Practices（`response_type` の値の組み合わせと `response_mode=fragment`）
-- OpenID Connect Conformance Profiles v3.0（Basic OP、Implicit OP、Hybrid OP）
-
-### Basic OPの必須機能
-
-- Authorization Code Flow（`response_type=code`）
-- PKCE（S256 必須）
-- ID Token 署名（RS256 必須）
-- Token Endpoint
-- UserInfo Endpoint
-- `prompt` パラメータ（`none`、`login`、`consent`、`select_account`）
-
-### Authorization Code Flow 以外のフロー
-
-- Implicit Flow（`response_type=id_token token` と `id_token`。OpenID Connect Core 1.0 §3.2）。認可エンドポイントが ID Token（`id_token token` では Access Token も）を、リダイレクト URI のフラグメントで返す
-- Hybrid Flow（`response_type=code id_token`、`code token`、`code id_token token`。OpenID Connect Core 1.0 §3.3）。認可エンドポイントが認可コードと一緒に ID Token と Access Token の一方または両方をフラグメントで返し、クライアントはその認可コードをトークンエンドポイントで交換する
 
 ## ディレクトリの構成
 

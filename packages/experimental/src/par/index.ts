@@ -11,7 +11,6 @@
 export {
   ParError,
   assertParExpiresInSeconds,
-  authenticateParClient,
   buildPushedAuthorizationResponse,
   createPushedAuthorizationRecord,
   handlePushedAuthorizationRequest,

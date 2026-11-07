@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { FunctionEntry, MapData } from '@maronn-openid-connect/map-analysis';
+import type { FlowTree, FunctionEntry, MapData, TreeNode } from '@maronn-openid-connect/map-analysis';
 import { parseAspects } from '../aspects.js';
-import { indexRefs, outlineOf } from '../build.js';
+import { codeOfFrame, indexRefs, outlineOf, shownFiles, stepBlocks } from '../build.js';
 import { joinTests } from '../join.js';
 import type { TestCase } from '../model.js';
 
@@ -214,5 +214,151 @@ describe('outlineOf', () => {
   it('should leave out an endpoint the join does not know', () => {
     const only = joinTests([], { ...DATA, flows: { hono: DATA.flows.hono } } as unknown as MapData, ASPECTS, false);
     expect(outlineOf(DATA, only, []).endpoints.map((endpoint) => endpoint.key)).toEqual(['hono:userinfo', 'hono:token']);
+  });
+});
+
+describe('the code of the outline', () => {
+  const LOGIN = 'hono:oidc-provider/endpoints/login/pipeline.ts';
+  /** The map with the sources of its frames: the body of /token, the functions, and /login of hono, a body of two handlers the map has no range for. */
+  const CODED = {
+    ...DATA,
+    flows: {
+      ...DATA.flows,
+      hono: {
+        endpoints: [
+          ...DATA.flows['hono']!.endpoints,
+          { id: 'login', label: 'ログイン画面', path: '/login', methods: ['GET', 'POST'], root: 'endpoint:login', group: { id: 'login', label: 'ログイン' }, layer: 'browser', steps: [] },
+        ],
+      },
+    },
+    functions: {
+      [AUTH]: fn(AUTH, [VERIFY], { source: { file: 'hono:oidc-provider/endpoints/token/steps/authenticate-client.ts', start: 10, end: 30 } }),
+      [VERIFY]: fn(VERIFY, [], { source: { file: 'core:client-auth.ts', start: 246, end: 269 } }),
+      [NEXT]: fn(NEXT, [VERIFY], { source: { file: 'nextjs:app/token/route.ts', start: 98, end: 408 } }),
+      [CLAIMS]: fn(CLAIMS, [], { source: { file: 'core:claims.ts', start: 1, end: 9 } }),
+      [UNUSED]: fn(UNUSED, [], { source: { file: 'core:unused.ts', start: 1, end: 2 } }),
+      [`${LOGIN}#prepareLogin`]: fn(`${LOGIN}#prepareLogin`, [], { source: { file: LOGIN, start: 12, end: 42 } }),
+      [`${LOGIN}#submitLogin`]: fn(`${LOGIN}#submitLogin`, [], { source: { file: LOGIN, start: 44, end: 97 } }),
+    },
+    bodies: {
+      'endpoint:token': { ...DATA.bodies['endpoint:token']!, source: { file: 'hono:oidc-provider/endpoints/token/pipeline.ts', start: 40, end: 126 } },
+      'endpoint:userinfo': DATA.bodies['endpoint:userinfo']!,
+      'endpoint:login': { id: 'endpoint:login', endpoint: 'login', name: 'GET | POST /login', package: 'hono', module: 'oidc-provider/endpoints/login/pipeline.ts', line: 35, summary: '', calls: [`${LOGIN}#prepareLogin`, `${LOGIN}#submitLogin`, VERIFY], sites: [], frame: '', synthetic: true },
+    },
+    sources: {
+      'hono:oidc-provider/endpoints/token/steps/authenticate-client.ts': { path: 'apps/hono/src/oidc-provider/endpoints/token/steps/authenticate-client.ts', url: '' },
+      'core:client-auth.ts': { path: 'packages/core/src/client-auth.ts', url: '' },
+      'nextjs:app/token/route.ts': { path: 'apps/nextjs/src/app/token/route.ts', url: '' },
+      'core:claims.ts': { path: 'packages/core/src/claims.ts', url: '' },
+      'core:unused.ts': { path: 'packages/core/src/unused.ts', url: '' },
+      [LOGIN]: { path: 'apps/hono/src/oidc-provider/endpoints/login/pipeline.ts', url: '' },
+      'hono:oidc-provider/endpoints/token/pipeline.ts': { path: 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts', url: '' },
+    },
+  } as unknown as MapData;
+  /** An API test whose expectations call claimsOf(), a function no unit test names and no step has. */
+  const calls = card('claims', { kind: 'api', root: 'hono', subjects: [{ kind: 'function', id: CLAIMS, how: 'call' }, { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] });
+  const joined = joinTests([reject, calls], CODED, ASPECTS, false);
+  const outline = outlineOf(CODED, joined, []);
+
+  it('should give each endpoint the code of its body: the pipeline of hono, the Route Handler of Next.js', () => {
+    expect(Object.fromEntries(outline.endpoints.map((endpoint) => [endpoint.key, endpoint.code]))).toEqual({
+      'hono:userinfo': undefined,
+      'hono:token': { file: 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts', lines: [40, 126] },
+      'hono:login': { file: 'apps/hono/src/oidc-provider/endpoints/login/pipeline.ts', lines: [12, 97] },
+      'nextjs:token': { file: 'apps/nextjs/src/app/token/route.ts', lines: [98, 408] },
+    });
+  });
+
+  it('should give a body of several handlers the code from its first handler to its last, those of its own module only', () => {
+    expect(codeOfFrame(CODED, 'endpoint:login')).toEqual({ file: 'apps/hono/src/oidc-provider/endpoints/login/pipeline.ts', lines: [12, 97] });
+    expect([codeOfFrame(CODED, 'endpoint:userinfo'), codeOfFrame(CODED, 'core:gone.ts#gone')]).toEqual([undefined, undefined]);
+  });
+
+  it('should name every function a test names as its subject, with its code, whether or not it has a unit test or a step', () => {
+    expect(outline.functions[CLAIMS]).toEqual({ id: CLAIMS, name: 'claimsOf', package: 'core', module: 'claims.ts', code: { file: 'packages/core/src/claims.ts', lines: [1, 9] } });
+    expect(outline.functions[VERIFY]?.code).toEqual({ file: 'packages/core/src/client-auth.ts', lines: [246, 269] });
+    expect(outline.functions['endpoint:login']?.code).toEqual({ file: 'apps/hono/src/oidc-provider/endpoints/login/pipeline.ts', lines: [12, 97] });
+    expect(Object.keys(outline.functions)).not.toContain(UNUSED);
+  });
+
+  it('should give a step of hono the code of its function', () => {
+    const token = outline.endpoints.find((endpoint) => endpoint.key === 'hono:token');
+    expect(token?.steps.map((step) => [step.id, step.code])).toEqual([
+      ['authenticate-client', { file: 'apps/hono/src/oidc-provider/endpoints/token/steps/authenticate-client.ts', lines: [10, 30] }],
+      ['respond', undefined],
+    ]);
+  });
+
+  it('should show the code of every file a card or the outline points at: the tests, the helpers, the step definitions, the functions and the bodies', () => {
+    const scenario = card('scenario', {
+      kind: 'api',
+      root: 'features',
+      source: { file: 'tests/features/token/client.feature', lines: [5, 9], form: 'feature' },
+      steps: [{ keyword: 'Then ', type: 'outcome', text: 'the HTTP status is 401', line: 8, definition: { file: 'tests/steps/common/response.steps.ts', lines: [14, 16] } }],
+    });
+    const helped = card('helped', { helpers: [{ name: 'post', file: 'packages/core/src/client-auth.test.ts', lines: [5, 9] }, { name: 'basicAuthorization', file: 'apps/hono/src/test-support/token.ts', lines: [115, 118] }] });
+    const files = [
+      { path: 'packages/core/src/client-auth.test.ts', root: 'core', form: 'code', place: 'catalog' },
+      { path: 'tests/features/token/client.feature', root: 'features', form: 'feature', place: 'features' },
+    ] as const;
+    expect(shownFiles(files, [helped, scenario], outline)).toEqual([
+      'apps/hono/src/oidc-provider/endpoints/login/pipeline.ts',
+      'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts',
+      'apps/hono/src/oidc-provider/endpoints/token/steps/authenticate-client.ts',
+      'apps/hono/src/test-support/token.ts',
+      'apps/nextjs/src/app/token/route.ts',
+      'packages/core/src/claims.ts',
+      'packages/core/src/client-auth.test.ts',
+      'packages/core/src/client-auth.ts',
+      'tests/features/token/client.feature',
+      'tests/steps/common/response.steps.ts',
+    ]);
+  });
+});
+
+describe('stepBlocks', () => {
+  const block = (step: string, lines: [number, number], nodes: TreeNode[] = []): TreeNode => ({ id: '', kind: 'block', lines, code: `[${step}]`, step: { id: step, label: step }, branches: [{ key: 'body', label: '', nodes }] });
+  const tree = (id: string, lines: [number, number], nodes: TreeNode[]): FlowTree => ({ id, name: id, signature: '', file: 'nextjs:app/token/route.ts', lines, head: lines, nodes });
+  const DATA_NEXT = {
+    ...DATA,
+    flows: {
+      hono: DATA.flows['hono'],
+      nextjs: { endpoints: [{ ...DATA.flows['nextjs']!.endpoints[0]!, source: 'nextjs:app/token/route.ts', steps: [{ id: 'parse-request', label: '解析する' }, { id: 'authenticate-client', label: '認証する' }, { id: 'respond', label: '応答する' }, { id: 'missing', label: 'ない' }] }] },
+    },
+    sources: { 'nextjs:app/token/route.ts': { path: 'apps/nextjs/src/app/token/route.ts', url: '' } },
+  } as unknown as MapData;
+  // The Route Handler: a block at its top, one inside a `try`, and a helper below it with a block of the same step (the root's is taken).
+  const root = tree(NEXT, [98, 140], [
+    block('parse-request', [99, 104]),
+    { id: '', kind: 'try', lines: [106, 130], code: 'try', branches: [{ key: 'try', label: '', nodes: [block('authenticate-client', [107, 112])] }] },
+  ]);
+  const helper = tree('nextjs:app/token/route.ts#respondOf', [150, 170], [block('respond', [151, 160]), block('authenticate-client', [161, 169])]);
+  // Line 99 and 107 are blank, the markers are on 100 and 108.
+  const text = Array.from({ length: 180 }, (_, index) => ([99, 107, 151].includes(index + 1) ? '' : `line ${index + 1}`)).join('\n');
+
+  it('should take the lines of the block of each step from the trees of the file of the Route Handler, the root first', () => {
+    expect(stepBlocks(DATA_NEXT, [helper, root])).toEqual(
+      new Map([
+        ['nextjs:token:parse-request', { file: 'apps/nextjs/src/app/token/route.ts', lines: [99, 104] }],
+        ['nextjs:token:authenticate-client', { file: 'apps/nextjs/src/app/token/route.ts', lines: [107, 112] }],
+        ['nextjs:token:respond', { file: 'apps/nextjs/src/app/token/route.ts', lines: [151, 160] }],
+      ]),
+    );
+  });
+
+  it('should start a block at its marker, past the blank lines the map gives it, when the text is there', () => {
+    const blocks = stepBlocks(DATA_NEXT, [root, helper], () => text);
+    expect([...blocks.values()].map((code) => code.lines)).toEqual([
+      [100, 104],
+      [108, 112],
+      [152, 160],
+    ]);
+  });
+
+  it('should give the steps of Next.js the code of their blocks in the outline', () => {
+    const joined = joinTests([], DATA_NEXT, ASPECTS, false);
+    const outline = outlineOf(DATA_NEXT, joined, [], undefined, stepBlocks(DATA_NEXT, [root, helper], () => text));
+    const next = outline.endpoints.find((endpoint) => endpoint.key === 'nextjs:token');
+    expect(next?.steps.map((step) => step.code?.lines)).toEqual([[100, 104], [108, 112], [152, 160], undefined]);
   });
 });

@@ -6,10 +6,10 @@
  * shows (model.ts).
  */
 export { parseAspects, readAspects, aspectsOf, ASPECTS_FILE, type AspectTable } from './aspects.js';
-export { buildTests, readBaseCatalog, readTables, withRun, type TestBuildOptions } from './build.js';
-export { EndpointIndex, outcomeOf, readCatalog, stepOutcome, type CatalogInput, type CatalogResult } from './catalog.js';
+export { buildTests, codeOfFrame, readBaseCatalog, readTables, shownFiles, stepBlocks, withRun, type TestBuildOptions } from './build.js';
+export { EndpointIndex, helperResolver, outcomeOf, readCatalog, scenarioHelpers, stepDefinitionCode, stepDefinitionLines, stepOutcome, type CatalogInput, type CatalogResult, type StepDefinitionCode } from './catalog.js';
 export { changesOf, diffCatalogs, expectationOverlap, relatedTests } from './diff.js';
-export { listFiles, testFileOf, testFiles, type TestFile } from './discover.js';
+export { isTestSupportPath, listFiles, supportFiles, testFileOf, testFiles, type TestFile } from './discover.js';
 export { draftTests, mapDataOf } from './draft.js';
 export { exampleTestId, fileTestId, hashedTestId } from './id.js';
 export { countTests, joinTests, reachableFrames, type Joined } from './join.js';

@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Compiler, Resolver, type AnalysisRoot, type Project } from '@maronn-openid-connect/map-analysis';
+import { helperResolver, scenarioHelpers, stepDefinitionCode } from '../catalog.js';
 import { codeSubjects, pathOfText, readCodeTests, readComments, type CodeReadOptions, type CodeTest } from '../read-code.js';
+import { readDefinitions } from '../vocabulary.js';
 
 /** A root `lib` of small sources compiled in a temporary directory, its tests read with the reader. */
 function compileTests(files: Record<string, string>) {
@@ -14,10 +16,12 @@ function compileTests(files: Record<string, string>) {
     mkdirSync(dirname(join(directory, 'src', path)), { recursive: true });
     writeFileSync(join(directory, 'src', path), text);
   }
-  const roots: AnalysisRoot[] = [{ name: 'lib', directory: 'src', exclude: [/\.test\.ts$/], project: '.' }];
+  // As extract.json does, the catalog leaves the tests and the test helpers out.
+  const roots: AnalysisRoot[] = [{ name: 'lib', directory: 'src', exclude: [/\.test\.ts$/, /(^|\/)test-helpers\.ts$/], project: '.' }];
   const compiler = new Compiler(directory, new Map([[config, JSON.stringify({ extends: undefined, compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'bundler', strict: true, noEmit: true, types: [] }, include: ['src/**/*'] })]]));
   const project: Project = compiler.project(config);
   const resolver = new Resolver(project, { repository: directory, roots, isFunction: () => true, paragraph: (text) => text });
+  const helperOf = helperResolver(project, directory);
   const options = (extra: Partial<CodeReadOptions> = {}): CodeReadOptions => ({
     importTarget: (name) => {
       const target = resolver.reference(name);
@@ -26,6 +30,7 @@ function compileTests(files: Record<string, string>) {
     endpointOfPath: (path) => ({ '/token': 'token', '/userinfo': 'userinfo', '/consent': 'consent' })[path],
     endpointOfFunction: () => undefined,
     specReferencesOf: (text) => [...text.matchAll(/RFC \d{4} §[\d.]+/g)].map((match) => match[0]),
+    helperOf,
     ...extra,
   });
   return {
@@ -33,6 +38,11 @@ function compileTests(files: Record<string, string>) {
       const source = project.program.getSourceFile(join(directory, 'src', path));
       if (source === undefined) throw new Error(`${path} is not in the program`);
       return readCodeTests(source, options(extra));
+    },
+    /** The code of the step definitions of a file, as the catalog finds it for the steps of the scenarios. */
+    definitions(path: string) {
+      const file = `src/${path}`;
+      return stepDefinitionCode(project, directory, readDefinitions(files[path] ?? '', file).definitions, helperOf);
     },
     dispose() {
       compiler.close();
@@ -142,6 +152,182 @@ describe('readCodeTests', () => {
       { kind: 'function', id: 'lib:auth.ts#authenticate', how: 'describe' },
       { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' },
     ]);
+  });
+});
+
+const HELPERS = [
+  '/** A client of the tests. */',
+  'export function client(id: string) {',
+  '  const pick = (value: string) => value;',
+  '  return { id, secret: pick(secretOf(id)) };',
+  '}',
+  '// The secret of a client: a helper of the helper.',
+  'function secretOf(id: string): string {',
+  '  return `${id}-secret`;',
+  '}',
+  'export const tokenOf = (value: string) => value.toUpperCase();',
+].join('\n');
+
+const HELPER_TEST = [
+  "import { describe, expect, it } from 'vitest';",
+  "import { authenticate } from './auth';",
+  "import { client, tokenOf } from './test-helpers';",
+  '',
+  '/** Sign in with a client of the tests. */',
+  'function signIn(id: string): string {',
+  '  return authenticate(client(id).secret);',
+  '}',
+  '',
+  "const check = (value: string) => expect(value).toBe('x');",
+  'function countdown(n: number): number {',
+  '  return n > 0 ? countdown(n - 1) : 0;',
+  '}',
+  '',
+  "describe('authenticate', () => {",
+  '  // The token of a test, through the support module.',
+  '  const token = (value: string) => tokenOf(value);',
+  '',
+  "  it('should call the helpers of its file and of a support module', () => {",
+  "    const inline = () => signIn('a');",
+  '    check(inline());',
+  "    check(token('x'));",
+  '  });',
+  '',
+  "  it('should take no parameter and no function of the catalog for a helper', ({ task }: { task: () => void }) => {",
+  '    task();',
+  "    expect(authenticate('s')).toBe('s');",
+  '  });',
+  '',
+  "  it('should take a helper handed to a call, and read a helper that calls itself once', () => {",
+  "    expect(['a'].map(token)).toEqual(['A']);",
+  '    expect(countdown(2)).toBe(0);',
+  '  });',
+  '',
+  "  it('should list a helper the test calls at the top, though a helper it calls first calls it too', () => {",
+  "    check(signIn('b'));",
+  "    check(client('b').id);",
+  '  });',
+  '});',
+].join('\n');
+
+describe('the helpers of a test', () => {
+  let fixture: ReturnType<typeof compileTests>;
+  beforeAll(() => {
+    fixture = compileTests({ 'auth.ts': SOURCE, 'test-helpers.ts': HELPERS, 'helpers.test.ts': HELPER_TEST });
+  });
+  afterAll(() => fixture.dispose());
+
+  it('should list the functions of the file and of a support module the body calls, each followed by those it calls, deeper', () => {
+    const [first] = fixture.read('helpers.test.ts');
+    // `inline` is written in the test: its call of signIn is the test's own. client() calls secretOf() of its module; `pick` is written inside client().
+    expect(first?.helpers).toEqual([
+      { name: 'signIn', lines: [5, 8], depth: 1 },
+      { name: 'client', file: 'src/test-helpers.ts', lines: [1, 5], depth: 2 },
+      { name: 'secretOf', file: 'src/test-helpers.ts', lines: [6, 9], depth: 3 },
+      { name: 'check', lines: [10, 10], depth: 1 },
+      { name: 'token', lines: [16, 17], depth: 1 },
+      { name: 'tokenOf', file: 'src/test-helpers.ts', lines: [10, 10], depth: 2 },
+    ]);
+  });
+
+  it('should list every helper the test calls itself at depth 1, never under another helper that calls it', () => {
+    const [, , , fourth] = fixture.read('helpers.test.ts');
+    expect(fourth?.helpers.map((helper) => [helper.name, helper.depth])).toEqual([
+      ['check', 1],
+      ['signIn', 1],
+      ['client', 1],
+      ['secretOf', 2],
+    ]);
+  });
+
+  it('should take neither a parameter of the test (a fixture) nor a function of the catalog for a helper', () => {
+    const [, second] = fixture.read('helpers.test.ts');
+    expect(second?.helpers).toEqual([]);
+    expect(second?.called).toEqual(['lib:auth.ts#authenticate']);
+  });
+
+  it('should take a function handed to a call for a helper, and list a helper that calls itself once', () => {
+    const [, , third] = fixture.read('helpers.test.ts');
+    expect(third?.helpers.map((helper) => helper.name)).toEqual(['token', 'tokenOf', 'countdown']);
+  });
+
+  it('should find the helpers of the file only when nothing resolves an import by the types', () => {
+    const [first] = fixture.read('helpers.test.ts', { helperOf: undefined });
+    expect(first?.helpers.map((helper) => helper.name)).toEqual(['signIn', 'check', 'token']);
+  });
+});
+
+describe('the code of the step definitions', () => {
+  const STEPS = [
+    "import { createBdd } from 'playwright-bdd';",
+    'declare const test: unknown;',
+    'const { Given, Then } = createBdd(test);',
+    '',
+    '// RFC 6749 §5.2: the error parameter of an error response.',
+    "Then('the error code is {string}', async ({ exchange }: { exchange: { error: string } }, code: string) => {",
+    "  if (exchange.error !== code) throw new Error(`not ${code} (or ')'`);",
+    '});',
+    '',
+    '/** A user the OP has. */',
+    "Given('the user {string}', async () => {});",
+    '',
+    "Given('a client', async () => {",
+    '  // )',
+    '});',
+    '',
+    "Then('the error is known', async ({ exchange }: { exchange: { error: string } }) => {",
+    "  if (errorOf(exchange) === '') throw new Error('no error');",
+    '});',
+    '',
+    '/** The error of an exchange. */',
+    'function errorOf(exchange: { error: string }): string {',
+    '  return trimmed(exchange.error);',
+    '}',
+    'const trimmed = (text: string) => text.trim();',
+  ].join('\n');
+  let fixture: ReturnType<typeof compileTests>;
+  beforeAll(() => {
+    fixture = compileTests({ 'steps.ts': STEPS });
+  });
+  afterAll(() => fixture.dispose());
+
+  it('should give each definition its call statement with the comment lines right above it, by the file and the line of its keyword', () => {
+    const definitions = fixture.definitions('steps.ts');
+    expect(new Map([...definitions].map(([key, definition]) => [key, definition.code]))).toEqual(
+      new Map([
+        ['src/steps.ts:6', { file: 'src/steps.ts', lines: [5, 8] }],
+        ['src/steps.ts:11', { file: 'src/steps.ts', lines: [10, 11] }],
+        ['src/steps.ts:13', { file: 'src/steps.ts', lines: [13, 15] }],
+        ['src/steps.ts:17', { file: 'src/steps.ts', lines: [17, 19] }],
+      ]),
+    );
+  });
+
+  it('should give each definition the helpers its function calls, as a test has them, with their file', () => {
+    const definitions = fixture.definitions('steps.ts');
+    expect(definitions.get('src/steps.ts:6')?.helpers).toEqual([]);
+    expect(definitions.get('src/steps.ts:17')?.helpers).toEqual([
+      { name: 'errorOf', file: 'src/steps.ts', lines: [21, 24], depth: 1 },
+      { name: 'trimmed', file: 'src/steps.ts', lines: [25, 25], depth: 2 },
+    ]);
+  });
+});
+
+describe('scenarioHelpers', () => {
+  const helper = (name: string, depth: number) => ({ name, file: `tests/steps/${name}.ts`, lines: [1, 2] as [number, number], depth });
+
+  it('should list the helpers of the steps in their order, each once, a repeated one with nothing under it', () => {
+    const first = [helper('storeCode', 1), helper('scenarioClient', 2), helper('requiredCell', 1)];
+    // The second step calls storeCode again (and so scenarioClient under it), then redeem, which calls requestToken and scenarioClient.
+    const second = [helper('storeCode', 1), helper('scenarioClient', 2), helper('redeem', 1), helper('requestToken', 2), helper('scenarioClient', 2), helper('jsonBody', 3)];
+    expect(scenarioHelpers([first, second]).map((item) => [item.name, item.depth])).toEqual([
+      ['storeCode', 1],
+      ['scenarioClient', 2],
+      ['requiredCell', 1],
+      ['redeem', 1],
+      ['requestToken', 2],
+    ]);
+    expect(scenarioHelpers([])).toEqual([]);
   });
 });
 

@@ -85,6 +85,13 @@ export interface CodeRef {
 export interface HelperRef extends CodeRef {
   /** The name it is called by (`post`, `expectCode`, `login`). */
   name: string;
+  /**
+   * How deep it is called: 1 for a helper the test (a step definition of a
+   * scenario) calls itself, 2 for one a helper of depth 1 calls, and so on.
+   * The list is in the order of a walk depth first, so a helper deeper than
+   * 1 is under the nearest helper before it one level up. Absent: 1.
+   */
+  depth?: number;
 }
 
 /** A step of a scenario of a feature file. */
@@ -145,8 +152,11 @@ export interface TestCase {
   /**
    * The helpers its body calls, directly or through another helper: the
    * functions of its file and of the test support modules it imports
-   * (test-helpers.ts, test-support/, tests/e2e/fixtures.ts, tests/steps), in
-   * the order they are first called. The functions it tests are its subjects.
+   * (test-helpers.ts, test-support/, tests/e2e/fixtures.ts, tests/steps).
+   * Those it calls itself come first, each followed by the helpers it calls
+   * in turn (HelperRef.depth). For a scenario, the helpers the step
+   * definitions of its steps call, in the order of the steps, each once. The
+   * functions it tests are its subjects.
    */
   helpers?: HelperRef[];
 }
@@ -321,7 +331,7 @@ export interface TestsIndex {
   diff?: boolean;
 }
 
-/** tests/sources/<hash>.json: the text of a test file. */
+/** tests/sources/<hash>.json: the text of a file the viewer shows (TestsIndex.sources): a test file, or the file of a helper, a step definition, a function or an endpoint body. */
 export interface TestSource {
   path: string;
   text: string;
@@ -348,6 +358,12 @@ export interface OutlineStep {
    * (EndpointTestsRef.units), so the step has unit tests like a step of hono.
    */
   calls?: string[];
+  /**
+   * The code of the step: the function of a step of hono; the block of the
+   * Route Handler of Next.js, from its marker (`// [step-id]`) to its last
+   * statement.
+   */
+  code?: CodeRef;
 }
 
 /** An endpoint of a source in the outline, in the order of the map. */

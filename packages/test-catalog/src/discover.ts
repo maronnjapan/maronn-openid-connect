@@ -75,3 +75,23 @@ export function testFileOf(roots: readonly AnalysisRoot[], path: string): TestFi
 export function testFiles(roots: readonly AnalysisRoot[], paths: readonly string[]): TestFile[] {
   return paths.map((path) => testFileOf(roots, path)).filter((file): file is TestFile => file !== undefined);
 }
+
+/**
+ * Whether a file of the repository is test support code, whose functions a
+ * test calls as helpers (model.ts HelperRef): the code under tests/ (the
+ * fixtures of the E2E specs, the step definitions and their support), in a
+ * test-support/, __tests__/, __fixtures__/ or __mocks__/ directory, a
+ * test-helpers, test-utils or fixture(s) module (extract.json leaves
+ * test-helpers.ts out of the catalog), or a test file. The code a test of a
+ * tool checks (the tool's own modules) and the code of the apps outside the
+ * catalog are none of these: a test of them calls what it tests, not a helper.
+ */
+export function isTestSupportPath(path: string): boolean {
+  if (path.includes('/node_modules/') || path.startsWith('node_modules/') || /\.d\.[cm]?ts$/.test(path)) return false;
+  return path.startsWith('tests/') || /(^|\/)(test-support|__tests__|__fixtures__|__mocks__)\//.test(path) || /(^|\/)(test-helpers|test-utils|fixtures?)\.[cm]?[jt]sx?$/.test(path) || isTestPath(path);
+}
+
+/** The test support modules among some paths whose code the catalog reads (see isTestSupportPath): not the tests themselves, nor the Conformance Suite. */
+export function supportFiles(paths: readonly string[]): string[] {
+  return paths.filter((path) => /\.[cm]?[jt]sx?$/.test(path) && !isTestPath(path) && !path.startsWith('tests/conformance/') && isTestSupportPath(path));
+}

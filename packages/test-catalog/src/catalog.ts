@@ -12,29 +12,44 @@
  *
  * For a revision other than the working tree (the base of a pull request),
  * the overlay gives the files of that revision.
+ *
+ * The helpers a test imports are found by the types too: the projects of the
+ * roots reach their test support modules through the imports, and the
+ * project of the E2E specs and the tools has the support modules of the
+ * repository among its files (it resolves no import outside them). The step
+ * definitions (tests/steps) are in that project as well, so a step of a
+ * scenario names the code of the definition it matched.
  */
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import {
+  any,
   catalogModules,
   Compiler,
+  is,
+  isAlias,
   overlayConfigs,
   overlayOf,
   Resolver,
+  startLine,
+  SyntaxKind,
+  unwrap,
+  walk,
   type AnalysisRoot,
   type MapData,
   type Node,
   type Overlay,
   type Project,
   type Repository,
+  type SourceFile,
 } from '@maronn-openid-connect/map-analysis';
 import { aspectsOf, type AspectTable } from './aspects.js';
-import type { TestFile } from './discover.js';
+import { isTestSupportPath, type TestFile } from './discover.js';
 import { fileTestId, hashedTestId } from './id.js';
-import type { Assertion, FeatureStep, RequestShape, Subject, TestCase, TestKind, TestOutcome } from './model.js';
-import { codeSubjects, readCodeTests, type CodeTest } from './read-code.js';
+import type { Assertion, CodeRef, FeatureStep, HelperRef, RequestShape, Subject, TestCase, TestKind, TestOutcome } from './model.js';
+import { codeSubjects, declarationLines, fileHelpers, readCodeTests, type CodeTest, type HelperDeclaration } from './read-code.js';
 import { readFeatureTags, readFeatureTests, type FeatureTest } from './read-feature.js';
-import { holesOf, type Translations, type Vocabulary } from './vocabulary.js';
+import { holesOf, type StepDefinition, type Translations, type Vocabulary } from './vocabulary.js';
 import { expectedErrors, expectsFailure, headerOf, isStatus, japaneseHole } from './words.js';
 
 /** The virtual tsconfig the E2E specs and the tests of the tools are read in. */
@@ -51,6 +66,12 @@ export interface CatalogInput {
   aspects: AspectTable;
   vocabulary: Vocabulary;
   translations: Translations;
+  /**
+   * The test support modules of the revision (discover.ts supportFiles): the
+   * project of the E2E specs and the tools reads them, so the helpers those
+   * tests import are found.
+   */
+  supportFiles?: readonly string[];
 }
 
 export interface CatalogResult {
@@ -123,6 +144,160 @@ export function digestOf(text: string): string {
   return createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
 }
 
+/**
+ * The helper a name refers to by the types of a project (CodeReadOptions.helperOf):
+ * the symbol of the name (Checker.getSymbolAtLocation), through the aliases of
+ * the imports and re-exports (Checker.getAliasedSymbol), declared in a file of
+ * the repository that is test support code (discover.ts isTestSupportPath) as
+ * a function with a body (its overloads before it) or as a variable bound to
+ * an arrow function or a function expression (its variable statement). The
+ * answers are kept by node and by symbol: every test of a file, and every
+ * file of the project, asks for the same helpers.
+ */
+export function helperResolver(project: Project, repository: string): (name: Node) => HelperDeclaration | undefined {
+  const byNode = new Map<Node, HelperDeclaration | null>();
+  const bySymbol = new Map<number, HelperDeclaration | null>();
+  const pathOf = (absolute: string): string | undefined => {
+    const path = relative(repository, absolute).split('\\').join('/');
+    return path.startsWith('..') || isAbsolute(path) ? undefined : path;
+  };
+  /** The declarations of a symbol (NodeHandle: its kind, its file, the node it resolves to) that are test support code, as a helper. */
+  const declarationOf = (handles: ReadonlyArray<{ kind: SyntaxKind; path: string; resolve(project?: Project): Node | undefined }>): HelperDeclaration | undefined => {
+    const own = handles.flatMap((handle) => {
+      const path = pathOf(handle.path);
+      return path !== undefined && isTestSupportPath(path) ? [{ kind: handle.kind, path, handle }] : [];
+    });
+    // A function: its overloads in its file, then the implementation.
+    const functions = own.filter((declaration) => declaration.kind === SyntaxKind.FunctionDeclaration).flatMap((declaration) => {
+      const node = declaration.handle.resolve(project);
+      return node === undefined ? [] : [{ node, path: declaration.path }];
+    });
+    const implementation = functions.find((declaration) => any(declaration.node)['body'] !== undefined);
+    if (implementation !== undefined) {
+      const file = implementation.node.getSourceFile();
+      const first = functions.find((declaration) => declaration.path === implementation.path) ?? implementation;
+      return { file: implementation.path, lines: declarationLines(file, first.node, implementation.node), fn: implementation.node };
+    }
+    // A variable bound to an arrow function or a function expression: its variable statement.
+    for (const declaration of own) {
+      if (declaration.kind !== SyntaxKind.VariableDeclaration) continue;
+      const node = declaration.handle.resolve(project);
+      const initializer = node === undefined ? undefined : (any(node)['initializer'] as Node | undefined);
+      const value = initializer === undefined ? undefined : unwrap(initializer);
+      if (node === undefined || !(is(value, SyntaxKind.ArrowFunction) || is(value, SyntaxKind.FunctionExpression))) continue;
+      const statement = is(node.parent?.parent, SyntaxKind.VariableStatement) ? (node.parent.parent as Node) : node;
+      return { file: declaration.path, lines: declarationLines(node.getSourceFile(), statement), fn: value as Node };
+    }
+    return undefined;
+  };
+  return (name) => {
+    const known = byNode.get(name);
+    if (known !== undefined) return known ?? undefined;
+    let found: HelperDeclaration | null = null;
+    try {
+      let symbol = project.checker.getSymbolAtLocation(name);
+      if (symbol !== undefined && isAlias(symbol)) {
+        const target = project.checker.getAliasedSymbol(symbol);
+        symbol = project.checker.isUnknownSymbol(target) ? undefined : target;
+      }
+      if (symbol !== undefined) {
+        const cached = bySymbol.get(symbol.id);
+        found = cached !== undefined ? cached : (declarationOf(symbol.declarations) ?? null);
+        bySymbol.set(symbol.id, found);
+      }
+    } catch {
+      // A name the types cannot answer for (a broken file): no helper.
+      found = null;
+    }
+    byNode.set(name, found);
+    return found ?? undefined;
+  };
+}
+
+/**
+ * The code of each step definition of a file of tests/steps: the statement
+ * of its `Given(...)`, `When(...)`, `Then(...)` or `Step(...)` call with the
+ * comment lines right above it, and the function it hands the call (the
+ * last argument that is one), by the line of its keyword (where the
+ * vocabulary reads it, vocabulary.ts readDefinitions).
+ */
+export function stepDefinitionLines(file: SourceFile): Map<number, { keyword: string; lines: [number, number]; fn?: Node }> {
+  const found = new Map<number, { keyword: string; lines: [number, number]; fn?: Node }>();
+  walk(file, (node) => {
+    if (!is(node, SyntaxKind.CallExpression)) return true;
+    const callee = unwrap(node['expression'] as Node);
+    const keyword = is(callee, SyntaxKind.Identifier) ? (callee['text'] as string) : '';
+    if (!['Given', 'When', 'Then', 'Step'].includes(keyword)) return true;
+    const statement = is(node.parent, SyntaxKind.ExpressionStatement) ? (node.parent as Node) : node;
+    const line = startLine(file, callee);
+    const fn = [...((node['arguments'] as Node[] | undefined) ?? [])]
+      .reverse()
+      .map((argument) => unwrap(argument))
+      .find((argument) => is(argument, SyntaxKind.ArrowFunction) || is(argument, SyntaxKind.FunctionExpression));
+    if (!found.has(line)) found.set(line, { keyword, lines: declarationLines(file, statement), ...(fn === undefined ? {} : { fn }) });
+    return true;
+  });
+  return found;
+}
+
+/** The code of a step definition and the helpers its function calls (HelperRef, with the file of each). */
+export interface StepDefinitionCode {
+  code: CodeRef;
+  helpers: HelperRef[];
+}
+
+/**
+ * The code of the step definitions of the vocabulary, by file and line, read
+ * from a project that has their files, and the helpers each calls (found as
+ * those of a test, read-code.ts fileHelpers; without `helperOf`, those of
+ * its own file only).
+ */
+export function stepDefinitionCode(project: Project, repository: string, definitions: readonly StepDefinition[], helperOf?: (name: Node) => HelperDeclaration | undefined): Map<string, StepDefinitionCode> {
+  const code = new Map<string, StepDefinitionCode>();
+  for (const path of new Set(definitions.map((definition) => definition.file))) {
+    const source = project.program.getSourceFile(join(repository, path));
+    if (source === undefined) continue;
+    const lines = stepDefinitionLines(source);
+    const helpersOf = fileHelpers(source, helperOf);
+    for (const definition of definitions) {
+      if (definition.file !== path) continue;
+      const found = lines.get(definition.line);
+      // The vocabulary and the program read the same text: a definition whose keyword is not there (a revision laid over the tree) has no code.
+      if (found === undefined || found.keyword !== definition.keyword) continue;
+      const helpers = found.fn === undefined ? [] : helpersOf(found.fn).map((helper) => ({ name: helper.name, file: helper.file ?? path, lines: helper.lines, depth: helper.depth }));
+      code.set(`${path}:${definition.line}`, { code: { file: path, lines: found.lines }, helpers });
+    }
+  }
+  return code;
+}
+
+/**
+ * The helpers of a scenario: those of the step definitions of its steps, in
+ * the order of the steps, each once. A helper an earlier step listed is not
+ * listed again, nor what it calls under it, so each helper stays under the
+ * helper that calls it.
+ */
+export function scenarioHelpers(lists: ReadonlyArray<readonly HelperRef[]>): HelperRef[] {
+  const helpers: HelperRef[] = [];
+  const seen = new Set<string>();
+  for (const list of lists) {
+    let skipping: number | undefined;
+    for (const helper of list) {
+      const depth = helper.depth ?? 1;
+      if (skipping !== undefined && depth > skipping) continue;
+      skipping = undefined;
+      const key = `${helper.file}:${helper.lines[0]}`;
+      if (seen.has(key)) {
+        skipping = depth;
+        continue;
+      }
+      seen.add(key);
+      helpers.push(helper);
+    }
+  }
+  return helpers;
+}
+
 /** The card of a test of the code. */
 function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (id: string) => boolean, aspects: AspectTable): TestCase {
   const sources = sourcesOf(file.root);
@@ -153,6 +328,7 @@ function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (i
     evidence,
     ...(test.skipped ? { skipped: true } : {}),
     digest: digestOf(test.body),
+    ...(test.helpers.length === 0 ? {} : { helpers: test.helpers.map((helper) => ({ name: helper.name, file: helper.file ?? file.path, lines: helper.lines, depth: helper.depth })) }),
   };
   return card;
 }
@@ -174,7 +350,7 @@ export function stepOutcome(text: string): TestOutcome {
 }
 
 /** The card of a case of a feature file. */
-function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, endpoints: EndpointIndex, isFunction: (id: string) => boolean, catalogNamed: (name: string) => string | undefined, untranslated: Set<string>): TestCase {
+function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, endpoints: EndpointIndex, isFunction: (id: string) => boolean, catalogNamed: (name: string) => string | undefined, untranslated: Set<string>, definitions: ReadonlyMap<string, StepDefinitionCode>): TestCase {
   const tags = readFeatureTags(test.tags);
   const inProcess = tags.targets.filter((target): target is 'hono' | 'nextjs' => target === 'hono' || target === 'nextjs');
   const sources: Array<'hono' | 'nextjs'> = tags.targets.includes('http') ? ['hono', 'nextjs'] : inProcess;
@@ -184,13 +360,17 @@ function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, end
     const id = isFunction(name) ? name : catalogNamed(name);
     if (id !== undefined) subjects.push({ kind: 'function', id, how: 'declared' });
   }
+  const helperLists: HelperRef[][] = [];
   const steps: FeatureStep[] = test.steps.map((step) => {
     const [match] = input.vocabulary.matches(step.text);
     if (match === undefined) return step;
     const ja = input.translations.translate(match.definition.expression, match.holes);
     if (ja === undefined) untranslated.add(match.definition.expression);
-    return { ...step, phrase: match.definition.expression, ...(ja === undefined ? {} : { ja }) };
+    const definition = definitions.get(`${match.definition.file}:${match.definition.line}`);
+    if (definition !== undefined) helperLists.push(definition.helpers);
+    return { ...step, phrase: match.definition.expression, ...(ja === undefined ? {} : { ja }), ...(definition === undefined ? {} : { definition: definition.code }) };
   });
+  const helpers = scenarioHelpers(helperLists);
   const assertions: Assertion[] = steps
     .filter((step) => step.type === 'outcome')
     .map((step) => ({ actual: '', matcher: 'step', line: step.line, text: step.text, ...(step.phrase === undefined ? {} : { phrase: step.phrase }), ...(step.ja === undefined ? {} : { ja: step.ja }) }));
@@ -233,6 +413,7 @@ function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, end
     ...(tags.targets.length === 0 ? {} : { targets: tags.targets }),
     evidence: subjects.length > 0 ? ['declared'] : [],
     digest: digestOf(test.steps.map((step) => `${step.keyword}${step.text}\n${(step.table ?? []).map((row) => row.join('|')).join('\n')}`).join('\n')),
+    ...(helpers.length === 0 ? {} : { helpers }),
   };
 }
 
@@ -262,30 +443,33 @@ export function readCatalog(input: CatalogInput): CatalogResult {
   const configs = overlayConfigs(root, repo.roots, modules);
   const others = codeFiles.filter((file) => file.place !== 'catalog');
   const otherConfig = join(root, OTHER_CONFIG);
+  // The E2E specs and the tests of the tools, with the support modules they may import and the step definitions: the project resolves no import outside its files.
+  const otherFiles = [...new Set([...others.map((file) => file.path), ...(input.supportFiles ?? []), ...input.vocabulary.definitions.map((definition) => definition.file)])];
   configs.set(
     otherConfig,
     JSON.stringify({
-      compilerOptions: { allowJs: true, checkJs: false, noEmit: true, noResolve: true, skipLibCheck: true, target: 'es2022', module: 'nodenext', moduleResolution: 'nodenext', types: [] },
-      files: others.map((file) => `./${file.path}`),
+      compilerOptions: { allowJs: true, checkJs: false, noEmit: true, noResolve: true, skipLibCheck: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', types: [] },
+      files: otherFiles.map((path) => `./${path}`),
     }),
   );
   const compiler = new Compiler(root, configs, input.overlay);
   const tests: TestCase[] = [];
+  let definitions = new Map<string, StepDefinitionCode>();
   try {
-    const projects = new Map<string, { project: Project; resolver?: Resolver }>();
+    const projects = new Map<string, { project: Project; resolver?: Resolver; helperOf: (name: Node) => HelperDeclaration | undefined }>();
     const projectOf = (file: TestFile) => {
       const analysisRoot = file.place === 'catalog' ? repo.roots.find((candidate: AnalysisRoot) => candidate.name === file.root) : undefined;
       const config = analysisRoot === undefined ? otherConfig : overlayOf(root, analysisRoot);
       let entry = projects.get(config);
       if (entry === undefined) {
         const project = compiler.project(config);
-        entry = { project, ...(analysisRoot === undefined ? {} : { resolver: new Resolver(project, { repository: root, roots: repo.roots, isFunction, paragraph: (text) => text }) }) };
+        entry = { project, helperOf: helperResolver(project, root), ...(analysisRoot === undefined ? {} : { resolver: new Resolver(project, { repository: root, roots: repo.roots, isFunction, paragraph: (text) => text }) }) };
         projects.set(config, entry);
       }
       return entry;
     };
     for (const file of codeFiles) {
-      const { project, resolver } = projectOf(file);
+      const { project, resolver, helperOf } = projectOf(file);
       const source = project.program.getSourceFile(join(root, file.path));
       if (source === undefined) {
         warnings.push(`${file.path}: not in the program of its project; its tests are not in the catalog`);
@@ -325,6 +509,7 @@ export function readCatalog(input: CatalogInput): CatalogResult {
             if (ja === undefined) untranslated.add(phrase);
             return ja;
           },
+          helperOf,
         });
       } catch (error) {
         warnings.push(`${file.path}: could not be read (${error instanceof Error ? error.message : String(error)})`);
@@ -337,6 +522,9 @@ export function readCatalog(input: CatalogInput): CatalogResult {
         tests.push(card);
       }
     }
+    // The step definitions are in the project of the E2E specs and the tools, with the support modules their helpers are in.
+    const other = compiler.project(otherConfig);
+    definitions = stepDefinitionCode(other, root, input.vocabulary.definitions, projects.get(otherConfig)?.helperOf ?? helperResolver(other, root));
   } finally {
     compiler.close();
   }
@@ -349,7 +537,7 @@ export function readCatalog(input: CatalogInput): CatalogResult {
       warnings.push(`${file.path}: does not parse (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`);
       continue;
     }
-    for (const test of read) tests.push(featureCard(file, test, input, endpoints, isFunction, catalogNamed, untranslated));
+    for (const test of read) tests.push(featureCard(file, test, input, endpoints, isFunction, catalogNamed, untranslated, definitions));
   }
 
   // Two tests with one id: tell them apart by their files (design §1), and say so.

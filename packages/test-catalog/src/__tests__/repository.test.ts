@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { readRepository, readRoots, type AnalysisRoot, type MapData } from '@maronn-openid-connect/map-analysis';
 import { readTables } from '../build.js';
 import { readCatalog } from '../catalog.js';
-import { listFiles, testFileOf, testFiles } from '../discover.js';
+import { isTestSupportPath, listFiles, supportFiles, testFileOf, testFiles } from '../discover.js';
 import { mapDataOf } from '../draft.js';
 import { fixedIds, lintTests } from '../lint.js';
 import type { TestCase } from '../model.js';
@@ -39,6 +39,28 @@ describe('testFileOf', () => {
       undefined,
       undefined,
     ]);
+  });
+});
+
+describe('isTestSupportPath and supportFiles', () => {
+  it('should take the code under tests/, the test-support and __tests__ directories, the test helpers and the tests for test support, and not the code they test', () => {
+    const paths = [
+      'tests/e2e/fixtures.ts',
+      'tests/steps/support/target.ts',
+      'apps/hono/src/test-support/context.ts',
+      'packages/experimental/src/ciba/test-helpers.ts',
+      'packages/map-analysis/src/__tests__/helpers.ts',
+      'apps/tests/src/lib/fixture.ts',
+      'packages/core/src/client-auth.test.ts',
+      'packages/core/src/client-auth.ts',
+      'apps/hono/src/app.ts',
+      'packages/map-analysis/src/tree.ts',
+      'node_modules/@playwright/test/index.d.ts',
+      'tests/e2e/types.d.ts',
+    ];
+    expect(paths.map(isTestSupportPath)).toEqual([true, true, true, true, true, true, true, false, false, false, false, false]);
+    // The modules a catalog reads besides the tests: not the tests themselves, nor the Conformance Suite, nor what is no code.
+    expect(supportFiles([...paths, 'tests/conformance/scripts/create-op-config.mjs', 'tests/steps/ja.yaml'])).toEqual(paths.slice(0, 6));
   });
 });
 
@@ -78,7 +100,8 @@ describe('the catalog of the repository', () => {
   beforeAll(async () => {
     const read = await readRepository(repository);
     const data: MapData = mapDataOf(read);
-    const result = readCatalog({ repository: read, data, files: testFiles(read.roots, listFiles(repository)), read: (path) => readFileSync(join(repository, path), 'utf8'), ...readTables(repository) });
+    const listed = listFiles(repository);
+    const result = readCatalog({ repository: read, data, files: testFiles(read.roots, listed), read: (path) => readFileSync(join(repository, path), 'utf8'), ...readTables(repository), supportFiles: supportFiles(listed) });
     tests = result.tests;
     warnings = result.warnings;
   });
@@ -100,6 +123,30 @@ describe('the catalog of the repository', () => {
     expect(pipeline.every((test) => test.kind === 'api' && test.subjects.some((subject) => subject.kind === 'endpoint' && subject.id === 'token' && subject.source === 'hono'))).toBe(true);
     const unauthorized = pipeline.find((test) => test.title.includes('401 invalid_client'));
     expect([unauthorized?.outcome, unauthorized?.errors, unauthorized?.aspects.includes('authentication')]).toEqual(['failure', ['invalid_client'], true]);
+  });
+
+  it('should give a test the helpers of its file and of the test support modules it imports, and nothing of the catalog', () => {
+    const exchange = tests.find((test) => test.source.file === 'apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts' && test.title.startsWith('should exchange the code'));
+    expect(exchange?.helpers?.find((helper) => helper.name === 'provider')?.file).toBe('apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts');
+    expect(exchange?.helpers?.find((helper) => helper.name === 'basicAuthorization')?.file).toBe('apps/hono/src/test-support/token.ts');
+    const helped = tests.filter((test) => (test.helpers ?? []).length > 0);
+    expect(helped.filter((test) => test.kind === 'e2e').length).toBeGreaterThan(0);
+    expect(helped.flatMap((test) => test.helpers ?? []).every((helper) => isTestSupportPath(helper.file))).toBe(true);
+  });
+
+  it('should give every step of a scenario the code of the step definition it matched', () => {
+    const steps = tests.flatMap((test) => test.steps ?? []);
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.every((step) => step.definition?.file.startsWith('tests/steps/') === true && step.definition.lines[0] <= step.definition.lines[1])).toBe(true);
+  });
+
+  it('should give a scenario the helpers its step definitions call, each once, those of the step definitions at depth 1', () => {
+    const redeems = tests.find((test) => test.source.form === 'feature' && (test.steps ?? []).some((step) => step.text.includes('redeems the authorization code "')));
+    const helpers = redeems?.helpers ?? [];
+    expect(helpers.find((helper) => helper.name === 'redeem')).toMatchObject({ file: 'tests/steps/in-process/token.steps.ts', depth: 1 });
+    expect(helpers.some((helper) => helper.file === 'tests/steps/support/in-process.ts')).toBe(true);
+    expect(new Set(helpers.map((helper) => `${helper.file}:${helper.lines[0]}`)).size).toBe(helpers.length);
+    expect(tests.flatMap((test) => (test.source.form === 'feature' ? (test.helpers ?? []) : [])).every((helper) => isTestSupportPath(helper.file))).toBe(true);
   });
 
   it('should read the E2E specs as E2E tests against both apps, and leave the tests of the tools off the map', () => {

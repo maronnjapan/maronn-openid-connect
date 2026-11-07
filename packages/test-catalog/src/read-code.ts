@@ -21,6 +21,19 @@
  *   (through the imports of the file, by the types: `describe` names the
  *   function as the README asks), the functions of the catalog its body
  *   calls, the endpoints its requests reach, and what its author declares.
+ * - Its helpers are the functions its body calls (or hands to a call) that
+ *   are no function of the catalog and no call of a test framework: the
+ *   functions of its file, found by the scopes the name is used in (a
+ *   `function`, or a `const` bound to an arrow function, at the top or in a
+ *   describe block; a parameter such as a Playwright fixture is none), and
+ *   the functions of the test support modules it imports, found by the types
+ *   (CodeReadOptions.helperOf). The helpers a helper calls are its helpers
+ *   too, a few calls deep, each once: the helpers the test calls itself are
+ *   listed first (depth 1), each followed by those it calls in turn (depth
+ *   2, ...), so a helper the test calls is never listed under another. A
+ *   function written inside the test or inside a helper it lists is part of
+ *   that code, not a helper of its own. The step definitions of the
+ *   scenarios have their helpers the same way (fileHelpers).
  */
 import {
   any,
@@ -64,6 +77,30 @@ export interface CodeTest {
   skipped: boolean;
   /** The text of its body, for the diff (a body that changed without its expectations). */
   body: string;
+  /** The helpers its body calls, directly or through another helper, in the order they are first called (see the module comment). */
+  helpers: CodeHelper[];
+}
+
+/** A helper of a test as the reader finds it: a function of the test's own file, or of a test support module. */
+export interface CodeHelper {
+  /** The name the test (or the helper that calls it) calls it by. */
+  name: string;
+  /** Its file from the root of the repository; absent for a function of the test's own file. */
+  file?: string;
+  /** Its declaration (declarationLines). */
+  lines: [number, number];
+  /** 1 for a helper the test calls itself, 2 for one such a helper calls, ... (model.ts HelperRef.depth). */
+  depth: number;
+}
+
+/** A function of a test support module a name refers to (CodeReadOptions.helperOf). */
+export interface HelperDeclaration {
+  /** Its file from the root of the repository. */
+  file: string;
+  /** Its declaration (declarationLines). */
+  lines: [number, number];
+  /** The function, whose calls are read for the helpers it calls in turn. */
+  fn: Node;
 }
 
 export interface TestComments {
@@ -88,6 +125,14 @@ export interface CodeReadOptions {
   constantsOf?(nodes: readonly Node[]): ReadonlyMap<Node, string>;
   /** The Japanese of an expectation's phrase with its holes, from the translation table. */
   translate?(phrase: string, holes: readonly string[]): string | undefined;
+  /**
+   * The function of a test support module a name refers to, by the types: an
+   * imported name of the test file, or a name a helper of another file calls.
+   * Undefined for anything else (a function of the catalog, of a test
+   * framework, of node_modules or of the runtime, a value that is no
+   * function); without it the reader finds the helpers of the file only.
+   */
+  helperOf?(name: Node): HelperDeclaration | undefined;
 }
 
 const DESCRIBE = new Set(['describe', 'suite']);
@@ -643,6 +688,226 @@ function describedName(title: string): string {
   return /^[A-Za-z_$][\w$]*/.exec(title.trim())?.[0] ?? '';
 }
 
+/**
+ * The lines of a declaration (a function, the variable statement of an arrow
+ * function, a statement): from its JSDoc, or from the comment lines right
+ * above it (no blank line between), to its end. `last` is where it ends when
+ * that is another node: the implementation of an overloaded function.
+ */
+export function declarationLines(file: SourceFile, first: Node, last: Node = first): [number, number] {
+  let start = first.getStart(file, true);
+  let next = first.getStart(file);
+  const ranges = getLeadingCommentRanges(file.text, first.pos) ?? [];
+  for (let index = ranges.length - 1; index >= 0; index -= 1) {
+    const range = ranges[index] as { pos: number; end: number };
+    if ((file.text.slice(range.end, next).match(/\n/g) ?? []).length > 1) break;
+    start = Math.min(start, range.pos);
+    next = range.pos;
+  }
+  return [file.getLineAndCharacterOfPosition(start).line + 1, endLine(file, last)];
+}
+
+/** The calls of the test frameworks (Vitest, Playwright, playwright-bdd): never a helper, `test` and `expect` of tests/e2e/fixtures.ts included. */
+const FRAMEWORK = new Set(['describe', 'suite', 'it', 'test', 'bench', 'expect', 'beforeEach', 'afterEach', 'beforeAll', 'afterAll', 'vi', 'vitest', 'createBdd', 'Given', 'When', 'Then', 'Step', 'Before', 'After', 'BeforeAll', 'AfterAll']);
+
+/** How deep the helpers of a helper are read: a helper of the test, its helpers, and so on. */
+const HELPER_DEPTH = 4;
+
+/** What a name refers to in a scope of a file: a function of the file, another name (`const send = post`), or something that is no helper (a parameter, a value, a class). */
+type Declared = { kind: 'function'; fn: Node; first: Node; last: Node } | { kind: 'alias'; target: Node } | { kind: 'other' };
+
+const OTHER: Declared = { kind: 'other' };
+
+/** The kinds of node whose parameters are names of their body. */
+const WITH_PARAMETERS = new Set<SyntaxKind>([
+  SyntaxKind.FunctionDeclaration,
+  SyntaxKind.FunctionExpression,
+  SyntaxKind.ArrowFunction,
+  SyntaxKind.MethodDeclaration,
+  SyntaxKind.Constructor,
+  SyntaxKind.GetAccessor,
+  SyntaxKind.SetAccessor,
+]);
+
+/** The names a binding binds: an identifier, or the names of a destructuring pattern. */
+function boundNames(name: Node | undefined): string[] {
+  if (name === undefined) return [];
+  if (is(name, SyntaxKind.Identifier)) return [name['text'] as string];
+  if (is(name, SyntaxKind.ObjectBindingPattern) || is(name, SyntaxKind.ArrayBindingPattern)) return ((name['elements'] as Node[] | undefined) ?? []).flatMap((element) => (is(element, SyntaxKind.BindingElement) ? boundNames(element['name'] as Node) : []));
+  return [];
+}
+
+/** The names a scope declares (a block, a file, a function's parameters, the variable of a `catch` or a `for`), each with what it refers to. */
+function scopeNames(scope: Node): Map<string, Declared> {
+  const names = new Map<string, Declared>();
+  const other = (name: Node | undefined) => {
+    for (const bound of boundNames(name)) if (!names.has(bound)) names.set(bound, OTHER);
+  };
+  if (WITH_PARAMETERS.has(scope.kind)) {
+    for (const parameter of (any(scope)['parameters'] as Node[] | undefined) ?? []) other(any(parameter)['name'] as Node | undefined);
+    // A function expression's own name refers to itself: a call of it is a recursion, not a helper.
+    if (is(scope, SyntaxKind.FunctionExpression)) other(scope['name'] as Node | undefined);
+  }
+  if (is(scope, SyntaxKind.CatchClause)) {
+    const variable = scope['variableDeclaration'] as Node | undefined;
+    other(variable === undefined ? undefined : (any(variable)['name'] as Node | undefined));
+  }
+  if (is(scope, SyntaxKind.ForStatement) || is(scope, SyntaxKind.ForOfStatement) || is(scope, SyntaxKind.ForInStatement)) {
+    const initializer = scope['initializer'] as Node | undefined;
+    if (is(initializer, SyntaxKind.VariableDeclarationList)) for (const declaration of (initializer['declarations'] as Node[]) ?? []) other(any(declaration)['name'] as Node | undefined);
+  }
+  const statements = any(scope)['statements'] as Node[] | undefined;
+  if (!Array.isArray(statements)) return names;
+  /** The first declaration of each overloaded function: its lines start there. */
+  const signatures = new Map<string, Node>();
+  for (const statement of statements) {
+    if (is(statement, SyntaxKind.FunctionDeclaration)) {
+      const name = nameOf(statement['name'] as Node | undefined);
+      if (name === undefined) continue;
+      const first = signatures.get(name) ?? statement;
+      signatures.set(name, first);
+      // A signature (an overload, a `declare function`) has no code; the implementation that follows it does.
+      if (statement['body'] !== undefined) names.set(name, { kind: 'function', fn: statement, first, last: statement });
+      else if (!names.has(name)) names.set(name, OTHER);
+    } else if (is(statement, SyntaxKind.VariableStatement)) {
+      for (const declaration of (any(statement['declarationList'])['declarations'] as Node[]) ?? []) {
+        const name = declaration === undefined ? undefined : (any(declaration)['name'] as Node | undefined);
+        const initializer = any(declaration)['initializer'] as Node | undefined;
+        const value = initializer === undefined ? undefined : unwrap(initializer);
+        if (is(name, SyntaxKind.Identifier) && (is(value, SyntaxKind.ArrowFunction) || is(value, SyntaxKind.FunctionExpression))) names.set(name['text'] as string, { kind: 'function', fn: value as Node, first: statement, last: statement });
+        else if (is(name, SyntaxKind.Identifier) && is(value, SyntaxKind.Identifier)) names.set(name['text'] as string, { kind: 'alias', target: value as Node });
+        else other(name);
+      }
+    } else if (is(statement, SyntaxKind.ClassDeclaration) || is(statement, SyntaxKind.EnumDeclaration) || is(statement, SyntaxKind.ModuleDeclaration)) {
+      other(statement['name'] as Node | undefined);
+    }
+  }
+  return names;
+}
+
+/** Whether a node is inside another (in its subtree, the node itself aside). */
+function within(node: Node, container: Node): boolean {
+  for (let current = node.parent; current !== undefined; current = current.parent) if (current === container) return true;
+  return false;
+}
+
+/** The names a body calls (`f(...)`) or hands to a call (`items.map(f)`), in the order of the text; the calls of the test frameworks left out. */
+function calleesIn(root: Node): Node[] {
+  const found: Node[] = [];
+  walk(root, (node) => {
+    if (!is(node, SyntaxKind.Identifier) || FRAMEWORK.has(node['text'] as string)) return true;
+    const parent = node.parent;
+    if (is(parent, SyntaxKind.CallExpression) && (parent['expression'] === node || ((parent['arguments'] as Node[] | undefined) ?? []).includes(node))) found.push(node);
+    return true;
+  });
+  return found;
+}
+
+/** A helper as found, with the function to read its calls from and whether that function is of the test's own file. */
+interface FoundHelper {
+  helper: Omit<CodeHelper, 'depth'>;
+  fn: Node;
+  local: boolean;
+}
+
+/**
+ * The helpers of the tests of a file (see the module comment): the names a
+ * body calls looked up in the scopes they are used in, an import looked up
+ * by the types (`helperOf`) unless it is a function of the catalog
+ * (`imported`), the calls of a helper of another file looked up by the types.
+ */
+function helperReader(file: SourceFile, imports: ReadonlyMap<string, Node>, imported: ReadonlyMap<string, string | undefined>, helperOf: CodeReadOptions['helperOf']): (body: Node) => CodeHelper[] {
+  const scopes = new Map<Node, Map<string, Declared>>();
+  const importHelpers = new Map<Node, HelperDeclaration | null>();
+  const callees = new Map<Node, Node[]>();
+  const namesOf = (scope: Node) => {
+    let names = scopes.get(scope);
+    if (names === undefined) {
+      names = scopeNames(scope);
+      scopes.set(scope, names);
+    }
+    return names;
+  };
+  /** What a name used at a node refers to: the innermost scope that declares it, else an import. */
+  const lookup = (name: string, at: Node, hops = 0): Declared | { kind: 'import'; node: Node } | undefined => {
+    for (let scope = at.parent; scope !== undefined; scope = scope.parent) {
+      const declared = namesOf(scope).get(name);
+      if (declared === undefined) continue;
+      if (declared.kind !== 'alias') return declared;
+      // `const send = post`: what `post` refers to where `send` is bound, a few names deep.
+      return hops < 3 ? lookup(any(declared.target)['text'] as string, declared.target, hops + 1) : undefined;
+    }
+    const node = imports.get(name);
+    return node === undefined ? undefined : { kind: 'import', node };
+  };
+  const importHelper = (node: Node): HelperDeclaration | undefined => {
+    let known = importHelpers.get(node);
+    if (known === undefined) {
+      known = helperOf?.(node) ?? null;
+      importHelpers.set(node, known);
+    }
+    return known ?? undefined;
+  };
+  /** The helper a callee of a body is: by the scopes of the test file, or by the types for the body of a helper of another file. */
+  const helperAt = (callee: Node, local: boolean): FoundHelper | undefined => {
+    const name = any(callee)['text'] as string;
+    if (!local) {
+      const declaration = helperOf?.(callee);
+      return declaration === undefined ? undefined : { helper: { name, file: declaration.file, lines: declaration.lines }, fn: declaration.fn, local: false };
+    }
+    const declared = lookup(name, callee);
+    if (declared === undefined || declared.kind === 'other' || declared.kind === 'alias') return undefined;
+    if (declared.kind === 'function') return { helper: { name, lines: declarationLines(file, declared.first, declared.last) }, fn: declared.fn, local: true };
+    // An import: a function of the catalog is a subject or what the test arranges, not a helper.
+    if (imported.get(nameOf(declared.node) ?? '') !== undefined) return undefined;
+    const declaration = importHelper(declared.node);
+    return declaration === undefined ? undefined : { helper: { name, file: declaration.file, lines: declaration.lines }, fn: declaration.fn, local: false };
+  };
+  const calleesOf = (fn: Node) => {
+    let list = callees.get(fn);
+    if (list === undefined) {
+      list = calleesIn(fn);
+      callees.set(fn, list);
+    }
+    return list;
+  };
+  return (body) => {
+    const found: CodeHelper[] = [];
+    const listed = new Set<Node>();
+    /** The helpers a function calls that no list has yet, in the order of their first call, each taken at once: its siblings are never under it. */
+    const callsOf = (root: Node, local: boolean): FoundHelper[] => {
+      const helpers: FoundHelper[] = [];
+      for (const callee of root === body ? calleesIn(body) : calleesOf(root)) {
+        const helper = helperAt(callee, local);
+        // A function written in the test, or in the code being read, is part of that code.
+        if (helper === undefined || listed.has(helper.fn) || helper.fn === body || within(helper.fn, body) || within(helper.fn, root)) continue;
+        listed.add(helper.fn);
+        helpers.push(helper);
+      }
+      return helpers;
+    };
+    /** A helper, then the helpers it calls under it, depth first. */
+    const add = (helper: FoundHelper, depth: number) => {
+      found.push({ ...helper.helper, depth });
+      if (depth >= HELPER_DEPTH) return;
+      for (const next of callsOf(helper.fn, helper.local)) add(next, depth + 1);
+    };
+    for (const helper of callsOf(body, true)) add(helper, 1);
+    return found;
+  };
+}
+
+/**
+ * The helpers of the functions of a file that is no test file (a file of
+ * step definitions): read as those of a test (helperReader), with no
+ * function of the catalog among its imports (the project of such a file
+ * resolves none: a function the types find in no test support module is no
+ * helper anyway).
+ */
+export function fileHelpers(file: SourceFile, helperOf: CodeReadOptions['helperOf']): (fn: Node) => CodeHelper[] {
+  return helperReader(file, importsOf(file), new Map(), helperOf);
+}
+
 /** The test cases of a file of test code (see the module comment). */
 export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeTest[] {
   const scope = scopeOf(file);
@@ -651,6 +916,7 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
   for (const [name, node] of importNodes) imported.set(name, options.importTarget(node));
   const accesses = memberAccessesOf(file);
   const constants = accesses.length === 0 || options.constantsOf === undefined ? new Map<Node, string>() : options.constantsOf(accesses);
+  const helpersOf = helperReader(file, importNodes, imported, options.helperOf);
   const tests: CodeTest[] = [];
 
   const visit = (statements: readonly Node[], path: string[], described: string[], skipped: boolean, pathIds: Array<string | undefined> = []) => {
@@ -801,6 +1067,7 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
         urls,
         skipped: skipped || kind.skipped,
         body: fn === undefined ? '' : textOf(file, fn),
+        helpers: fn === undefined ? [] : helpersOf(fn),
       });
     }
   };

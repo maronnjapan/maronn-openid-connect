@@ -12,7 +12,9 @@
  *     viewer names (TestsOutline);
  *   - tests/by-file/<hash>.json: the cards of the tests of a file, read when
  *     the reader opens one of them;
- *   - tests/sources/<hash>.json: the text of a test file;
+ *   - tests/sources/<hash>.json: the text of a file the viewer shows: a test
+ *     file, or the file of a helper, of a step definition, of a function or
+ *     of an endpoint body (TestsIndex.sources);
  *   - tests/diff.json: in the build of a pull request, the diff of the tests.
  *
  * The run (MAP_TEST_REPORTS: the directory a run with MARONN_TEST_REPORTS
@@ -23,15 +25,15 @@
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { git, removeStale, writeHashed, type BuildContext, type BuildExtension } from '@maronn-openid-connect/map-analysis';
+import { git, nodesOf, removeStale, writeHashed, type BuildContext, type BuildExtension } from '@maronn-openid-connect/map-analysis';
 import { ASPECTS_FILE, readAspects, type AspectTable } from './aspects.js';
 import { EndpointIndex, readCatalog } from './catalog.js';
 import { diffCatalogs } from './diff.js';
-import { listFiles, testFileOf, testFiles, type TestFile } from './discover.js';
+import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from './discover.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown } from './markdown.js';
-import type { MapData } from '@maronn-openid-connect/map-analysis';
-import type { FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
+import type { FlowTree, MapData } from '@maronn-openid-connect/map-analysis';
+import type { CodeRef, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { readRun } from './run.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
@@ -124,14 +126,97 @@ function writeFileCards(out: string, tests: readonly TestCase[]): Map<string, st
 }
 
 /**
- * The endpoints of hono and Next.js with their steps, and the functions the
- * index and the steps name (TestsOutline). A step without a function of its
- * own (a block of a Route Handler) names the frames it calls that have unit
- * tests of the endpoint (`refs`, the endpoints of the index).
+ * The code of a frame of the map as a range of a file of the repository: its
+ * source (FunctionEntry.source, the JSDoc and the overloads included;
+ * BodyEntry.source). A body of several handlers that are functions of the
+ * catalog has no range of its own on the map (synthetic): its code is that of
+ * its handlers, the functions it calls in its own module, from the first to
+ * the last.
  */
-export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string>, refs: TestsIndex['endpoints'] = indexRefs(joined).endpoints): TestsOutline {
+export function codeOfFrame(data: MapData, id: string): CodeRef | undefined {
+  const range = (source: { file: string; start: number; end: number } | undefined): CodeRef | undefined => {
+    const path = source === undefined ? undefined : data.sources[source.file]?.path;
+    return source === undefined || path === undefined ? undefined : { file: path, lines: [source.start, source.end] };
+  };
+  const own = range((data.functions[id] ?? data.bodies[id])?.source);
+  if (own !== undefined) return own;
+  const body = data.bodies[id];
+  if (body === undefined) return undefined;
+  const module = `${body.package}:${body.module}`;
+  const handlers = body.calls.map((callee) => data.functions[callee]?.source).filter((source): source is { file: string; start: number; end: number } => source !== undefined && source.file === module);
+  if (handlers.length === 0) return undefined;
+  return range({ file: module, start: Math.min(...handlers.map((source) => source.start)), end: Math.max(...handlers.map((source) => source.end)) });
+}
+
+/**
+ * The code of each step without a function of its own, a block of the code
+ * of its endpoint (every step of a Route Handler of Next.js, a few of a
+ * pipeline of hono): the lines of the block its marker (`// [step-id]`)
+ * opens, from the trees of the frames of the endpoint's file (a node of kind
+ * `block`), the tree of the endpoint's root first. A step whose endpoint has
+ * no such marker has none. A block takes the blank lines above its marker on
+ * the map; with `read` (the text of a file) the range starts at the marker.
+ * By `<source>:<endpoint>:<step>`.
+ */
+export function stepBlocks(data: MapData, trees: Iterable<FlowTree>, read?: (path: string) => string): Map<string, CodeRef> {
+  const byFile = new Map<string, FlowTree[]>();
+  for (const tree of trees) byFile.set(tree.file, [...(byFile.get(tree.file) ?? []), tree]);
+  const texts = new Map<string, string[] | undefined>();
+  const linesOf = (path: string): string[] | undefined => {
+    if (!texts.has(path)) {
+      let text: string | undefined;
+      try {
+        text = read?.(path);
+      } catch {
+        text = undefined;
+      }
+      texts.set(path, text?.split('\n'));
+    }
+    return texts.get(path);
+  };
+  const blocks = new Map<string, CodeRef>();
+  const endpoints = (['hono', 'nextjs'] as const).flatMap((source) => (data.flows[source]?.endpoints ?? []).map((endpoint) => ({ source, endpoint })));
+  for (const { source, endpoint } of endpoints) {
+    const file = endpoint.source;
+    const path = file === undefined ? undefined : data.sources[file]?.path;
+    if (file === undefined || path === undefined) continue;
+    const candidates = [...(byFile.get(file) ?? [])].sort((a, b) => Number(b.id === endpoint.root) - Number(a.id === endpoint.root) || a.lines[0] - b.lines[0]);
+    for (const step of endpoint.steps) {
+      if (step.functionId !== undefined) continue;
+      let found: [number, number] | undefined;
+      for (const tree of candidates) {
+        for (const node of nodesOf(tree.nodes)) {
+          if (node.kind === 'block' && node.step?.id === step.id) {
+            found = node.lines;
+            break;
+          }
+        }
+        if (found !== undefined) break;
+      }
+      if (found === undefined) continue;
+      let [start, end] = found;
+      const text = linesOf(path);
+      while (text !== undefined && start < end && (text[start - 1] ?? '').trim() === '') start += 1;
+      blocks.set(`${source}:${endpoint.id}:${step.id}`, { file: path, lines: [start, end] });
+    }
+  }
+  return blocks;
+}
+
+/**
+ * The endpoints of hono and Next.js with their steps, and the functions the
+ * index and the steps name (TestsOutline), each with its code. The functions
+ * named are those of `frames`, every frame a test names as a subject or
+ * reached (joined.frames), the roots and the functions of the steps. A step
+ * without a function of its own (a block of a Route Handler) names the frames
+ * it calls that have unit tests of the endpoint (`refs`, the endpoints of the
+ * index). The code of a step is its function's, or its block's (`blocks`,
+ * stepBlocks).
+ */
+export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string>, refs: TestsIndex['endpoints'] = indexRefs(joined).endpoints, blocks: ReadonlyMap<string, CodeRef> = new Map()): TestsOutline {
   const endpoints: TestsOutline['endpoints'] = [];
   const named = new Set(frames);
+  for (const [id, frame] of joined.frames) if (frame.tests.length > 0) named.add(id);
   for (const source of ['hono', 'nextjs'] as const) {
     for (const endpoint of data.flows[source]?.endpoints ?? []) {
       const key = `${source}:${endpoint.id}`;
@@ -142,12 +227,15 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
       const steps = endpoint.steps.map((step): OutlineStep => {
         if (step.functionId !== undefined) {
           named.add(step.functionId);
-          return { id: step.id, label: step.label, function: step.functionId };
+          const code = codeOfFrame(data, step.functionId);
+          return { id: step.id, label: step.label, function: step.functionId, ...(code === undefined ? {} : { code }) };
         }
         const calls = [...new Set(step.calls ?? [])].filter((id) => units[id] !== undefined);
         for (const id of calls) named.add(id);
-        return { id: step.id, label: step.label, ...(calls.length === 0 ? {} : { calls }) };
+        const code = blocks.get(`${source}:${endpoint.id}:${step.id}`);
+        return { id: step.id, label: step.label, ...(calls.length === 0 ? {} : { calls }), ...(code === undefined ? {} : { code }) };
       });
+      const code = codeOfFrame(data, root);
       endpoints.push({
         key,
         source,
@@ -160,6 +248,7 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
         layer: endpoint.layer,
         root,
         steps,
+        ...(code === undefined ? {} : { code }),
       });
     }
   }
@@ -167,15 +256,36 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
   for (const id of [...named].sort()) {
     const fn = data.functions[id];
     const body = data.bodies[id];
+    const code = codeOfFrame(data, id);
     const entry: OutlineFunction | undefined =
       fn !== undefined
-        ? { id, name: fn.name, package: fn.package, module: fn.module, ...(fn.summary ? { summary: fn.summary } : {}) }
+        ? { id, name: fn.name, package: fn.package, module: fn.module, ...(fn.summary ? { summary: fn.summary } : {}), ...(code === undefined ? {} : { code }) }
         : body !== undefined
-          ? { id, name: body.name, package: body.package, module: body.module, ...(body.summary ? { summary: body.summary } : {}) }
+          ? { id, name: body.name, package: body.package, module: body.module, ...(body.summary ? { summary: body.summary } : {}), ...(code === undefined ? {} : { code }) }
           : undefined;
     if (entry !== undefined) functions[id] = entry;
   }
   return { version: 1, endpoints, functions };
+}
+
+/**
+ * The files the viewer shows code of, in the order of their paths: the test
+ * files, and the files of the helpers of the tests, of the step definitions
+ * the steps matched, of the functions, the endpoint bodies and the steps of
+ * the outline (TestsIndex.sources).
+ */
+export function shownFiles(files: readonly TestFile[], tests: readonly TestCase[], outline: TestsOutline): string[] {
+  const shown = new Set<string>(files.map((file) => file.path));
+  for (const test of tests) {
+    for (const helper of test.helpers ?? []) shown.add(helper.file);
+    for (const step of test.steps ?? []) if (step.definition !== undefined) shown.add(step.definition.file);
+  }
+  for (const endpoint of outline.endpoints) {
+    if (endpoint.code !== undefined) shown.add(endpoint.code.file);
+    for (const step of endpoint.steps) if (step.code !== undefined) shown.add(step.code.file);
+  }
+  for (const fn of Object.values(outline.functions)) if (fn.code !== undefined) shown.add(fn.code.file);
+  return [...shown].sort();
 }
 
 /** What reading a catalog needs besides the revision: the tables of the repository. */
@@ -233,9 +343,10 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   const { repository, data } = context;
   const root = repository.repository;
   const tables = readTables(root);
-  const files = testFiles(repository.roots, listFiles(root));
+  const listed = listFiles(root);
+  const files = testFiles(repository.roots, listed);
   const read = (path: string) => readFileSync(join(root, path), 'utf8');
-  const catalog = readCatalog({ repository, data, files, read, ...tables });
+  const catalog = readCatalog({ repository, data, files, read, ...tables, supportFiles: supportFiles(listed) });
   for (const warning of catalog.warnings) context.log.push(`tests: ${warning}`);
   const tests = catalog.tests;
 
@@ -262,18 +373,20 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   const out = options.out;
   if (out !== undefined) mkdirSync(join(out, 'tests'), { recursive: true });
   const fileCards = out === undefined ? new Map<string, string>() : writeFileCards(out, tests);
-  // The text of each test file, for the code of a test.
+  const blocks = stepBlocks(data, [...repository.head.trees.values()].map((built) => built.tree), read);
+  const outline = outlineOf(data, joined, Object.keys(refs.frames), refs.endpoints, blocks);
+  // The text of each file the viewer shows code of: the test files, the helpers, the step definitions, the functions and the endpoint bodies.
   const writtenSources = new Set<string>();
   const sources: TestsIndex['sources'] = {};
   if (out !== undefined) {
-    for (const file of files) {
+    for (const path of shownFiles(files, tests, outline)) {
       let text: string;
       try {
-        text = read(file.path);
+        text = read(path);
       } catch {
         continue;
       }
-      sources[file.path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), file.path, JSON.stringify({ path: file.path, text }), writtenSources)}`;
+      sources[path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), path, JSON.stringify({ path, text }), writtenSources)}`;
     }
     removeStale(join(out, 'tests', 'sources'), writtenSources);
   }
@@ -312,12 +425,13 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   } else if (out !== undefined) rmSync(join(out, 'tests', 'diff.json'), { force: true });
   if (out !== undefined) {
     writeFileSync(join(out, 'tests.json'), JSON.stringify(index));
-    writeFileSync(join(out, 'outline.json'), JSON.stringify(outlineOf(data, joined, Object.keys(refs.frames), refs.endpoints)));
+    writeFileSync(join(out, 'outline.json'), JSON.stringify(outline));
   }
 
   const kinds = Object.entries(index.counts.kinds).map(([kind, count]) => `${kind} ${count}`).join(', ');
+  const helped = tests.filter((test) => (test.helpers ?? []).length > 0).length;
   context.log.push(
-    `tests: ${tests.length} cases (${kinds}) in ${files.length} files, ${Object.keys(refs.frames).length} frames and ${Object.keys(refs.endpoints).length} endpoints with tests, ${gaps.length} gaps, ` +
+    `tests: ${tests.length} cases (${kinds}) in ${files.length} files, ${helped} with helpers${out === undefined ? '' : `, the code of ${Object.keys(sources).length} files`}, ${Object.keys(refs.frames).length} frames and ${Object.keys(refs.endpoints).length} endpoints with tests, ${gaps.length} gaps, ` +
       `${run === undefined ? 'no run' : `${Object.keys(run.run.results).length} results${measured ? `, the reach of ${run.reach.size}` : ''} (unmatched: ${run.unmatched.results} results, ${run.unmatched.reach} reach)`}, ${catalog.untranslated.length} phrases without Japanese (${((Date.now() - started) / 1000).toFixed(1)}s)`,
   );
   return { sections };

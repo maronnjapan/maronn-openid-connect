@@ -539,6 +539,12 @@ screenshot の提出と `oidcc-server-rotate-keys` の手動開始は、まだ�
 
 Dynamic OP の変更の後も、3つのプランは4つのサンプルのどれでも exit 0（manual review を除く module で FAILURE 0、WARNING 0、予期しない SKIPPED 0）だった。
 
+### 後方互換の配慮を外した後の再実行（2026-11-07、CI）
+
+クライアントの保存の形（`--db sql` の `client_auths` と `clients` の列、`--db kv` のレコード）、ログイン画面と同意画面の値、PAR と動的登録の experimental の API を変えた後に、5つのプランを4つのサンプルのそれぞれで実行し直した（`0ec2ba90`）。
+20の実行はどれも exit 0 だった。
+`hono-cloudflare` の Dynamic OP は、前と同じく 13 PASSED、3 SKIPPED（想定どおり）、823 SUCCESS / 0 FAILURE / 0 WARNING だった。
+
 ## 実行時間
 
 - `op` サービスは Discovery に応答するまで healthy にならず、`op-tls` と `runner` は healthy になってから起動します。OP が起動しない場合は、約3分で `docker compose up` が失敗します。

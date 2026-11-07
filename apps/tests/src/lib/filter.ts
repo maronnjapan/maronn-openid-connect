@@ -5,6 +5,7 @@
  */
 import type { TestEntry } from '@maronn-openid-connect/test-catalog/model';
 import type { Db } from './data';
+import type { RemovedTest } from './pr';
 import type { KindFilter, OutcomeFilter } from './route';
 
 export type Lang = 'ja' | 'en';
@@ -35,6 +36,16 @@ export function searchTests(db: Db, query: string): TestEntry[] {
     if (words.every((word) => text.includes(word))) found.push(entry);
   }
   return found;
+}
+
+/** The tests a pull request removed whose titles, file or describe path hold every word of a query, as searchTests reads them. */
+export function searchRemoved(db: Db, query: string): RemovedTest[] {
+  const words = query.toLowerCase().split(/\s+/).filter((word) => word !== '');
+  if (words.length === 0) return [];
+  return (db.pr?.removed ?? []).filter((test) => {
+    const text = [test.title, test.ja ?? '', test.file, ...test.path].join('\n').toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
 }
 
 /** The title in the chosen language; English when the test has no translation. */

@@ -12,7 +12,8 @@
  *
  * A list keeps its state in the query: `step` or `fn` narrows an endpoint to
  * the unit tests of a step or a function, `kind` and `outcome` filter the
- * list, `pkg` chooses the package of the unit tests, and `test` opens a test
+ * list, `changed=1` keeps the tests a pull request changed (in the build of
+ * one), `pkg` chooses the package of the unit tests, and `test` opens a test
  * in the panel over it (`code` the code of a function, an endpoint or a step,
  * see CodeTarget), so the back button closes the panel and a link opens the
  * list with the panel shown.
@@ -68,9 +69,16 @@ export interface View {
   fn?: string;
   kind?: KindFilter;
   outcome?: OutcomeFilter;
+  /** On a list, only the tests the pull request added, changed or removed. */
+  changed?: boolean;
 }
 
 export const HOME: View = { page: 'home' };
+
+/** The pages whose lists can keep only the tests a pull request changed. */
+export function hasChangedFilter(page: Page): boolean {
+  return page === 'endpoint' || page === 'kind' || page === 'file' || page === 'search';
+}
 
 function decode(part: string): string {
   try {
@@ -160,6 +168,7 @@ export function parseHash(hash: string): View {
   if (kind !== undefined && kind !== 'all') view.kind = kind;
   const outcome = oneOf(OUTCOME_FILTERS, query.get('outcome'));
   if (outcome !== undefined && outcome !== 'both') view.outcome = outcome;
+  if (hasChangedFilter(view.page) && query.get('changed') === '1') view.changed = true;
   if (view.page === 'endpoint') {
     const step = query.get('step');
     const fn = query.get('fn');
@@ -205,6 +214,7 @@ export function formatHash(view: View): string {
   }
   if (view.kind !== undefined && view.kind !== 'all' && view.page !== 'kind') query.set('kind', view.kind);
   if (view.outcome !== undefined && view.outcome !== 'both') query.set('outcome', view.outcome);
+  if (view.changed === true && hasChangedFilter(view.page)) query.set('changed', '1');
   if (view.test !== undefined) query.set('test', view.test);
   else if (view.code !== undefined) query.set('code', view.code);
   const rest = query.toString();

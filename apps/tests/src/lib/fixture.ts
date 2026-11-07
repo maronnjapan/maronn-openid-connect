@@ -1,5 +1,5 @@
-/** Small tests.json, outline.json and cards for the tests of the page's logic. */
-import type { CodeRef, OutlineEndpoint, OutlineFunction, TestCase, TestEntry, TestsIndex, TestsOutline } from '@maronn-openid-connect/test-catalog/model';
+/** Small tests.json, outline.json, cards and a diff of a pull request for the tests of the page's logic. */
+import type { Assertion, CodeRef, OutlineEndpoint, OutlineFunction, TestCase, TestDiff, TestEntry, TestsIndex, TestsOutline } from '@maronn-openid-connect/test-catalog/model';
 
 export function entry(id: string, fields: Partial<TestEntry> = {}): TestEntry {
   return {
@@ -91,4 +91,69 @@ export function fn(id: string, fields: Partial<OutlineFunction> = {}): OutlineFu
   const colon = id.indexOf(':');
   const hash = id.lastIndexOf('#');
   return { id, name: id.slice(hash + 1), package: id.slice(0, colon), module: id.slice(colon + 1, hash), ...fields };
+}
+
+/** An expectation as the diff and the cards name it. */
+export function assertion(text: string, line: number, fields: Partial<Assertion> = {}): Assertion {
+  return { actual: 'response.status', matcher: 'toBe', line, text, ...fields };
+}
+
+type DiffCard = TestDiff['cards'][string];
+
+/** A card of the diff (TestDiff.cards). */
+export function diffCard(id: string, fields: Partial<DiffCard> = {}): DiffCard {
+  return {
+    id,
+    kind: 'unit',
+    title: `should ${id}`,
+    outcome: 'success',
+    aspects: [],
+    source: { file: 'packages/core/src/a.test.ts', lines: [1, 3], form: 'code' },
+    path: [],
+    ...fields,
+  };
+}
+
+/**
+ * A diff with every state: `added` added, `changed` modified (an expectation
+ * added and one removed), `old` renamed to `new` and changed besides, `named`
+ * renamed alone (from `was`), and three removed tests: an API test of
+ * hono:token, a unit test of a function, and an E2E test of a file no test
+ * is left in.
+ */
+export function diff(fields: Partial<TestDiff> = {}): TestDiff {
+  return {
+    added: ['added'],
+    removed: ['gone-api', 'gone-unit', 'gone-e2e'],
+    renamed: [
+      ['old', 'new'],
+      ['was', 'named'],
+    ],
+    modified: [
+      { id: 'changed', what: ['body', 'assertions'], assertions: { added: [assertion('the HTTP status is 400', 12)], removed: [assertion('the HTTP status is 200', 12)] } },
+      { id: 'new', what: ['requests'] },
+    ],
+    counts: { before: 6, after: 5, byKind: {}, byEndpoint: {} },
+    frames: [],
+    cards: {
+      added: diffCard('added'),
+      changed: diffCard('changed'),
+      old: diffCard('old', { title: 'should be the old name', ja: '古い名前' }),
+      new: diffCard('new'),
+      was: diffCard('was', { title: 'should be named so before' }),
+      named: diffCard('named'),
+      'gone-api': diffCard('gone-api', {
+        kind: 'api',
+        title: 'should reject a client without a secret',
+        ja: 'シークレットのないクライアントを拒否する',
+        outcome: 'failure',
+        source: { file: 'apps/hono/src/token.test.ts', lines: [40, 52], form: 'code' },
+        path: ['POST /token', 'client authentication'],
+        endpoints: ['hono:token', 'nextjs:token'],
+      }),
+      'gone-unit': diffCard('gone-unit', { source: { file: 'packages/core/src/jwt.test.ts', lines: [7, 9], form: 'code' }, path: ['sign'], functions: ['core:jwt.ts#sign'] }),
+      'gone-e2e': diffCard('gone-e2e', { kind: 'e2e', source: { file: 'tests/e2e/specs/gone.spec.ts', lines: [3, 30], form: 'code' }, path: ['Gone flow'], endpoints: ['hono:authorize'] }),
+    },
+    ...fields,
+  };
 }

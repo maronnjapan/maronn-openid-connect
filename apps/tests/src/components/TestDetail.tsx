@@ -6,6 +6,11 @@
  * opens its code in 「テスト対象」. The index entry is shown at once; the
  * full card and the code come from their files when the test is opened.
  *
+ * In the build of a pull request a test it touched says so: an added test
+ * has its badge, a changed one the block 「この PR での変更」 (what changed,
+ * a renamed test's name before), and among the things it checks those the
+ * pull request added (＋) and, struck through, those it removed (−).
+ *
  * Whoever shows it keys it by the test (Panel, TestPage), so another test
  * starts afresh: its checks, its tab, its chosen code.
  */
@@ -14,10 +19,12 @@ import { useState } from 'react';
 import { KIND_LABELS, splitPath } from '../lib/data';
 import { textOf, titleOf, type Lang } from '../lib/filter';
 import { formatCount, formatDuration, targetLabel } from '../lib/format';
+import { markChecks, type PrChange } from '../lib/pr';
 import { formatHash, type Source } from '../lib/route';
 import { targetOf } from '../lib/targets';
 import { useApp, useCard } from './app-context';
-import { TargetLine } from './Target';
+import { PrChangeBlock, PrPill, prTitle, RemovedCheck } from './PrMarks';
+import { hasMainTarget, ROUTE_LABELS, ROUTE_NOTES, TargetLine } from './Target';
 import { TestCode, type CodeState, type CodeTab } from './TestCode';
 import { Badge, OutcomeBadge, STATUS_LABELS, StatusIcon, Words } from './ui';
 
@@ -31,24 +38,34 @@ function checksOf(card: TestCase): Array<{ text: string; ja?: string; line: numb
   return (card.assertions ?? []).map((assertion: Assertion) => ({ text: assertion.text, ja: assertion.ja, line: assertion.line }));
 }
 
-function Checks({ card, lang }: { card: TestCase; lang: Lang }) {
-  const checks = checksOf(card);
-  const [all, setAll] = useState(false);
-  if (checks.length === 0) return null;
+/**
+ * What a test checks, the first six; of a test the pull request changed,
+ * every one, those it added tinted with ＋, and after them, struck through
+ * with −, the expectations it removed.
+ */
+function Checks({ card, lang, change }: { card: TestCase; lang: Lang; change: PrChange | undefined }) {
+  const { checks, removed } = markChecks(checksOf(card), change);
+  const changed = checks.some((check) => check.added) || removed.length > 0;
+  const [all, setAll] = useState(changed);
+  if (checks.length === 0 && removed.length === 0) return null;
   const shown = all ? checks : checks.slice(0, FIRST_CHECKS);
   return (
     <section className="detail-section">
       <h3>確かめていること</h3>
       <ul className="checks">
         {shown.map((check, index) => (
-          <li key={index}>
+          <li key={index} className={check.added ? 'check-added' : undefined}>
             <span className="check-mark" aria-hidden="true">
-              ✓
+              {check.added ? '＋' : '✓'}
             </span>
+            {check.added && <span className="visually-hidden">この PR で追加: </span>}
             <span>
               <Words text={textOf(check, lang)} />
             </span>
           </li>
+        ))}
+        {removed.map((check, index) => (
+          <RemovedCheck key={`removed-${index}`} check={check} />
         ))}
       </ul>
       {checks.length > FIRST_CHECKS && (
@@ -60,7 +77,12 @@ function Checks({ card, lang }: { card: TestCase; lang: Lang }) {
   );
 }
 
-function Requests({ card }: { card: TestCase }) {
+/**
+ * The requests a test sends, each with its params and authentication; a
+ * request of an API test that reaches no endpoint says why (「テストのルート」,
+ * 「アプリのルート」, 「パスは実行時に決まる」).
+ */
+function Requests({ card, kind }: { card: TestCase; kind: TestEntry['kind'] }) {
   const requests = card.requests ?? [];
   if (requests.length === 0) return null;
   return (
@@ -69,9 +91,11 @@ function Requests({ card }: { card: TestCase }) {
       <ul className="requests">
         {requests.map((request, index) => {
           const line = [request.params?.join(', '), request.auth].filter((part) => part !== undefined && part !== '').join(' · ');
+          const route = kind === 'api' && (request.endpoint === undefined || request.endpoint === '') ? (request.route ?? (request.path === '' ? 'unknown' : 'app')) : undefined;
           return (
-            <li key={index} title={`${request.method} ${request.path}${line === '' ? '' : ` ${line}`}`}>
-              <span className="method">{request.method}</span> <span className="mono">{request.path}</span>
+            <li key={index} title={`${request.method} ${request.path}${line === '' ? '' : ` ${line}`}${route === undefined ? '' : `（${ROUTE_NOTES[route]}）`}`}>
+              <span className="method">{request.method}</span> {request.path !== '' && <span className="mono">{request.path}</span>}
+              {route !== undefined && <span className="request-route">{ROUTE_LABELS[route]}</span>}
               {line !== '' && <span className="request-params mono">{line}</span>}
             </li>
           );
@@ -108,6 +132,7 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
   const card = useCard(entry);
   const full = card instanceof Error ? undefined : card;
   const target = targetOf(db, entry, full, source);
+  const change = db.pr?.byId.get(entry.id);
   const [tab, setTab] = useState<CodeTab>('test');
   const [chosen, setChosen] = useState<string | undefined>(undefined);
   const [side, setSide] = useState<Source>(source);
@@ -140,6 +165,8 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
         <h2 id={headingId}>{title}</h2>
         {other !== undefined && other !== title && <p className="detail-other">{other}</p>}
         <div className="badges">
+          {/* A changed or renamed test says so in its block 「この PR での変更」; an added one, which has no block, here. */}
+          {change?.state === 'added' && <PrPill state={change.state} title={prTitle(change.state, change, lang)} />}
           {KIND_LABELS[entry.kind] !== undefined && <Badge>{KIND_LABELS[entry.kind]}</Badge>}
           <OutcomeBadge outcome={entry.outcome} />
           {aspects.map((aspect) => (
@@ -147,7 +174,8 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
           ))}
           {entry.skipped === true && <Badge>スキップ</Badge>}
         </div>
-        {target !== undefined && <TargetLine target={target} className="detail-target" onPick={pick} />}
+        {/* The requests to other routes are in 「リクエスト」 below, each with why it reaches no endpoint. */}
+        {target !== undefined && hasMainTarget(target) && <TargetLine target={target} className="detail-target" onPick={pick} outside={false} />}
         <ResultLine card={full} entry={entry} />
         <p className="detail-file">
           <a href={formatHash({ page: 'file', file: entry.file })} title={entry.file}>
@@ -170,10 +198,11 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
         )}
       </header>
 
+      {change !== undefined && <PrChangeBlock change={change} />}
       {card === undefined && <p className="note">読み込んでいます…</p>}
       {card instanceof Error && <p className="note">{card.message}</p>}
-      {full !== undefined && <Checks card={full} lang={lang} />}
-      {full !== undefined && <Requests card={full} />}
+      {full !== undefined && <Checks card={full} lang={lang} change={change} />}
+      {full !== undefined && <Requests card={full} kind={entry.kind} />}
 
       <TestCode entry={entry} card={card} lines={lines} state={code} />
     </article>

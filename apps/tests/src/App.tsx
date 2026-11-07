@@ -1,8 +1,10 @@
 /**
- * The tests viewer: loads tests.json and outline.json once, follows the view
- * in the hash and shows its screen, with the panel of a test over a list.
+ * The tests viewer: loads tests.json and outline.json once (and in the build
+ * of a pull request its diff, tests/diff.json, which marks the tests it
+ * touched), follows the view in the hash and shows its screen, with the
+ * panel of a test over a list.
  */
-import type { TestsIndex, TestsOutline } from '@maronn-openid-connect/test-catalog/model';
+import type { TestDiff, TestsIndex, TestsOutline } from '@maronn-openid-connect/test-catalog/model';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AppContext, useNarrow, type AppState } from './components/app-context';
 import { EndpointPage } from './components/EndpointPage';
@@ -17,7 +19,7 @@ import { SearchPage } from './components/SearchPage';
 import { SourceSwitch } from './components/ui';
 import { buildDb, type Db } from './lib/data';
 import type { Lang } from './lib/filter';
-import { loadJson, MissingData } from './lib/load';
+import { DIFF_URL, loadJson, MissingData } from './lib/load';
 import { formatHash, panelOf, parseHash, samePage, type Source, type View } from './lib/route';
 
 const TESTS_URL = './data/tests.json';
@@ -99,9 +101,15 @@ export function App() {
   viewRef.current = view;
 
   useEffect(() => {
+    // The diff of a pull request is small and read before the first screen, so its marks are there from the start; a
+    // diff that cannot be read leaves the tests unmarked and the page of the pull request says why.
+    const index = loadJson<TestsIndex>(TESTS_URL);
+    const diff = index.then((value) =>
+      value.diff === true ? loadJson<TestDiff>(DIFF_URL).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error)))) : undefined,
+    );
     // Indexing data the page cannot read fails here too, and says so rather than loading for ever.
-    Promise.all([loadJson<TestsIndex>(TESTS_URL), loadJson<TestsOutline>(OUTLINE_URL).catch(() => undefined)])
-      .then(([index, outline]) => buildDb(index, outline))
+    Promise.all([index, loadJson<TestsOutline>(OUTLINE_URL).catch(() => undefined), diff])
+      .then(([value, outline, changes]) => buildDb(value, outline, changes))
       .then(
         (db) => setLoaded({ db }),
         (error: unknown) => setLoaded({ error: error instanceof Error ? error : new Error(String(error)) }),
@@ -165,8 +173,10 @@ export function App() {
     () => (loaded !== undefined && 'db' in loaded ? { db: loaded.db, view, lang, source, go, chooseSource } : undefined),
     [loaded, view, lang, source, go, chooseSource],
   );
-  // The panel of a test or of some code over a list; the file page shows the test in its own code on a desk.
-  const panelTest = view.page === 'test' || (view.page === 'file' && !narrow) ? undefined : view.test;
+  // The panel of a test or of some code over a list; the file page shows the test in its own code on a desk, but a test a
+  // pull request removed has no code, and opens in the panel there too.
+  const removed = view.test !== undefined && state?.db.pr?.removedById.has(view.test) === true;
+  const panelTest = view.page === 'test' || (view.page === 'file' && !narrow && !removed) ? undefined : view.test;
   const panelCode = view.page === 'test' || panelTest !== undefined ? undefined : view.code;
   const panel = panelTest ?? panelCode;
   // The source chooses the endpoints of home, the endpoint page and the API tests.

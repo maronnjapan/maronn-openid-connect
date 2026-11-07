@@ -1,17 +1,20 @@
 /**
- * The home page: in the build of a pull request a line to its tests; how
- * many tests there are and of what kind, how the latest run went and how many
- * expect success or failure; the three kinds of tests (E2E, API, unit), each
- * a way into its tests by what they test; then the endpoints of the chosen
- * source as cards, each with its own tests at a glance (its API and E2E tests
- * and the unit tests of its steps).
+ * The home page: in the build of a pull request a line to its tests and the
+ * legend of its marks; how many tests there are and of what kind, how the
+ * latest run went and how many expect success or failure; the three kinds of
+ * tests (E2E, API, unit), each a way into its tests by what they test (with,
+ * in the build of a pull request, how many of them it touched); then the
+ * endpoints of the chosen source as cards, each with its own tests at a
+ * glance (its API and E2E tests and the unit tests of its steps) and, in the
+ * build of a pull request, how many of them it added, changed and removed.
  */
-import type { TestCounts, TestDiff } from '@maronn-openid-connect/test-catalog/model';
-import { countsOf, endpointGroups, endpointTests, healthOf, KIND_LABELS, KIND_NAMES, KIND_NOTES, KINDS, type Db } from '../lib/data';
+import type { TestCounts } from '@maronn-openid-connect/test-catalog/model';
+import { countsOf, endpointGroups, endpointRemoved, endpointTests, healthOf, KIND_LABELS, KIND_NAMES, KIND_NOTES, kindChanges, KINDS, type Db } from '../lib/data';
 import { formatCount, formatDate } from '../lib/format';
-import { DIFF_URL } from '../lib/load';
+import { prCounts } from '../lib/pr';
 import { formatHash, MAIN_KINDS, type MainKind, type Source } from '../lib/route';
-import { useApp, useJson, useTitle } from './app-context';
+import { useApp, useTitle } from './app-context';
+import { PrCountsText, PrLegend } from './PrMarks';
 import { HealthMark, Legend, PartsBar, SourceSwitch, type BarPart } from './ui';
 
 /** The kinds of some counts as the parts of a bar; `tool` only when asked, since the endpoints have none. */
@@ -19,24 +22,27 @@ export function kindParts(counts: TestCounts | undefined, withTools = false): Ba
   return KINDS.filter((kind) => withTools || kind !== 'tool').map((kind) => ({ key: kind, label: KIND_LABELS[kind], value: counts?.kinds?.[kind] ?? 0 }));
 }
 
-/** In the build of a pull request: how many tests it had and has, a link to them. */
-function PrLine() {
-  const diff = useJson<TestDiff>(DIFF_URL);
-  const counts = diff === undefined || diff instanceof Error ? undefined : diff.counts;
-  const added = diff === undefined || diff instanceof Error ? 0 : (diff.added?.length ?? 0);
+/** In the build of a pull request: how many tests it had and has and how many it touched, a link to them, and what the marks mean. */
+function PrLine({ db }: { db: Db }) {
+  const marks = db.pr;
+  const counts = marks?.diff.counts;
+  const changes = marks === undefined ? undefined : prCounts(marks, marks.byId.keys(), marks.removed);
   return (
-    <a className="pr-line" href={formatHash({ page: 'pr' })}>
-      <span className="pr-line-label">この PR</span>
-      {counts === undefined ? (
-        <span>のテスト</span>
-      ) : (
-        <span className="num">
-          テスト {formatCount(counts.before ?? 0)} → {formatCount(counts.after ?? 0)}
-          {added > 0 && `（追加 ${formatCount(added)}）`}
-        </span>
-      )}
-      <span aria-hidden="true">→</span>
-    </a>
+    <div className="pr-head">
+      <a className="pr-line" href={formatHash({ page: 'pr' })}>
+        <span className="pr-line-label">この PR</span>
+        {counts === undefined ? (
+          <span>のテスト</span>
+        ) : (
+          <span className="num">
+            テスト {formatCount(counts.before ?? 0)} → {formatCount(counts.after ?? 0)}
+          </span>
+        )}
+        {changes !== undefined && <PrCountsText counts={changes} className="pr-line-counts" full words />}
+        <span aria-hidden="true">→</span>
+      </a>
+      {marks !== undefined && <PrLegend />}
+    </div>
   );
 }
 
@@ -118,21 +124,25 @@ function Kinds({ db }: { db: Db }) {
         テストの種類
       </h2>
       <ul className="kind-cards">
-        {MAIN_KINDS.map((kind) => (
-          <li key={kind}>
-            <a className={`kind-card kind-card-${kind}`} href={formatHash({ page: 'kind', testKind: kind })}>
-              <span className="kind-card-top">
-                <span className={`swatch part-${kind}`} aria-hidden="true" />
-                <span className="kind-card-name">{KIND_NAMES[kind]}</span>
-                <span className="kind-card-count num">{formatCount(db.index.counts?.kinds?.[kind] ?? 0)}</span>
-              </span>
-              <span className="kind-card-note">{KIND_NOTES[kind]}</span>
-              <span className="kind-card-go">
-                {KIND_GROUPING[kind]}に見る <span aria-hidden="true">→</span>
-              </span>
-            </a>
-          </li>
-        ))}
+        {MAIN_KINDS.map((kind) => {
+          const changes = kindChanges(db, kind);
+          return (
+            <li key={kind}>
+              <a className={`kind-card kind-card-${kind}`} href={formatHash({ page: 'kind', testKind: kind })}>
+                <span className="kind-card-top">
+                  <span className={`swatch part-${kind}`} aria-hidden="true" />
+                  <span className="kind-card-name">{KIND_NAMES[kind]}</span>
+                  <span className="kind-card-count num">{formatCount(db.index.counts?.kinds?.[kind] ?? 0)}</span>
+                  {changes !== undefined && <PrCountsText counts={changes} className="kind-card-pr" label="PR" />}
+                </span>
+                <span className="kind-card-note">{KIND_NOTES[kind]}</span>
+                <span className="kind-card-go">
+                  {KIND_GROUPING[kind]}に見る <span aria-hidden="true">→</span>
+                </span>
+              </a>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -156,7 +166,9 @@ function Endpoints({ db, source }: { db: Db; source: Source }) {
             </h3>
             <ul className="cards">
               {group.endpoints.map((endpoint) => {
-                const counts = countsOf(endpointTests(db, endpoint));
+                const tests = endpointTests(db, endpoint);
+                const counts = countsOf(tests);
+                const changes = db.pr === undefined ? undefined : prCounts(db.pr, tests.map((test) => test.id), endpointRemoved(db, endpoint));
                 return (
                   <li key={endpoint.key}>
                     <a className="card" href={formatHash({ page: 'endpoint', source: endpoint.source, endpoint: endpoint.id })}>
@@ -167,8 +179,11 @@ function Endpoints({ db, source }: { db: Db; source: Source }) {
                           {formatCount(counts.total)}
                         </span>
                       </span>
-                      <span className="card-path">
-                        <span className="method">{endpoint.methods.join(' · ')}</span> {endpoint.path}
+                      <span className="card-path-line">
+                        <span className="card-path">
+                          <span className="method">{endpoint.methods.join(' · ')}</span> {endpoint.path}
+                        </span>
+                        {changes !== undefined && <PrCountsText counts={changes} className="card-pr" label="PR" />}
                       </span>
                       <PartsBar parts={kindParts(counts)} />
                     </a>
@@ -188,7 +203,7 @@ export function Home() {
   useTitle(undefined);
   return (
     <div className="page home">
-      {db.index.diff === true && <PrLine />}
+      {db.index.diff === true && <PrLine db={db} />}
       <Tiles db={db} />
       <Kinds db={db} />
       <Endpoints db={db} source={source} />

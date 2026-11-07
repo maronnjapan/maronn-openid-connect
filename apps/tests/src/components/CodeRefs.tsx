@@ -1,9 +1,9 @@
 /**
  * The code of what a test tests and of what it uses: a range of a file
  * with a caption that says what it is (「関数 authenticateTokenClient」,
- * 「エンドポイント POST /token（Hono）」, 「手順のコード」) and where it is,
- * and the switch between the functions or endpoints of a test (and hono /
- * Next.js).
+ * 「エンドポイント POST /token（Hono）」, 「手順のコード」, 「ルートの実装
+ * WebRouter」) and where it is, and the switch between the functions or
+ * endpoints of a test (and hono / Next.js).
  */
 import type { CodeRef } from '@maronn-openid-connect/test-catalog/model';
 import type { ReactNode } from 'react';
@@ -11,6 +11,7 @@ import { formatCode, withoutPanel, type CodeTarget, type Source } from '../lib/r
 import { codeKey, type TestedCode } from '../lib/targets';
 import { useApp } from './app-context';
 import { CodeView } from './CodeView';
+import { ROUTE_CODE_LABEL } from './Target';
 import { Chips, CodeIcon, Segmented, Words } from './ui';
 
 export const SOURCE_NAMES: Record<Source, string> = { hono: 'Hono', nextjs: 'Next.js' };
@@ -96,10 +97,21 @@ function EndpointCaption({ methods, path, source }: { methods: readonly string[]
   );
 }
 
+/** The caption of the code that answers an API test's requests to routes that are no endpoint: 「ルートの実装 name」. */
+function RouteCodeCaption({ name }: { name: string }) {
+  return (
+    <span className="code-what">
+      <span className="code-kind">{ROUTE_CODE_LABEL}</span>
+      <span className="code-name mono">{name}</span>
+    </span>
+  );
+}
+
 /** What a chip of 「テスト対象」 says, and its title. */
 function chipOf(item: TestedCode): { label: string; title: string } {
   if (item.kind === 'function') return { label: item.name, title: `関数 ${item.name}` };
   if (item.kind === 'block') return { label: '手順のコード', title: `手順「${item.name}」のコード` };
+  if (item.kind === 'route-code') return { label: item.name, title: `${ROUTE_CODE_LABEL} ${item.name}` };
   return { label: item.path, title: item.named ? `エンドポイント ${item.path}` : `エンドポイント ${item.path}（このテストは実行で通っただけ）` };
 }
 
@@ -147,6 +159,8 @@ export function TestedCodeView({ items, empty, named, choice }: { items: readonl
       )}
       {item.kind === 'function' ? (
         <RefView code={item.code} caption={alone ? <KindOnly kind="関数" /> : <FunctionCaption name={item.name} summary={item.summary} />} missing={`${item.name} のコードはデータにありません。`} />
+      ) : item.kind === 'route-code' ? (
+        <RefView code={item.code} caption={<RouteCodeCaption name={item.name} />} missing={`${item.name} のコードはデータにありません。`} />
       ) : item.kind === 'block' ? (
         <RefView code={item.code} caption={<KindOnly kind="手順のコード" />} missing={`「${item.name}」のコードはデータにありません。`} />
       ) : version === undefined ? (

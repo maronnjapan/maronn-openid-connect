@@ -52,6 +52,17 @@ describe('parseHash', () => {
     expect(parseHash('#/test/x?code=fn%3Aa')).toEqual({ page: 'test', test: 'x' });
   });
 
+  it('should keep only the changed tests of a list that has the switch, and read nothing else as on', () => {
+    expect(parseHash('#/endpoint/hono/token?changed=1')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', changed: true });
+    expect(parseHash('#/kind/unit?pkg=hono&changed=1')).toEqual({ page: 'kind', testKind: 'unit', pkg: 'hono', changed: true });
+    expect(parseHash('#/file/a.test.ts?changed=1')).toEqual({ page: 'file', file: 'a.test.ts', changed: true });
+    expect(parseHash('#/search?q=x&changed=1')).toEqual({ page: 'search', q: 'x', changed: true });
+    expect(parseHash('#/endpoint/hono/token?changed=yes')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token' });
+    // The page of the pull request lists its changes alone, and the other pages have no list.
+    expect(parseHash('#/pr?changed=1')).toEqual({ page: 'pr' });
+    expect(parseHash('#/files?changed=1')).toEqual({ page: 'files' });
+  });
+
   it('should read the search, the files, the pull request and a test page', () => {
     expect(parseHash('#/search?q=token%20client')).toEqual({ page: 'search', q: 'token client' });
     expect(parseHash('#/files')).toEqual({ page: 'files' });
@@ -75,6 +86,9 @@ describe('formatHash', () => {
     { page: 'kind', testKind: 'unit', pkg: 'core', outcome: 'success', test: 't' },
     { page: 'kind', testKind: 'e2e', code: 'endpoint:nextjs:token' },
     { page: 'endpoint', source: 'hono', endpoint: 'token', step: 'parse-request', code: 'step:hono:token:parse-request' },
+    { page: 'endpoint', source: 'hono', endpoint: 'token', step: 'parse-request', changed: true, test: 'gone' },
+    { page: 'kind', testKind: 'api', changed: true },
+    { page: 'file', file: 'apps/hono/src/a.test.ts', changed: true },
   ];
 
   it('should write a hash that reads back as the same view', () => {
@@ -82,7 +96,8 @@ describe('formatHash', () => {
   });
 
   it('should leave the defaults out', () => {
-    expect(formatHash({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'all', outcome: 'both' })).toBe('#/endpoint/hono/token');
+    expect(formatHash({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'all', outcome: 'both', changed: false })).toBe('#/endpoint/hono/token');
+    expect(formatHash({ page: 'pr', changed: true })).toBe('#/pr');
     expect(formatHash({ page: 'home' })).toBe('#/');
   });
 

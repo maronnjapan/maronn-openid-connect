@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDb } from './data';
-import { codeParts, filterTests, searchTests, textOf, titleOf } from './filter';
-import { entry, index } from './fixture';
+import { codeParts, filterTests, searchRemoved, searchTests, textOf, titleOf } from './filter';
+import { diff, entry, index } from './fixture';
 
 const tests = [
   entry('u1', { title: 'should sign the ID token', ja: 'ID トークンに署名する', outcome: 'success' }),
@@ -35,6 +35,15 @@ describe('searchTests', () => {
 
   it('should find nothing for an empty query', () => {
     expect(searchTests(db, '   ')).toEqual([]);
+  });
+
+  it('should find the tests a pull request removed the same way, in its build only', () => {
+    const pr = buildDb(index(tests, { diff: true }), undefined, diff());
+    expect(searchRemoved(pr, 'secret').map((test) => test.id)).toEqual(['gone-api']);
+    expect(searchRemoved(pr, 'クライアント token.test').map((test) => test.id)).toEqual(['gone-api']);
+    expect(searchRemoved(pr, 'Gone flow').map((test) => test.id)).toEqual(['gone-e2e']);
+    expect(searchRemoved(pr, ' ')).toEqual([]);
+    expect(searchRemoved(db, 'secret')).toEqual([]);
   });
 });
 

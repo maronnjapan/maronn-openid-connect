@@ -1,9 +1,10 @@
 /**
  * The panel over a list: a test, or the code of a function, an endpoint or
- * a step. On the right on a desk, the whole screen on a phone. Escape, the
- * close button and a click beside it close it; the page under it keeps its
- * place and is inert while it is open (App), and closing it gives the focus
- * back to what opened it.
+ * a step; a test a pull request removed, in a narrow panel, as the diff
+ * knows it. On the right on a desk, the whole screen on a phone. Escape,
+ * the close button and a click beside it close it; the page under it keeps
+ * its place and is inert while it is open (App), and closing it gives the
+ * focus back to what opened it.
  */
 import { useEffect, useRef, useState } from 'react';
 import { titleOf } from '../lib/filter';
@@ -12,6 +13,7 @@ import { codePanel } from '../lib/targets';
 import { useApp, useTitle } from './app-context';
 import { TestedCodeView } from './CodeRefs';
 import { ErrorBoundary } from './ErrorBoundary';
+import { RemovedDetail } from './PrMarks';
 import { TestDetail } from './TestDetail';
 import { Words } from './ui';
 
@@ -44,6 +46,7 @@ export function Panel({ test, code }: { test?: string; code?: string }) {
   const { db, view, go } = useApp();
   const id = test ?? code ?? '';
   const entry = test === undefined ? undefined : db.byId.get(test);
+  const removed = test === undefined || entry !== undefined ? undefined : db.pr?.removedById.get(test);
   const target = test === undefined ? parseCode(code) : undefined;
   const panel = useRef<HTMLDivElement>(null);
   // Read while rendering, before the page under the panel turns inert and gives up its focus.
@@ -78,9 +81,11 @@ export function Panel({ test, code }: { test?: string; code?: string }) {
   return (
     <>
       <div className="scrim" onClick={close} aria-hidden="true" />
-      <div className="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" tabIndex={-1} ref={panel}>
+      <div className={removed === undefined ? 'panel' : 'panel panel-small'} role="dialog" aria-modal="true" aria-labelledby="panel-title" tabIndex={-1} ref={panel}>
         <div className="panel-bar">
-          {test !== undefined ? (
+          {removed !== undefined ? (
+            <span className="panel-label">この PR で削除されたテスト</span>
+          ) : test !== undefined ? (
             <a className="panel-link" href={formatHash({ page: 'test', test })}>
               このテストのページ
             </a>
@@ -93,10 +98,12 @@ export function Panel({ test, code }: { test?: string; code?: string }) {
         </div>
         <ErrorBoundary reset={id}>
           {test !== undefined ? (
-            entry === undefined ? (
-              <p className="note panel-note">テスト {test} はありません。</p>
-            ) : (
+            entry !== undefined ? (
               <TestDetail key={entry.id} entry={entry} headingId="panel-title" />
+            ) : removed !== undefined ? (
+              <RemovedDetail key={removed.id} test={removed} headingId="panel-title" inPanel />
+            ) : (
+              <p className="note panel-note">テスト {test} はありません。</p>
             )
           ) : target === undefined ? (
             <p className="note panel-note">このコードはデータにありません。</p>
@@ -109,11 +116,12 @@ export function Panel({ test, code }: { test?: string; code?: string }) {
   );
 }
 
-/** A test on a page of its own (`#/test/<id>`). */
+/** A test on a page of its own (`#/test/<id>`); a test a pull request removed, as the diff knows it. */
 export function TestPage() {
   const { db, view, lang } = useApp();
   const entry = view.test === undefined ? undefined : db.byId.get(view.test);
-  useTitle(entry === undefined ? undefined : titleOf(entry, lang));
+  const removed = view.test === undefined || entry !== undefined ? undefined : db.pr?.removedById.get(view.test);
+  useTitle(entry !== undefined ? titleOf(entry, lang) : removed !== undefined ? titleOf(removed, lang) : undefined);
   return (
     <div className="page test-page">
       <nav className="crumbs" aria-label="パンくず">
@@ -125,7 +133,13 @@ export function TestPage() {
           </>
         )}
       </nav>
-      {entry === undefined ? <p className="note">テスト {view.test} はありません。</p> : <TestDetail key={entry.id} entry={entry} />}
+      {entry !== undefined ? (
+        <TestDetail key={entry.id} entry={entry} />
+      ) : removed !== undefined ? (
+        <RemovedDetail key={removed.id} test={removed} />
+      ) : (
+        <p className="note">テスト {view.test} はありません。</p>
+      )}
     </div>
   );
 }

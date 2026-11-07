@@ -3,22 +3,31 @@
  * 正常系/異常系 and its file), a filter by kind and by outcome kept in the
  * hash, the kinds in sections of their own, and the rows in chunks of 100
  * so a list of a thousand tests opens at once.
+ *
+ * In the build of a pull request a row it touched is marked (PrMarks): its
+ * label (追加, 変更, 削除) at the start of the title, a tint and a stripe on
+ * the row; a renamed test is a change, with its name before under its
+ * title. The tests it removed are rows among the others, where they were in
+ * their file, with their title struck through and what they tested; and a
+ * switch keeps only the changed tests.
  */
 import type { FileTests, TestEntry, TestKind, TestOutcome, TestStatus } from '@maronn-openid-connect/test-catalog/model';
 import { useState, type ReactNode } from 'react';
 import { KIND_LABELS, KIND_NAMES, KIND_NOTES, KINDS, kindCounts, splitPath, type Db } from '../lib/data';
 import { filterTests, titleOf } from '../lib/filter';
 import { formatCount } from '../lib/format';
+import { markOf, mergeByPlace, prCounts, type PrMark, type RemovedTest } from '../lib/pr';
 import { withoutPanel, type KindFilter, type OutcomeFilter, type Source } from '../lib/route';
-import { cardIn, needsCard, targetOf, withoutImplied, type Target, type TargetContext } from '../lib/targets';
+import { cardIn, needsCard, removedTarget, targetOf, withoutImplied, type Target, type TargetContext } from '../lib/targets';
 import { useApp, useCards } from './app-context';
+import { ChangedToggle, PrCountsText, PrPill, prTitle } from './PrMarks';
 import { TargetLine } from './Target';
 import { OutcomeBadge, Segmented, StatusIcon } from './ui';
 
 /** How many rows a long list shows at a time. */
 export const CHUNK = 100;
 
-/** What a row shows; a removed test of a pull request has no entry and cannot be opened. */
+/** What a row shows: a test of the index, or one a pull request removed (it opens what the diff knows of it). */
 export interface Row {
   id: string;
   kind?: TestKind;
@@ -27,30 +36,64 @@ export interface Row {
   outcome?: TestOutcome;
   result?: TestStatus;
   file: string;
-  /** Shown before the title, muted: the title a renamed test had. */
+  /** Its first line, which places a removed test among the tests of its file. */
+  line?: number;
+  /** Its describe path, by which the page of its file groups it. */
+  path?: string[];
+  /** Shown under the title, muted (「旧名: …」): the title a renamed test had; else the pull request's marks give it. */
   before?: string;
   open?: boolean;
   /** The index entry, from which the row says what the test tests. */
   entry?: TestEntry;
+  /** A test the pull request removed: its title struck through. */
+  removed?: boolean;
+  /** What the diff keeps of a removed test, from which the row says what it tested. */
+  gone?: RemovedTest;
 }
 
 export function rowOf(entry: TestEntry): Row {
-  return { id: entry.id, kind: entry.kind, title: entry.title, ja: entry.ja, outcome: entry.outcome, result: entry.result, file: entry.file, open: true, entry };
+  return { id: entry.id, kind: entry.kind, title: entry.title, ja: entry.ja, outcome: entry.outcome, result: entry.result, file: entry.file, line: entry.lines?.[0], path: entry.path, open: true, entry };
 }
 
-/** One row: the test's result, its title and what it tests, 正常系/異常系 and its file; a button that opens the test. */
-export function RowItem({ row, said, current, hideFile }: { row: Row; said?: Target; current?: string; hideFile?: boolean }) {
-  const { view, go, lang } = useApp();
+/** The row of a test a pull request removed. */
+export function removedRow(test: RemovedTest): Row {
+  return { id: test.id, kind: test.kind, title: test.title, ja: test.ja, outcome: test.outcome, file: test.file, line: test.lines?.[0], path: test.path, open: true, removed: true, gone: test };
+}
+
+/** The rows of some tests with the rows of the tests a pull request removed among them, by file and line (lib/pr mergeByPlace). */
+export function withRemoved(rows: readonly Row[], removed: readonly RemovedTest[] | undefined): Row[] {
+  if (removed === undefined || removed.length === 0) return [...rows];
+  return mergeByPlace(rows, removed.map(removedRow));
+}
+
+/**
+ * One row: the test's result, its title (a renamed test's name before under
+ * it) and what it tests, 正常系/異常系 and its file; a button that opens the
+ * test. With `quiet` (a section whose heading names the state) a marked row
+ * keeps its stripe and leaves out its label and its tint.
+ */
+export function RowItem({ row, said, current, hideFile, quiet }: { row: Row; said?: Target; current?: string; hideFile?: boolean; quiet?: boolean }) {
+  const { db, view, go, lang } = useApp();
   const title = titleOf(row, lang);
   const { name } = splitPath(row.file);
+  const change = row.removed === true ? undefined : db.pr?.byId.get(row.id);
+  const state = row.removed === true ? 'removed' : change?.state;
+  const mark: PrMark | undefined = state === undefined ? undefined : markOf(state);
+  const before = row.before ?? (change?.before === undefined ? undefined : titleOf(change.before, lang));
   const content = (
     <>
       <StatusIcon status={row.result} />
       <span className="row-title">
         <span className="row-name">
-          {row.before !== undefined && <span className="row-before">{row.before} → </span>}
-          {title}
+          {state !== undefined && quiet !== true && <PrPill state={state} title={prTitle(state, change, lang)} />}
+          {row.removed === true ? <s className="row-gone">{title}</s> : title}
         </span>
+        {before !== undefined && (
+          <span className="row-before">
+            <span className="row-before-label">旧名</span>
+            {before}
+          </span>
+        )}
         {said !== undefined && <TargetLine target={said} current={current} compact />}
       </span>
       <span className="row-outcome">
@@ -64,43 +107,56 @@ export function RowItem({ row, said, current, hideFile }: { row: Row; said?: Tar
     </>
   );
   const selected = view.test === row.id;
+  const className = `row${selected ? ' row-on' : ''}${mark === undefined ? '' : ` pr-row pr-row-${mark}${quiet === true ? ' pr-row-quiet' : ''}`}`;
   return (
     <li>
       {row.open === true ? (
         // On the file page a test is chosen in place (its code is beside the list): choosing another replaces it.
         <button
           type="button"
-          className={`row${selected ? ' row-on' : ''}`}
+          className={className}
           aria-current={selected ? 'true' : undefined}
           onClick={() => go({ ...withoutPanel(view), test: row.id }, { replace: view.page === 'file' && view.test !== undefined })}
         >
           {content}
         </button>
       ) : (
-        <div className="row row-static">{content}</div>
+        <div className={`${className} row-static`}>{content}</div>
       )}
     </li>
   );
 }
 
-/** What a row says it tests in a context: what the list does not already say (targets.ts withoutImplied). */
-export function rowTarget(db: Db, entry: TestEntry | undefined, cards: ReadonlyMap<string, FileTests>, source: Source, target: TargetContext | undefined): Target | undefined {
-  if (target === undefined || entry === undefined) return undefined;
+/**
+ * What a row says it tests in a context: what the list does not already say
+ * (targets.ts withoutImplied); for a removed test, what the diff keeps of it
+ * (removedTarget).
+ */
+export function rowTarget(db: Db, row: Pick<Row, 'entry' | 'gone'>, cards: ReadonlyMap<string, FileTests>, source: Source, target: TargetContext | undefined): Target | undefined {
+  if (target === undefined) return undefined;
+  if (row.gone !== undefined) return withoutImplied(removedTarget(db, row.gone, source), target);
+  const entry = row.entry;
+  if (entry === undefined) return undefined;
   return withoutImplied(targetOf(db, entry, entry.card === undefined ? undefined : cardIn(cards.get(entry.card), entry.id), source), target);
 }
 
 /**
  * Rows, a hundred at a time, with a heading where the kind changes when
  * `groups` is on, and with `target` a line of what each test tests (the
- * route of an E2E test from the cards of its file, fetched as its rows show).
+ * route of an E2E test and the other routes of an API test from the cards
+ * of its file, fetched as its rows show). `removed` are the tests a pull
+ * request removed from this list, placed among the rows by file and line.
+ * `quiet` leaves out the label and the tint of the marks (PrPage, whose
+ * headings name the state).
  */
-export function Rows({ rows, groups, empty, hideFile, target }: { rows: readonly Row[]; groups?: boolean; empty?: string; hideFile?: boolean; target?: TargetContext }) {
+export function Rows({ rows, groups, empty, hideFile, target, removed, quiet }: { rows: readonly Row[]; groups?: boolean; empty?: string; hideFile?: boolean; target?: TargetContext; removed?: readonly RemovedTest[]; quiet?: boolean }) {
   const { db, source } = useApp();
   const [limit, setLimit] = useState(CHUNK);
-  const shown = rows.slice(0, limit);
-  const cards = useCards(target === undefined ? [] : shown.map((row) => (row.entry !== undefined && needsCard(row.entry.kind) ? row.entry.card : undefined)));
-  if (rows.length === 0) return <p className="note list-empty">{empty ?? '該当するテストはありません'}</p>;
-  const counts = groups === true ? kindCounts(rows.filter((row): row is Row & { kind: TestKind } => row.kind !== undefined)) : undefined;
+  const all = withRemoved(rows, removed);
+  const shown = all.slice(0, limit);
+  const cards = useCards(target === undefined ? [] : shown.map((row) => (row.entry !== undefined && needsCard(row.entry) ? row.entry.card : undefined)));
+  if (all.length === 0) return <p className="note list-empty">{empty ?? '該当するテストはありません'}</p>;
+  const counts = groups === true ? kindCounts(all.filter((row): row is Row & { kind: TestKind } => row.kind !== undefined)) : undefined;
   const items: ReactNode[] = [];
   shown.forEach((row, index) => {
     if (counts !== undefined && row.kind !== undefined && row.kind !== shown[index - 1]?.kind) {
@@ -111,28 +167,30 @@ export function Rows({ rows, groups, empty, hideFile, target }: { rows: readonly
         </li>,
       );
     }
-    items.push(<RowItem key={row.id} row={row} said={rowTarget(db, row.entry, cards, source, target)} current={target?.current} hideFile={hideFile} />);
+    items.push(<RowItem key={row.id} row={row} said={rowTarget(db, row, cards, source, target)} current={target?.current} hideFile={hideFile} quiet={quiet} />);
   });
   return (
     <>
       <ul className={hideFile === true ? 'rows rows-no-file' : 'rows'}>{items}</ul>
-      {rows.length > limit && (
+      {all.length > limit && (
         <button type="button" className="more" onClick={() => setLimit(limit + CHUNK)}>
-          さらに表示（残り {formatCount(rows.length - limit)} 件）
+          さらに表示（残り {formatCount(all.length - limit)} 件）
         </button>
       )}
     </>
   );
 }
 
-/** The name of a kind with its count and what its tests check: the head of a section of a list. */
-function KindHeading({ kind, count }: { kind: TestKind; count: number }) {
+/** The name of a kind with its count and what its tests check: the head of a section of a list, with how many of them a pull request added, changed and removed. */
+function KindHeading({ kind, tests, removed }: { kind: TestKind; tests: readonly TestEntry[]; removed: readonly RemovedTest[] }) {
+  const { db } = useApp();
   return (
     <div className="kind-head">
       <h3 className="kind-title">
         <span className={`swatch part-${kind}`} aria-hidden="true" />
         {KIND_NAMES[kind]}
-        <span className="kind-count num">{formatCount(count)}</span>
+        <span className="kind-count num">{formatCount(tests.length)}</span>
+        {db.pr !== undefined && <PrCountsText counts={prCounts(db.pr, tests.map((test) => test.id), removed)} className="kind-pr" />}
       </h3>
       <p className="kind-note">{KIND_NOTES[kind]}</p>
     </div>
@@ -153,22 +211,65 @@ export function OutcomeFilterControl() {
 }
 
 /**
+ * What the switch 「この PR の変更だけ」 keeps: with it on (in the build of a
+ * pull request), the tests the pull request added, modified or renamed; the
+ * removed tests are changes, and stay. `count` counts the changes of a list.
+ */
+export function useChangedOnly(): { on: boolean; keep: (entry: Pick<TestEntry, 'id'>) => boolean; changed: (entry: Pick<TestEntry, 'id'>) => boolean } {
+  const { db, view } = useApp();
+  const marks = db.pr;
+  const changed = (entry: Pick<TestEntry, 'id'>) => marks?.byId.has(entry.id) === true;
+  const on = marks !== undefined && view.changed === true;
+  return { on, changed, keep: (entry) => !on || changed(entry) };
+}
+
+/** The removed tests of the kind and the outcome of a filter. */
+export function filterRemoved(removed: readonly RemovedTest[] | undefined, filter: { kind?: KindFilter; outcome?: OutcomeFilter }): RemovedTest[] {
+  const kind = filter.kind ?? 'all';
+  const outcome = filter.outcome ?? 'both';
+  return (removed ?? []).filter((test) => (kind === 'all' || test.kind === kind) && (outcome === 'both' || test.outcome === outcome));
+}
+
+/**
  * Tests with the filters above them, each kind in a section of its own
  * (its name, its count and what it checks). The kinds offered are those the
  * tests have, and those of `sections`, which show even without a test (the
  * kinds an endpoint's tests should have); `fixedKind` hides the kind filter
- * and the sections (the unit tests of a step).
+ * and the sections (the unit tests of a step). `removed` are the tests a
+ * pull request removed from the list, shown in their kind's section.
  */
-export function TestList({ tests, title, fixedKind, empty, target, sections }: { tests: readonly TestEntry[]; title?: ReactNode; fixedKind?: boolean; empty?: string; target?: TargetContext; sections?: readonly TestKind[] }) {
+export function TestList({
+  tests,
+  removed,
+  title,
+  fixedKind,
+  empty,
+  target,
+  sections,
+}: {
+  tests: readonly TestEntry[];
+  removed?: readonly RemovedTest[];
+  title?: ReactNode;
+  fixedKind?: boolean;
+  empty?: string;
+  target?: TargetContext;
+  sections?: readonly TestKind[];
+}) {
   const { view, go } = useApp();
+  const changedOnly = useChangedOnly();
   const counts = kindCounts(tests);
-  const kinds = KINDS.filter((kind) => counts[kind] > 0 || sections?.includes(kind) === true);
+  const gone = removed ?? [];
+  const kinds = KINDS.filter((kind) => counts[kind] > 0 || gone.some((test) => test.kind === kind) || sections?.includes(kind) === true);
   const kind: KindFilter = fixedKind === true || view.kind === undefined || !kinds.includes(view.kind as TestKind) ? 'all' : view.kind;
   const outcome: OutcomeFilter = view.outcome ?? 'both';
-  const shown = filterTests(tests, { kind, outcome });
+  const filtered = filterTests(tests, { kind, outcome });
+  const shown = filtered.filter(changedOnly.keep);
+  const shownRemoved = filterRemoved(gone, { kind, outcome });
+  const changes = filtered.filter(changedOnly.changed).length + shownRemoved.length;
   const setKind = (value: KindFilter) => go({ ...view, kind: value === 'all' ? undefined : value }, { replace: true });
   const kindOptions = [{ value: 'all' as KindFilter, label: 'すべて', count: tests.length }, ...kinds.map((value) => ({ value: value as KindFilter, label: KIND_LABELS[value], count: counts[value] }))];
-  const listKey = `${kind}:${outcome}:${tests.length}:${tests[0]?.id ?? ''}`;
+  const listKey = `${kind}:${outcome}:${changedOnly.on}:${tests.length}:${tests[0]?.id ?? ''}`;
+  const nothing = changedOnly.on ? 'この PR で変わったテストはありません' : '該当するテストはありません';
 
   return (
     <div className="list">
@@ -177,28 +278,34 @@ export function TestList({ tests, title, fixedKind, empty, target, sections }: {
         <div className="filters">
           {fixedKind !== true && kinds.length > 1 && <Segmented label="種類" options={kindOptions} value={kind} onChange={setKind} />}
           <OutcomeFilterControl />
+          <ChangedToggle count={changes} />
         </div>
       </div>
       {fixedKind === true ? (
-        <Rows key={listKey} rows={shown.map(rowOf)} empty={empty} target={target} />
+        <Rows key={listKey} rows={shown.map(rowOf)} removed={shownRemoved} empty={changedOnly.on ? nothing : empty} target={target} />
       ) : (
         <div className="kind-sections">
           {(kind === 'all' ? kinds : [kind as TestKind]).map((section) => {
             const of = shown.filter((entry) => entry.kind === section);
-            if (of.length === 0 && sections?.includes(section) !== true) return null;
+            const removedOf = shownRemoved.filter((test) => test.kind === section);
+            // A section stays even when empty (the kinds an endpoint's tests should have), but not with the switch on.
+            if (of.length === 0 && removedOf.length === 0 && (sections?.includes(section) !== true || changedOnly.on)) return null;
             return (
               <section key={section} className="kind-section" aria-label={KIND_NAMES[section]}>
-                <KindHeading kind={section} count={of.length} />
+                <KindHeading kind={section} tests={of} removed={removedOf} />
                 <Rows
                   key={listKey}
                   rows={of.map(rowOf)}
+                  removed={removedOf}
                   target={target}
-                  empty={counts[section] === 0 ? `${KIND_NAMES[section]}はありません` : '該当するテストはありません'}
+                  empty={changedOnly.on ? nothing : counts[section] === 0 ? `${KIND_NAMES[section]}はありません` : '該当するテストはありません'}
                 />
               </section>
             );
           })}
-          {shown.length === 0 && (sections === undefined || sections.length === 0) && <p className="note list-empty">{empty ?? '該当するテストはありません'}</p>}
+          {shown.length + shownRemoved.length === 0 && (sections === undefined || sections.length === 0 || changedOnly.on) && (
+            <p className="note list-empty">{changedOnly.on ? nothing : (empty ?? '該当するテストはありません')}</p>
+          )}
         </div>
       )}
     </div>

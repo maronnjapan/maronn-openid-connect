@@ -1,6 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { buildDb, commonDirectory, describeGroups, endpointGroups, endpointTests, fileGroups, healthOf, kindCounts, nameOfFrame, otherFunctions, splitPath, stepCount, stepFrames, stepTests, unitTestsOf } from './data';
-import { COUNTS, endpoint, entry, index, outline } from './fixture';
+import {
+  buildDb,
+  commonDirectory,
+  describeGroups,
+  endpointFrames,
+  endpointGroups,
+  endpointRemoved,
+  endpointTests,
+  fileGroups,
+  framesRemoved,
+  healthOf,
+  kindCounts,
+  nameOfFrame,
+  otherFunctions,
+  rootOfFile,
+  splitPath,
+  stepCount,
+  stepFrames,
+  stepTests,
+  unitTestsOf,
+} from './data';
+import { COUNTS, diff, diffCard, endpoint, entry, index, outline } from './fixture';
 
 const tests = [
   entry('u1', { file: 'packages/core/src/b.test.ts', lines: [10, 12], path: ['b'] }),
@@ -104,6 +124,41 @@ describe('the tests of an endpoint', () => {
     ]);
     expect(next && otherFunctions(db, next).map((fn) => fn.id)).toEqual(['core:db.ts#save']);
     expect(nameOfFrame('endpoint:token')).toBe('endpoint:token');
+  });
+});
+
+describe('the build of a pull request', () => {
+  const changes = diff({
+    removed: ['gone-api', 'gone-unit', 'gone-e2e', 'gone-step', 'u1'],
+    cards: { ...diff().cards, 'gone-step': diffCard('gone-step', { functions: ['hono:steps/parse.ts#parse'], source: { file: 'packages/core/src/b.test.ts', lines: [6, 8], form: 'code' } }) },
+  });
+  const pr = buildDb(index(tests, { ...db.index, diff: true }), outline(db.endpoints), changes);
+  const token = pr.byEndpoint.get('hono:token');
+
+  it('should read the diff only when the index says it is a build of one, and keep a diff it could not read as its error', () => {
+    expect(pr.pr?.byId.get('added')?.state).toBe('added');
+    // A test the index still has is not removed.
+    expect(pr.pr?.removed.map((test) => test.id)).toEqual(['gone-api', 'gone-unit', 'gone-e2e', 'gone-step']);
+    expect(buildDb(index(tests), undefined, changes).pr).toBeUndefined();
+    const failed = buildDb(index(tests, { diff: true }), undefined, new Error('HTTP 500'));
+    expect([failed.pr, failed.diffError?.message]).toEqual([undefined, 'HTTP 500']);
+    expect(db.pr).toBeUndefined();
+  });
+
+  it('should place the removed tests of an endpoint by its key and its frames, and those of a step by its functions', () => {
+    expect(token && endpointFrames(token)).toEqual(['endpoint:token', 'hono:steps/parse.ts#parse']);
+    expect(token && endpointRemoved(pr, token).map((test) => test.id)).toEqual(['gone-api', 'gone-step']);
+    expect(framesRemoved(pr, ['hono:steps/parse.ts#parse']).map((test) => test.id)).toEqual(['gone-step']);
+    expect(token && endpointRemoved(db, token)).toEqual([]);
+  });
+
+  it('should list a file whose every test the pull request removed under the root of the files nearest to it', () => {
+    expect(fileGroups(pr).find((group) => group.root === 'e2e')?.files).toEqual([
+      { path: 'tests/e2e/specs/gone.spec.ts', count: 0 },
+      { path: 'tests/e2e/specs/token.spec.ts', count: 1 },
+    ]);
+    expect(rootOfFile(pr, 'packages/core/src/deep/x.test.ts')).toBe('core');
+    expect(rootOfFile(buildDb(index([])), 'packages/test-catalog/src/x.test.ts')).toBe('test-catalog');
   });
 });
 

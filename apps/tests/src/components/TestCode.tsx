@@ -1,8 +1,10 @@
 /**
  * The code of a test, a tab each so the panel stays short: the test itself,
  * the code it tests (the functions it names or calls; for a test of no
- * function, the endpoints it requests or goes through), and the helpers it
- * calls with the step definitions of a scenario, each opened in place. The
+ * function, the endpoints it requests or goes through, with the module its
+ * file tests; for an API test of other routes, the code that answers them),
+ * and the helpers it calls with the step definitions of a scenario, each
+ * opened in place. The
  * helpers the test calls itself are listed, those they call folded under
  * them. The tab, the item of 「テスト対象」 and its source are the detail's
  * (TestDetail): they stay as the reader moves between the tabs, and a name
@@ -13,10 +15,11 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'rea
 import { splitPath } from '../lib/data';
 import { textOf } from '../lib/filter';
 import { descendants, flatten, helperTree, type HelperNode } from '../lib/helpers';
-import { codeKey, initialItem, testedCode } from '../lib/targets';
+import { codeKey, initialItem, outsideRequests, testedCode } from '../lib/targets';
 import { useApp } from './app-context';
 import { RefView, TestedCodeView, type TestedChoice } from './CodeRefs';
 import { CodeView } from './CodeView';
+import { OutsideLine } from './Target';
 import { Tabs, Words } from './ui';
 
 export type CodeTab = 'test' | 'target' | 'helpers';
@@ -180,12 +183,19 @@ function Helpers({ card }: { card: TestCase | Error | undefined }) {
 function TargetTab({ entry, card, state }: { entry: TestEntry; card: TestCase | undefined; state: CodeState }) {
   const { db, source, view } = useApp();
   const items = testedCode(db, entry, card, source);
+  const outside = outsideRequests(entry, card);
   // Opened over the page of an endpoint, an E2E or API test shows that endpoint first.
   const chosen = state.chosen !== undefined && items.some((item) => codeKey(item) === state.chosen) ? state.chosen : initialItem(items, view.page === 'endpoint' ? view.endpoint : undefined);
   return (
     <>
       {!db.hasCode && items.length > 0 && <p className="note tested-hint">このデータには関数とエンドポイントのコードの範囲がありません。データを作り直すと表示されます。</p>}
-      <TestedCodeView items={items} empty="このテストが何を確かめているか（関数やエンドポイント）は分かりませんでした。" choice={{ ...state, chosen }} />
+      {/* An API test of routes that are no endpoint of the OP: those routes, introducing the code that answers them (「ルートの実装」) or the functions it tests. */}
+      {items.length > 0 && <OutsideLine requests={outside} className="tested-outside" />}
+      <TestedCodeView
+        items={items}
+        empty={outside.length > 0 ? 'このテストのリクエストに答えるコードは分かりませんでした。' : 'このテストが何を確かめているか（関数やエンドポイント）は分かりませんでした。'}
+        choice={{ ...state, chosen }}
+      />
     </>
   );
 }

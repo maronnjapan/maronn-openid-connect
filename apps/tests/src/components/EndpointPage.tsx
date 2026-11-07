@@ -6,29 +6,39 @@
  * are folded under 「ほかの関数」, where one can be chosen the same way. The
  * code of the endpoint and of each step (its function, or its block of the
  * Route Handler) opens in the panel.
+ *
+ * In the build of a pull request the head has a chip of how many of its
+ * tests the pull request added, changed and removed (which keeps only those
+ * in the list), a step has a dot with how many of its unit tests it
+ * touched, and the lists have the tests it removed from the endpoint, the
+ * step or the function among the others.
  */
 import type { OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { countsOf, endpointTests, healthOf, otherFunctions, stepCount, stepFrames, stepTests, unitTestsOf, type Db } from '../lib/data';
+import { countsOf, endpointRemoved, endpointTests, framesRemoved, healthOf, otherFunctions, stepCount, stepFrames, stepTests, unitTestsOf, type Db } from '../lib/data';
 import { formatCount } from '../lib/format';
+import { prCounts, type RemovedTest } from '../lib/pr';
 import { MAIN_KINDS, type View } from '../lib/route';
 import { stepHasCode } from '../lib/targets';
 import { NARROW_QUERY, useApp, useTitle } from './app-context';
 import { CodeButton, SOURCE_NAMES } from './CodeRefs';
 import { kindParts } from './Home';
+import { PrChangesButton, PrDot } from './PrMarks';
 import { TestList } from './TestList';
 import { Legend, PartsBar, SourceSwitch, Words } from './ui';
 
 /** How many of the other functions show before 「すべて表示」. */
 const FIRST_OTHERS = 10;
 
-/** The tests the list is narrowed to, their name, and the functions they are of: a step's, or another function's. */
-function selection(db: Db, endpoint: OutlineEndpoint, view: View): { label: string; tests: TestEntry[]; frames: string[] } | undefined {
+/** The tests the list is narrowed to, their name, and the functions they are of: a step's, or another function's; with the unit tests of them a pull request removed. */
+function selection(db: Db, endpoint: OutlineEndpoint, view: View): { label: string; tests: TestEntry[]; frames: string[]; removed: RemovedTest[] } | undefined {
   if (view.step !== undefined) {
     const step = endpoint.steps.find((candidate) => candidate.id === view.step);
-    return step === undefined ? undefined : { label: step.label, tests: stepTests(db, endpoint.key, step), frames: stepFrames(step) };
+    if (step === undefined) return undefined;
+    const frames = stepFrames(step);
+    return { label: step.label, tests: stepTests(db, endpoint.key, step), frames, removed: framesRemoved(db, frames) };
   }
-  if (view.fn !== undefined) return { label: db.functions[view.fn]?.name ?? view.fn, tests: unitTestsOf(db, endpoint.key, view.fn), frames: [view.fn] };
+  if (view.fn !== undefined) return { label: db.functions[view.fn]?.name ?? view.fn, tests: unitTestsOf(db, endpoint.key, view.fn), frames: [view.fn], removed: framesRemoved(db, [view.fn]) };
   return undefined;
 }
 
@@ -44,21 +54,30 @@ function narrow(): boolean {
 function Step({ db, endpoint, step, index, selected, onPick, codes }: { db: Db; endpoint: OutlineEndpoint; step: OutlineStep; index: number; selected: boolean; onPick: () => void; codes: boolean }) {
   const count = stepCount(db, endpoint.key, step);
   const code = stepHasCode(db, step);
+  const removed = db.pr === undefined ? [] : framesRemoved(db, stepFrames(step));
+  const changes = db.pr === undefined ? undefined : prCounts(db.pr, stepTests(db, endpoint.key, step).map((test) => test.id), removed);
   const content = (
     <>
       <span className="step-no num">{index + 1}</span>
       <span className="step-label">{step.label}</span>
+      {/* In the build of a pull request a column for the dot on every step, so the pills line up. */}
+      {changes !== undefined && (
+        <span className="step-pr">
+          <PrDot counts={changes} />
+        </span>
+      )}
       {count > 0 ? <span className="pill num">ユニット {formatCount(count)}</span> : <span className="pill pill-none">テストなし</span>}
     </>
   );
+  const button = `step-button${changes === undefined ? '' : ' step-button-pr'}`;
   return (
     <li className={selected ? 'step step-on' : 'step'}>
-      {count > 0 ? (
-        <button type="button" className="step-button" aria-pressed={selected} onClick={onPick}>
+      {count > 0 || removed.length > 0 ? (
+        <button type="button" className={button} aria-pressed={selected} onClick={onPick}>
           {content}
         </button>
       ) : (
-        <div className="step-button step-static">{content}</div>
+        <div className={`${button} step-static`}>{content}</div>
       )}
       {code ? (
         <CodeButton target={{ kind: 'step', key: endpoint.key, step: step.id }} label={`「${step.label}」のコードを見る`} className="step-code" />
@@ -133,6 +152,7 @@ export function EndpointPage() {
   const key = `${view.source}:${view.endpoint}`;
   const endpoint = db.byEndpoint.get(key);
   const own = useMemo(() => (endpoint === undefined ? [] : endpointTests(db, endpoint)), [db, endpoint]);
+  const gone = useMemo(() => (endpoint === undefined ? [] : endpointRemoved(db, endpoint)), [db, endpoint]);
   const counts = useMemo(() => countsOf(own), [own]);
   // A choice on a phone scrolls to the list, which is under the steps there.
   const scrollToList = useRef(false);
@@ -197,12 +217,15 @@ export function EndpointPage() {
           </span>
         </div>
         <SourceSwitch place="body" />
+        {/* The changes of the pull request on a line of their own, never beside the result; choosing it keeps them in the list, which it brings into view. */}
+        {db.pr !== undefined && <PrChangesButton counts={prCounts(db.pr, own.map((test) => test.id), gone)} list=".endpoint-list" />}
       </header>
       <div className="endpoint-body">
         <Flow key={key} db={db} endpoint={endpoint} view={view} onPick={pick} />
         <section className="endpoint-list" aria-label="テスト">
           <TestList
             tests={picked === undefined ? own : picked.tests}
+            removed={picked === undefined ? gone : picked.removed}
             fixedKind={picked !== undefined}
             sections={MAIN_KINDS}
             target={picked === undefined ? { current: endpoint.id } : { current: endpoint.id, known: picked.frames }}

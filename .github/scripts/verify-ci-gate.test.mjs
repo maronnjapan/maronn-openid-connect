@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   assertEveryPackageIsTypechecked,
   assertLintGateIsBacked,
+  assertMapFollowsTests,
   assertRootScriptsCoverApps,
   assertStaticVerificationGate,
   assertWorkflowVerifiesMainPush,
@@ -401,6 +402,38 @@ describe('assertRootScriptsCoverApps', () => {
       new Error(
         'ルートの test:ci スクリプトが apps/* を対象にしていません（--filter "./apps/*" test）。' +
           'apps の単体テストが CI で走らなくなります。',
+      ),
+    );
+  });
+});
+
+describe('assertMapFollowsTests', () => {
+  const mapJob = (needs) =>
+    [
+      '  map:',
+      ...(needs === undefined ? [] : [`    needs: ${needs}`]),
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - name: Build the map',
+      '        run: pnpm run build:map',
+      '',
+    ].join('\n');
+
+  it('should accept a map job that waits for the job that runs the tests', () => {
+    assert.doesNotThrow(() => assertMapFollowsTests(workflowWith(`${CI_WORKFLOW}${mapJob('test')}`)));
+    assert.doesNotThrow(() => assertMapFollowsTests(workflowWith(`${CI_WORKFLOW}${mapJob('[test]')}`)));
+  });
+
+  it('should accept a workflow without a map job', () => {
+    assert.doesNotThrow(() => assertMapFollowsTests(workflowWith(CI_WORKFLOW)));
+  });
+
+  it('should reject a map job that runs beside the tests', () => {
+    assert.throws(
+      () => assertMapFollowsTests(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`)),
+      new Error(
+        'CI の map ジョブは `pnpm run build:map` を実行しますが、`pnpm run test:ci` を実行する test ジョブを needs に持っていません。' +
+          '地図はテストの結果と到達をテストのジョブの出力から読むため、そのジョブの後に走らせてください。',
       ),
     );
   });

@@ -246,6 +246,33 @@ export function assertStaticVerificationGate(workflow) {
   }
 }
 
+const MAP_COMMAND = 'pnpm run build:map';
+
+/** The names of the jobs a job waits for (`needs: test` or `needs: [test, lint]`). */
+function needsOf(job) {
+  const needs = job?.needs;
+  if (Array.isArray(needs)) return needs.map(String);
+  return typeof needs === 'string' ? [needs.trim()] : [];
+}
+
+/**
+ * 地図（`pnpm run build:map`）を作るジョブが、テスト（`pnpm run test:ci`）を実行するジョブの後に走ることを要求する。
+ * 地図のテストの欄（テストの結果とテストごとの到達）は、そのジョブが書いた出力を読むためで、
+ * 並べて走らせると結果の無い地図ができる（apps/map/docs/design-test-catalog.md「ワークフロー」）。
+ */
+export function assertMapFollowsTests(workflow) {
+  const mapJob = findJobRunning(workflow, MAP_COMMAND);
+  if (mapJob === undefined) return;
+  const testJob = findJobRunning(workflow, TEST_COMMAND);
+  if (testJob === undefined) return;
+  if (mapJob.name === testJob.name) return;
+  if (needsOf(mapJob.job).includes(testJob.name)) return;
+  throw new Error(
+    `CI の ${mapJob.name} ジョブは \`${MAP_COMMAND}\` を実行しますが、\`${TEST_COMMAND}\` を実行する ${testJob.name} ジョブを needs に持っていません。` +
+      '地図はテストの結果と到達をテストのジョブの出力から読むため、そのジョブの後に走らせてください。',
+  );
+}
+
 export function assertEveryPackageIsTypechecked(packageJsons) {
   const missing = packageJsons
     .filter((packageJson) => packageJson?.scripts?.typecheck === undefined)
@@ -323,6 +350,7 @@ function verifyCiGate() {
 
   assertWorkflowVerifiesMainPush(workflow);
   assertStaticVerificationGate(workflow);
+  assertMapFollowsTests(workflow);
   assertEveryPackageIsTypechecked(packageJsons);
   assertLintGateIsBacked(workflow, packageJsons, rootPackageJson);
   assertRootScriptsCoverApps(
@@ -331,7 +359,7 @@ function verifyCiGate() {
   );
 
   console.log(
-    'CI gate verified: main push trigger, build / typecheck / test order, typecheck coverage (packages and apps)',
+    'CI gate verified: main push trigger, build / typecheck / test order, the map after the tests, typecheck coverage (packages and apps)',
   );
 }
 

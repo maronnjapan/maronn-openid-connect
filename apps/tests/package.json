@@ -1,0 +1,27 @@
+{
+  "name": "@maronn-openid-connect/tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The tests of the OIDC Provider as a page: the test cases of each endpoint and step, their results and their code; served at /tests/ of the map's Worker",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host ${HOST:-127.0.0.1} --port ${PORT:-3620}",
+    "build": "vite build",
+    "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3620}",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@maronn-openid-connect/test-catalog": "workspace:*",
+    "@maronn-openid-connect/test-reach": "workspace:*",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.5"
+  }
+}

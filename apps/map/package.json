@@ -7,7 +7,8 @@
   "scripts": {
     "data": "node scripts/build-data.mjs",
     "dev": "pnpm run data && vite --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
-    "build": "pnpm run data && vite build && pnpm run check && pnpm run check:wiring",
+    "build": "pnpm run data && vite build && pnpm run viewer && pnpm run check && pnpm run check:wiring",
+    "viewer": "pnpm --filter @maronn-openid-connect/tests build && node scripts/copy-tests-viewer.mjs",
     "check": "node scripts/check-map.mjs",
     "changes:draft": "node scripts/draft-notes.mjs",
     "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",

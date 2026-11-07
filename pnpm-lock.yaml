@@ -156,6 +156,37 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@edge-runtime/vm@5.0.0)(@types/node@26.6.6)(@vitest/coverage-istanbul@5.0.5)(vite@8.3.3(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/tests:
+    dependencies:
+      react:
+        specifier: ^19.3.1
+        version: 19.3.1
+      react-dom:
+        specifier: ^19.3.1
+        version: 19.3.1(react@19.3.1)
+    devDependencies:
+      '@maronn-openid-connect/test-catalog':
+        specifier: workspace:*
+        version: link:../../packages/test-catalog
+      '@maronn-openid-connect/test-reach':
+        specifier: workspace:*
+        version: link:../../packages/test-reach
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vite:
+        specifier: ^8.3.3
+        version: 8.3.3(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@edge-runtime/vm@5.0.0)(@types/node@26.6.6)(@vitest/coverage-istanbul@5.0.5)(vite@8.3.3(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
   docs/library-document:
     dependencies:
       '@astrojs/starlight':

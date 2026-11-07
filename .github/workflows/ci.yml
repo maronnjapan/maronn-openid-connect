@@ -92,7 +92,7 @@ jobs:
 
   # テストの結果（Vitest と Playwright の JSON と JUnit）と、テストごとの到達（MARONN_REACH=1 の計測。
   # Vitest は Istanbul の計数、E2E は OP の V8 の計数の差分）を work/test-reports に書く。
-  # 次の map ジョブがそれを地図のテストの欄に載せ、カバレッジと結果は Codecov に上げる
+  # 次の map ジョブがそれをテストのページ（apps/tests、地図の /tests/）に載せ、カバレッジと結果は Codecov に上げる
   # （apps/map/docs/design-test-catalog.md「データとビルド」）。計測は CI だけで行い、手元の pnpm test は変わらない。
   test:
     runs-on: ubuntu-latest
@@ -207,14 +207,16 @@ jobs:
           directory: work/test-reports/junit
           fail_ci_if_error: false
 
-  # OIDC Provider Map（apps/map）を、テストの結果と到達を載せてビルドし、PR ごとのプレビューと main の本番に出す。
-  # テストの後に置くのは、地図のテストの欄（テストカタログ、結果、到達、PR のテストの差分）が test ジョブの出力を読むため。
-  # テストが落ちても、そこまでの結果で地図を作る（if: !cancelled()）。
+  # OIDC Provider Map（apps/map）と、テストのページ（apps/tests）をビルドし、PR ごとのプレビューと main の本番に出す。
+  # テストのページは地図の dist/tests/ に入り、同じ Worker の <地図の URL>/tests/ で出る（地図はテストを出さず、
+  # ヘッダの「テスト」がそこへのリンク）。テストの後に置くのは、テストのページ（テストカタログ、結果、到達、
+  # PR のテストの差分）と PR のコメントのテストの節が test ジョブの出力を読むため。
+  # テストが落ちても、そこまでの結果で作る（if: !cancelled()）。
   #
   # - PR: その PR のコードから地図をビルドし、同じ Worker の Worker Preview `pr-<番号>` を作る・更新する。
   #   PR の地図は base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
-  #   変更メモ（apps/map/changes/*.md）の意図と、テストの差分（足した、変えた、消したテスト、
-  #   関連するテストが変わっていない実装の変更）を並べる。URL と変更の表は PR にコメントする
+  #   変更メモ（apps/map/changes/*.md）の意図を並べる。テストの差分（足した、変えた、消したテスト、
+  #   関連するテストが変わっていない実装の変更）は PR のコメントのテストの節とテストのページに出る。URL と変更の表は PR にコメントする
   #   （push ごとに同じコメントを書き換える）。エンドポイントに届く変更に説明の節が無いとき、
   #   または関連するテストを足しも変えもせず理由（テストを変えない理由:）も無いとき、地図のビルド
   #   （pnpm run build:map の最後の検査）が落ちてこのジョブが失敗する。そのときもページのデプロイと
@@ -225,7 +227,7 @@ jobs:
   #   削除の後に作り直されて残らないようにするため。
   # - main への push: wrangler deploy で本番を更新する。
   #
-  # どの場合も artifact（oidc-provider-map）にビルド結果を残す。fork からの PR はシークレットが
+  # どの場合も artifact（oidc-provider-map、テストのページの tests/ を含む）にビルド結果を残す。fork からの PR はシークレットが
   # 無いのでデプロイもコメントもせず、artifact だけ残る。
   map:
     needs: test
@@ -269,11 +271,12 @@ jobs:
 
       # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）をビルドし、全関数と
       # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、
-      # 地図のデータとページを作り、出力を検査する（apps/map/scripts/check-map.mjs）。
+      # 地図のデータとページを作り、テストのページ（apps/tests、データは apps/tests/public/data）をビルドして
+      # 地図の dist/tests/ に入れ（apps/map/scripts/copy-tests-viewer.mjs）、出力を検査する（apps/map/scripts/check-map.mjs）。
       # PR では MAP_BASE に base ブランチを渡し、変更前の木とテストカタログとの差分と変更メモを地図に載せる。
       # 変わった関数とテストの一覧は dist/data/changes.md にも書かれる。説明の無い変更か、関連するテストの
-      # 変わっていない変更があると、ページを作ったうえでこのステップが落ちる（後のステップはページがあれば続け、
-      # ジョブは失敗のまま）。
+      # 変わっていない変更があると、地図とテストのページを作ったうえでこのステップが落ちる（後のステップはページが
+      # あれば続け、ジョブは失敗のまま）。
       - name: Build the map
         id: build
         env:
@@ -357,13 +360,14 @@ jobs:
               ...(changes ? ['', changes] : []),
               '',
               status,
-              ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路、テストの差分）: ${url}#changes`] : []),
-              ...(url ? [`テストの一覧（エンドポイントごとのテスト、不足）: ${url}#tests`] : []),
+              ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路）: ${url}#changes`] : []),
+              // The tests viewer (apps/tests) is deployed with the map, at /tests/ of the same Worker.
+              ...(url ? [`この PR のテスト: ${url.replace(/\/$/, '')}/tests/#/pr`] : []),
               `テストの結果とカバレッジ（Codecov）: ${codecov}`,
               '',
               `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
               '',
-              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches, what its change notes (\`apps/map/changes/*.md\`) say, and the tests that name or reach them.`,
+              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches and what its change notes (\`apps/map/changes/*.md\`) say. The tests have a page of their own at \`/tests/\` (apps/tests): the test cases of each endpoint and step, their latest results and their code.`,
             ].join('\n');
             const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
             const existing = comments.find((comment) => comment.body && comment.body.includes(marker));

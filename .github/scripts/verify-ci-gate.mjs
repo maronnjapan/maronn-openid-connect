@@ -257,8 +257,8 @@ function needsOf(job) {
 
 /**
  * 地図（`pnpm run build:map`）を作るジョブが、テスト（`pnpm run test:ci`）を実行するジョブの後に走ることを要求する。
- * 地図のテストの欄（テストの結果とテストごとの到達）は、そのジョブが書いた出力を読むためで、
- * 並べて走らせると結果の無い地図ができる（apps/map/docs/design-test-catalog.md「ワークフロー」）。
+ * 同じビルドが作るテストのページ（apps/tests、地図の /tests/。テストの結果とテストごとの到達）は、そのジョブが
+ * 書いた出力を読むためで、並べて走らせると結果の無いページができる（apps/map/docs/design-test-catalog.md「ワークフロー」）。
  */
 export function assertMapFollowsTests(workflow) {
   const mapJob = findJobRunning(workflow, MAP_COMMAND);

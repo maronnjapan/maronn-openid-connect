@@ -21,6 +21,7 @@
         "test:e2e": "pnpm --filter @maronn-openid-connect/e2e test:e2e",
         "test:e2e:app-hono": "pnpm --filter @maronn-openid-connect/e2e test:e2e:app-hono",
         "test:e2e:samples": "pnpm --filter @maronn-openid-connect/e2e test:e2e:samples",
+        "test:features": "pnpm --filter @maronn-openid-connect/test-steps test",
         "test:conformance": "pnpm --filter @maronn-openid-connect/conformance test",
         "conformance:basic-op": "pnpm --filter @maronn-openid-connect/conformance basic-op",
         "conformance:implicit-op": "pnpm --filter @maronn-openid-connect/conformance implicit-op",

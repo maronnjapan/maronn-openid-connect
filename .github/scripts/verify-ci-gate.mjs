@@ -273,6 +273,24 @@ export function assertMapFollowsTests(workflow) {
   );
 }
 
+/**
+ * 地図を作るジョブが、PR を閉じたときにプレビューを消す map-preview.yml と同じ concurrency の group で、
+ * 打ち切らずに順に走ることを要求する。group が分かれると、test ジョブの間に閉じた PR のプレビューを
+ * 削除が先に消し、後から地図のジョブが作り直して、消す者のいないプレビューが残る。
+ */
+export function assertMapSharesPreviewGroup(workflow, previewWorkflow) {
+  const mapJob = findJobRunning(workflow, MAP_COMMAND);
+  if (mapJob === undefined || previewWorkflow === undefined) return;
+  const group = String(mapJob.job?.concurrency?.group ?? '').trim();
+  const previewGroup = String(previewWorkflow?.concurrency?.group ?? '').trim();
+  const queued = (concurrency) => String(concurrency?.['cancel-in-progress'] ?? 'false').trim() === 'false';
+  if (group !== '' && group === previewGroup && queued(mapJob.job.concurrency) && queued(previewWorkflow.concurrency)) return;
+  throw new Error(
+    `CI の ${mapJob.name} ジョブの concurrency の group（${group || 'なし'}）が、map-preview.yml の group（${previewGroup || 'なし'}）と一致していないか、cancel-in-progress が false ではありません。` +
+      'プレビューの作成と削除を同じ group で順に走らせないと、閉じた PR のプレビューが削除の後に作り直されて残ります。',
+  );
+}
+
 export function assertEveryPackageIsTypechecked(packageJsons) {
   const missing = packageJsons
     .filter((packageJson) => packageJson?.scripts?.typecheck === undefined)
@@ -347,10 +365,13 @@ function verifyCiGate() {
   const appPackageJsons = readPackageJsons(join(repositoryRoot, 'apps'));
   const packageJsons = [...readPackageJsons(join(repositoryRoot, 'packages')), ...appPackageJsons];
   const rootPackageJson = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'));
+  const previewPath = join(repositoryRoot, '.github/workflows/map-preview.yml');
+  const previewWorkflow = existsSync(previewPath) ? parseWorkflow(readFileSync(previewPath, 'utf8')) : undefined;
 
   assertWorkflowVerifiesMainPush(workflow);
   assertStaticVerificationGate(workflow);
   assertMapFollowsTests(workflow);
+  assertMapSharesPreviewGroup(workflow, previewWorkflow);
   assertEveryPackageIsTypechecked(packageJsons);
   assertLintGateIsBacked(workflow, packageJsons, rootPackageJson);
   assertRootScriptsCoverApps(
@@ -359,7 +380,7 @@ function verifyCiGate() {
   );
 
   console.log(
-    'CI gate verified: main push trigger, build / typecheck / test order, the map after the tests, typecheck coverage (packages and apps)',
+    'CI gate verified: main push trigger, build / typecheck / test order, the map after the tests and with the preview cleanup, typecheck coverage (packages and apps)',
   );
 }
 

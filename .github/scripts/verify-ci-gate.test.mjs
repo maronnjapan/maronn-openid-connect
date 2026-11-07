@@ -5,6 +5,7 @@ import {
   assertEveryPackageIsTypechecked,
   assertLintGateIsBacked,
   assertMapFollowsTests,
+  assertMapSharesPreviewGroup,
   assertRootScriptsCoverApps,
   assertStaticVerificationGate,
   assertWorkflowVerifiesMainPush,
@@ -436,5 +437,37 @@ describe('assertMapFollowsTests', () => {
           '地図はテストの結果と到達をテストのジョブの出力から読むため、そのジョブの後に走らせてください。',
       ),
     );
+  });
+});
+
+describe('assertMapSharesPreviewGroup', () => {
+  const GROUP = 'map-preview-${{ github.event.pull_request.number || github.ref }}';
+  const mapJob = (group, cancel = 'false') =>
+    [
+      '  map:',
+      '    needs: test',
+      '    runs-on: ubuntu-latest',
+      ...(group === undefined ? [] : ['    concurrency:', `      group: ${group}`, `      cancel-in-progress: ${cancel}`]),
+      '    steps:',
+      '      - name: Build the map',
+      '        run: pnpm run build:map',
+      '',
+    ].join('\n');
+  const preview = (group) =>
+    workflowWith(['name: Map Preview', '', 'concurrency:', `  group: ${group}`, '  cancel-in-progress: false', '', 'jobs:', '  cleanup:', '    runs-on: ubuntu-latest', ''].join('\n'));
+
+  it('should accept a map job in the group of the preview cleanup, queued', () => {
+    assert.doesNotThrow(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(GROUP)}`), preview(GROUP)));
+  });
+
+  it('should accept a workflow without a map job or without the cleanup', () => {
+    assert.doesNotThrow(() => assertMapSharesPreviewGroup(workflowWith(CI_WORKFLOW), preview(GROUP)));
+    assert.doesNotThrow(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`), undefined));
+  });
+
+  it('should reject a map job outside the group, or one that cancels the cleanup', () => {
+    assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`), preview(GROUP)), /concurrency の group（なし）/);
+    assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob('map-${{ github.ref }}')}`), preview(GROUP)), /一致していない/);
+    assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(GROUP, 'true')}`), preview(GROUP)), /cancel-in-progress が false ではありません/);
   });
 });

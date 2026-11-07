@@ -372,7 +372,7 @@ Worker の名前は `wrangler.jsonc` の `name` で変える。
 テストが落ちても、そこまでの結果で地図を作る。
 
 - **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。URL と変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
-- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Preview を `wrangler preview delete --name pr-<番号>` で消す
+- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Preview を `wrangler preview delete --name pr-<番号>` で消す。`map` ジョブと同じ concurrency の group で順に走り、`map` ジョブは PR が閉じていればプレビューを作らない
 - **main への push**：`wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`）を更新する
 
 Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`wrangler preview` が失敗したときは `.github/scripts/map-preview.mjs` が PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` し、閉じたときにその Worker も消す。

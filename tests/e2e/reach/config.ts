@@ -3,7 +3,7 @@
  * fixtures.ts (apps/map/docs/design-test-catalog.md §2):
  *
  * - With MARONN_TEST_REPORTS (or MARONN_REACH=1), the JSON and JUnit reports
- *   of Playwright: playwright/<target>.json and junit/e2e-<target>.xml.
+ *   of Playwright: playwright/<target>.json and junit/e2e-<target>.junit.xml.
  * - With MARONN_REACH=1 against apps/hono or apps/nextjs (the OPs that start
  *   packages/test-reach), every OP instance gets a control port (its own
  *   port + 1) and an access log, the tests run one at a time, and the
@@ -61,7 +61,7 @@ export function reportReporters(): ReporterDescription[] {
   if (reports === undefined) return [];
   return [
     ['json', { outputFile: join(reports, 'playwright', `${target}.json`) }],
-    ['junit', { outputFile: join(reports, 'junit', `e2e-${target}.xml`) }],
+    ['junit', { outputFile: join(reports, 'junit', `e2e-${target}.junit.xml`) }],
   ];
 }
 

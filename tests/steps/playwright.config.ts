@@ -38,7 +38,7 @@ export default defineConfig<object, InProcessOptions>({
       ? []
       : ([
           ['json', { outputFile: `${reports}/playwright/in-process.json` }],
-          ['junit', { outputFile: `${reports}/junit/features-in-process.xml` }],
+          ['junit', { outputFile: `${reports}/junit/features-in-process.junit.xml` }],
         ] as const)),
   ],
   projects: [

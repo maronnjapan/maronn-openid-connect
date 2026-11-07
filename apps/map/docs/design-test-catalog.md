@@ -795,6 +795,8 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 そこで地図のジョブを `map-preview.yml` から `ci.yml` に移し、`test` のジョブの後に `map` のジョブを置いた。
 `map-preview.yml` には、PR を閉じたときにプレビューを消すジョブだけが残る。
 `map` のジョブが `test` のジョブを `needs` に持つことは CI の検査（`.github/scripts/verify-ci-gate.mjs`）が確かめる。
+プレビューを作る `map` のジョブと消すジョブは、別のワークフローになっても同じ concurrency の group（`map-preview-<PR の番号>`、打ち切らない）で順に走らせ、`map` のジョブは PR が閉じていればプレビューを作らない。
+`test` のジョブの間に PR を閉じると、削除が先に走り、後から `map` のジョブがプレビューを作り直して残すからである。これも CI の検査が確かめる。
 
 1. `test`：`pnpm run test:ci` を `MARONN_REACH=1` で走らせ、Vitest の JSON、JUnit、lcov、到達の JSONL を artifact にする。E2E も同じジョブで、`MARONN_REACH=1` で `apps/hono` と `apps/nextjs` を起動して走らせる（Next.js は到達を取るビルドでサーバーのソースマップを有効にする）。lcov と JUnit は Codecov に上げる
 2. `map`：artifact を受け取り（`MAP_TEST_REPORTS`）、`build:map` がテストカタログと差分も作る。テストが落ちても、そこまでの結果で地図を作る。デプロイとコメントは前のとおりで、コメントにはテストの一覧と Codecov のコメントへのリンクを足した

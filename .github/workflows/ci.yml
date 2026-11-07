@@ -196,6 +196,8 @@ jobs:
           flags: e2e
           fail_ci_if_error: false
 
+      # Codecov は directory の中の名前が *junit*.xml か *test*.xml の JUnit だけを拾う。
+      # Vitest は junit/vitest-<パッケージ>.xml、E2E は junit/e2e-<実行先>.junit.xml、機能ファイルは junit/features-in-process.junit.xml に書く。
       - name: Upload the test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v7
@@ -218,6 +220,9 @@ jobs:
   #   （pnpm run build:map の最後の検査）が落ちてこのジョブが失敗する。そのときもページのデプロイと
   #   コメントは行う。Worker Previews が失敗したときは PR ごとの Worker へ wrangler deploy する
   #   （.github/scripts/map-preview.mjs）。PR を閉じたときのプレビューの削除は map-preview.yml が行う。
+  #   削除とこのジョブは同じ concurrency の group（map-preview-<番号>）で順に走り、このジョブは PR が
+  #   閉じていればプレビューを作らずコメントもしない。test ジョブの間に閉じた PR のプレビューが、
+  #   削除の後に作り直されて残らないようにするため。
   # - main への push: wrangler deploy で本番を更新する。
   #
   # どの場合も artifact（oidc-provider-map）にビルド結果を残す。fork からの PR はシークレットが
@@ -226,6 +231,9 @@ jobs:
     needs: test
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: map-preview-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -288,9 +296,19 @@ jobs:
           path: apps/map/dist
           if-no-files-found: error
 
+      # map-preview.yml がプレビューを消した後に作り直さないよう、PR が今も開いているかを確かめる。
+      - name: Check that the pull request is still open
+        id: pull
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { data } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number });
+            core.setOutput('open', String(data.state === 'open'));
+
       - name: Create or update the Preview of the pull request
         id: preview
-        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && env.CLOUDFLARE_API_TOKEN != '' }}
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.pull.outputs.open == 'true' && env.CLOUDFLARE_API_TOKEN != '' }}
         run: node .github/scripts/map-preview.mjs create --pr "${{ github.event.pull_request.number }}" --sha "${{ github.event.pull_request.head.sha }}"
 
       - name: Deploy main to production
@@ -299,7 +317,7 @@ jobs:
         run: node .github/scripts/map-preview.mjs deploy
 
       - name: Comment the Preview on the pull request
-        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.pull.outputs.open == 'true' }}
         uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}

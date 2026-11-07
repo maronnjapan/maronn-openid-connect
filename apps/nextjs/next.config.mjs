@@ -15,6 +15,14 @@ const nextConfig = {
       headers: [{ key: 'Cache-Control', value: 'no-store' }],
     }));
   },
+  // The build tests/e2e measures (MARONN_REACH=1, src/instrumentation.ts):
+  // source maps of the server code, which the V8 coverage maps back to the
+  // lines of app/ and packages/*/src, and the server code left unminified,
+  // so the positions are those of the functions and V8 names them as the
+  // sources do.
+  ...(process.env.MARONN_REACH === '1'
+    ? { experimental: { serverSourceMaps: true, serverMinification: false } }
+    : {}),
 };
 
 export default nextConfig;

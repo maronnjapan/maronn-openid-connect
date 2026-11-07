@@ -221,6 +221,8 @@ export interface TestEntry {
   result?: TestStatus;
   /** How many functions it reached in the latest measured run. */
   reached?: number;
+  /** The url of the cards of its file (`./data/tests/by-file/<hash>.json`), which holds its card. */
+  card?: string;
 }
 
 /** The tests of a frame in the index: where its cards are, and the counts the outline shows. */
@@ -292,7 +294,7 @@ export interface TestSource {
  */
 export interface FrameTests {
   version: 1;
-  /** The frame id, or `<source>:<endpoint>`. */
+  /** The frame id, `<source>:<endpoint>`, or the path of a test file. */
   key: string;
   tests: TestCase[];
   /** For an endpoint: the unit tests of each frame it reaches, by id. */

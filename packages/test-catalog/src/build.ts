@@ -99,6 +99,20 @@ function writeCards(out: string, joined: Joined): { frames: TestsIndex['frames']
   return { frames, endpoints };
 }
 
+/** The cards of each test file, so every entry of the index has its card at a known url (TestEntry.card). */
+function writeFileCards(out: string, tests: readonly TestCase[]): Map<string, string> {
+  const written = new Set<string>();
+  const byFile = new Map<string, TestCase[]>();
+  for (const test of tests) byFile.set(test.source.file, [...(byFile.get(test.source.file) ?? []), test]);
+  const urls = new Map<string, string>();
+  for (const [path, cards] of [...byFile].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const file: FrameTests = { version: 1, key: path, tests: cards, gaps: [] };
+    urls.set(path, `./data/tests/by-file/${writeHashed(join(out, 'tests', 'by-file'), path, JSON.stringify(file), written)}`);
+  }
+  removeStale(join(out, 'tests', 'by-file'), written);
+  return urls;
+}
+
 /** What reading a catalog needs besides the revision: the tables of the repository. */
 interface Tables {
   aspects: AspectTable;
@@ -158,6 +172,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   const joined = joinTests(tests, data, tables.aspects, measured);
   mkdirSync(join(out, 'tests'), { recursive: true });
   const refs = writeCards(out, joined);
+  const fileCards = writeFileCards(out, tests);
   // A function without a unit test once, with the endpoints that reach it; the other gaps by endpoint.
   const untested = new Map<string, TestsIndex['gaps'][number] & { endpoints: string[] }>();
   const gaps: TestsIndex['gaps'] = [];
@@ -188,7 +203,10 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     version: 1,
     ...(run === undefined ? {} : { run: run.run.run }),
     measured,
-    tests: tests.map(entryOf),
+    tests: tests.map((test) => {
+      const card = fileCards.get(test.source.file);
+      return { ...entryOf(test), ...(card === undefined ? {} : { card }) };
+    }),
     frames: refs.frames,
     endpoints: refs.endpoints,
     counts: countTests(tests),

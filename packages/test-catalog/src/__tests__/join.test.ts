@@ -8,7 +8,7 @@ import { diffCatalogs, expectationOverlap } from '../diff.js';
 import { joinTests, reachableFrames } from '../join.js';
 import { testsMarkdown } from '../markdown.js';
 import type { Assertion, TestCase } from '../model.js';
-import { CaseFinder, FrameLocator, readRun } from '../run.js';
+import { CaseFinder, FrameLocator, readRun, repositoryPath } from '../run.js';
 
 function fn(id: string, calls: string[] = [], extra: Partial<FunctionEntry> = {}): FunctionEntry {
   const name = id.slice(id.indexOf('#') + 1);
@@ -210,5 +210,15 @@ describe('diffCatalogs', () => {
 describe('expectationOverlap', () => {
   it('should give the share of the expectations two tests have alike', () => {
     expect([expectationOverlap([said('a'), said('b')], [said('a'), said('c')]), expectationOverlap([], []), expectationOverlap([said('a')], [])]).toEqual([0.5, 1, 0]);
+  });
+});
+
+describe('repositoryPath', () => {
+  it('should name a file of a report from the root of the repository, also when another checkout wrote the report', () => {
+    expect([
+      repositoryPath('/repo', '/repo/tests/e2e/specs/flow.spec.ts'),
+      repositoryPath('/repo', '/repo/.claude/worktrees/agent-1/tests/e2e/specs/flow.spec.ts'),
+      repositoryPath('/repo', '/home/runner/work/x/x/packages/core/src/a.test.ts'),
+    ]).toEqual(['tests/e2e/specs/flow.spec.ts', 'tests/e2e/specs/flow.spec.ts', 'packages/core/src/a.test.ts']);
   });
 });

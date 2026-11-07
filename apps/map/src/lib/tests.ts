@@ -285,12 +285,14 @@ export function entryOfCard(test: TestCase): TestEntry {
 }
 
 /**
- * Where the card of an entry of the index is: the file of the cards of a
+ * Where the card of an entry of the index is: the cards of its file
+ * (TestEntry.card); for an index without them, the file of the cards of a
  * function it names (its own frame first), else of an endpoint it requests;
  * undefined for a test about nothing the map holds (its entry and its source
  * are all there is).
  */
-export function cardUrlOf(index: Pick<TestsIndex, 'frames' | 'endpoints'>, entry: Pick<TestEntry, 'subjects' | 'kind'>): string | undefined {
+export function cardUrlOf(index: Pick<TestsIndex, 'frames' | 'endpoints'>, entry: Pick<TestEntry, 'subjects' | 'kind'> & { card?: string }): string | undefined {
+  if (entry.card !== undefined) return entry.card;
   const functions = entry.subjects.filter((subject) => subject.kind === 'function');
   const named = functions.find((subject) => subject.how === 'describe' || subject.how === 'declared') ?? functions[0];
   const frame = named === undefined ? undefined : index.frames[named.id];

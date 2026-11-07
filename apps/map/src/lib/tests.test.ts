@@ -162,6 +162,7 @@ describe('the card of an entry of the index', () => {
     expect(cardUrlOf(index, { kind: 'unit', subjects: [{ kind: 'function', id: 'core:a.ts#f', how: 'describe' }] })).toBe('frame-f');
     expect(cardUrlOf(index, { kind: 'api', subjects: [{ kind: 'function', id: 'core:a.ts#f', how: 'call' }, { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] })).toBe('endpoint-token');
     expect(cardUrlOf(index, { kind: 'unit', subjects: [] })).toBeUndefined();
+    expect(cardUrlOf(index, { kind: 'tool', subjects: [], card: 'file-cards' })).toBe('file-cards');
   });
 
   it('should list a card the way the index does', () => {

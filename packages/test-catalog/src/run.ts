@@ -21,6 +21,21 @@ import { join, relative } from 'node:path';
 import type { MapData } from '@maronn-openid-connect/map-analysis';
 import type { RawReach, TestCase, TestReach, TestResult, TestRun, TestStatus } from './model.js';
 
+/**
+ * The path of a file a report names, from the root of the repository. A report
+ * written in another checkout of the repository (a worktree, the workspace of
+ * CI) names its files under that checkout: the path is then taken from where
+ * the directories of the repository start in it (`packages/`, `apps/`,
+ * `tests/`, `.github/`, `scripts/`).
+ */
+export function repositoryPath(repository: string, file: string): string {
+  const path = relative(repository, file).split('\\').join('/');
+  if (!path.startsWith('..') && !path.startsWith('.claude/') && !path.startsWith('/')) return path;
+  const absolute = file.split('\\').join('/');
+  const starts = ['/packages/', '/apps/', '/tests/', '/.github/', '/scripts/'].map((part) => absolute.lastIndexOf(part)).filter((index) => index !== -1);
+  return starts.length === 0 ? path : absolute.slice(Math.max(...starts) + 1);
+}
+
 /** The worse of two statuses: failed, then passed, then skipped. */
 function worse(a: TestStatus, b: TestStatus): TestStatus {
   const order: TestStatus[] = ['failed', 'passed', 'skipped'];
@@ -192,7 +207,7 @@ export function readRun(directory: string, repository: string, tests: readonly T
     const report = JSON.parse(readFileSync(path, 'utf8')) as VitestReport;
     if (report.startTime !== undefined && startedAt === undefined) startedAt = new Date(report.startTime).toISOString();
     for (const file of report.testResults ?? []) {
-      const relativeFile = relative(repository, file.name).split('\\').join('/');
+      const relativeFile = repositoryPath(repository, file.name);
       for (const result of file.assertionResults ?? []) {
         const test = finder.code(relativeFile, result.ancestorTitles, result.title);
         if (test === undefined) {
@@ -227,7 +242,7 @@ export function readRun(directory: string, repository: string, tests: readonly T
           if (row !== undefined) rows.set(`${specFile}\u0000${id}`, row);
           test = finder.scenario(id, row);
         } else if (specFile !== undefined) {
-          test = finder.code(relative(repository, join(rootDir, specFile)).split('\\').join('/'), titles, spec.title);
+          test = finder.code(repositoryPath(repository, join(rootDir, specFile)), titles, spec.title);
         }
         for (const run of spec.tests ?? []) {
           if (test === undefined) {

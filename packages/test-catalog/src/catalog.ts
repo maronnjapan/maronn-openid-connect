@@ -142,7 +142,8 @@ function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (i
     ...(test.comments.ja === undefined ? {} : { ja: { title: test.comments.ja } }),
     path: test.path,
     subjects,
-    ...(test.requests.length === 0 ? {} : { requests: test.requests }),
+    // The requests to the endpoints: an E2E test also requests the RP (`/start`), which is not on the map.
+    ...(test.requests.some((request) => request.endpoint !== undefined) ? { requests: test.requests.filter((request) => request.endpoint !== undefined) } : {}),
     outcome: outcomeOf(test.expectations.some(expectsFailure), test.expectations.length > 0),
     aspects: kind === 'tool' ? [] : aspectsOf(aspects, { declared: test.comments.aspects, names: [...test.path, test.title], errors, statuses, headers }),
     spec: test.comments.spec,

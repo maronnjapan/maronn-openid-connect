@@ -182,8 +182,9 @@ export function sayExpectation(expectation: Expectation): Said {
   if ((matcher === 'toMatchObject' || matcher === 'toEqual' || matcher === 'toStrictEqual') && code !== undefined && first?.kind === 'object' && !negated) {
     return say(`the error code is \`${code}\``, 'the error code is {string}', code);
   }
-  if (/(^|\.)error$/.test(actual.trim()) && (matcher === 'toBe' || matcher === 'toEqual') && first?.kind === 'string') {
-    return say(`the error code is${NOT(negated)} \`${first.value}\``, `the error code is${NOT(negated)} {string}`, first.value);
+  if (isErrorCode(actual, first) && (matcher === 'toBe' || matcher === 'toEqual')) {
+    const code = (first as { value: string }).value;
+    return say(`the error code is${NOT(negated)} \`${code}\``, `the error code is${NOT(negated)} {string}`, code);
   }
 
   // The URL of a page.
@@ -270,13 +271,26 @@ export function expectsFailure(expectation: Expectation): boolean {
   if (expectation.negated) return false;
   if (isStatus(expectation.actual) && first?.kind === 'number') return first.value >= 400;
   if ((expectation.matcher === 'toMatchObject' || expectation.matcher === 'toEqual' || expectation.matcher === 'toStrictEqual') && first?.kind === 'object') return first.entries.some(([key, value]) => key === 'error' && value.kind === 'string');
-  return /(^|\.)error$/.test(expectation.actual.trim()) && first?.kind === 'string';
+  return isErrorCode(expectation.actual, first) && /^to(Be|Equal|StrictEqual)$/.test(expectation.matcher);
+}
+
+/**
+ * Whether an expectation checks an error code: the `error` of a value and a
+ * string, or its `code` and a code in snake_case (`slow_down`: a `code`
+ * also names authorization codes, `code-1`, which are no error).
+ */
+export function isErrorCode(actual: string, value: Value | undefined): boolean {
+  if (value?.kind !== 'string') return false;
+  const code = actual.trim().replace(/\?\./g, '.');
+  if (/(^|\.)error$/.test(code)) return true;
+  return /(^|\.)code$/.test(code) && /^[a-z]+(_[a-z0-9]+)+$/.test(value.value);
 }
 
 /** The errors an expectation expects: the codes (`invalid_client`) and the classes (`TokenError`) it names. */
 export function expectedErrors(expectation: Expectation): string[] {
   if (!expectsFailure(expectation)) return [];
   const [first] = expectation.args;
+  if (isErrorCode(expectation.actual, first)) return [(first as { value: string }).value];
   const named = errorNamed(first);
   if (named !== undefined) return [named];
   if (first?.kind === 'code' && /^[A-Z][\w$]*$/.test(first.code.trim())) return [first.code.trim()];

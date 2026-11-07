@@ -209,7 +209,7 @@ export function readComments(comments: readonly string[], specReferencesOf: (tex
 }
 
 /** A value of an expectation or a request as written (words.ts); an enum member is the value the types give it. */
-export function valueOf(file: SourceFile, node: Node | undefined, constants: ReadonlyMap<Node, string> = new Map()): Value {
+export function valueOf(file: SourceFile, node: Node | undefined, constants: ReadonlyMap<Node, string> = new Map(), bound: ReadonlyMap<string, Value> = new Map()): Value {
   if (node === undefined) return { kind: 'undefined' };
   const value = unwrap(node);
   const literal = stringOf(value);
@@ -234,16 +234,21 @@ export function valueOf(file: SourceFile, node: Node | undefined, constants: Rea
       if (any(value)['operator'] === SyntaxKind.MinusToken && is(operand, SyntaxKind.NumericLiteral)) return { kind: 'number', value: -Number(operand['text']) };
       break;
     }
-    case SyntaxKind.Identifier:
-      if (any(value)['text'] === 'undefined') return { kind: 'undefined' };
+    case SyntaxKind.Identifier: {
+      const name = any(value)['text'] as string;
+      if (name === 'undefined') return { kind: 'undefined' };
+      // A parameter of a helper of the file, bound to what the test handed it.
+      const known = bound.get(name);
+      if (known !== undefined) return known;
       break;
+    }
     case SyntaxKind.ObjectLiteralExpression: {
       const entries: Array<[string, Value]> = [];
       for (const property of (any(value)['properties'] as Node[]) ?? []) {
         if (is(property, SyntaxKind.PropertyAssignment)) {
           const key = nameOf(property['name'] as Node);
           if (key === undefined) return { kind: 'code', code: textOf(file, value) };
-          entries.push([key, valueOf(file, property['initializer'] as Node, constants)]);
+          entries.push([key, valueOf(file, property['initializer'] as Node, constants, bound)]);
         } else if (is(property, SyntaxKind.ShorthandPropertyAssignment)) {
           const key = nameOf(property['name'] as Node) ?? '';
           entries.push([key, { kind: 'code', code: key }]);
@@ -254,13 +259,13 @@ export function valueOf(file: SourceFile, node: Node | undefined, constants: Rea
       return { kind: 'object', entries };
     }
     case SyntaxKind.ArrayLiteralExpression:
-      return { kind: 'array', items: ((any(value)['elements'] as Node[]) ?? []).map((element) => valueOf(file, element, constants)) };
+      return { kind: 'array', items: ((any(value)['elements'] as Node[]) ?? []).map((element) => valueOf(file, element, constants, bound)) };
   }
   return { kind: 'code', code: textOf(file, value) };
 }
 
 /** An `expect(...)` chain a call ends: the matcher, `.not`, `.resolves`, `.rejects`, and the actual (undefined for another call). */
-function expectationOf(file: SourceFile, call: Node, constants: ReadonlyMap<Node, string>): (Expectation & { actualNode: Node }) | undefined {
+function expectationOf(file: SourceFile, call: Node, constants: ReadonlyMap<Node, string>, bound: ReadonlyMap<string, Value> = new Map()): (Expectation & { actualNode: Node }) | undefined {
   const callee = unwrap(any(call)['expression'] as Node);
   if (!is(callee, SyntaxKind.PropertyAccessExpression)) return undefined;
   const matcher = nameOf(callee['name']) ?? '';
@@ -284,7 +289,7 @@ function expectationOf(file: SourceFile, call: Node, constants: ReadonlyMap<Node
   if (chain === undefined || chain.root !== 'expect' || chain.names.some((name) => name !== 'soft' && name !== 'poll')) return undefined;
   const actual = (current['arguments'] as Node[] | undefined)?.[0];
   if (actual === undefined) return undefined;
-  const args = ((any(call)['arguments'] as Node[]) ?? []).map((arg) => valueOf(file, arg, constants));
+  const args = ((any(call)['arguments'] as Node[]) ?? []).map((arg) => valueOf(file, arg, constants, bound));
   return { actual: textOf(file, actual), actualNode: actual, matcher, args, negated, ...(mode === undefined ? {} : { mode }) };
 }
 
@@ -646,11 +651,28 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
       /** The actuals of the expectations, and the names they read (the values the test computed to check them). */
       const actuals: Node[] = [];
       const checked = new Set<string>();
-      if (fn !== undefined) {
-        walk(fn, (node) => {
+      /** Read the expectations of a body, and of the helpers of the file it calls (two levels), their parameters bound to the values it hands them. */
+      const visited = new Set<Node>();
+      const collect = (root: Node, bound: ReadonlyMap<string, Value>, depth: number) => {
+        if (visited.has(root)) return;
+        visited.add(root);
+        walk(root, (node) => {
           if (!is(node, SyntaxKind.CallExpression)) return true;
-          const found = expectationOf(file, node, constants);
-          if (found === undefined) return true;
+          const found = expectationOf(file, node, constants, bound);
+          if (found === undefined) {
+            const callee = unwrap(node['expression'] as Node);
+            const helper = is(callee, SyntaxKind.Identifier) && depth < 2 ? scope.functions.get(callee['text'] as string) : undefined;
+            if (helper !== undefined) {
+              const parameters = ((any(helper)['parameters'] as Node[] | undefined) ?? []).map((parameter) => nameOf(any(parameter)['name'] as Node | undefined));
+              const args = (node['arguments'] as Node[] | undefined) ?? [];
+              const inner = new Map(bound);
+              parameters.forEach((name, index) => {
+                if (name !== undefined && args[index] !== undefined) inner.set(name, valueOf(file, args[index], constants, bound));
+              });
+              collect(helper, inner, depth + 1);
+            }
+            return true;
+          }
           const { actualNode, ...expectation } = found;
           expectations.push(expectation);
           actuals.push(actualNode);
@@ -679,7 +701,8 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
           }
           return true;
         });
-      }
+      };
+      if (fn !== undefined) collect(fn, new Map(), 0);
       // The calls in what it checks: inside the actuals, and in the initializers of the names they read.
       const called: string[] = [];
       const acts: Node[] = [...actuals];

@@ -56,6 +56,9 @@ const TEST = [
   "async function post(fields: Record<string, string>) {",
   "  return app.request(`${TEST_ISSUER}/token`, { method: 'POST', headers: { Authorization: basicAuthorization('c', 's') }, body: new URLSearchParams(fields) });",
   '}',
+  'function expectCode(run: () => unknown, code: string) {',
+  '  try { run(); } catch (error) { expect((error as { code: string }).code).toBe(code); }',
+  '}',
   "describe('authenticate', () => {",
   "  describe('Client secret', () => {",
   '    // RFC 6749 §5.2: invalid_client.',
@@ -76,6 +79,9 @@ const TEST = [
   "    expect(response.headers.get('WWW-Authenticate')).toBe('Basic');",
   '  });',
   "  it.skip('should be skipped', () => {});",
+  "  it('should fail through a helper of the file', () => {",
+  "    expectCode(() => authenticate(''), 'invalid_client');",
+  '  });',
   '});',
 ].join('\n');
 
@@ -93,8 +99,9 @@ describe('readCodeTests', () => {
       [['authenticate', 'Client secret'], 'should accept %s', false],
       [['authenticate'], 'should answer the token endpoint with 401', false],
       [['authenticate'], 'should be skipped', true],
+      [['authenticate'], 'should fail through a helper of the file', false],
     ]);
-    expect(tests[0]?.lines).toEqual([14, 17]);
+    expect(tests[0]?.lines).toEqual([17, 20]);
   });
 
   it('should resolve the function a describe names through the imports, and keep it for each block of the path', () => {
@@ -124,6 +131,7 @@ describe('readCodeTests', () => {
   it('should read a request a helper of the file sends: its endpoint, method, params and authentication', () => {
     const tests = fixture.read('auth.test.ts');
     expect(tests[2]?.requests).toEqual([{ endpoint: 'token', method: 'POST', path: '/token', params: ['grant_type', 'code'], auth: 'client_secret_basic', line: 7 }]);
+    expect(tests[4]?.assertions.map((assertion) => assertion.text)).toEqual(['the error code is `invalid_client`']);
     expect(codeSubjects(tests[2] as CodeTest, ['hono'], () => true)).toEqual([
       { kind: 'function', id: 'lib:auth.ts#authenticate', how: 'describe' },
       { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' },

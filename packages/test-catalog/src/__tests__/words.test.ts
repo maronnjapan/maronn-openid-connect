@@ -73,6 +73,9 @@ describe('expectedErrors', () => {
     expect(expectedErrors(expectation('p', 'toMatchObject', [{ kind: 'object', entries: [['error', string('invalid_target')]] }], { mode: 'rejects' }))).toEqual(['invalid_target']);
     expect(expectedErrors(expectation('() => f()', 'toThrow', [{ kind: 'code', code: 'TokenError' }]))).toEqual(['TokenError']);
     expect(expectedErrors(expectation('x', 'toBe', [string('invalid_target')]))).toEqual([]);
+    expect(expectedErrors(expectation('typed.code', 'toBe', [string('slow_down')]))).toEqual(['slow_down']);
+    expect(expectedErrors(expectation('params.code', 'toBe', [string('code-1')]))).toEqual([]);
+    expect(expectedErrors(expectation('error?.error', 'toBe', [string('invalid_request')]))).toEqual(['invalid_request']);
     expect(expectedErrors(expectation('() => f()', 'toThrowError', [{ kind: 'code', code: "new CibaGrantError('unauthorized_client', 'no')" }]))).toEqual(['unauthorized_client']);
   });
 });

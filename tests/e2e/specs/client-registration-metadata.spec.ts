@@ -7,12 +7,14 @@ const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
 const redirectUri = `${clientBaseURL}/callback`;
 
-// What playwright.config.ts registers for e2e-hashed-client: the hash, not the secret.
+// What playwright.config.ts registers for e2e-hashed-client: the hash, not the
+// secret. hashClientSecret() of core returns the base64url SHA-256 digest,
+// without a prefix.
 const hashedClientSecret = 'e2e-hashed-client-secret';
-const registeredSecretHash = 'sha256:XTdm4hz_Raiz0XpnpuyAp3vlTS5u5zvbtKLw32daEb8';
+const registeredSecretHash = 'XTdm4hz_Raiz0XpnpuyAp3vlTS5u5zvbtKLw32daEb8';
 
 /**
- * Client registration metadata: clientSecretHash and allowedScopes.
+ * Client registration metadata: clientSecretHash and scope (the allowed scopes).
  *
  * The two clients are registered through OIDC_CLIENTS_JSON, the way a
  * deployment hands its clients to a sample OP, so these tests show that the
@@ -21,8 +23,8 @@ const registeredSecretHash = 'sha256:XTdm4hz_Raiz0XpnpuyAp3vlTS5u5zvbtKLw32daEb8
  *
  * - RFC 6819 §5.1.4.1.3: a client registered with the hash of its secret
  *   authenticates with the secret, and the stored hash is not a credential.
- * - RFC 7591 §2 / RFC 6749 §3.3: a client registered with allowedScopes cannot
- *   request a scope outside them.
+ * - RFC 7591 §2 / RFC 6749 §3.3: a client registered with a scope list
+ *   (RegisteredClient.scope) cannot request a scope outside it.
  */
 test.describe('Client registration metadata', () => {
   test('should issue tokens to a client registered with clientSecretHash', async ({
@@ -151,12 +153,14 @@ function scopedClientAuthorizeUrl(issuer: string, scope: string): string {
   );
 }
 
+// The OP hands the browser the transaction id in a cookie, so /login and
+// /consent carry no query (specs/transaction-cookie.spec.ts).
 async function login(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/login\?transaction_id=/);
+  await expect(page).toHaveURL(/\/login$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=/);
+  await expect(page).toHaveURL(/\/consent$/);
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

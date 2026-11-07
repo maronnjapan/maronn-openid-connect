@@ -112,6 +112,35 @@ const oidcClientsJson = JSON.stringify([
     scope: ['openid', 'profile'],
   },
   {
+    // RFC 6819 §5.1.4.1.3: registered with the hash of its secret and no
+    // secret, so the client-registration-metadata spec can authenticate it
+    // with e2e-hashed-client-secret and show the hash itself is refused. The
+    // value is hashClientSecret('e2e-hashed-client-secret') of core, mirrored
+    // in that spec. Nothing serves the redirect URI for this client: the spec
+    // answers the authorization response in the browser and redeems the code
+    // itself.
+    clientId: 'e2e-hashed-client',
+    clientSecretHash: 'XTdm4hz_Raiz0XpnpuyAp3vlTS5u5zvbtKLw32daEb8',
+    redirectUris: [`${clientBaseURL}/callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+  },
+  {
+    // RFC 7591 §2 scope: the scope values this client may request, so the
+    // client-registration-metadata spec can show that /authorize answers any
+    // other scope with invalid_scope and sends a request within them to login.
+    clientId: 'e2e-scoped-client',
+    clientSecret: 'e2e-scoped-client-secret',
+    redirectUris: [`${clientBaseURL}/callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+    scope: ['openid', 'profile'],
+  },
+  {
     // Registered with two client authentication methods, so the
     // client-auth-methods spec can authenticate with each of them. Nothing
     // serves the redirect URI: the spec reads the code from the URL the

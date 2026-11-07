@@ -55,9 +55,11 @@ export interface ProviderMetadataConfig {
   tokenEndpointAuthMethodsSupported?: string[];
   /**
    * OIDC Discovery 1.0 §3 / RFC 8414 §2: JWS `alg` values the Token Endpoint
-   * accepts for the client assertion of `private_key_jwt` (OIDC Core 1.0 §9).
-   * Advertise when `tokenEndpointAuthMethodsSupported` lists `private_key_jwt`.
-   * `none` must not be listed.
+   * accepts for the client assertion of `private_key_jwt` and `client_secret_jwt`
+   * (OIDC Core 1.0 §9). Required, and must not be empty, when
+   * `tokenEndpointAuthMethodsSupported` lists `private_key_jwt` or
+   * `client_secret_jwt` (RFC 8414 §2); optional otherwise, and left out of the
+   * document when absent or empty. `none` must not be listed.
    */
   tokenEndpointAuthSigningAlgValuesSupported?: string[];
   responseModesSupported?: string[];
@@ -177,10 +179,12 @@ function validateIssuer(issuer: string): void {
  *
  * 任意の項目のうち、配列は要素があるときだけ、真偽値は指定されたときだけ、エンドポイントの URL は空でないときだけ含める。
  * `claimTypesSupported` に指定できる値は `normal` だけである。
+ * `tokenEndpointAuthMethodsSupported` に `private_key_jwt` か `client_secret_jwt` があれば、`tokenEndpointAuthSigningAlgValuesSupported` は必須で、空にできない。
  *
  * @spec OIDC Discovery 1.0 §3
  * @spec OIDC Core 1.0 §15.1
- * @throws {Error} 必須の設定がないか空のとき、`issuer` が条件を満たさないとき、RS256 の鍵がないとき、RSASSA-PKCS1-v1_5 でも ECDSA でもない鍵があるとき、`claimTypesSupported` に `normal` 以外の値があるとき、または `tokenEndpointAuthSigningAlgValuesSupported` に `none` があるとき
+ * @spec RFC 8414 §2
+ * @throws {Error} 必須の設定がないか空のとき、`issuer` が条件を満たさないとき、RS256 の鍵がないとき、RSASSA-PKCS1-v1_5 でも ECDSA でもない鍵があるとき、`claimTypesSupported` に `normal` 以外の値があるとき、`tokenEndpointAuthMethodsSupported` に `private_key_jwt` か `client_secret_jwt` があるのに `tokenEndpointAuthSigningAlgValuesSupported` が無いか空のとき、または `tokenEndpointAuthSigningAlgValuesSupported` に `none` があるとき
  */
 export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderMetadata {
   validateIssuer(config.issuer);
@@ -267,6 +271,22 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
   }
   if (config.tokenEndpointAuthMethodsSupported && config.tokenEndpointAuthMethodsSupported.length > 0) {
     metadata.token_endpoint_auth_methods_supported = config.tokenEndpointAuthMethodsSupported;
+  }
+  // `private_key_jwt` か `client_secret_jwt` を公開するのに、署名のアルゴリズムの一覧が無いか空なら例外を投げる（RFC 8414 §2 の MUST）。
+  // 一覧を省いても既定のアルゴリズムは決まらないので、クライアントはアサーションに署名するアルゴリズムを選べないためである。
+  const advertisesJwtClientAuth = (config.tokenEndpointAuthMethodsSupported ?? []).some(
+    (method) => method === 'private_key_jwt' || method === 'client_secret_jwt',
+  );
+  if (
+    advertisesJwtClientAuth &&
+    !(
+      config.tokenEndpointAuthSigningAlgValuesSupported &&
+      config.tokenEndpointAuthSigningAlgValuesSupported.length > 0
+    )
+  ) {
+    throw new Error(
+      'token_endpoint_auth_signing_alg_values_supported is required when token_endpoint_auth_methods_supported lists private_key_jwt or client_secret_jwt',
+    );
   }
   if (
     config.tokenEndpointAuthSigningAlgValuesSupported &&

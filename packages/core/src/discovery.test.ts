@@ -314,6 +314,38 @@ describe('buildProviderMetadata', () => {
       );
     });
 
+    // RFC 8414 §2: the alg list is REQUIRED when private_key_jwt is advertised.
+    it('should throw when private_key_jwt is advertised without signing algs', () => {
+      const config = createValidConfig({ tokenEndpointAuthMethodsSupported: ['private_key_jwt'] });
+      expect(() => buildProviderMetadata(config)).toThrowError(
+        'token_endpoint_auth_signing_alg_values_supported is required when token_endpoint_auth_methods_supported lists private_key_jwt or client_secret_jwt',
+      );
+    });
+
+    it('should throw when private_key_jwt is advertised with an empty signing alg list', () => {
+      const config = createValidConfig({
+        tokenEndpointAuthMethodsSupported: ['client_secret_basic', 'private_key_jwt'],
+        tokenEndpointAuthSigningAlgValuesSupported: [],
+      });
+      expect(() => buildProviderMetadata(config)).toThrowError(
+        'token_endpoint_auth_signing_alg_values_supported is required when token_endpoint_auth_methods_supported lists private_key_jwt or client_secret_jwt',
+      );
+    });
+
+    // RFC 8414 §2: the alg list is REQUIRED when client_secret_jwt is advertised.
+    it('should throw when client_secret_jwt is advertised without signing algs', () => {
+      const config = createValidConfig({ tokenEndpointAuthMethodsSupported: ['client_secret_jwt'] });
+      expect(() => buildProviderMetadata(config)).toThrowError(
+        'token_endpoint_auth_signing_alg_values_supported is required when token_endpoint_auth_methods_supported lists private_key_jwt or client_secret_jwt',
+      );
+    });
+
+    it('should omit token_endpoint_auth_signing_alg_values_supported when no JWT method is advertised', () => {
+      const config = createValidConfig({ tokenEndpointAuthMethodsSupported: ['client_secret_basic'] });
+      const metadata = buildProviderMetadata(config);
+      expect(metadata).not.toHaveProperty('token_endpoint_auth_signing_alg_values_supported');
+    });
+
     it('should include response_modes_supported when provided', () => {
       const config = createValidConfig({ responseModesSupported: ['query'] });
       const metadata = buildProviderMetadata(config);

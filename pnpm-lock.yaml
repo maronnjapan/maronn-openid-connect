@@ -112,6 +112,9 @@ importers:
       '@maronn-openid-connect/test-catalog':
         specifier: workspace:*
         version: link:../../packages/test-catalog
+      '@maronn-openid-connect/test-reach':
+        specifier: workspace:*
+        version: link:../../packages/test-reach
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
@@ -191,6 +194,9 @@ importers:
 
   packages/cli:
     devDependencies:
+      '@maronn-openid-connect/test-reach':
+        specifier: workspace:*
+        version: link:../test-reach
       '@types/express':
         specifier: ^5.0.5
         version: 5.0.6
@@ -300,6 +306,9 @@ importers:
       '@maronn-openid-connect/cli':
         specifier: workspace:*
         version: link:../cli
+      '@maronn-openid-connect/test-reach':
+        specifier: workspace:*
+        version: link:../test-reach
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
@@ -330,6 +339,9 @@ importers:
       '@maronn-openid-connect/map-analysis':
         specifier: workspace:*
         version: link:../map-analysis
+      '@maronn-openid-connect/test-reach':
+        specifier: workspace:*
+        version: link:../test-reach
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6

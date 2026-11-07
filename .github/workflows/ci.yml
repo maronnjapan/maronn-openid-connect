@@ -169,7 +169,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-reports
-          path: work/test-reports
+          # v8/（E2E の生の V8 の計数）と access/（OP のアクセスログ）は lcov と到達の行を作る途中のもので、地図は読まない。
+          path: |
+            work/test-reports
+            !work/test-reports/v8
+            !work/test-reports/access
           if-no-files-found: ignore
 
       # PR のコメントの patch coverage（変えた行のうちテストが通った割合）と、失敗したテストと flaky なテスト（Test Analytics）。

@@ -8,11 +8,19 @@
  * apps (testuser / password). E2E_CLIENTS below names the clients a scenario
  * can act as.
  *
+ * It also records what the scenario reaches, as every E2E spec does
+ * (tests/e2e/fixtures.ts): the scenario runs against the same OPs.
+ *
  * The steps of http/ are defined with this test and HTTP_TARGETS: a scenario
  * tagged @hono or @nextjs that uses one of them has no definition for it on
  * any target, and bddgen fails.
  */
-import { test as base } from './target.js';
+import { mergeTests } from '@playwright/test';
+import { test as reach } from '../../e2e/fixtures.js';
+import { test as target } from './target.js';
+
+/** The test of the targets with the record of what each scenario reaches (tests/e2e/fixtures.ts, only with MARONN_REACH=1), as the E2E specs have. */
+const base = mergeTests(target, reach);
 
 /** The tags of the scenarios the http steps serve: any scenario that is not also run in process. */
 export const HTTP_TARGETS = 'not @hono and not @nextjs';

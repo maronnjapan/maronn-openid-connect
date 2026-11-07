@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { describeGroups, fileGroups, healthOf, splitPath } from '../lib/data';
 import { titleOf } from '../lib/filter';
 import { formatCount } from '../lib/format';
-import { formatHash, withoutTest } from '../lib/route';
+import { formatHash, withoutPanel } from '../lib/route';
 import { NARROW_QUERY, useApp, useTitle } from './app-context';
 import { CodeView } from './CodeView';
 import { rowOf, Rows } from './TestList';
@@ -126,7 +126,7 @@ export function FilePage() {
                 <a className="code-head-link" href={formatHash({ page: 'test', test: chosen.id })}>
                   詳細
                 </a>
-                <button type="button" className="icon-button code-head-close" aria-label="選択を外す" onClick={() => go(withoutTest(view), { replace: true })}>
+                <button type="button" className="icon-button code-head-close" aria-label="選択を外す" onClick={() => go(withoutPanel(view), { replace: true })}>
                   ×
                 </button>
               </div>

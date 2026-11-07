@@ -5,7 +5,7 @@
  * icon or a word, and the bars have a legend.
  */
 import type { TestOutcome, TestStatus } from '@maronn-openid-connect/test-catalog/model';
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import type { Health } from '../lib/data';
 import { codeParts } from '../lib/filter';
 import { formatCount, share } from '../lib/format';
@@ -128,5 +128,83 @@ export function SourceSwitch({ place }: { place: 'header' | 'body' }) {
     <div className={place === 'header' ? 'top-source' : 'body-source'}>
       <Segmented<Source> label="ソース" options={SOURCE_OPTIONS} value={source} onChange={chooseSource} />
     </div>
+  );
+}
+
+export interface TabOption<T extends string> {
+  value: T;
+  label: ReactNode;
+  /** A tab with nothing in it, muted (the helpers of a test that calls none). */
+  quiet?: boolean;
+}
+
+/**
+ * Tabs over one panel (the code of a test): the arrow keys move between
+ * them, and only the chosen one is in the order of Tab, as the ARIA tabs
+ * pattern asks. The panel is the caller's, with `panelId` as its id.
+ */
+export function Tabs<T extends string>({ options, value, onChange, label, panelId }: { options: ReadonlyArray<TabOption<T>>; value: T; onChange: (value: T) => void; label: string; panelId: string }) {
+  const move = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    const index = options.findIndex((option) => option.value === value);
+    const next =
+      event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : options.length - 1)) % options.length;
+    const option = options[next];
+    if (option === undefined) return;
+    onChange(option.value);
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  };
+  return (
+    <div className="tabs" role="tablist" aria-label={label} onKeyDown={move}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="tab"
+          id={`${panelId}-${option.value}`}
+          aria-selected={option.value === value}
+          aria-controls={panelId}
+          tabIndex={option.value === value ? 0 : -1}
+          className={option.quiet === true ? 'tab-quiet' : undefined}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export interface ChipOption<T extends string> {
+  value: T;
+  label: ReactNode;
+  title?: string;
+  /** A count shown small beside the label. */
+  count?: number;
+  /** Muted: an item the others stand out from (an endpoint a test only passes through). */
+  quiet?: boolean;
+}
+
+/** A row of small buttons of which one is on, wrapping when there are many: the functions or endpoints of 「テスト対象」, the packages of the unit tests. */
+export function Chips<T extends string>({ options, value, onChange, label }: { options: ReadonlyArray<ChipOption<T>>; value: T; onChange: (value: T) => void; label: string }) {
+  return (
+    <div className="chips" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button key={option.value} type="button" className={option.quiet === true ? 'chip chip-quiet' : 'chip'} aria-pressed={option.value === value} title={option.title} onClick={() => onChange(option.value)}>
+          {option.label}
+          {option.count !== undefined && <span className="chip-count">{formatCount(option.count)}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The icon of the buttons that open some code: `</>`. */
+export function CodeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 3 7 13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }

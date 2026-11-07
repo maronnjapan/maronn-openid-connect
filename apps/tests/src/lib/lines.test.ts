@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inRange, lineWindow } from './lines';
+import { codeWindow, inRange, lineWindow } from './lines';
 
 describe('lineWindow', () => {
   it('should show the lines of a test with three lines around them', () => {
@@ -27,5 +27,32 @@ describe('inRange', () => {
     expect(inRange(29, [22, 29])).toBe(true);
     expect(inRange(30, [22, 29])).toBe(false);
     expect(inRange(1, undefined)).toBe(false);
+  });
+});
+
+describe('codeWindow', () => {
+  it('should show a range of code alone, unmarked, or with context and marked for a test', () => {
+    expect(codeWindow([12, 48], 200, 'range')).toEqual({ start: 12, end: 48, outside: false });
+    expect(codeWindow([12, 48], 200, 'range', { context: 3, markRange: true })).toEqual({ start: 9, end: 51, mark: [12, 48], outside: false });
+  });
+
+  it('should show the whole file with the range marked', () => {
+    expect(codeWindow([12, 48], 200, 'file')).toEqual({ start: 1, end: 200, mark: [12, 48], outside: false });
+  });
+
+  it('should read a range in the wrong order and cut one past the end of the file', () => {
+    expect(codeWindow([48, 12], 200, 'range')).toEqual({ start: 12, end: 48, outside: false });
+    expect(codeWindow([190, 230], 200, 'file')).toEqual({ start: 1, end: 200, mark: [190, 200], outside: false });
+    expect(codeWindow([190, 230], 200, 'range')).toEqual({ start: 190, end: 200, outside: false });
+  });
+
+  it('should show the whole file unmarked when the range starts past its end (the file changed)', () => {
+    expect(codeWindow([250, 260], 200, 'range')).toEqual({ start: 1, end: 200, outside: true });
+    expect(codeWindow([250, 260], 200, 'file')).toEqual({ start: 1, end: 200, outside: true });
+  });
+
+  it('should show the whole file without a range', () => {
+    expect(codeWindow(undefined, 40, 'range')).toEqual({ start: 1, end: 40, outside: false });
+    expect(codeWindow(undefined, 0, 'file')).toEqual({ start: 1, end: 1, outside: false });
   });
 });

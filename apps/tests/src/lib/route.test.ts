@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatHash, parseHash, samePage, withoutTest, type View } from './route';
+import { formatCode, formatHash, panelOf, parseCode, parseHash, samePage, withoutPanel, type CodeTarget, type View } from './route';
 
 describe('parseHash', () => {
   it('should read an empty or unknown hash as the home page', () => {
@@ -35,6 +35,23 @@ describe('parseHash', () => {
     expect(parseHash('#/file/a%20b/c.test.ts?test=x')).toEqual({ page: 'file', file: 'a b/c.test.ts', test: 'x' });
   });
 
+  it('should read a kind page with its package and the code in its panel', () => {
+    expect(parseHash('#/kind/e2e')).toEqual({ page: 'kind', testKind: 'e2e' });
+    expect(parseHash('#/kind/unit?pkg=hono&outcome=failure')).toEqual({ page: 'kind', testKind: 'unit', pkg: 'hono', outcome: 'failure' });
+    expect(parseHash('#/kind/unit?code=fn%3Acore%3Ajwt.ts%23sign')).toEqual({ page: 'kind', testKind: 'unit', code: 'fn:core:jwt.ts#sign' });
+    // Only the unit tests have packages, and a kind page has no filter by kind.
+    expect(parseHash('#/kind/api?pkg=core&kind=unit')).toEqual({ page: 'kind', testKind: 'api' });
+    expect(parseHash('#/kind/tool')).toEqual({ page: 'home' });
+    expect(parseHash('#/kind')).toEqual({ page: 'home' });
+  });
+
+  it('should keep a test before some code, and leave out code it cannot read', () => {
+    expect(parseHash('#/endpoint/hono/token?test=a&code=endpoint%3Ahono%3Atoken')).toMatchObject({ test: 'a' });
+    expect(parseHash('#/endpoint/hono/token?test=a&code=endpoint%3Ahono%3Atoken')).not.toHaveProperty('code');
+    expect(parseHash('#/endpoint/hono/token?code=nothing')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token' });
+    expect(parseHash('#/test/x?code=fn%3Aa')).toEqual({ page: 'test', test: 'x' });
+  });
+
   it('should read the search, the files, the pull request and a test page', () => {
     expect(parseHash('#/search?q=token%20client')).toEqual({ page: 'search', q: 'token client' });
     expect(parseHash('#/files')).toEqual({ page: 'files' });
@@ -54,6 +71,10 @@ describe('formatHash', () => {
     { page: 'pr', outcome: 'failure' },
     { page: 'search', q: 'トークン client' },
     { page: 'test', test: 'id-1' },
+    { page: 'kind', testKind: 'api' },
+    { page: 'kind', testKind: 'unit', pkg: 'core', outcome: 'success', test: 't' },
+    { page: 'kind', testKind: 'e2e', code: 'endpoint:nextjs:token' },
+    { page: 'endpoint', source: 'hono', endpoint: 'token', step: 'parse-request', code: 'step:hono:token:parse-request' },
   ];
 
   it('should write a hash that reads back as the same view', () => {
@@ -70,16 +91,47 @@ describe('formatHash', () => {
   });
 });
 
-describe('samePage and withoutTest', () => {
+describe('samePage, panelOf and withoutPanel', () => {
   it('should tell a change of filter or panel from a change of page', () => {
     const base: View = { page: 'endpoint', source: 'hono', endpoint: 'token' };
     expect(samePage(base, { ...base, kind: 'unit', test: 'x' })).toBe(true);
+    expect(samePage(base, { ...base, code: 'endpoint:hono:token' })).toBe(true);
     expect(samePage(base, { ...base, endpoint: 'par' })).toBe(false);
     expect(samePage({ page: 'test', test: 'a' }, { page: 'test', test: 'b' })).toBe(false);
+    expect(samePage({ page: 'kind', testKind: 'unit' }, { page: 'kind', testKind: 'unit', pkg: 'hono' })).toBe(true);
+    expect(samePage({ page: 'kind', testKind: 'unit' }, { page: 'kind', testKind: 'api' })).toBe(false);
+  });
+
+  it('should tell what the panel shows: a test, or some code, never on the page of a test', () => {
+    expect(panelOf({ page: 'endpoint', test: 'x' })).toBe('x');
+    expect(panelOf({ page: 'kind', testKind: 'unit', code: 'fn:a' })).toBe('fn:a');
+    expect(panelOf({ page: 'test', test: 'x' })).toBeUndefined();
+    expect(panelOf({ page: 'home' })).toBeUndefined();
   });
 
   it('should close the panel and keep the filters', () => {
-    expect(withoutTest({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit', test: 'x' })).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit' });
-    expect(withoutTest({ page: 'test', test: 'x' })).toEqual({ page: 'home' });
+    expect(withoutPanel({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit', test: 'x' })).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit' });
+    expect(withoutPanel({ page: 'kind', testKind: 'unit', pkg: 'hono', code: 'fn:a' })).toEqual({ page: 'kind', testKind: 'unit', pkg: 'hono' });
+    expect(withoutPanel({ page: 'test', test: 'x' })).toEqual({ page: 'home' });
+  });
+});
+
+describe('formatCode and parseCode', () => {
+  const targets: CodeTarget[] = [
+    { kind: 'fn', id: 'hono:oidc-provider/endpoints/token/steps/parse-request.ts#parseTokenRequest' },
+    { kind: 'fn', id: 'nextjs:app/(ciba)/ciba/route.ts#GET' },
+    { kind: 'endpoint', key: 'nextjs:token' },
+    { kind: 'step', key: 'hono:token', step: 'authenticate-client' },
+  ];
+
+  it('should write the code of the panel so that it reads back the same', () => {
+    for (const target of targets) expect(parseCode(formatCode(target))).toEqual(target);
+    expect(formatCode({ kind: 'step', key: 'hono:token', step: 'respond' })).toBe('step:hono:token:respond');
+  });
+
+  it('should read nothing it does not know', () => {
+    for (const value of [undefined, '', 'fn:', 'fn', 'endpoint:express:token', 'endpoint:hono', 'endpoint:hono:token:x', 'step:hono:token', 'step:hono:token:', 'class:x']) {
+      expect(parseCode(value)).toBeUndefined();
+    }
   });
 });

@@ -53,6 +53,13 @@ describe('buildDb', () => {
     expect(db.byFile.get('packages/core/src/b.test.ts')?.map((test) => test.id)).toEqual(['u2', 'u1']);
   });
 
+  it('should tell whether the outline gives the code of its functions and endpoints', () => {
+    expect(db.hasCode).toBe(false);
+    const withCode = buildDb(index([]), outline([], { 'core:jwt.ts#sign': { id: 'core:jwt.ts#sign', name: 'sign', package: 'core', module: 'jwt.ts', code: { file: 'packages/core/src/jwt.ts', lines: [3, 9] } } }));
+    expect(withCode.hasCode).toBe(true);
+    expect(buildDb(index([]), outline([endpoint('hono', 'token', { code: { file: 'apps/hono/src/token.ts', lines: [1, 2] } })])).hasCode).toBe(true);
+  });
+
   it('should read an index without its optional parts and without an outline', () => {
     const bare = buildDb({ ...index([entry('x', { result: 'passed' }), entry('y', { kind: 'api', outcome: 'failure' })]), counts: undefined, endpoints: undefined, sources: undefined, aspectLabels: undefined } as never);
     expect(bare.index.counts).toEqual({ total: 2, kinds: { unit: 1, api: 1 }, outcomes: { success: 1, failure: 1 }, aspects: {}, evidence: {}, results: { passed: 1, none: 1 } });
@@ -74,8 +81,8 @@ describe('the tests of an endpoint', () => {
   const token = db.byEndpoint.get('hono:token');
   const next = db.byEndpoint.get('nextjs:token');
 
-  it('should be its API and E2E tests and the unit tests of its steps, each once, without the helpers it reaches', () => {
-    expect(token && endpointTests(db, token).map((test) => test.id)).toEqual(['a1', 'e1', 'u2', 'u1']);
+  it('should be its E2E and API tests and the unit tests of its steps, each once, without the helpers it reaches', () => {
+    expect(token && endpointTests(db, token).map((test) => test.id)).toEqual(['e1', 'a1', 'u2', 'u1']);
     // A step of Next.js has the unit tests of the functions its block calls.
     expect(next && endpointTests(db, next).map((test) => test.id)).toEqual(['a1', 'u2', 'u3']);
   });

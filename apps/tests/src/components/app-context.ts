@@ -3,7 +3,7 @@
  * language and the source the reader chose, and how to move to another view.
  */
 import type { FileTests, TestCase, TestEntry, TestSource } from '@maronn-openid-connect/test-catalog/model';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Db } from '../lib/data';
 import type { Lang } from '../lib/filter';
 import { loadJson } from '../lib/load';
@@ -89,7 +89,33 @@ export function useCard(entry: TestEntry | undefined): TestCase | Error | undefi
   return file.tests.find((test) => test.id === entry.id) ?? new Error('カードの中にこのテストがありません');
 }
 
-/** The text of a test file. */
+/**
+ * The cards of some files, fetched once each as a list needs them (the
+ * routes of its E2E tests): the files that arrived so far, by url. A file
+ * that cannot be read is left out, and its rows say what the index knows.
+ */
+export function useCards(urls: ReadonlyArray<string | undefined>): ReadonlyMap<string, FileTests> {
+  const key = useMemo(() => [...new Set(urls.filter((url): url is string => url !== undefined))].sort().join('\n'), [urls]);
+  const [cards, setCards] = useState<ReadonlyMap<string, FileTests>>(() => new Map());
+  useEffect(() => {
+    if (key === '') return undefined;
+    let live = true;
+    for (const url of key.split('\n')) {
+      loadJson<FileTests>(url).then(
+        (file) => {
+          if (live) setCards((previous) => (previous.get(url) === file ? previous : new Map(previous).set(url, file)));
+        },
+        () => undefined,
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  return cards;
+}
+
+/** The text of a file of the data: a test file, a helper, a function, an endpoint. */
 export function useSource(path: string | undefined): TestSource | Error | undefined {
   const { db } = useApp();
   const url = path === undefined ? undefined : db.index.sources[path];

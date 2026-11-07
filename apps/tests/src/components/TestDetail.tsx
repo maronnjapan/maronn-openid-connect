@@ -1,17 +1,24 @@
 /**
  * One test: what it is (its title in both languages, its kind, outcome and
- * aspects, its result on one line, where it is), the first things it checks,
- * the requests it sends, and its code. The index entry is shown at once; the
+ * aspects, what it tests, its result on one line, where it is), the first
+ * things it checks, the requests it sends, and its code: the test, the code
+ * it tests and the helpers it uses, a tab each. Each name of what it tests
+ * opens its code in 「テスト対象」. The index entry is shown at once; the
  * full card and the code come from their files when the test is opened.
+ *
+ * Whoever shows it keys it by the test (Panel, TestPage), so another test
+ * starts afresh: its checks, its tab, its chosen code.
  */
 import type { Assertion, TestCase, TestEntry } from '@maronn-openid-connect/test-catalog/model';
 import { useState } from 'react';
 import { KIND_LABELS, splitPath } from '../lib/data';
 import { textOf, titleOf, type Lang } from '../lib/filter';
 import { formatCount, formatDuration, targetLabel } from '../lib/format';
-import { formatHash } from '../lib/route';
+import { formatHash, type Source } from '../lib/route';
+import { targetOf } from '../lib/targets';
 import { useApp, useCard } from './app-context';
-import { CodeView } from './CodeView';
+import { TargetLine } from './Target';
+import { TestCode, type CodeState, type CodeTab } from './TestCode';
 import { Badge, OutcomeBadge, STATUS_LABELS, StatusIcon, Words } from './ui';
 
 /** How many checks show before 「すべて表示」, so the code starts on the first screen. */
@@ -97,9 +104,21 @@ function ResultLine({ card, entry }: { card: TestCase | undefined; entry: TestEn
 }
 
 export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?: string }) {
-  const { db, lang } = useApp();
+  const { db, lang, source } = useApp();
   const card = useCard(entry);
   const full = card instanceof Error ? undefined : card;
+  const target = targetOf(db, entry, full, source);
+  const [tab, setTab] = useState<CodeTab>('test');
+  const [chosen, setChosen] = useState<string | undefined>(undefined);
+  const [side, setSide] = useState<Source>(source);
+  const [focus, setFocus] = useState(0);
+  const code: CodeState = { tab, onTab: setTab, chosen, onChoose: setChosen, side, onSide: setSide, focus };
+  // A name of what it tests: its code in 「テスト対象」, brought into view.
+  const pick = (key: string) => {
+    setTab('target');
+    setChosen(key);
+    setFocus((count) => count + 1);
+  };
   const title = titleOf(entry, lang);
   const other = entry.ja === undefined ? undefined : lang === 'ja' ? entry.title : entry.ja;
   const { name } = splitPath(entry.file ?? '');
@@ -128,6 +147,7 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
           ))}
           {entry.skipped === true && <Badge>スキップ</Badge>}
         </div>
+        {target !== undefined && <TargetLine target={target} className="detail-target" onPick={pick} />}
         <ResultLine card={full} entry={entry} />
         <p className="detail-file">
           <a href={formatHash({ page: 'file', file: entry.file })} title={entry.file}>
@@ -152,13 +172,10 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
 
       {card === undefined && <p className="note">読み込んでいます…</p>}
       {card instanceof Error && <p className="note">{card.message}</p>}
-      {full !== undefined && <Checks key={entry.id} card={full} lang={lang} />}
+      {full !== undefined && <Checks card={full} lang={lang} />}
       {full !== undefined && <Requests card={full} />}
 
-      <section className="detail-section">
-        <h3>コード</h3>
-        <CodeView key={entry.id} path={entry.file} lines={lines} />
-      </section>
+      <TestCode entry={entry} card={card} lines={lines} state={code} />
     </article>
   );
 }

@@ -1,15 +1,16 @@
 /**
  * The home page: in the build of a pull request a line to its tests; how
  * many tests there are and of what kind, how the latest run went and how many
- * expect success or failure; then the endpoints of the chosen source as
- * cards, each with its own tests at a glance (its API and E2E tests and the
- * unit tests of its steps).
+ * expect success or failure; the three kinds of tests (E2E, API, unit), each
+ * a way into its tests by what they test; then the endpoints of the chosen
+ * source as cards, each with its own tests at a glance (its API and E2E tests
+ * and the unit tests of its steps).
  */
 import type { TestCounts, TestDiff } from '@maronn-openid-connect/test-catalog/model';
-import { countsOf, endpointGroups, endpointTests, healthOf, KIND_LABELS, KINDS, type Db } from '../lib/data';
+import { countsOf, endpointGroups, endpointTests, healthOf, KIND_LABELS, KIND_NAMES, KIND_NOTES, KINDS, type Db } from '../lib/data';
 import { formatCount, formatDate } from '../lib/format';
 import { DIFF_URL } from '../lib/load';
-import { formatHash, type Source } from '../lib/route';
+import { formatHash, MAIN_KINDS, type MainKind, type Source } from '../lib/route';
 import { useApp, useJson, useTitle } from './app-context';
 import { HealthMark, Legend, PartsBar, SourceSwitch, type BarPart } from './ui';
 
@@ -106,6 +107,37 @@ function Tiles({ db }: { db: Db }) {
   );
 }
 
+/** How each kind's page groups its tests. */
+const KIND_GROUPING: Record<MainKind, string> = { e2e: 'spec・シナリオのファイルごと', api: 'エンドポイントごと', unit: '関数ごと' };
+
+/** The three kinds of tests as cards: what each checks, how many there are, and a way into them. */
+function Kinds({ db }: { db: Db }) {
+  return (
+    <section className="kinds" aria-labelledby="kinds-title">
+      <h2 id="kinds-title" className="section-title">
+        テストの種類
+      </h2>
+      <ul className="kind-cards">
+        {MAIN_KINDS.map((kind) => (
+          <li key={kind}>
+            <a className={`kind-card kind-card-${kind}`} href={formatHash({ page: 'kind', testKind: kind })}>
+              <span className="kind-card-top">
+                <span className={`swatch part-${kind}`} aria-hidden="true" />
+                <span className="kind-card-name">{KIND_NAMES[kind]}</span>
+                <span className="kind-card-count num">{formatCount(db.index.counts?.kinds?.[kind] ?? 0)}</span>
+              </span>
+              <span className="kind-card-note">{KIND_NOTES[kind]}</span>
+              <span className="kind-card-go">
+                {KIND_GROUPING[kind]}に見る <span aria-hidden="true">→</span>
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Endpoints({ db, source }: { db: Db; source: Source }) {
   const groups = endpointGroups(db, source);
   if (groups.length === 0) return <p className="note">エンドポイントの一覧（outline.json）がありません。</p>;
@@ -158,6 +190,7 @@ export function Home() {
     <div className="page home">
       {db.index.diff === true && <PrLine />}
       <Tiles db={db} />
+      <Kinds db={db} />
       <Endpoints db={db} source={source} />
       <nav className="quiet-links" aria-label="ほかの見方">
         <a href={formatHash({ page: 'files' })}>ファイルから探す →</a>

@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { FilePage, FilesPage } from './components/FilesPage';
 import { Header } from './components/Header';
 import { Home } from './components/Home';
+import { KindPage } from './components/KindPage';
 import { Panel, TestPage } from './components/Panel';
 import { PrPage } from './components/PrPage';
 import { SearchPage } from './components/SearchPage';
@@ -17,7 +18,7 @@ import { SourceSwitch } from './components/ui';
 import { buildDb, type Db } from './lib/data';
 import type { Lang } from './lib/filter';
 import { loadJson, MissingData } from './lib/load';
-import { formatHash, parseHash, samePage, type Source, type View } from './lib/route';
+import { formatHash, panelOf, parseHash, samePage, type Source, type View } from './lib/route';
 
 const TESTS_URL = './data/tests.json';
 const OUTLINE_URL = './data/outline.json';
@@ -70,6 +71,8 @@ function NoData({ error }: { error: Error }) {
 
 function Screen({ view }: { view: View }) {
   switch (view.page) {
+    case 'kind':
+      return <KindPage />;
     case 'endpoint':
       return <EndpointPage />;
     case 'files':
@@ -132,11 +135,11 @@ export function App() {
     const hash = formatHash(next);
     if (hash === window.location.hash) return;
     // Closing a panel this page opened goes back, so the back button does not open it again.
-    if (current.test !== undefined && next.test === undefined && samePage(current, next) && window.history.state?.panel === true) {
+    if (panelOf(current) !== undefined && panelOf(next) === undefined && samePage(current, next) && window.history.state?.panel === true) {
       window.history.back();
       return;
     }
-    const panel = next.test !== undefined && current.test === undefined && samePage(current, next);
+    const panel = panelOf(next) !== undefined && panelOf(current) === undefined && samePage(current, next);
     if (options?.replace === true) window.history.replaceState(window.history.state, '', hash);
     else window.history.pushState({ panel }, '', hash);
     setView(parseHash(hash));
@@ -162,9 +165,12 @@ export function App() {
     () => (loaded !== undefined && 'db' in loaded ? { db: loaded.db, view, lang, source, go, chooseSource } : undefined),
     [loaded, view, lang, source, go, chooseSource],
   );
-  // The panel of a test over a list; the file page shows the test in its own code on a desk.
-  const panel = view.page === 'test' || (view.page === 'file' && !narrow) ? undefined : view.test;
-  const showsSource = view.page === 'home' || view.page === 'endpoint';
+  // The panel of a test or of some code over a list; the file page shows the test in its own code on a desk.
+  const panelTest = view.page === 'test' || (view.page === 'file' && !narrow) ? undefined : view.test;
+  const panelCode = view.page === 'test' || panelTest !== undefined ? undefined : view.code;
+  const panel = panelTest ?? panelCode;
+  // The source chooses the endpoints of home, the endpoint page and the API tests.
+  const showsSource = view.page === 'home' || view.page === 'endpoint' || (view.page === 'kind' && view.testKind === 'api');
 
   // While the panel is open the page under it is inert: Tab stays in the panel.
   const shell = (
@@ -185,7 +191,7 @@ export function App() {
   return (
     <AppContext.Provider value={state}>
       {shell}
-      {panel !== undefined && <Panel id={panel} />}
+      {panel !== undefined && <Panel test={panelTest} code={panelCode} />}
     </AppContext.Provider>
   );
 }

@@ -31,12 +31,25 @@ export interface Db {
   byEndpoint: Map<string, OutlineEndpoint>;
   /** What the search reads of each test, lower-cased: its titles, its file and its describe path. */
   haystack: Map<string, string>;
+  /** Whether the outline gives the code of its functions and endpoints (data older than that has none). */
+  hasCode: boolean;
 }
 
-/** The kinds in the order every list and bar shows them. */
-export const KINDS: readonly TestKind[] = ['api', 'e2e', 'unit', 'tool'];
+/** The kinds in the order every list and bar shows them: from the widest test to the narrowest, then the tools. */
+export const KINDS: readonly TestKind[] = ['e2e', 'api', 'unit', 'tool'];
 
 export const KIND_LABELS: Record<TestKind, string> = { api: 'API', e2e: 'E2E', unit: 'ユニット', tool: 'ツール' };
+
+/** The name of a kind as a heading. */
+export const KIND_NAMES: Record<TestKind, string> = { e2e: 'E2E テスト', api: 'API テスト', unit: 'ユニットテスト', tool: 'ツールのテスト' };
+
+/** What the tests of a kind check, in one sentence. */
+export const KIND_NOTES: Record<TestKind, string> = {
+  e2e: 'ブラウザと OP を動かし、いくつものエンドポイントを通る流れを確かめる',
+  api: 'エンドポイントにリクエストを送り、応答を確かめる',
+  unit: '関数を直接呼び、その結果を確かめる',
+  tool: 'CLI、地図、テストの一覧などの道具を確かめる',
+};
 
 function byLine(a: TestEntry, b: TestEntry): number {
   return a.lines[0] - b.lines[0] || a.title.localeCompare(b.title);
@@ -63,14 +76,16 @@ export function buildDb(index: TestsIndex, outline?: TestsOutline): Db {
     group: endpoint.group ?? { id: 'other', label: 'そのほか' },
     steps: (endpoint.steps ?? []).filter((step) => step !== null && typeof step === 'object'),
   }));
+  const functions = outline?.functions ?? {};
   return {
     index: { ...index, tests, counts: index.counts ?? countsOf(tests), endpoints: index.endpoints ?? {}, sources: index.sources ?? {}, aspectLabels: index.aspectLabels ?? {} },
     endpoints,
-    functions: outline?.functions ?? {},
+    functions,
     byId,
     byFile,
     byEndpoint: new Map(endpoints.map((endpoint) => [endpoint.key, endpoint])),
     haystack,
+    hasCode: endpoints.some((endpoint) => endpoint.code !== undefined) || Object.values(functions).some((fn) => fn?.code !== undefined),
   };
 }
 
@@ -96,7 +111,7 @@ export function entriesOf(db: Db, ids: readonly string[]): TestEntry[] {
   return entries;
 }
 
-/** Sort for a list: by kind (API, E2E, unit, tool), then by file and line. */
+/** Sort for a list: by kind (E2E, API, unit, tool), then by file and line. */
 export function sortForList(entries: readonly TestEntry[]): TestEntry[] {
   return [...entries].sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || a.file.localeCompare(b.file) || byLine(a, b));
 }

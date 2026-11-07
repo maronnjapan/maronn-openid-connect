@@ -1,23 +1,54 @@
 /**
- * The panel of a test over a list: on the right on a desk, the whole screen
- * on a phone. Escape, the close button and a click beside it close it; the
- * page under it keeps its place and is inert while it is open (App), and
- * closing it gives the focus back to what opened it.
+ * The panel over a list: a test, or the code of a function, an endpoint or
+ * a step. On the right on a desk, the whole screen on a phone. Escape, the
+ * close button and a click beside it close it; the page under it keeps its
+ * place and is inert while it is open (App), and closing it gives the focus
+ * back to what opened it.
  */
 import { useEffect, useRef, useState } from 'react';
 import { titleOf } from '../lib/filter';
-import { formatHash, withoutTest } from '../lib/route';
+import { formatHash, parseCode, withoutPanel, type CodeTarget, type Source } from '../lib/route';
+import { codePanel } from '../lib/targets';
 import { useApp, useTitle } from './app-context';
+import { TestedCodeView } from './CodeRefs';
 import { ErrorBoundary } from './ErrorBoundary';
 import { TestDetail } from './TestDetail';
+import { Words } from './ui';
 
-export function Panel({ id }: { id: string }) {
+/** The code of a function, an endpoint or a step, in the panel. */
+function CodeDetail({ target, headingId }: { target: CodeTarget; headingId: string }) {
+  const { db, source } = useApp();
+  const [chosen, setChosen] = useState<string | undefined>(undefined);
+  const [side, setSide] = useState<Source>(source);
+  const panel = codePanel(db, target);
+  if (panel === undefined) return <p className="note panel-note">このコードはデータにありません。</p>;
+  return (
+    <article className="detail code-detail">
+      <header className="detail-head">
+        <h2 id={headingId} className={target.kind === 'fn' ? 'mono code-detail-title' : undefined}>
+          {panel.title}
+        </h2>
+        {panel.subtitle !== undefined && <p className="detail-other code-detail-where">{panel.subtitle}</p>}
+        {panel.summary !== undefined && panel.summary !== '' && (
+          <p className="code-detail-summary">
+            <Words text={panel.summary} />
+          </p>
+        )}
+      </header>
+      <TestedCodeView items={panel.items} empty="このコードはデータにありません。" named={target.kind !== 'step'} choice={{ chosen, onChoose: setChosen, side, onSide: setSide }} />
+    </article>
+  );
+}
+
+export function Panel({ test, code }: { test?: string; code?: string }) {
   const { db, view, go } = useApp();
-  const entry = db.byId.get(id);
+  const id = test ?? code ?? '';
+  const entry = test === undefined ? undefined : db.byId.get(test);
+  const target = test === undefined ? parseCode(code) : undefined;
   const panel = useRef<HTMLDivElement>(null);
   // Read while rendering, before the page under the panel turns inert and gives up its focus.
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
-  const close = () => go(withoutTest(view));
+  const close = () => go(withoutPanel(view));
 
   useEffect(() => {
     panel.current?.focus();
@@ -34,7 +65,7 @@ export function Panel({ id }: { id: string }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') go(withoutTest(view));
+      if (event.key === 'Escape') go(withoutPanel(view));
     };
     window.addEventListener('keydown', onKey);
     document.body.classList.add('panel-open');
@@ -49,14 +80,30 @@ export function Panel({ id }: { id: string }) {
       <div className="scrim" onClick={close} aria-hidden="true" />
       <div className="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" tabIndex={-1} ref={panel}>
         <div className="panel-bar">
-          <a className="panel-link" href={formatHash({ page: 'test', test: id })}>
-            このテストのページ
-          </a>
+          {test !== undefined ? (
+            <a className="panel-link" href={formatHash({ page: 'test', test })}>
+              このテストのページ
+            </a>
+          ) : (
+            <span className="panel-label">コード</span>
+          )}
           <button type="button" className="icon-button" aria-label="閉じる" onClick={close}>
             ×
           </button>
         </div>
-        <ErrorBoundary reset={id}>{entry === undefined ? <p className="note panel-note">テスト {id} はありません。</p> : <TestDetail entry={entry} headingId="panel-title" />}</ErrorBoundary>
+        <ErrorBoundary reset={id}>
+          {test !== undefined ? (
+            entry === undefined ? (
+              <p className="note panel-note">テスト {test} はありません。</p>
+            ) : (
+              <TestDetail key={entry.id} entry={entry} headingId="panel-title" />
+            )
+          ) : target === undefined ? (
+            <p className="note panel-note">このコードはデータにありません。</p>
+          ) : (
+            <CodeDetail key={id} target={target} headingId="panel-title" />
+          )}
+        </ErrorBoundary>
       </div>
     </>
   );
@@ -78,7 +125,7 @@ export function TestPage() {
           </>
         )}
       </nav>
-      {entry === undefined ? <p className="note">テスト {view.test} はありません。</p> : <TestDetail entry={entry} />}
+      {entry === undefined ? <p className="note">テスト {view.test} はありません。</p> : <TestDetail key={entry.id} entry={entry} />}
     </div>
   );
 }

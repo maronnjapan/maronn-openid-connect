@@ -35,7 +35,7 @@ function Section({ title, rows, note }: { title: string; rows: Row[]; note?: str
         <span className="muted num">{formatCount(rows.length)}</span>
       </h2>
       {note !== undefined && <p className="note">{note}</p>}
-      <Rows rows={sorted} groups={kinds.size > 1 && !kinds.has(undefined)} />
+      <Rows rows={sorted} groups={kinds.size > 1 && !kinds.has(undefined)} target={{}} />
     </section>
   );
 }

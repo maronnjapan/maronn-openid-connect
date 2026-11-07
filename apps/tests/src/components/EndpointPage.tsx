@@ -1,16 +1,20 @@
 /**
  * An endpoint: its steps as a timeline with the unit tests of each, and its
- * tests beside them (its API and E2E tests and the unit tests of its steps).
- * Choosing a step narrows the list to the step's unit tests; choosing it again
- * shows them all. The functions it reaches below its steps are folded under
- * 「ほかの関数」, where one can be chosen the same way.
+ * tests beside them in three sections (E2E, API, unit), each row saying what
+ * it tests. Choosing a step narrows the list to the step's unit tests;
+ * choosing it again shows them all. The functions it reaches below its steps
+ * are folded under 「ほかの関数」, where one can be chosen the same way. The
+ * code of the endpoint and of each step (its function, or its block of the
+ * Route Handler) opens in the panel.
  */
 import type { OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { countsOf, endpointTests, healthOf, otherFunctions, stepCount, stepTests, unitTestsOf, type Db } from '../lib/data';
+import { countsOf, endpointTests, healthOf, otherFunctions, stepCount, stepFrames, stepTests, unitTestsOf, type Db } from '../lib/data';
 import { formatCount } from '../lib/format';
-import type { View } from '../lib/route';
+import { MAIN_KINDS, type View } from '../lib/route';
+import { stepHasCode } from '../lib/targets';
 import { NARROW_QUERY, useApp, useTitle } from './app-context';
+import { CodeButton, SOURCE_NAMES } from './CodeRefs';
 import { kindParts } from './Home';
 import { TestList } from './TestList';
 import { Legend, PartsBar, SourceSwitch, Words } from './ui';
@@ -18,13 +22,13 @@ import { Legend, PartsBar, SourceSwitch, Words } from './ui';
 /** How many of the other functions show before 「すべて表示」. */
 const FIRST_OTHERS = 10;
 
-/** The tests the list is narrowed to, and their name: a step's, or another function's. */
-function selection(db: Db, endpoint: OutlineEndpoint, view: View): { label: string; tests: TestEntry[] } | undefined {
+/** The tests the list is narrowed to, their name, and the functions they are of: a step's, or another function's. */
+function selection(db: Db, endpoint: OutlineEndpoint, view: View): { label: string; tests: TestEntry[]; frames: string[] } | undefined {
   if (view.step !== undefined) {
     const step = endpoint.steps.find((candidate) => candidate.id === view.step);
-    return step === undefined ? undefined : { label: step.label, tests: stepTests(db, endpoint.key, step) };
+    return step === undefined ? undefined : { label: step.label, tests: stepTests(db, endpoint.key, step), frames: stepFrames(step) };
   }
-  if (view.fn !== undefined) return { label: db.functions[view.fn]?.name ?? view.fn, tests: unitTestsOf(db, endpoint.key, view.fn) };
+  if (view.fn !== undefined) return { label: db.functions[view.fn]?.name ?? view.fn, tests: unitTestsOf(db, endpoint.key, view.fn), frames: [view.fn] };
   return undefined;
 }
 
@@ -37,8 +41,9 @@ function narrow(): boolean {
   }
 }
 
-function Step({ db, endpoint, step, index, selected, onPick }: { db: Db; endpoint: OutlineEndpoint; step: OutlineStep; index: number; selected: boolean; onPick: () => void }) {
+function Step({ db, endpoint, step, index, selected, onPick, codes }: { db: Db; endpoint: OutlineEndpoint; step: OutlineStep; index: number; selected: boolean; onPick: () => void; codes: boolean }) {
   const count = stepCount(db, endpoint.key, step);
+  const code = stepHasCode(db, step);
   const content = (
     <>
       <span className="step-no num">{index + 1}</span>
@@ -55,12 +60,19 @@ function Step({ db, endpoint, step, index, selected, onPick }: { db: Db; endpoin
       ) : (
         <div className="step-button step-static">{content}</div>
       )}
+      {code ? (
+        <CodeButton target={{ kind: 'step', key: endpoint.key, step: step.id }} label={`「${step.label}」のコードを見る`} className="step-code" />
+      ) : (
+        codes && <span className="step-code step-code-none" aria-hidden="true" />
+      )}
     </li>
   );
 }
 
 function Flow({ db, endpoint, view, onPick }: { db: Db; endpoint: OutlineEndpoint; view: View; onPick: (next: Partial<View>) => void }) {
   const others = otherFunctions(db, endpoint);
+  // The steps keep a column for the button of their code when any step has code, so the pills line up.
+  const codes = endpoint.steps.some((step) => stepHasCode(db, step));
   const [showOthers, setShowOthers] = useState(view.fn !== undefined);
   const chosen = others.findIndex((fn) => fn.id === view.fn);
   const [allOthers, setAllOthers] = useState(chosen >= FIRST_OTHERS);
@@ -74,7 +86,7 @@ function Flow({ db, endpoint, view, onPick }: { db: Db; endpoint: OutlineEndpoin
       <ol className="timeline">
         {endpoint.steps.map((step, index) => {
           const selected = view.step === step.id;
-          return <Step key={step.id} db={db} endpoint={endpoint} step={step} index={index} selected={selected} onPick={() => onPick(selected ? {} : { step: step.id })} />;
+          return <Step key={step.id} db={db} endpoint={endpoint} step={step} index={index} selected={selected} codes={codes} onPick={() => onPick(selected ? {} : { step: step.id })} />;
         })}
       </ol>
       {others.length > 0 && (
@@ -147,6 +159,7 @@ export function EndpointPage() {
     delete base.step;
     delete base.fn;
     delete base.test;
+    delete base.code;
     delete base.kind;
     scrollToList.current = narrow();
     go({ ...base, ...next }, { replace: true });
@@ -163,6 +176,9 @@ export function EndpointPage() {
         <h1>{endpoint.label}</h1>
         <p className="endpoint-path">
           <span className="method">{endpoint.methods.join(' · ')}</span> {endpoint.path}
+          {endpoint.code !== undefined && (
+            <CodeButton target={{ kind: 'endpoint', key: endpoint.key }} label={`${endpoint.label}（${SOURCE_NAMES[endpoint.source]}）のコードを見る`} text="コード" className="endpoint-code" />
+          )}
         </p>
         {endpoint.summary !== undefined && (
           <p className="summary" title={endpoint.summary}>
@@ -188,6 +204,8 @@ export function EndpointPage() {
           <TestList
             tests={picked === undefined ? own : picked.tests}
             fixedKind={picked !== undefined}
+            sections={MAIN_KINDS}
+            target={picked === undefined ? { current: endpoint.id } : { current: endpoint.id, known: picked.frames }}
             title={
               picked === undefined ? (
                 <span>テスト</span>

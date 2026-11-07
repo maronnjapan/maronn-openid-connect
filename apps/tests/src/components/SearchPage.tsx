@@ -22,7 +22,7 @@ export function SearchPage() {
       {found.length === 0 ? (
         <p className="note">一致するテストはありません。英語と日本語のタイトル、ファイルのパス、describe の名前から探します。</p>
       ) : (
-        <TestList tests={found} />
+        <TestList tests={found} target={{}} />
       )}
     </div>
   );

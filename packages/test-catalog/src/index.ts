@@ -4,4 +4,17 @@
  * catalog of the map, take in the results and the reach of a run, diff the
  * catalog of a pull request, and write the data the page shows (model.ts).
  */
+export { parseAspects, readAspects, aspectsOf, ASPECTS_FILE, type AspectTable } from './aspects.js';
+export { buildTests, readBaseCatalog, readTables, withRun, type TestBuildOptions } from './build.js';
+export { EndpointIndex, outcomeOf, readCatalog, stepOutcome, type CatalogInput, type CatalogResult } from './catalog.js';
+export { changesOf, diffCatalogs, expectationOverlap, relatedTests } from './diff.js';
+export { listFiles, testFileOf, testFiles, type TestFile } from './discover.js';
+export { draftTests, mapDataOf } from './draft.js';
+export { exampleTestId, fileTestId, hashedTestId } from './id.js';
+export { countTests, joinTests, reachableFrames, type Joined } from './join.js';
+export { fixedIds, lintTests, type TestLintViolation } from './lint.js';
+export { testsMarkdown } from './markdown.js';
+export { readRun, type JoinedRun } from './run.js';
+export { checkTranslations, japaneseKeyword, Translations, Vocabulary } from './vocabulary.js';
+export { expectationPhrases, sayExpectation } from './words.js';
 export type * from './model.js';

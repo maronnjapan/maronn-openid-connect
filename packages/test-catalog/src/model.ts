@@ -108,6 +108,8 @@ export interface TestCase {
   /** The sections of the specifications it cites: `RFC 6749 §5.2`. */
   spec: string[];
   assertions: Assertion[];
+  /** The errors it expects: OAuth error codes (`invalid_client`) and error classes (`TokenError`). */
+  errors?: string[];
   /** The steps of a scenario. */
   steps?: FeatureStep[];
   /** Where it runs: the OPs an E2E test or a scenario runs against (hono, nextjs, http). */
@@ -116,6 +118,8 @@ export interface TestCase {
   evidence: Evidence[];
   /** Marked `skip`, `todo` or `fixme` in the code. */
   skipped?: boolean;
+  /** A hash of its body (its steps for a scenario), its whitespace aside: the diff of the tests tells a test that changed only there. */
+  digest: string;
   /** The result of the latest run, by target ('' for a Vitest test). */
   result?: TestResult;
   /** What it ran in the latest run measured with MARONN_REACH=1, by target. */
@@ -159,6 +163,12 @@ export interface RawReach {
   target?: string;
   functions: Array<{ file: string; line: number; name?: string }>;
   requests?: Array<{ method: string; url: string; status: number; error?: string }>;
+  /** The attempt (a retry of Playwright counts from 1); the catalog keeps the last. */
+  retry?: number;
+  /** How the attempt ended; a skipped test reached nothing worth keeping. */
+  status?: TestStatus;
+  /** The tags of the test (Playwright's), which name a scenario of a feature file by its `@id:`. */
+  tags?: string[];
 }
 
 /** Something the tests do not check that the map can tell (the 不足 rules of the design). */
@@ -254,18 +264,29 @@ export interface TestsIndex {
   unknown: { subject: number; outcome: number; aspect: number };
   /** The phrases (step expressions and the words of expectations) the translation table has no Japanese for. */
   untranslated: string[];
-  /** The gaps of every endpoint and feature, for the list of the tests. */
-  gaps: Array<Gap & { source?: string; endpoint?: string }>;
+  /**
+   * The gaps of every endpoint and feature, for the list of the tests: a
+   * function without a unit test once, with the endpoints that reach it; the
+   * other gaps of an endpoint with its source and id.
+   */
+  gaps: Array<Gap & { source?: string; endpoint?: string; endpoints?: string[] }>;
   /** The aspects aspects.yaml asks every endpoint to have. */
   requiredAspects: string[];
 }
 
-/** tests/by-frame/<hash>.json and tests/by-endpoint/<hash>.json: the cards of the tests of a frame or an endpoint. */
+/**
+ * tests/by-frame/<hash>.json and tests/by-endpoint/<hash>.json: the cards of
+ * the tests of a frame or an endpoint. An endpoint's file has the cards of
+ * the tests that request it (API, E2E, scenarios) and names its unit tests by
+ * the frames it reaches: their cards are in the files of those frames.
+ */
 export interface FrameTests {
   version: 1;
   /** The frame id, or `<source>:<endpoint>`. */
   key: string;
   tests: TestCase[];
+  /** For an endpoint: the unit tests of each frame it reaches, by id. */
+  units?: Record<string, string[]>;
   gaps: Gap[];
 }
 
@@ -299,5 +320,5 @@ export interface TestDiff {
     after: { outcomes: string[]; aspects: string[]; errors: string[] };
   }>;
   /** The cards of the tests the diff names (added, removed, renamed and modified, before and after), by id. */
-  cards: Record<string, Pick<TestCase, 'id' | 'kind' | 'title' | 'outcome' | 'aspects' | 'source' | 'path'> & { ja?: string; examples?: number }>;
+  cards: Record<string, Pick<TestCase, 'id' | 'kind' | 'title' | 'outcome' | 'aspects' | 'source' | 'path'> & { ja?: string; examples?: number; endpoints?: string[] }>;
 }

@@ -71,6 +71,22 @@ export interface RequestShape {
   line: number;
 }
 
+/**
+ * A range of a file the viewer can show (inclusive, from 1): the file's
+ * text is in TestsIndex.sources under the same path.
+ */
+export interface CodeRef {
+  /** The path from the repository root. */
+  file: string;
+  lines: [number, number];
+}
+
+/** A helper a test calls: a function of its own file or of a test support module, not a function it tests. */
+export interface HelperRef extends CodeRef {
+  /** The name it is called by (`post`, `expectCode`, `login`). */
+  name: string;
+}
+
 /** A step of a scenario of a feature file. */
 export interface FeatureStep {
   /** The keyword as written (`Given `, `And `), and the kind it stands for. */
@@ -84,6 +100,8 @@ export interface FeatureStep {
   /** Its data table, the header row first. */
   table?: string[][];
   line: number;
+  /** The code of the step definition it matched (tests/steps). */
+  definition?: CodeRef;
 }
 
 /** A test case: a test of the code (`it`, `test`) or a scenario (a row of the examples of an outline). */
@@ -124,6 +142,13 @@ export interface TestCase {
   result?: TestResult;
   /** What it ran in the latest run measured with MARONN_REACH=1, by target. */
   reach?: TestReach[];
+  /**
+   * The helpers its body calls, directly or through another helper: the
+   * functions of its file and of the test support modules it imports
+   * (test-helpers.ts, test-support/, tests/e2e/fixtures.ts, tests/steps), in
+   * the order they are first called. The functions it tests are its subjects.
+   */
+  helpers?: HelperRef[];
 }
 
 export type TestStatus = 'passed' | 'failed' | 'skipped';
@@ -284,7 +309,11 @@ export interface TestsIndex {
   gaps: Array<Gap & { source?: string; endpoint?: string; endpoints?: string[] }>;
   /** The aspects aspects.yaml asks every endpoint to have. */
   requiredAspects: string[];
-  /** The url of the text of each test file (TestSource), by its path. */
+  /**
+   * The url of the text (TestSource) of every file the viewer shows, by its
+   * path: the test files, and the files of the helpers, the step
+   * definitions, the functions and the endpoint bodies the tests name.
+   */
   sources: Record<string, string>;
   /** The labels of the aspects (`boundary` → `境界値`). */
   aspectLabels: Record<string, string>;
@@ -337,6 +366,8 @@ export interface OutlineEndpoint {
   /** The frame of its body (`endpoint:token`, `endpoint:nextjs:token`). */
   root: string;
   steps: OutlineStep[];
+  /** The code of its body: the pipeline of hono, the Route Handler of Next.js (BodyEntry.source of the map). */
+  code?: CodeRef;
 }
 
 /** A function of the catalog the viewer names. */
@@ -346,6 +377,8 @@ export interface OutlineFunction {
   package: string;
   module: string;
   summary?: string;
+  /** Its code, the JSDoc and the overloads included (FunctionEntry.source of the map). */
+  code?: CodeRef;
 }
 
 /**

@@ -73,6 +73,7 @@ README は「`/token` なら `authorization_code` と `refresh_token`」をケ�
 - カタログに載せる関数を `function` 宣言で書く。カタログの id（`<root>:<module>#<name>`）と生成器の読み方がこれに依る。TypeScript の解析器にすればアロー関数も読めるが、id と生成器の両方に手が入って複雑になるので、この規則は緩めない。モジュール直下の変数や default export に arrow/function 式の本体を置く形も禁止し、`.github/scripts/lint-function-forms.mjs` が AST で検査する。型注釈を付けても本体がカタログから落ちるためであり、単なる関数の別名や factory の戻り値にはこの禁止を課さない
 - 関数の JSDoc の一行目に振る舞いを一文で書く。`.github/scripts/lint-function-docs.mjs` の検査を続ける。地図はこれを、アウトラインの行と図の箱の言葉、要約に使う
 - 変更メモ（`apps/map/changes/*.md`）を PR に添える。存在と関数への対応づけは機械で確かめる。何を求め、何を地図が計算するかは「変更メモと影響範囲」の節で述べる
+- エンドポイントに届く実装の変更で、その関数に関連するテストを足しも変えもしないときは、変更メモのその関数の節に `テストを変えない理由:` の行を書く。地図のビルドの検査（`MapChanges.untested`、`packages/test-catalog` の diff.ts）が確かめる。テストを変えないという判断を毎回人にさせるためで、理由と関連するテストの決め方は [design-test-catalog.md](design-test-catalog.md) の「関連するテストに変更が無い実装の変更」にある
 
 **あれば良くなるもの**（無くても欠けない）。
 

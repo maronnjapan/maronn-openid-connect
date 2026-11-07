@@ -229,6 +229,10 @@ function ProviderMap({ data }: { data: MapData }) {
           <button type="button" className="changes-button" aria-pressed={onWiring} onClick={openWiring} title="型や呼び出しから届く先を確定できない配線">
             追えない配線<span className="count">{data.wiring?.length ?? 0}</span>
           </button>
+          {/* The tests are a page of their own (apps/tests), deployed beside the map at ./tests/. */}
+          <a className="changes-button header-link" href="./tests/" title="テストケースの一覧とそのコード（別のページ）">
+            テスト
+          </a>
           <div className="seg" role="group" aria-label="フレームワーク">
             {data.frameworks.map((name) => (
               <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...plainView(view), framework: name, step: null, trace: EMPTY_TRACE }, 'replace')}>

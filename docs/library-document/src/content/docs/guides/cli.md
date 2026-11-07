@@ -1007,4 +1007,5 @@ maronn-oidc explain hono --format json -o map.json    # UI 向けの JSON
 呼び出しはその場で開けるので、エンドポイントから何段下の関数まででも、一つの画面でたどれます。
 分岐ごとに進む側を選ぶとその道筋で通らない行が灰色になり（行は消えません）、`/token` の「refresh_token グラントを検証する」のような、よく使う選択も並びます。
 関数のページでは、その関数を根にして同じように処理をたどり、その関数を使うエンドポイントと、その関数を呼ぶ関数を確かめられます。
-Cloudflare Workers に置いた URL はこのサイトのサイドバー（Reference › Provider Map）にあり、PR ごとに GitHub Actions（`map-preview.yml`）が同じページをビルドしてプレビュー URL を PR にコメントします。
+エンドポイントと関数のページには、それを検証するテスト（API、E2E、ユニット）と、テストの足りないところも並びます。
+Cloudflare Workers に置いた URL はこのサイトのサイドバー（Reference › Provider Map）にあり、PR ごとに GitHub Actions（`ci.yml` の `map` ジョブ）がテストの後に同じページをビルドしてプレビュー URL を PR にコメントします。

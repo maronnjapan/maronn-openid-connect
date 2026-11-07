@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import {
   assertEveryPackageIsTypechecked,
   assertLintGateIsBacked,
+  assertMapFollowsTests,
+  assertMapSharesPreviewGroup,
   assertRootScriptsCoverApps,
   assertStaticVerificationGate,
   assertWorkflowVerifiesMainPush,
@@ -403,5 +405,69 @@ describe('assertRootScriptsCoverApps', () => {
           'apps の単体テストが CI で走らなくなります。',
       ),
     );
+  });
+});
+
+describe('assertMapFollowsTests', () => {
+  const mapJob = (needs) =>
+    [
+      '  map:',
+      ...(needs === undefined ? [] : [`    needs: ${needs}`]),
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - name: Build the map',
+      '        run: pnpm run build:map',
+      '',
+    ].join('\n');
+
+  it('should accept a map job that waits for the job that runs the tests', () => {
+    assert.doesNotThrow(() => assertMapFollowsTests(workflowWith(`${CI_WORKFLOW}${mapJob('test')}`)));
+    assert.doesNotThrow(() => assertMapFollowsTests(workflowWith(`${CI_WORKFLOW}${mapJob('[test]')}`)));
+  });
+
+  it('should accept a workflow without a map job', () => {
+    assert.doesNotThrow(() => assertMapFollowsTests(workflowWith(CI_WORKFLOW)));
+  });
+
+  it('should reject a map job that runs beside the tests', () => {
+    assert.throws(
+      () => assertMapFollowsTests(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`)),
+      new Error(
+        'CI の map ジョブは `pnpm run build:map` を実行しますが、`pnpm run test:ci` を実行する test ジョブを needs に持っていません。' +
+          '地図はテストの結果と到達をテストのジョブの出力から読むため、そのジョブの後に走らせてください。',
+      ),
+    );
+  });
+});
+
+describe('assertMapSharesPreviewGroup', () => {
+  const GROUP = 'map-preview-${{ github.event.pull_request.number || github.ref }}';
+  const mapJob = (group, cancel = 'false') =>
+    [
+      '  map:',
+      '    needs: test',
+      '    runs-on: ubuntu-latest',
+      ...(group === undefined ? [] : ['    concurrency:', `      group: ${group}`, `      cancel-in-progress: ${cancel}`]),
+      '    steps:',
+      '      - name: Build the map',
+      '        run: pnpm run build:map',
+      '',
+    ].join('\n');
+  const preview = (group) =>
+    workflowWith(['name: Map Preview', '', 'concurrency:', `  group: ${group}`, '  cancel-in-progress: false', '', 'jobs:', '  cleanup:', '    runs-on: ubuntu-latest', ''].join('\n'));
+
+  it('should accept a map job in the group of the preview cleanup, queued', () => {
+    assert.doesNotThrow(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(GROUP)}`), preview(GROUP)));
+  });
+
+  it('should accept a workflow without a map job or without the cleanup', () => {
+    assert.doesNotThrow(() => assertMapSharesPreviewGroup(workflowWith(CI_WORKFLOW), preview(GROUP)));
+    assert.doesNotThrow(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`), undefined));
+  });
+
+  it('should reject a map job outside the group, or one that cancels the cleanup', () => {
+    assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`), preview(GROUP)), /concurrency の group（なし）/);
+    assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob('map-${{ github.ref }}')}`), preview(GROUP)), /一致していない/);
+    assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(GROUP, 'true')}`), preview(GROUP)), /cancel-in-progress が false ではありません/);
   });
 });

@@ -1,0 +1,30 @@
+{
+  // The driver of apps/nextjs and the code of the app it imports, with the JSX
+  // and strictness settings of apps/nextjs/tsconfig.json. The config.ts of the
+  // features add their client metadata to the ClientRegistration of the app
+  // (declare module), so they are part of the program though nothing imports
+  // them all.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitReturns": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["support/drivers/nextjs.ts", "../../apps/nextjs/src/app/_oidc-provider/features/*/config.ts"]
+}

@@ -22,7 +22,7 @@ import { escapingFailures } from './failures.js';
 import { CallGraph, reachOf, rootOf, type EndpointRoot } from './impact.js';
 import { attachNotes, draftSections, isNote, NOTES_DIRECTORY, parseNote, type Named } from './notes.js';
 import type { Repository } from './repository.js';
-import { moduleOf } from './roots.js';
+import { isTestPath, moduleOf } from './roots.js';
 import type { BuiltTree } from './tree.js';
 import { nodesOf } from './tree.js';
 import { joinLines, shorten } from './words.js';
@@ -213,6 +213,10 @@ export interface ChangeResult {
   frames: Map<string, FrameChange>;
   /** The revision at the fork point, for its trees. */
   base: Revision;
+  /** The commit the working tree forked from the base at (`git merge-base`). */
+  forkPoint: string;
+  /** Every file the working tree changed since the fork point, the untracked ones as added. */
+  files: ChangedFile[];
 }
 
 /** The lines of a frame in its file: the JSDoc, the declaration up to the body, the rest. */
@@ -254,6 +258,7 @@ export function collectChanges(input: ChangeInput): ChangeResult {
   const baseModules = new Map<string, string[]>();
   const pairs: Array<{ before?: { root: string; module: string; text: string }; after?: { root: string; module: string; text: string } }> = [];
   let otherFiles = 0;
+  let testFiles = 0;
   for (const file of files) {
     if (file.after !== undefined && isNote(file.after)) {
       notes.push({ file: file.after, ...parseNote(read(file.after)) });
@@ -262,7 +267,9 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     const before = file.before === undefined ? undefined : moduleOf(repo.roots, file.before);
     const after = file.after === undefined ? undefined : moduleOf(repo.roots, file.after);
     if (before === undefined && after === undefined) {
-      if (file.before === undefined || !isNote(file.before)) otherFiles += 1;
+      const path = file.after ?? file.before;
+      if (path !== undefined && isTestPath(path)) testFiles += 1;
+      else if (file.before === undefined || !isNote(file.before)) otherFiles += 1;
       continue;
     }
     const pair: (typeof pairs)[number] = {};
@@ -506,9 +513,10 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     undocumented: entries.filter((entry) => entry.required && !entry.documented).map((entry) => entry.id),
     outside,
     otherFiles,
+    testFiles,
   };
   if (input.pullRequest !== undefined) changes.pullRequest = input.pullRequest;
-  return { changes, frames: diffs, base: baseRevision };
+  return { changes, frames: diffs, base: baseRevision, forkPoint, files };
 }
 
 /** Whether a node of a tree holds another (or is it). */
@@ -754,7 +762,7 @@ function narrowWords(warning: MapChanges['ambiguous'][number]): string {
  * the table where the new failures are caught and the calls the types do not
  * tell that may reach a change.
  */
-export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): string {
+export function changesMarkdown(changes: MapChanges, { limit = 40, sections = [] }: { limit?: number; sections?: readonly string[] } = {}): string {
   const lines: string[] = [];
   const missing = changes.frames.filter((entry) => (entry.kind === 'added' || entry.kind === 'modified') && !entry.documented);
   if (missing.length > 0) {
@@ -763,7 +771,7 @@ export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): strin
     lines.push(
       required > 0
         ? `このうち、エンドポイントに届く変更とエンドポイントの処理の変更 ${required} 個は変更メモ（\`${NOTES_DIRECTORY}/*.md\`）に説明が要ります。説明が無いと地図の検査が落ちます。`
-        : 'どれも説明の要る変更ではない（エンドポイントに届かないか、コメントや書き方だけの変更）ので、検査は落ちません。',
+        : 'どれも説明の要る変更ではない（エンドポイントに届かないか、コメントや書き方だけの変更）ので、変更メモの検査は落ちません。',
       '',
       '| | 関数 | 場所 | 自動要約 | 届くエンドポイント |',
       '|---|---|---|---|---|',
@@ -806,6 +814,8 @@ export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): strin
   if (folded > 0) lines.push('', `説明のない、JSDoc だけ変えた関数 ${folded} 個は表に入れていません（地図の「このPRの変更」にあります）。`);
   const outsideLines = changes.outside.reduce((sum, file) => sum + file.lines.length, 0);
   if (outsideLines > 0) lines.push('', `関数の外（import、型、定数など）の変更: ${changes.outside.map((file) => `\`${file.file}\` ${file.lines.length} 行`).join('、')}`);
+  // The sections others add (the tests of packages/test-catalog), each in its own `###` heading.
+  for (const section of sections) if (section.trim() !== '') lines.push('', section.trimEnd());
   return `${lines.join('\n')}\n`;
 }
 

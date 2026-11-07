@@ -1,6 +1,6 @@
 # 変更メモ
 
-PR の地図（`map-preview.yml` が PR ごとに出す OIDC Provider Map）は、その PR が変えた関数とエンドポイントの処理本体ごとに、何を変えたかとどこに効くかを計算して見せる。
+PR の地図（`ci.yml` の `map` ジョブが PR ごとに出す OIDC Provider Map）は、その PR が変えた関数とエンドポイントの処理本体ごとに、何を変えたかとどこに効くかを計算して見せる。
 変更メモには、地図が計算できない意図と背景を書く。
 
 | 問い | 答えるもの |
@@ -18,6 +18,28 @@ PR の地図（`map-preview.yml` が PR ごとに出す OIDC Provider Map）は�
 store や resolver の実装は、そのメンバーを呼ぶところを通ってエンドポイントに届く（`apps/hono` の実装は Hono・Express・Fastify、`apps/nextjs` の実装は Next.js のエンドポイントにだけ届く）。
 どのエンドポイントにも届かない関数、コメントや書き方だけを変えた関数（処理の流れの木が同じもの）、型で追えない呼び出しのほかからは届かない関数は、一覧に出るだけで、ビルドは落ちない。
 節の本文の質は検査しない。
+
+### テストを変えないとき
+
+同じ範囲の変更（エンドポイントに届く関数とエンドポイントの処理本体のコードの変更）で、その PR がその関数に関連するテストを一つも足しも変えもしないと、地図のビルドが落ちる。
+関連するテストは、`describe` がその関数を名指すテスト、期待結果を確かめるところでその関数を呼ぶテスト、計測した実行でその関数に到達したテスト、計測が無いときは変更が届くエンドポイントへリクエストする API と E2E のテストである（`packages/test-catalog`）。
+テストを変えないのが妥当なら、その関数の節に `テストを変えない理由:` で始まる行を書く。
+
+```md
+## buildTokenResponse <!-- hono:oidc-provider/endpoints/token/steps/build-token-response.ts#buildTokenResponse -->
+
+`scope` の値の前後の空白を落としてから返すようにした。
+
+テストを変えない理由: レスポンスの形は変えていない。既存の 12 件が同じ期待で通る。
+```
+
+理由の行は、なぜ変えたかの説明とは別に読む。
+理由は、その行から空行までの段落である（続く行も理由に入る）。
+コードブロックと HTML コメントの中の `テストを変えない理由:` は理由として読まない。
+理由の行だけの節は、説明の無い節として数える。
+コロンは半角でも全角でもよく、コロンの後が空の行は理由として数えない。
+理由の質は検査せず、PR のコメントに関連するテストの数と並べて出す。
+テストを変えるかどうかは変更の性質によるので機械では決めず、黙って通さずに一度落とすことで、毎回人に判断させる。
 
 ## 雛形を作る
 
@@ -42,6 +64,14 @@ MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft
 見出しの HTML コメントがその関数の id で、自動要約と届く先は参考として HTML コメントで添える。
 HTML コメントだけの節は説明の無い節として数えるので、コメントの下に意図を書く。
 生成した節を消すと、同じ検査がまた「説明の無い変更」として挙げる。
+
+関連するテストが変わっていない関数には、その関連するテストを HTML コメントで添え、空の `テストを変えない理由:` の行を置く。
+すでに節がある関数には、同じ見出しの節をもう一つ足し、そこに置く（一つの関数を名指す節がいくつあってもよい）。
+
+```md
+<!-- 関連するテスト（2）: should reject an expired access token / should accept a token that expires later。どれかを変えるか、変えない理由を次の行に書く -->
+テストを変えない理由:
+```
 
 ## 書き方
 
@@ -90,6 +120,7 @@ UserInfo とイントロスペクションで、期限の時刻ちょうどの�
 ```bash
 pnpm --filter @maronn-openid-connect/cli build
 pnpm --filter @maronn-openid-connect/map-analysis build
+pnpm --filter @maronn-openid-connect/test-catalog build
 MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map dev
 MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map build
 ```

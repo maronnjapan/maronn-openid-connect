@@ -12,6 +12,10 @@ dist/
 coverage/
 tests/e2e/playwright-report/
 tests/e2e/test-results/
+tests/steps/test-results/
+
+# The Playwright tests bddgen generates from tests/features (every run writes them anew)
+.features-gen/
 
 # Editor
 .vscode/
@@ -63,6 +67,7 @@ packages/cli/.matrix/
 
 # apps/map: the data of the map, built from the CLI (pnpm run build:map)
 apps/map/public/data/
+apps/tests/public/data/
 
 # Local audit data, build/test logs and investigation snapshots
 /work/

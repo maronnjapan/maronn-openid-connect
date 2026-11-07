@@ -122,6 +122,16 @@ describe('checkMap', () => {
     expect([metrics.changedOutside, failures]).toEqual([[], []]);
   });
 
+  it('should fail on a change whose related tests the pull request did not touch, naming the reason line that lets it pass', async () => {
+    const { data, frame } = mapOf([]);
+    data.changes = { ...changesOf([]), untested: ['core:a.ts#f'] };
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined);
+    expect(metrics.untested).toEqual(['core:a.ts#f']);
+    expect(failures).toEqual([
+      'f() (core a.ts) changed and reaches an endpoint, but this pull request adds or changes none of its related tests: change a test that names or reaches it, or write why the tests stay as they are on a line `テストを変えない理由: …` in its section of apps/map/changes/*.md',
+    ]);
+  });
+
   it('should count a changed line between the last node and the closing line as outside every node', async () => {
     const { data, frame } = mapWithClosingLine(4, 2);
     data.changes = changesOf([3]);

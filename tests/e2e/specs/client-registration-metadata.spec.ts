@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');

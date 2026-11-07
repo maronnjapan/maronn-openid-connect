@@ -76,7 +76,10 @@ OP 以外の役割（クライアントやリソースサーバー）は置き�
 分岐ごとに進む側を選ぶと、その道筋で通らない行が灰色になります（行は消えません）。
 `/token` なら「refresh_token グラントを検証する」のような、よく使う選択も並びます。
 処理の流れは、ビルド時に `packages/map-analysis` が TypeScript のコンパイラで読みます（React + Vite、Cloudflare Workers に静的アセットとして置く）。
-`pnpm run build:map` でビルドし、PR ごとに `map-preview.yml` がプレビューを発行します。
+`pnpm run build:map` でビルドし、PR ごとに `ci.yml` の `map` ジョブ（テストの後）がプレビューを発行します。
+テストは地図とは別の画面（`apps/tests`、地図の URL の `/tests/`）に、エンドポイントとステップごとのテストケース、そのテストのコード、ユニットテストの無いステップ、PR のテストの差分を表示します（データは地図のビルドが `packages/test-catalog` で作ります）。
+`apps/tests`（`@maronn-openid-connect/tests`）も OP ではなく、地図のビルドが地図の `dist/tests/` に入れて一緒に配るページです。
+テストの画面と、そのデータを作る道具の実装の詳細は [apps/tests/docs](apps/tests/docs/README.md) にあります。
 PR の地図は、その PR が変えた関数に札を付け、何を変えたか（処理の流れの差分）、どのエンドポイントに届くか、`apps/map/changes/` の変更メモに書いた意図を表示します。
 詳しくは [apps/map/README.md](apps/map/README.md) を参照してください。
 

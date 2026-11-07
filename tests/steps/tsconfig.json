@@ -1,0 +1,26 @@
+{
+  // The step definitions, their fixtures and the in-process config. The drivers
+  // of the apps import the code of an app and typecheck with the settings of
+  // that app: tsconfig.hono.json and tsconfig.nextjs.json.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true
+  },
+  "include": ["playwright.config.ts", "support/*.ts", "support/drivers/driver.ts", "common/**/*.ts", "in-process/**/*.ts", "http/**/*.ts"],
+  "exclude": ["node_modules", ".features-gen", "test-results"]
+}

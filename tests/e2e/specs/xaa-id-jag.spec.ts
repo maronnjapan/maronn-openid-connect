@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');

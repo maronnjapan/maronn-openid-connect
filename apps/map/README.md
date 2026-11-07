@@ -141,6 +141,14 @@ Tab で箱へ移ると、その箱が見える所まで図が動いてカード�
 ほかのタブと同じく図が見せている関数について述べるので、呼び出しの中へ潜ると、潜った先の関数の呼び出し元になる。
 呼び出し元へ移るときは、たどった経路を捨てて、その関数かエンドポイントのトレースを新しく開く。
 
+## テスト
+
+地図はテストを出さない。
+ヘッダの「テスト」は、テストの画面（[`apps/tests`](../tests)）へのリンクで、地図と同じ Worker の `./tests/` で開く。
+テストの画面は、エンドポイントごとのテストケースと、そのテストのコードを読む別のアプリである。
+テストを読むのは地図のデータの段で、テストの画面のデータを `apps/tests/public/data` に書く（後の「データとビルド」）。
+設計は [docs/design-test-catalog.md](docs/design-test-catalog.md) にある。
+
 ## PR の地図：このPRの変更
 
 PR の地図は、その PR が変えた関数とエンドポイントの処理本体に札を付ける。
@@ -203,10 +211,11 @@ interface のメンバーの実装を持つノードの要約は、そのメン�
 
 何を変えたかは木の差分が、どこに効くかは地図が示し、変更メモ（[changes/](changes/README.md)）には意図と背景を書く。
 地図のビルドは、変更メモの見出しが名前を挙げる関数が実在するかを確かめ、コードを変えた関数で節の無いものを「説明の無い変更」として PR コメントの先頭に一覧する。
-CI（`.github/workflows/map-preview.yml` の地図のビルド）を落とすのは、エンドポイントに届く関数か、エンドポイントの処理本体に説明の節が無いときだけである。
+CI（`.github/workflows/ci.yml` の `map` ジョブの地図のビルド）を落とすのは、エンドポイントに届く関数か、エンドポイントの処理本体に説明の節が無いときと、それらの関連するテストをこの PR が足しも変えもせず、節に `テストを変えない理由:` の行も無いときである。
+関連するテストの変わらない変更は、PR のコメントの「テスト」の節と検査の出力に出る（地図の画面には出さない）。
 コメントや書き方だけの変更と、追えない呼び出しのほかからは届かない変更では落とさない。
 本文の質は検査せず、自動要約を隣に並べる。
-PR のコメントは、説明の無い変更（と足す節の雛形）、変更メモの要旨、変わった関数の表（札、関数、場所、自動要約、届くエンドポイント、メモの一行目）、新しい失敗が捕まる場所と追えない呼び出し、プレビューの URL の順に並べる。
+PR のコメントは、説明の無い変更（と足す節の雛形）、変更メモの要旨、変わった関数の表（札、関数、場所、自動要約、届くエンドポイント、メモの一行目）、新しい失敗が捕まる場所と追えない呼び出し、テストの節、プレビューの URL（地図と、テストの画面の「この PR のテスト」 `/tests/#/pr`）の順に並べる。
 
 節の雛形は次のコマンドで作れる。
 MAP_BASE からの差分で、まだ節の無い関数ごとに見出し（`## 名前 <!-- id -->`）と、自動要約と届く先の HTML コメントを書き、意図の欄を空けておく。
@@ -245,16 +254,25 @@ TypeScript と TSX のハイライトは [Shiki](https://shiki.style/) でビル
 
 React + Vite の静的ページで、Cloudflare Workers に静的アセットとして置く（`wrangler.jsonc`）。
 ページは表示だけを受け持ち、解析は非公開のワークスペースパッケージ [`@maronn-openid-connect/map-analysis`](../../packages/map-analysis) がビルド時に行う。
+同じデータの段で [`@maronn-openid-connect/test-catalog`](../../packages/test-catalog) がテストを読む。
 
 1. CLI の `explain --format json` を全機能オンで 4 フレームワーク分まとめ、関数カタログを読む
 2. 関数とエンドポイントの処理本体を TypeScript のコンパイラ API で読み、処理の流れの木にする。呼び先は型で解決する
 3. MAP_BASE があれば、変更前のコードからも木を作り、木の差分、式の差分、影響範囲、変更メモの対応づけを求める
-4. 次のファイルを `public/data/` に書く
+4. テストを読んでカタログにし、関数カタログとエンドポイントに結び付ける。MAP_TEST_REPORTS があれば、その実行の結果と到達も結び付ける。MAP_BASE があれば、変更前のカタログとの差分を求め、`changes.md` にテストの節を足し、関連するテストの変わらない変更を検査の対象にする
+5. 次のファイルを `public/data/` に書く
 
 - `map.json`：索引。フレームワーク、コマンド、機能、エンドポイントとステップ、関数カタログ（呼び先、呼び出し元、外へ出る失敗）、interface のメンバー（説明、実装、実装が呼ぶもの）、PR の変更の一覧。木は含まない
 - `functions/<hash>.json`：フレーム一つ分。木、よく使う選択、PR の地図では変更前の木、ノードの差分、式の差分、ノードごとの hunk。フレームを開いたときに読む
 - `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む
 - `changes.md`：PR の変更の Markdown。PR のコメントがこれを引用する
+
+テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
+地図の `public/data` にテストのファイルは無い。
+
+`pnpm run build` は、データとページを作った後、テストの画面をビルドして（`pnpm --filter @maronn-openid-connect/tests build`）、その `dist/` を地図の `dist/tests/` に写し（`scripts/copy-tests-viewer.mjs`）、最後に検査する。
+検査より前に写すので、検査が落ちても `dist/` にはテストの画面が入る。
+写す段は、テストの画面がビルドされていないとき、そのデータが無いとき、地図のデータにテストのファイルが残っているときに落ちる。
 
 関数の id はカタログと同じ `<root>:<module>#<name>`、hono のエンドポイントの処理本体は `endpoint:<id>` である。
 解析パッケージのテストは、木から求めた呼び先が CLI のカタログの calls / calledBy と一致すること、本体の全行がどれかのノードに属することを確かめる。
@@ -263,26 +281,32 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 名前の無い選択（exit ケース）と、同じフレームで重なる名前（番号だけで区別した名前を含む）、ノードに属さない行、PR が変えた行のうちノードに属さないもの、説明の無い変更である。
 全機能オンの `/token` に、refresh_token と authorization_code の名前付きの選択があることも確かめる。
 これは地図の出力に対する検査で、貢献者のコードの形には向けない。
-図の検査（`src/lib/diagram.data.test.ts`）も同じ考えで、ビルドしたデータがあるときだけ走る（`map-preview.yml` では `build:map` の後のテスト）。
+図の検査（`src/lib/diagram.data.test.ts`）も同じ考えで、ビルドしたデータがあるときだけ走る（`ci.yml` の `map` ジョブでは `build:map` の後のテスト）。
 決定と終わりがどのフレームの図からも欠けないこと、`try` の枠が自分の箱だけを囲むこと、図がステップと守りをアウトラインと同じに畳むこと、幅に合わせて見出しが 11px に届くフレームが 9 割を下回らないことを確かめる。
 
 `MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` は、ページに出す PR の番号、タイトル、URL である。
+`MAP_TEST_REPORTS` は、テストの実行が書いたディレクトリ（Vitest と Playwright の JSON、到達の記録）である。
+無ければ、テストの札はコードから読んだものだけになる。
 
 ```bash
-# ルートで: CLI と解析パッケージをビルドしてから地図をビルドする（dist/ に静的ページ）
+# ルートで: CLI と解析パッケージをビルドしてから地図をビルドする（dist/ に静的ページ、dist/tests/ にテストの画面）
 pnpm run build:map
 
 # このディレクトリで
 pnpm run dev              # データを作って Vite の開発サーバー（http://127.0.0.1:3610）
 MAP_BASE=origin/main pnpm run dev   # origin/main からの変更（コミットしていないものを含む）を載せた地図
 MAP_BASE=origin/main pnpm run data  # 開発サーバーを動かしたまま、データだけを作り直す（ページを読み込み直すと載る）
-pnpm run build            # データを作って dist/ にビルドし、地図の出力を検査する
+pnpm run build            # データを作って dist/ にビルドし、テストの画面を dist/tests/ に入れ、地図の出力を検査する
 pnpm run check            # public/data の地図の出力だけを検査する
 pnpm run changes:draft    # MAP_BASE からの差分で変更メモの雛形を書く
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
 pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらない）
 pnpm test                 # ページの純粋な部分（トレース、決定、図、ハッシュ、変更の札、検索）のテスト
 ```
+
+開発サーバーは地図だけを配るので、ヘッダの「テスト」は開発サーバーでは開かない。
+テストの画面は `pnpm run data` の後に、その開発サーバー（`pnpm --filter @maronn-openid-connect/tests dev`）で開く。
+ビルドした `dist/` を `pnpm run preview` で配れば、`/tests/` も開く。
 
 データのビルドは `public/data` のファイルをその場で書き、前のビルドの残りだけを最後に消す（ディレクトリを消して作り直さない）。
 そのため、変更メモを書いた直後などに開発サーバーを止めずに `pnpm run data` で作り直してよい。
@@ -293,10 +317,13 @@ Worker の名前は `wrangler.jsonc` の `name` で変える。
 
 ## PR ごとのプレビューと main のデプロイ
 
-`.github/workflows/map-preview.yml` が、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
+`.github/workflows/ci.yml` の `map` ジョブが、`test` ジョブの後に、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
+`test` ジョブが書いたテストの結果と到達（`work/test-reports` の artifact `test-reports`）を `MAP_TEST_REPORTS` で受け取り、テストの画面に載せる。
+テストが落ちても、そこまでの結果で作る。
+テストの画面は地図の `dist/tests/` に入るので、どのデプロイでも地図の URL の `/tests/` で開く。
 
-- **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。URL と変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
-- **PR を閉じた**：その Preview を `wrangler preview delete --name pr-<番号>` で消す
+- **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。URL と変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更か、関連するテストの変わらない変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
+- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Preview を `wrangler preview delete --name pr-<番号>` で消す。`map` ジョブと同じ concurrency の group で順に走り、`map` ジョブは PR が閉じていればプレビューを作らない
 - **main への push**：`wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`）を更新する
 
 Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`wrangler preview` が失敗したときは `.github/scripts/map-preview.mjs` が PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` し、閉じたときにその Worker も消す。
@@ -314,7 +341,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/diagram.ts`：焦点のフレームの木をアウトラインと同じ畳み方で箱と矢印にし、選んだ道筋の箱、行、矢印と、箱の札を求める
 - `src/lib/graph.ts`：Dagre による図の自動配置、箱の幅、見出しを一行に収める省略
 - `src/lib/camera.ts`：図を開く倍率と位置、選んだ箱が見える所までの移動
-- `src/lib/hash.ts`：URL のハッシュ（`#hono--token/s4/s4.s2;d=s4.s1:true`、`#hono--fn--verifyClientSecret`、`#hono--changes`）
+- `src/lib/hash.ts`：URL のハッシュ（`#hono--token/s4/s4.s2;d=s4.s1:true`、`#hono--fn--verifyClientSecret`、`#hono--changes`、`#hono--wiring`）
 - `src/lib/changes.ts`：PR の変更の札（行と箱で共通）、下の変更の集計、変更に至る道筋の選択、届く経路の名前とまとめ方、失敗が捕まる場所、差分の行番号、変更メモの本文
 - `src/lib/words.ts`：アウトラインの行と図の箱の言葉（JSDoc、コメント、言葉の無い文の続き、`return` が返すもの、決定の側の名前）
 - `src/lib/model.ts`：機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
@@ -322,5 +349,6 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/components/Trace.tsx`, `TraceView.tsx`, `SelectionBar.tsx`：アウトライン、決定のボタン、よく使う選択、図・差分・詳細のタブ
 - `src/components/`：ほかに、エンドポイントの画面、関数のページ、このPRの変更のページ、左の一覧、検索、メニュー
 - `src/types.ts`：データの形（`@maronn-openid-connect/map-analysis/model` の再輸出）
-- `scripts/build-data.mjs`, `scripts/check-map.mjs`, `scripts/draft-notes.mjs`：解析パッケージを呼ぶデータのビルド、地図の出力の検査、変更メモの雛形
+- `scripts/build-data.mjs`, `scripts/check-map.mjs`, `scripts/draft-notes.mjs`：解析パッケージを呼ぶデータのビルド（テストの画面のデータも）、地図の出力の検査、変更メモの雛形
+- `scripts/copy-tests-viewer.mjs`：ビルドしたテストの画面を `dist/tests/` に写す
 - `changes/`：PR ごとの変更メモ（[書き方](changes/README.md)）

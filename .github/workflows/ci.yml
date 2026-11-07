@@ -137,6 +137,12 @@ jobs:
           MARONN_REACH: '1'
         run: pnpm run test:ci
 
+      # 機能ファイル（tests/features）のシナリオを、プロセス内の実行先（apps/hono と apps/nextjs を
+      # メモリのストアで立て、リクエストを直接渡す）で走らせる。ブラウザも OP のサーバーも要らない。
+      # HTTP の実行先（@http）は E2E と一緒に走る。
+      - name: Feature tests (in process)
+        run: pnpm run test:features
+
       - name: Install Playwright browsers
         run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
 

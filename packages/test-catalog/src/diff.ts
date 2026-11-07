@@ -90,15 +90,21 @@ export function relatedTests(entry: FrameChangeEntry, tests: readonly TestCase[]
   const endpoints = new Set(entry.reach.map((way) => `${way.source}:${way.endpoint}`));
   const own = bodyEndpoint(entry, data);
   if (own !== undefined) endpoints.add(own);
-  return tests.filter((test) => {
-    if (test.kind === 'tool') return false;
-    if (test.subjects.some((subject) => subject.kind === 'function' && subject.id === entry.id)) return true;
-    if ((test.reach ?? []).some((reach) => reach.functions.includes(entry.id))) return true;
+  // The closest first: the tests that name or call it, then those that reached it, then those of the endpoints it reaches.
+  const rank = (test: TestCase): number => {
+    if (test.kind === 'tool') return -1;
+    if (test.subjects.some((subject) => subject.kind === 'function' && subject.id === entry.id)) return 0;
+    if ((test.reach ?? []).some((reach) => reach.functions.includes(entry.id))) return 1;
     const reachesEndpoint = (test.kind === 'api' || test.kind === 'e2e') && endpointKeys(test).some((key) => endpoints.has(key));
     // A measured run tells which tests run the frame; without one, the tests of the endpoints the change reaches do.
-    if (!measured || test.reach === undefined) return reachesEndpoint;
-    return own !== undefined && reachesEndpoint;
-  });
+    if (!measured || test.reach === undefined) return reachesEndpoint ? 2 : -1;
+    return own !== undefined && reachesEndpoint ? 2 : -1;
+  };
+  return tests
+    .map((test) => ({ test, rank: rank(test) }))
+    .filter(({ rank: value }) => value >= 0)
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ test }) => test);
 }
 
 /** The outcomes, aspects and errors of some tests, each once and sorted. */

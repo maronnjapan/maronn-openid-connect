@@ -43,6 +43,27 @@ function testWords(card: TestDiff['cards'][string] | undefined, id: string, labe
   return `${card.title}（${facts.join(', ')}）`;
 }
 
+/** Tests in the comment, the rows of an outline as one line under its name with the number of its rows. */
+function testLines(ids: readonly string[], diff: TestDiff, labels: ReadonlyMap<string, string>): string[] {
+  const seen = new Map<string, { id: string; rows: number }>();
+  const order: string[] = [];
+  for (const id of ids) {
+    const card = diff.cards[id];
+    const outline = card !== undefined && card.source.form === 'feature' && card.path.length > 1 ? `${card.source.file}\u0000${card.path.join('\u0000')}` : id;
+    const known = seen.get(outline);
+    if (known === undefined) {
+      seen.set(outline, { id, rows: 1 });
+      order.push(outline);
+    } else known.rows += 1;
+  }
+  return order.map((key) => {
+    const { id, rows } = seen.get(key) as { id: string; rows: number };
+    const card = diff.cards[id];
+    if (card === undefined || key === id) return `- ${testWords(card === undefined ? undefined : { ...card, examples: undefined } as TestDiff['cards'][string], id, labels)}`;
+    return `- ${testWords({ ...card, title: card.path[card.path.length - 1] as string, examples: rows } as TestDiff['cards'][string], id, labels)}`;
+  });
+}
+
 /** The lines of a list, at most LIMIT, the rest counted. */
 function listed(lines: readonly string[]): string[] {
   return lines.length <= LIMIT ? [...lines] : [...lines.slice(0, LIMIT), `- ほか ${lines.length - LIMIT} 件は地図で見てください。`];
@@ -80,79 +101,69 @@ export function testsMarkdown(diff: TestDiff, data: MapData, aspects: AspectTabl
     lines.push(...listed(reasoned.map((frame) => `- ${frameWords(entries.get(frame.frame), frame.frame)}: 関連するテスト ${frame.related.length} 件。「${cell(frame.reason?.text ?? '')}」`)));
   }
 
-  // By endpoint: the tests added and changed, and the changed functions that reach it.
+  // By endpoint: the tests added and changed for it, and the changed functions that reach it with their tests of it.
   const endpointName = (key: string) => {
     const [source, id] = key.split(':') as [string, string];
     const endpoint = data.flows[source]?.endpoints.find((candidate) => candidate.id === id);
     return endpoint === undefined ? id : `${endpoint.methods.join(' | ')} ${endpoint.path}`;
   };
-  const groups = new Map<string, { sources: Set<string>; added: string[]; changed: string[]; frames: Set<string> }>();
-  const groupOf = (key: string) => {
-    const [source, id] = key.split(':') as [string, string];
-    const name = endpointName(key);
-    const group = groups.get(name) ?? { sources: new Set<string>(), added: [], changed: [], frames: new Set<string>() };
-    group.sources.add(source);
-    groups.set(name, group);
-    return { group, id };
-  };
-  for (const frame of diff.frames) {
-    const entry = entries.get(frame.frame);
-    for (const way of entry?.reach ?? []) groupOf(`${way.source}:${way.endpoint}`).group.frames.add(frame.frame);
-  }
   const changed = new Set(diff.modified.map((change) => change.id));
+  const groups = new Map<string, { keys: Set<string>; added: string[]; changed: string[] }>();
   for (const id of [...diff.added, ...diff.renamed.map(([, after]) => after), ...diff.modified.map((change) => change.id)]) {
     for (const key of diff.cards[id]?.endpoints ?? []) {
-      const { group } = groupOf(key);
+      const name = endpointName(key);
+      const group = groups.get(name) ?? { keys: new Set<string>(), added: [], changed: [] };
+      group.keys.add(key);
       const list = changed.has(id) ? group.changed : group.added;
       if (!list.includes(id)) list.push(id);
+      groups.set(name, group);
     }
   }
-  if (groups.size > 0) {
-    for (const [name, group] of [...groups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-      lines.push('', `**変更対象: ${name}（${[...group.sources].sort().join(', ')}）**`);
-      if (group.added.length > 0) lines.push('', '追加されたテスト:', ...listed(group.added.map((id) => `- ${testWords(diff.cards[id], id, labels)}`)));
-      if (group.changed.length > 0) {
-        lines.push(
-          '',
-          '変更されたテスト:',
-          ...listed(
-            group.changed.map((id) => {
-              const change = diff.modified.find((candidate) => candidate.id === id);
-              const pair = change?.assertions === undefined ? '' : `（期待 ${[...change.assertions.removed.map((assertion) => `~~${cell(assertion.text)}~~`), ...change.assertions.added.map((assertion) => cell(assertion.text))].slice(0, 4).join(' → ')}）`;
-              return `- ${testWords(diff.cards[id], id, labels)}${pair}`;
-            }),
-          ),
-        );
-      }
-      if (group.frames.size > 0) {
-        lines.push(
-          '',
-          '関連する変更関数:',
-          ...listed(
-            [...group.frames].map((id) => {
-              const frame = diff.frames.find((candidate) => candidate.frame === id);
-              const touched = frame?.touched ?? [];
-              const counts = new Map<string, { added: number; changed: number }>();
-              for (const test of touched) {
-                const card = diff.cards[test];
-                const word = card === undefined ? 'テスト' : KIND_WORDS[card.kind];
-                const known = counts.get(word) ?? { added: 0, changed: 0 };
-                if (changed.has(test)) known.changed += 1;
-                else known.added += 1;
-                counts.set(word, known);
-              }
-              const words = [...counts].map(([word, count]) => [count.added > 0 ? `${word} 追加 ${count.added}` : '', count.changed > 0 ? `${word} 変更 ${count.changed}` : ''].filter((part) => part !== '').join('、'));
-              return `- ${frameWords(entries.get(id), id)}: ${words.length === 0 ? `関連するテスト ${frame?.related.length ?? 0} 件、変更なし` : words.join('、')}`;
-            }),
-          ),
-        );
-      }
+  /** The words of what happened to the tests of a changed frame: by kind, added and changed. */
+  const touchedWords = (ids: readonly string[]) => {
+    const counts = new Map<string, { added: number; changed: number }>();
+    for (const test of ids) {
+      const card = diff.cards[test];
+      const word = card === undefined ? 'テスト' : KIND_WORDS[card.kind];
+      const known = counts.get(word) ?? { added: 0, changed: 0 };
+      if (changed.has(test)) known.changed += 1;
+      else known.added += 1;
+      counts.set(word, known);
     }
+    return [...counts].map(([word, count]) => [count.added > 0 ? `${word} 追加 ${count.added}` : '', count.changed > 0 ? `${word} 変更 ${count.changed}` : ''].filter((part) => part !== '').join('、'));
+  };
+  for (const [name, group] of [...groups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const sources = [...group.keys].map((key) => key.split(':')[0] as string).sort();
+    lines.push('', `**変更対象: ${name}（${[...new Set(sources)].join(', ')}）**`);
+    if (group.added.length > 0) lines.push('', '追加されたテスト:', ...listed(testLines(group.added, diff, labels)));
+    if (group.changed.length > 0) {
+      lines.push(
+        '',
+        '変更されたテスト:',
+        ...listed(
+          group.changed.map((id) => {
+            const change = diff.modified.find((candidate) => candidate.id === id);
+            const pair = change?.assertions === undefined ? '' : `（期待 ${[...change.assertions.removed.map((assertion) => `~~${cell(assertion.text)}~~`), ...change.assertions.added.map((assertion) => cell(assertion.text))].slice(0, 4).join(' → ')}）`;
+            return `- ${testWords(diff.cards[id], id, labels)}${pair}`;
+          }),
+        ),
+      );
+    }
+    // The changed functions that reach it, with their touched tests of this endpoint (and their unit tests).
+    const frames = diff.frames
+      .filter((frame) => (entries.get(frame.frame)?.reach ?? []).some((way) => group.keys.has(`${way.source}:${way.endpoint}`)))
+      .map((frame) => ({ frame, own: frame.touched.filter((id) => (diff.cards[id]?.endpoints ?? []).length === 0 || (diff.cards[id]?.endpoints ?? []).some((key) => group.keys.has(key))) }))
+      .filter(({ own }) => own.length > 0);
+    if (frames.length > 0) lines.push('', '関連する変更関数:', ...listed(frames.map(({ frame, own }) => `- ${frameWords(entries.get(frame.frame), frame.frame)}: ${touchedWords(own).join('、')}`)));
   }
+  // The changed functions whose tests changed outside the groups (unit tests only, or tests of no endpoint).
+  const grouped = new Set([...groups.values()].flatMap((group) => [...group.keys]));
+  const elsewhere = diff.frames.filter((frame) => frame.touched.length > 0 && !(entries.get(frame.frame)?.reach ?? []).some((way) => grouped.has(`${way.source}:${way.endpoint}`)));
+  if (elsewhere.length > 0) lines.push('', '**テストを足すか変えた変更関数**', '', ...listed(elsewhere.map((frame) => `- ${frameWords(entries.get(frame.frame), frame.frame)}: ${touchedWords(frame.touched).join('、')}`)));
 
   const failures = diff.frames.flatMap((frame) => frame.failuresWithoutTest.map((failure) => `- ${failure}（${frameWords(entries.get(frame.frame), frame.frame)} から）`));
   if (failures.length > 0) lines.push('', '**新しく外へ出る失敗を期待するテストが無いもの**', '', ...listed(failures));
-  if (diff.removed.length > 0) lines.push('', `**削除されたテスト（${diff.removed.length}）**`, '', ...listed(diff.removed.map((id) => `- ${testWords(diff.cards[id], id, labels)}`)));
+  if (diff.removed.length > 0) lines.push('', `**削除されたテスト（${diff.removed.length}）**`, '', ...listed(testLines(diff.removed, diff, labels)));
   if (diff.renamed.length > 0) lines.push('', `**名前を変えたテスト（${diff.renamed.length}）**`, '', ...listed(diff.renamed.map(([before, after]) => `- ${diff.cards[before]?.title ?? before} → ${diff.cards[after]?.title ?? after}`)));
   lines.push('', 'テストの結果とカバレッジの変化は Codecov のコメントにあります。');
   return `${lines.join('\n')}\n`;

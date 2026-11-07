@@ -1,6 +1,6 @@
 # ③ 結果と関数に結ぶ
 
-[全体像](README.md) ＞ [② 実行して計る](02-measure.md) ＞ ③ 結果と関数に結ぶ ＞ [④ PR の差分と検査](04-pull-request.md)
+[全体像](README.md) ｜ ← [② 実行して計る](02-measure.md) ｜ ③ 結果と関数に結ぶ ｜ [④ PR の差分と検査](04-pull-request.md) →
 
 ```mermaid
 flowchart LR
@@ -40,10 +40,10 @@ flowchart LR
 |---|---|
 | 入力 | ① のカード（`TestCase[]`）、② の報告のディレクトリ（`MAP_TEST_REPORTS`）、地図の `MapData`（`functions`、`bodies`、`members`、`flows`、`features`、`sources`）、観点の表（`required` と `label`） |
 | 出力 | 結果と到達を足したカード、計測したかどうか（`measured`）、`Joined`（フレームごととエンドポイントごとのテストと不足、機能の不足） |
-| 実装 | `packages/test-catalog/src/run.ts`（`readRun`、`CaseFinder`、`FrameLocator`、`repositoryPath`）、`build.ts`（`withRun`、`buildTests`）、`join.ts`（`joinTests`、`reachableFrames`、`sourceOfFrame`、`endpointsOf`、`countTests`、`errorCodeOf`）、`catalog.ts`（`EndpointIndex`） |
+| 実装 | `packages/test-catalog/src/run.ts`（`readRun`、`CaseFinder`、`FrameLocator`、`repositoryPath`）、`build.ts`（`withRun`、`buildTests`）、`join.ts`（`joinTests`、`reachableFrames`、`sourceOfFrame`、`endpointsOf`、`countTests`、`errorCodeOf`）、`catalog.ts`（`EndpointIndex`）<br>作る順：[再現の手順](README.md#再現の手順)の [6](README.md#6-結果と関数の結び付け) |
 
 ③ は、⑤ の `buildTests` の中で、① がカードを読んだ後に動く。
-報告のディレクトリが無ければ ③-1 から ③-5 を飛ばし、計測していない実行として ③-6 から先を行う。
+報告のディレクトリが無ければ [③-1](#-1-報告の読み方) から [③-5](#-5-カードへの結果と到達) を飛ばし、計測していない実行として [③-6](#-6-フレームのテスト) から先を行う。
 
 ```mermaid
 flowchart TB
@@ -84,16 +84,40 @@ flowchart TB
 
 `readRun(directory, repository, tests, data, endpointOf)` は、報告のディレクトリから三種類のファイルを決まった順に読む。
 
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S1 here
+  class S2,S3,S4,S5,S6,S7,S8,S9 dim
+```
+
 `buildTests` が `readRun` を呼ぶのは、`reports` が与えられ、そのディレクトリがあるときだけである。
-`reports` は、`build-data.mjs` が `MAP_TEST_REPORTS` の前後の空白を除き、空でなければ `resolve` で絶対パスにして渡す。
+`reports` は、`build-data.mjs` が `MAP_TEST_REPORTS` から作る絶対パスである（[⑦-2](07-build-ci.md#-2-データの段)）。
 `repository` は、`BuildContext.repository.repository`（リポジトリの絶対パス）である。
-`endpointOf` は、`EndpointIndex.endpointOfPath`（③-4-c）である。
+`endpointOf` は、`EndpointIndex.endpointOfPath`（[③-4-c](#-4-c-要求のエンドポイント)）である。
 
 | 順 | ファイル | 形 | 使い道 |
 |---|---|---|---|
 | 1 | `vitest/*.json`（名前の順） | Vitest の JSON の報告 | 結果（`meta.reach` があれば到達も） |
 | 2 | `playwright/*.json`（名前の順） | Playwright の JSON の報告 | 結果（ファイルの名前が実行先） |
-| 3 | `reach/*.jsonl`（名前の順） | 到達の行（`RawReach`、②-1-b） | 到達 |
+| 3 | `reach/*.jsonl`（名前の順） | 到達の行（`RawReach`、[②-1-b](02-measure.md#-1-b-到達の行)） | 到達 |
 
 ディレクトリが無い種類は、ファイルが無いものとして飛ばす。
 
@@ -150,7 +174,7 @@ interface PlaywrightSuite {
 
 実行の時刻（`run.at`）は、最初に見つけた開始の時刻である。
 Vitest の `startTime` を ISO 8601 にしたものが先で、無ければ Playwright の `stats.startTime` である。
-`TestRun.run` の `ref` と `commit` は、いまどこでも埋めない。
+`TestRun.run` の `ref` と `commit` は埋めない（[作らなくてよいもの](README.md#作らなくてよいもの)）。
 
 Vitest の `meta.reach` は、② のレポーターが JSON から外すので、このリポジトリでは到達は `reach/` から来る。
 `readRun` は、それでも `meta.reach` があれば、`skipped` でない結果の到達として読む。
@@ -167,11 +191,39 @@ interface JoinedRun {
 }
 ```
 
-実装：`packages/test-catalog/src/run.ts`（`readRun`、`jsonFiles`、`statusOf`）、`packages/test-catalog/src/build.ts`（`buildTests`）、`apps/map/scripts/build-data.mjs`
+実装：
+
+- `packages/test-catalog/src/run.ts`：`readRun`、`jsonFiles`、`statusOf`
+- `packages/test-catalog/src/build.ts`：`buildTests`
+- `apps/map/scripts/build-data.mjs`
 
 ## ③-2 テストの引き当て
 
 報告のテストを、ファイルと describe と名前で、またはシナリオの `@id:` のタグで、カードに引き当てる。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S2 here
+  class S1,S3,S4,S5,S6,S7,S8,S9 dim
+```
 
 ### ③-2-a 引き当ての索引
 
@@ -183,7 +235,7 @@ interface JoinedRun {
 | 索引 | 入るカード | 鍵 |
 |---|---|---|
 | `byId` | 全部 | カードの id |
-| `outlines` | 機能ファイルのカードで、id が `/^(.*)-(\d+)$/` に合い、`path` が二つ以上のもの | id の前の部分（シナリオアウトラインの id）。値は、例の行のカードをカタログの順に並べた列 |
+| `outlines` | 機能ファイルのカードで、id が `/^(.*)-(\d+)$/` に合い、`path` が二つ以上のもの | id の前の部分（シナリオアウトラインの id）。<br>値は、例の行のカードをカタログの順に並べた列 |
 | `byKey` | テストコードのカード | `source.file`、`path` の各要素、`title` を `\u0000` でつないだもの |
 | `templates` | テストコードのカードで、名前が名前のひな形のもの | `source.file` と `path` を `\u0000` でつないだもの |
 
@@ -198,9 +250,13 @@ interface JoinedRun {
 
 `should accept %s` は、`should accept a` にも `should accept b` にも合う。
 
+シナリオの id は、報告のテストのタグから取る。
+タグごとに先頭の `@` を一つ除き、`id:` で始まる最初のタグの残りを id とする。
+Playwright の JSON のタグは `@` を持たず、到達の行のタグ（`testInfo.tags`）は持つので、両方をこの規則で読む。
+
 ```mermaid
 flowchart TB
-  A["報告のテスト"] --> B{"タグに id: が<br/>あるか"}
+  A["報告のテスト"] --> B{"先頭の @ を除いて<br/>id: で始まる<br/>タグがあるか"}
   B -->|"ある"| C{"byId にその id の<br/>カードがあるか"}
   C -->|"ある"| D["そのシナリオ"]
   C -->|"無い<br/>シナリオアウトライン"| E{"番号を一つ進め<br/>名前が同じ例の行が<br/>ちょうど一つか"}
@@ -219,10 +275,10 @@ flowchart TB
 |---|---|
 | `code(file, path, title)` | `byKey` の同じ鍵、無ければ同じ `file` と `path` の `templates` で最初に合うもの |
 | `scenario(id)` | `byId` の `id` |
-| `scenario(id, row, title)` | `outlines` の `id` の例の行のうち、名前が `title` のものがちょうど一つならそれ。でなければ `row` 番目の例の行、それも無ければ `byId` の `${id}-${row}` |
+| `scenario(id, row, title)` | `outlines` の `id` の例の行のうち、名前が `title` のものがちょうど一つならそれ。<br>でなければ `row` 番目の例の行、それも無ければ `byId` の `${id}-${row}` |
 
 シナリオアウトラインかどうかは、`scenario(id)` が無いことで決める。
-例の行の id は `<id>-<番号>` で、`<id>` そのもののカードは無いからである（①-10）。
+例の行の id は `<id>-<番号>` で、`<id>` そのもののカードは無いからである（[①-10](01-read.md#-10-テストの-id)）。
 
 例の行の番号は、同じシナリオアウトラインの報告のテストを見た順に、1 から数える。
 
@@ -280,6 +336,30 @@ Playwright の報告の describe の並びは、suite の木をたどって作�
 
 引き当てた結果を、カードの id ごと、実行先ごとに一つの `TestResult` にまとめる。
 
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S3 here
+  class S1,S2,S4,S5,S6,S7,S8,S9 dim
+```
+
 ```ts
 interface TestResult {
   status: 'passed' | 'failed' | 'skipped'; // 実行先のうち最も悪いもの
@@ -317,18 +397,41 @@ Vitest は `assertionResults` の一件ごと、Playwright は `spec.tests` の�
 | 名前が `should accept %s` のカードに、`should accept a`（passed、2 ms）と `should accept b`（failed、3 ms） | `{ status: 'failed', targets: { '': { status: 'failed', duration: 5, attempts: 1 } } }` |
 | `expected` のテストで、試行が failed（5 ms）と passed（4 ms） | `{ status: 'passed', targets: { hono: { status: 'passed', duration: 9, attempts: 2 } } }` |
 
-例：`work/test-reports` の報告では、6,008 枚のうち 5,707 枚に結果が付く。
-実行先ごとには、`''` が 5,578 枚、`hono` と `nextjs` が 129 枚ずつである。
-数は実行で変わる。
+例：`work/test-reports` の報告では、6,062 枚のうち 5,761 枚に結果が付く。
+実行先ごとには、`''` が 5,632 枚、`hono` と `nextjs` が 129 枚ずつである。
 
 結果の無い 301 枚は、どれも `.github/scripts/*.test.mjs` の `tool` のテストである。
-これらは `node --test` で走って報告を書かないので、結果が付かない（⑦-5）。
+これらは `node --test` で走って報告を書かないので、結果が付かない（[⑦-5](07-build-ci.md#-5-ci-の-test-ジョブ)）。
 
 実装：`packages/test-catalog/src/run.ts`（`readRun` の `record`、`worse`、`statusOf`）
 
 ## ③-4 到達の行
 
 到達の行を、テストと実行先ごとに一行に絞り、位置をフレームの id に、URL をエンドポイントに直す。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S4 here
+  class S1,S2,S3,S5,S6,S7,S8,S9 dim
+```
 
 ### ③-4-a 残す到達の行
 
@@ -338,7 +441,7 @@ Vitest は `assertionResults` の一件ごと、Playwright は `spec.tests` の�
 2. 一行でも読めば、`measured` を真にする
 3. 鍵 `target`、`file`、`path` の各要素、`title` を `\u0000` でつなぐ（`target` が無ければ空）
 4. 同じ鍵では、`retry`（無ければ 0）が大きいほう、同じなら後の行を残す
-5. 残った行を、鍵を初めて見た順に、③-2 の規則でカードに引き当てる
+5. 残った行を、鍵を初めて見た順に、[③-2](#-2-テストの引き当て) の規則でカードに引き当てる
 6. `status` が `skipped` の行は捨てる（シナリオアウトラインのものは、例の行の番号を数えてから捨てる）
 7. 引き当てられなければ、`unmatched.reach` に数える
 
@@ -358,7 +461,7 @@ Vitest は `assertionResults` の一件ごと、Playwright は `spec.tests` の�
 名前でなく位置で引くのは、バンドラーが関数の名前を変えることがあるからである。
 関数の中の無名の関数は、それを含む最も内側のフレームになる。
 
-到達の `functions` は、引けたフレームの id を一つずつ、文字の順に並べたものである。
+到達の `functions` は、引けたフレームの id を重ならずに、コード単位の順に並べたものである。
 
 ### ③-4-c 要求のエンドポイント
 
@@ -380,7 +483,8 @@ URL として読めなければ、`url` をそのまま使う。
 ```ts
 interface TestReach {
   target?: string; // 到達の行の target。Vitest は無し
-  functions: string[]; // フレームの id。文字の順
+  functions: string[]; // フレームの id。コード単位の順
+  members?: string[]; // 書かない（README の作らなくてよいもの）
   requests?: Array<{ endpoint?: string; method: string; path: string; status: number; error?: string }>; // 空なら付けない
 }
 ```
@@ -405,11 +509,38 @@ interface TestReach {
 要求は 1,540 件で、1,529 件がエンドポイントに引ける。
 引けないのは `/operator/clients/...` や `/oidc-error` のような、地図のエンドポイントでないパスである。
 
-実装：`packages/test-catalog/src/run.ts`（`readRun`、`FrameLocator`、`reachOf`、`addReach`）、`packages/test-catalog/src/catalog.ts`（`EndpointIndex.endpointOfPath`）
+実装：
+
+- `packages/test-catalog/src/run.ts`：`readRun`、`FrameLocator`、`reachOf`、`addReach`
+- `packages/test-catalog/src/catalog.ts`：`EndpointIndex.endpointOfPath`
 
 ## ③-5 カードへの結果と到達
 
 `withRun(tests, run)` は、結果と到達をカードに置き、到達が示すエンドポイントを対象に足す。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S5 here
+  class S1,S2,S3,S4,S6,S7,S8,S9 dim
+```
 
 ```mermaid
 flowchart TB
@@ -441,10 +572,9 @@ flowchart TB
 
 `evidence` の `coverage` は、確かめたか足したときに、まだ無ければ一つ足す。
 到達した関数は、対象には足さない。
-到達のまま ③-6 が使う。
+到達のまま [③-6](#-6-フレームのテスト) が使う。
 
-`model.ts` の型は、`how: 'coverage'` の関数の対象、`member` の対象、`TestReach.members` を持つ。
-コードは、そのどれも作らない。
+型にある `how: 'coverage'` の関数の対象、`member` の対象、`TestReach.members` は作らない（[作らなくてよいもの](README.md#作らなくてよいもの)）。
 
 例：このリポジトリでは、76 枚のカードに `coverage` のエンドポイントの対象が付き、4,414 枚の `evidence` に `coverage` が入る。
 
@@ -453,6 +583,30 @@ flowchart TB
 ## ③-6 フレームのテスト
 
 カードをフレームごとに集め、**フレームのテスト**、**フレームのユニットテスト**、到達したテストの数を決める。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S6 here
+  class S1,S2,S3,S4,S5,S7,S8,S9 dim
+```
 
 種類が `tool` のカードは、どのフレームにも入れない。
 対象と到達の id のうち、`MapData.functions` にも `MapData.bodies` にも無いものは数えない。
@@ -476,13 +630,40 @@ interface FrameJoin {
 }
 ```
 
-例：このリポジトリでは、テストのあるフレームが 1,052、ユニットテストのあるフレームが 664 である。
+例：このリポジトリでは、テストのあるフレームが 1,052、ユニットテストのあるフレームが 659 である。
+`createCorsMiddleware`（`apps/hono/src/oidc-provider/cors.ts`）を describe に書いた 6 件は、API テスト（[①-9-a](01-read.md#-9-a-種類)）である。
+そのため、このフレームの `unit` は 0 件である。
+`tests` には、その 6 件と到達したテストを合わせた 245 件が入る。
 
 実装：`packages/test-catalog/src/join.ts`（`joinTests` の前半）
 
 ## ③-7 エンドポイントのテスト
 
 エンドポイントごとに、届くフレームを呼び出しからたどり、そのエンドポイントのテストを決める。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S7 here
+  class S1,S2,S3,S4,S5,S6,S8,S9 dim
+```
 
 ### ③-7-a エンドポイントの並び
 
@@ -553,7 +734,7 @@ flowchart TB
 
 | 条件 | 内容 |
 |---|---|
-| 対象 | 対象に、id がこのエンドポイントで `source` が同じエンドポイントがある（`how` は問わず、③-5 で足したものも入る） |
+| 対象 | 対象に、id がこのエンドポイントで `source` が同じエンドポイントがある（`how` は問わず、[③-5](#-5-カードへの結果と到達) で足したものも入る） |
 | 到達 | 到達の項目のうち、実行先が無いか `source` と同じもののどれかが、`functions` に `root` を持つか、このエンドポイントの要求を持つ |
 | 届くフレーム | 届くフレームのどれかの、フレームのユニットテストである |
 
@@ -609,10 +790,10 @@ classDiagram
 ```
 
 `frames` は、テストのあるフレームと、どれかのエンドポイントから届くフレームの全部を持つ。
-③-8-c がフレームの不足を求めるときに、届くフレームの項目も作るからである。
+[③-8-c](#-8-c-フレームの不足) がフレームの不足を求めるときに、届くフレームの項目も作るからである。
 
 例：このリポジトリでは、エンドポイントは 34 ある。
-`hono:token` は 243 のフレームに届き、テストは 1,326 件である。
+`hono:token` は 243 のフレームに届き、テストは 1,328 件である。
 `nextjs:token` は 254 のフレームに届き、テストは 1,232 件である。
 
 実装：`packages/test-catalog/src/join.ts`（`endpointsOf`、`sourceOfFrame`、`reachableFrames`、`joinTests`）
@@ -620,6 +801,30 @@ classDiagram
 ## ③-8 不足
 
 テストが確かめていないことを、五つの規則で**不足**として求める。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S8 here
+  class S1,S2,S3,S4,S5,S6,S7,S9 dim
+```
 
 ```mermaid
 flowchart LR
@@ -646,12 +851,12 @@ interface Gap {
 ```
 
 種類ごとに持つ欄は決まっている。
-⑤ は、これらの欄をそのまま写し、エンドポイントを示す欄を足して索引に入れる（⑤-10-c）。
+⑤ は、これらの欄をそのまま写し、エンドポイントを示す欄を足して索引に入れる（[⑤-10-c](05-data.md#-10-c-不足の並べ方)）。
 
 | 種類 | `kind` のほかに持つ欄 |
 |---|---|
 | `no-unit-test` | `frame`、`reached`（計測したときだけ）、`text` |
-| `failure-untested` | `frame`（失敗が出るフレーム。エンドポイントの不足では ③-8-a の最初のもの）、`error`、`text` |
+| `failure-untested` | `frame`（失敗が出るフレーム。エンドポイントの不足では [③-8-a](#-8-a-エンドポイントの不足) の最初のもの）、`error`、`text` |
 | `step-unreached` | `frame`（ステップの `functionId`）、`step`、`text` |
 | `aspect-missing` | `aspect`、`text` |
 | `feature-without-e2e` | `feature`、`text` |
@@ -663,7 +868,7 @@ interface Gap {
 | 種類 | 条件 | 並び |
 |---|---|---|
 | `no-unit-test` | 届くフレームのうち `MapData.functions` にあるもの（処理本体は除く）で、フレームのユニットテストが無い | フレームの id の順 |
-| `failure-untested` | 届くフレームから外へ出る失敗のうち、エラーコードを持ち、エンドポイントのテストのどの `errors` にもそのコードが無い | 失敗の文字の順 |
+| `failure-untested` | 届くフレームから外へ出る失敗のうち、エラーコードを持ち、エンドポイントのテストのどの `errors` にもそのコードが無い | 失敗の文字列のコード単位の順 |
 | `step-unreached` | 計測した実行で、`functionId` を持つステップのうち、その関数の `reached` が 0 | ステップの順 |
 | `aspect-missing` | `aspects.yaml` の `required` の観点のうち、エンドポイントのテストのどれも持たない | `required` の順 |
 
@@ -704,7 +909,7 @@ OAuth のエラーコードのほか、`AuthTransactionError(invalid_csrf_token)
   - 不足：フレームのコードつきの失敗のうち、確かめるテストのどの `errors` にもコードが無いもの
   - 同じ失敗の文字は一度だけ
 
-フレームの不足は、いまどのファイルにも書かない。
+フレームの不足は、どのファイルにも書かない（[作らなくてよいもの](README.md#作らなくてよいもの)）。
 
 ### ③-8-d 不足の文
 
@@ -718,17 +923,45 @@ OAuth のエラーコードのほか、`AuthTransactionError(invalid_csrf_token)
 
 `<名前>` は関数の `name` である。
 
-索引の `gaps` への並べ方は ⑤-10-c にある。
+索引の `gaps` への並べ方は [⑤-10-c](05-data.md#-10-c-不足の並べ方) にある。
 
 例：このリポジトリのエンドポイントの不足は、`no-unit-test` が 1,279（321 フレーム）、`failure-untested` が 25 である。
 `aspect-missing` は 2、`step-unreached` は 0、機能の不足は 2 である。
 `required` は `authentication` と `boundary` である。
 
-実装：`packages/test-catalog/src/join.ts`（`joinTests` の後半、`errorCodeOf`、`frameName`）、`packages/test-catalog/src/build.ts`（`buildTests` の `gaps`）、`tests/catalog/aspects.yaml`
+実装：
+
+- `packages/test-catalog/src/join.ts`：`joinTests` の後半、`errorCodeOf`、`frameName`
+- `packages/test-catalog/src/build.ts`：`buildTests` の `gaps`
+- `tests/catalog/aspects.yaml`
 
 ## ③-9 テストの数え方
 
 `countTests(tests)` は、カードの集まりを、種類、正常系と異常系、観点、根拠、結果で数える。
+
+```mermaid
+flowchart LR
+  subgraph RUN["readRun"]
+    direction LR
+    S1["③-1<br/>報告"] --> S2["③-2<br/>引き当て"]
+    S2 --> S3["③-3<br/>結果"]
+    S2 --> S4["③-4<br/>到達の行"]
+  end
+  S5["③-5<br/>カードへ"]
+  subgraph JOIN["joinTests"]
+    direction LR
+    S6["③-6<br/>フレーム"] --> S7["③-7<br/>エンドポイント"] --> S8["③-8<br/>不足"]
+  end
+  S9["③-9<br/>数え方"]
+  S3 --> S5
+  S4 --> S5
+  S5 --> S6
+  S7 -.-> S9
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S9 here
+  class S1,S2,S3,S4,S5,S6,S7,S8 dim
+```
 
 ```ts
 interface TestCounts {
@@ -742,17 +975,18 @@ interface TestCounts {
 ```
 
 0 の鍵は持たない。
+どの鍵も、渡したカードの順で初めて出た順に並ぶ。
 ⑤ は、カタログの全部（`TestsIndex.counts`）と、エンドポイントのテスト（`EndpointTestsRef.counts`）を、これで数える。
 
-例：このリポジトリのカタログの全部は次のとおりである。
+例：このリポジトリのカタログの全部は次のとおりである（鍵の並びもこのとおり）。
 
 | 軸 | 数 |
 |---|---|
-| `total` | 6,008 |
-| `kinds` | `unit` 4,586、`tool` 1,146、`api` 154、`e2e` 122 |
-| `outcomes` | `success` 4,366、`failure` 1,319、`unknown` 323 |
-| `evidence` | `static` 4,505、`coverage` 4,414、`declared` 7 |
-| `results` | `passed` 5,707、`none` 301 |
+| `total` | 6,062 |
+| `kinds` | `tool` 1,200、`api` 217、`unit` 4,523、`e2e` 122 |
+| `outcomes` | `unknown` 323、`success` 4,420、`failure` 1,319 |
+| `evidence` | `static` 4,512、`coverage` 4,414、`declared` 7 |
+| `results` | `none` 301、`passed` 5,761 |
 
 実装：`packages/test-catalog/src/join.ts`（`countTests`）
 
@@ -763,4 +997,4 @@ interface TestCounts {
 - `Joined` は、⑤ が `indexRefs` で索引の `frames` と `endpoints` にし、不足を索引の `gaps` に置き、`outlineOf` で名指す関数を決めるのに使う
 - `JoinedRun` の `run.run`（`at`）は ⑤ が索引の `run` にし、`unmatched` の数は地図のビルドのログに出る
 
-[全体像](README.md) ＞ [② 実行して計る](02-measure.md) ＞ ③ 結果と関数に結ぶ ＞ [④ PR の差分と検査](04-pull-request.md)
+[全体像](README.md) ｜ ← [② 実行して計る](02-measure.md) ｜ ③ 結果と関数に結ぶ ｜ [④ PR の差分と検査](04-pull-request.md) →

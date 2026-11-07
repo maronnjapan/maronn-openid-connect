@@ -2,6 +2,7 @@
 
 OIDC Provider にどんなテストがあるかを見るページです。
 地図（apps/map）とは別のアプリで、地図と同じ Worker の `/tests/` で配信します。
+実装の詳細：テストの読み取りから計測、PR の検査、この画面、CI までの作り方は [docs/README.md](docs/README.md) にあります。
 
 ## 見られるもの
 

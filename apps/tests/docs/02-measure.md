@@ -1,6 +1,6 @@
 # ② 実行して計る
 
-[全体像](README.md) ＞ [① テストを読む](01-read.md) ＞ ② 実行して計る ＞ [③ 結果と関数に結ぶ](03-join.md)
+[全体像](README.md) ｜ ← [① テストを読む](01-read.md) ｜ ② 実行して計る ｜ [③ 結果と関数に結ぶ](03-join.md) →
 
 ```mermaid
 flowchart LR
@@ -40,7 +40,7 @@ flowchart LR
 |---|---|
 | 入力 | テストコード（Vitest のテスト、E2E の spec、機能ファイルから生成したテスト）、環境変数 `MARONN_REACH` と `MARONN_TEST_REPORTS` |
 | 出力 | 報告のディレクトリ（テストの結果の JSON と JUnit、テストごとの到達 `reach/*.jsonl`、行のカバレッジ `lcov.info`） |
-| 実装 | `packages/test-reach/src/`（`env.js`、`vitest.js`、`vitest-setup.js`、`vitest-reporter.js`、`source-map.js`、`op.js`）、`testReports` を呼ぶ各 `vitest.config.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach/`（`config.ts`、`global-setup.ts`、`global-teardown.ts`、`lcov.mjs`）、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`tests/steps/support/http.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs` |
+| 実装 | `packages/test-reach/src/`（`env.js`、`vitest.js`、`vitest-setup.js`、`vitest-reporter.js`、`source-map.js`、`op.js`）、`testReports` を呼ぶ各 `vitest.config.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach/`（`config.ts`、`global-setup.ts`、`global-teardown.ts`、`lcov.mjs`）、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`tests/steps/support/http.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs`<br>作る順：[再現の手順](README.md#再現の手順)の [5](README.md#5-計測と-http-の実行先) |
 
 計り方は、テストが動く場所で二つに分かれる。
 Vitest は Istanbul の計数を、E2E は OP のプロセスの V8 の計数を、テストの前後で比べる。
@@ -80,6 +80,31 @@ flowchart TB
 
 計るかどうかと報告を書く先を、二つの環境変数で決める。
 
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S1 here
+  class S2,S3,S4,S5,S6,S7,S8 dim
+```
+
 | 変数 | 値 | 意味 |
 |---|---|---|
 | `MARONN_REACH` | `1` のときだけ有効 | テストごとの到達を計り、報告も書く |
@@ -99,27 +124,27 @@ flowchart TB
 
 `test-reach` の出口と依存、計測した実行のコマンドは、⑦ にある。
 
-- `test-reach` の出口（`./env`、`./source-map`、`./vitest`、`./op` など）：⑦-1-d
-- `test-reach` を devDependency に持つパッケージ：⑦-1-e
-- 計測した実行のコマンドと変数：⑦-5
+- `test-reach` の出口（`./env`、`./source-map`、`./vitest`、`./op` など）：[⑦-1-d](07-build-ci.md#-1-d-export)
+- `test-reach` を devDependency に持つパッケージ：[⑦-1-e](07-build-ci.md#-1-e-依存)
+- 計測した実行のコマンドと変数：[⑦-5](07-build-ci.md#-5-ci-の-test-ジョブ)
 
 ### ②-1-a 報告のファイル
 
 | パス | 中身 | 書く節 |
 |---|---|---|
-| `vitest/<名前>.json` | Vitest の JSON の報告 | ②-2 |
-| `junit/vitest-<名前>.xml` | Vitest の JUnit | ②-2 |
-| `coverage/vitest/<名前>/lcov.info` | Vitest の行のカバレッジ | ②-2 |
-| `reach/vitest-<名前>.jsonl` | Vitest のテストごとの到達 | ②-3 |
-| `playwright/<実行先>.json` | E2E の Playwright の JSON | ②-5 |
-| `junit/e2e-<実行先>.junit.xml` | E2E の JUnit | ②-5 |
-| `playwright/in-process.json` | プロセス内のシナリオの JSON | ②-5 |
-| `junit/features-in-process.junit.xml` | プロセス内のシナリオの JUnit | ②-5 |
-| `v8/<実行先>/<役>-<pid>-takes.jsonl` | OP の V8 の生の計数 | ②-6 |
-| `v8/<実行先>/<役>-<pid>-sources.jsonl` | 計数のスクリプトとソースマップ | ②-6 |
-| `access/<実行先>-<役>.log` | OP のアクセスログ | ②-6 |
-| `reach/e2e-<実行先>.jsonl` | E2E のテストごとの到達 | ②-7 |
-| `coverage/e2e/<実行先>/lcov.info` | E2E の行のカバレッジ | ②-8 |
+| `vitest/<名前>.json` | Vitest の JSON の報告 | [②-2](#-2-vitest-の設定) |
+| `junit/vitest-<名前>.xml` | Vitest の JUnit | [②-2](#-2-vitest-の設定) |
+| `coverage/vitest/<名前>/lcov.info` | Vitest の行のカバレッジ | [②-2](#-2-vitest-の設定) |
+| `reach/vitest-<名前>.jsonl` | Vitest のテストごとの到達 | [②-3](#-3-vitest-のテストごとの到達) |
+| `playwright/<実行先>.json` | E2E の Playwright の JSON | [②-5](#-5-e2e-の実行の設定) |
+| `junit/e2e-<実行先>.junit.xml` | E2E の JUnit | [②-5](#-5-e2e-の実行の設定) |
+| `playwright/in-process.json` | プロセス内のシナリオの JSON | [②-5](#-5-e2e-の実行の設定) |
+| `junit/features-in-process.junit.xml` | プロセス内のシナリオの JUnit | [②-5](#-5-e2e-の実行の設定) |
+| `v8/<実行先>/<役>-<pid>-takes.jsonl` | OP の V8 の生の計数 | [②-6](#-6-op-の中の計測) |
+| `v8/<実行先>/<役>-<pid>-sources.jsonl` | 計数のスクリプトとソースマップ | [②-6](#-6-op-の中の計測) |
+| `access/<実行先>-<役>.log` | OP のアクセスログ | [②-6](#-6-op-の中の計測) |
+| `reach/e2e-<実行先>.jsonl` | E2E のテストごとの到達 | [②-7](#-7-e2e-のテストごとの到達) |
+| `coverage/e2e/<実行先>/lcov.info` | E2E の行のカバレッジ | [②-8](#-8-e2e-の行のカバレッジ) |
 
 - `<名前>` は、パッケージ名からスコープを除いたもの（`@maronn-openid-connect/app-hono` は `app-hono`）
 - `<実行先>` は `hono` か `nextjs`
@@ -152,15 +177,15 @@ interface RawReach {
 
 `functions` の `file` はリポジトリからのパス、`line` は 1 から数えた行である。
 同じ `file` と `line` は一つにし、`file` の順（`localeCompare`）、次に `line` の順に並べる。
-関数カタログの根の外の位置は入れない（②-1-c）。
+関数カタログのディレクトリの外の位置は入れない（[②-1-c](#-1-c-関数カタログのディレクトリ)）。
 
 例：`work/test-reports` の計測した実行では、Vitest の 5 パッケージで 4,880 行、E2E は実行先ごとに 122 行である。
 
-### ②-1-c 関数カタログの根
+### ②-1-c 関数カタログのディレクトリ
 
-到達に残すのは、関数カタログの根の中のソースの位置だけである。
+到達に残すのは、関数カタログのディレクトリの中のソースの位置だけである。
 
-根（`FUNCTION_ROOTS`）は次の六つで、`.github/scripts/lint-function-docs.mjs` と同じ並びである。
+ディレクトリ（`FUNCTION_ROOTS`）は次の六つで、`.github/scripts/lint-function-docs.mjs` と同じ並びである。
 
 - `packages/core/src`
 - `packages/experimental/src`
@@ -171,7 +196,7 @@ interface RawReach {
 
 `isCatalogSource(path)` は、リポジトリからのパスが次をすべて満たすとき真である。
 
-1. 根のどれかに `/` を足したもので始まる
+1. ディレクトリのどれかに `/` を足したもので始まる
 2. `/node_modules/` を含まない
 3. `/\.(test|spec)\.[cm]?[jt]sx?$/` に合わない
 4. `/(^|\/)test-helpers\.ts$/` に合わない
@@ -180,11 +205,39 @@ interface RawReach {
 `repositoryPath(file, root)` は、`\` を `/` にし、`<root>/` で始まればその後ろを返す。
 始まらなければ無し（リポジトリの外）である。
 
-実装：`packages/test-reach/src/env.js`（`reachEnabled`、`reportsDirectory`、`repositoryRoot`、`repositoryPath`、`isCatalogSource`、`FUNCTION_ROOTS`）、`packages/test-catalog/src/model.ts`（`RawReach`）
+実装：
+
+- `packages/test-reach/src/env.js`：`reachEnabled`、`reportsDirectory`、`repositoryRoot`、`repositoryPath`、`isCatalogSource`、`FUNCTION_ROOTS`
+- `packages/test-catalog/src/model.ts`：`RawReach`
 
 ## ②-2 Vitest の設定
 
 各パッケージの `vitest.config.ts` は、`testReports()` の返す値を `test` に広げて、報告と計測を足す。
+
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S2 here
+  class S1,S3,S4,S5,S6,S7,S8 dim
+```
 
 ```ts
 import { testReports } from '@maronn-openid-connect/test-reach/vitest';
@@ -201,7 +254,7 @@ export default defineConfig({
 interface TestReportsOptions {
   root: string | URL; // vitest.config の import.meta.url か、パッケージのディレクトリ
   name?: string; // 報告の名前。既定はパッケージ名からスコープを除いたもの
-  roots?: string[]; // テストが届く関数カタログの根。無ければ報告だけ
+  roots?: string[]; // テストが届く関数カタログのディレクトリ。無ければ報告だけ
   env?: Record<string, string | undefined>; // 既定は process.env
 }
 ```
@@ -240,20 +293,20 @@ flowchart LR
 `<名前>` は、そのディレクトリの `package.json` の `name` から `/^@[^/]+\//` を除いたものである。
 
 `includeTaskLocation` は、JSON の報告の各テストに行と列を付ける。
-③ はいまこれを読まない。
+③ はこれを読まない（[作らなくてよいもの](README.md#作らなくてよいもの)）。
 
 | `coverage` のキー | 値 |
 |---|---|
 | `enabled` | `true` |
 | `provider` | `'istanbul'` |
-| `include` | 根ごとの `<パッケージからの相対パス>/**/*.{js,jsx,ts,tsx,mjs,mts}`（相対パスが空なら `.`） |
+| `include` | `roots` のディレクトリごとの `<パッケージからの相対パス>/**/*.{js,jsx,ts,tsx,mjs,mts}`（相対パスが空なら `.`） |
 | `exclude` | `**/node_modules/**`、`**/dist/**`、`**/*.d.ts`、`**/*.test.*`、`**/*.spec.*`、`**/test-helpers.ts`、`**/test-support/**` |
-| `allowExternal` | `true`（`../core/src` のような、パッケージの外の根も含める） |
+| `allowExternal` | `true`（`../core/src` のような、パッケージの外のディレクトリも含める） |
 | `reporter` | `[['lcovonly', { file: 'lcov.info', projectRoot: <リポジトリ> }]]`（lcov のパスをリポジトリからにする） |
 | `reportsDirectory` | `<報告>/coverage/vitest/<名前>` |
 | `reportOnFailure` | `true`（テストが落ちても lcov を書く） |
 
-### ②-2-b パッケージごとの根
+### ②-2-b パッケージごとのディレクトリ
 
 | パッケージ | `roots` |
 |---|---|
@@ -264,17 +317,47 @@ flowchart LR
 | `apps/nextjs` | `apps/nextjs/src/app`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src` |
 | `packages/cli`、`packages/map-analysis`、`packages/test-catalog`、`packages/test-reach`、`apps/map`、`apps/tests` | なし（報告だけを書く） |
 
-アプリとパッケージのテストは、エイリアスでほかのパッケージの `src` を読むので、その根も計る。
+アプリとパッケージのテストは、エイリアスでほかのパッケージの `src` を読むので、そのディレクトリも計る。
 計る 5 パッケージは、devDependency に `@vitest/coverage-istanbul`（5.0.5）を持つ。
 
 `core`、`experimental`、`google-login` は、自前の `coverage`（`provider: 'v8'`）を先に書いている。
 `testReports()` を `test` の最後に広げるので、計るときはその `coverage` を丸ごと置き換える。
 
-実装：`packages/test-reach/src/vitest.js`（`testReports`、`packageDirectory`、`workspaceRoot`、`packageName`）、`packages/*/vitest.config.ts`、`apps/*/vitest.config.ts`、`packages/test-reach/vitest.config.js`
+実装：
+
+- `packages/test-reach/src/vitest.js`：`testReports`、`packageDirectory`、`workspaceRoot`、`packageName`
+- `packages/*/vitest.config.ts`
+- `apps/*/vitest.config.ts`
+- `packages/test-reach/vitest.config.js`
 
 ## ②-3 Vitest のテストごとの到達
 
 Istanbul の関数の計数をテストの前後で比べ、増えた関数をそのテストの到達とする。
+
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S3 here
+  class S1,S2,S4,S5,S6,S7,S8 dim
+```
 
 ```mermaid
 sequenceDiagram
@@ -348,7 +431,7 @@ function reachedSince(earlier) {
 ```
 
 `meta.reach` の `file` は絶対パスである。
-リポジトリからのパスにするのはレポーターである（②-3-c）。
+リポジトリからのパスにするのはレポーターである（[②-3-c](#-3-c-レポーター)）。
 
 ### ②-3-b 元の位置
 
@@ -356,7 +439,7 @@ function reachedSince(earlier) {
 
 1. 候補は、あるものだけで、`decl.start`（関数の宣言の名前）、次に `loc.start`（関数の始まり）の順とする
 2. `inputSourceMap.mappings` が無ければ、`{ file: coverage.path, line: 最初の候補の line }`
-3. あれば、候補の順に `originalPositionFor(map, line, column)`（②-4-b）を引き、最初に引けたものを採る
+3. あれば、候補の順に `originalPositionFor(map, line, column)`（[②-4-b](#-4-b-位置の引き方)）を引き、最初に引けたものを採る
 4. どれも引けなければ、その関数を捨てる
 
 元の `source` は、次の規則で絶対パスにする（`sourcePath`）。
@@ -391,7 +474,7 @@ setup ファイルは `node:fs` も `node:path` も使わない。
 | `file` | `testCase.module.moduleId` をリポジトリからのパスにしたもの（外なら絶対パスのまま） |
 | `path` | `testCase.parent` から `type` が `suite` の間たどった名前（外から順） |
 | `title` | `testCase.name`（`it.each` は値を入れた後の名前） |
-| `functions` | `reached` のうち、リポジトリの中にあり `isCatalogSource` が真のもの（②-1-b の順） |
+| `functions` | `reached` のうち、リポジトリの中にあり `isCatalogSource` が真のもの（[②-1-b](#-1-b-到達の行) の順） |
 | `retry` | `testCase.diagnostic()?.retryCount`（1 以上のときだけ） |
 | `status` | `testCase.result().state`（`passed`、`failed`、`skipped` のときだけ） |
 
@@ -408,21 +491,49 @@ Istanbul は、オブジェクトやクラスのメソッドを `(anonymous_5)` 
 setup ファイルは、この形の名前を落とす。
 ③ は、その行を含む最も内側のフレームに引く。
 
-実装：`packages/test-reach/src/vitest-setup.js`（`snapshot`、`reachedSince`、`originalStart`、`sourcePath`、`sourceMapOf`）、`packages/test-reach/src/vitest-reporter.js`（`TestReportsReporter`、`rawReachOf`、`describePath`）
+実装：
+
+- `packages/test-reach/src/vitest-setup.js`：`snapshot`、`reachedSince`、`originalStart`、`sourcePath`、`sourceMapOf`
+- `packages/test-reach/src/vitest-reporter.js`：`TestReportsReporter`、`rawReachOf`、`describePath`
 
 ## ②-4 ソースマップの読み取り
 
 生成後の位置から元のソースの位置を求める読み取りを、import の無い JavaScript で持つ。
 Vitest の `edge-runtime` のワーカーでも、Node でも動かすためである。
 
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S4 here
+  class S1,S2,S3,S5,S6,S7,S8 dim
+```
+
 | 関数 | 入力 | 出力 | 使う節 |
 |---|---|---|---|
-| `decodeMappings(mappings)` | `mappings` の文字列 | 行ごとのセグメントの配列 | ②-3、②-6、②-8 |
+| `decodeMappings(mappings)` | `mappings` の文字列 | 行ごとのセグメントの配列 | [②-3](#-3-vitest-のテストごとの到達)、[②-6](#-6-op-の中の計測)、[②-8](#-8-e2e-の行のカバレッジ) |
 | `encodeMappings(lines)` | 行ごとのセグメントの配列 | `mappings` の文字列 | `flattenSourceMap` |
-| `decodeSourceMap(map)` | `.map` の JSON か `inputSourceMap` | `{ sources, sourceRoot?, names, lines }` | ②-3、②-6、②-8 |
-| `originalPositionFor(map, line, column)` | 1 からの行と 0 からの列 | 元の `{ source, line, column }` | ②-3 |
-| `firstOriginalPositionIn(map, start, end)` | 生成後の範囲 | 範囲の中の最初の元の位置 | ②-6 |
-| `flattenSourceMap(map)` | `sections` を持つソースマップ | 一枚のソースマップ | ②-6、②-8 |
+| `decodeSourceMap(map)` | `.map` の JSON か `inputSourceMap` | `{ sources, sourceRoot?, names, lines }` | [②-3](#-3-vitest-のテストごとの到達)、[②-6](#-6-op-の中の計測)、[②-8](#-8-e2e-の行のカバレッジ) |
+| `originalPositionFor(map, line, column)` | 1 からの行と 0 からの列 | 元の `{ source, line, column }` | [②-3](#-3-vitest-のテストごとの到達) |
+| `firstOriginalPositionIn(map, start, end)` | 生成後の範囲 | 範囲の中の最初の元の位置 | [②-6](#-6-op-の中の計測) |
+| `flattenSourceMap(map)` | `sections` を持つソースマップ | 一枚のソースマップ | [②-6](#-6-op-の中の計測)、[②-8](#-8-e2e-の行のカバレッジ) |
 
 **セグメント**は `[生成の列, ソースの番号, 元の行, 元の列, 名前の番号]` の数の配列で、どれも 0 から数える。
 長さは 1、4、5 のどれかで、長さ 4 以上のものだけが元の位置を持つ。
@@ -441,7 +552,7 @@ Vitest の `edge-runtime` のワーカーでも、Node でも動かすためで�
 例：`AAAA,EAAE;AACA,IAAI` は、`[[0,0,0,0],[2,0,0,2]]` と `[[0,0,1,2],[4,0,1,6]]` の二行になる。
 
 `encodeMappings(lines)` は、その逆を行う。
-`flattenSourceMap`（②-4-c）が使うので、読み戻して同じセグメントになる必要がある。
+`flattenSourceMap`（[②-4-c](#-4-c-索引つきのソースマップ)）が使うので、読み戻して同じセグメントになる必要がある。
 
 1. 各行のセグメントを、生成の列の順に並べる
 2. 上の 6 と 7 と同じ差を取る（列は行ごとに 0 から）
@@ -483,6 +594,31 @@ Turbopack は、`sections` を持つ索引つきのソースマップを書く�
 
 `tests/e2e/reach/config.ts` は、実行先と計るかどうかを決め、Playwright の設定に足すものを返す。
 
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S5 here
+  class S1,S2,S3,S4,S6,S7,S8 dim
+```
+
 ### ②-5-a 実行先
 
 | `E2E_OP_PACKAGE` | 実行先（`target`） | 計るか |
@@ -503,7 +639,7 @@ Turbopack は、`sections` を持つ索引つきのソースマップを書く�
 |---|---|---|
 | `reportReporters()` | `['json', { outputFile: <報告>/playwright/<実行先>.json }]` と `['junit', { outputFile: <報告>/junit/e2e-<実行先>.junit.xml }]` | 報告のディレクトリがある |
 | `reachRun()` | `{ workers: 1, globalSetup, globalTeardown }` | `reachOn` |
-| `reachEnv(role, issuer)` | OP のインスタンスに渡す環境変数（②-5-c） | `reachOn` で、報告のディレクトリがある |
+| `reachEnv(role, issuer)` | OP のインスタンスに渡す環境変数（[②-5-c](#-5-c-op-のインスタンス)） | `reachOn` で、報告のディレクトリがある |
 
 `playwright.config.ts` は、`reporter` の `list` と `html` の後に `reportReporters()` を足し、`reachRun()` を設定に広げる。
 ワーカーを一つにするのは、OP の計数とアクセスログを、テストごとに切り分けるためである。
@@ -511,7 +647,7 @@ Turbopack は、`sections` を持つ索引つきのソースマップを書く�
 
 `globalSetup`（`reach/global-setup.ts`）は、到達の行のファイルを空にする。
 ワーカーでなく本体で空にするのは、Playwright が失敗の後に新しいワーカーを立てるからである。
-`globalTeardown` は ②-8 で扱う。
+`globalTeardown` は [②-8](#-8-e2e-の行のカバレッジ) で扱う。
 
 ### ②-5-c OP のインスタンス
 
@@ -547,10 +683,10 @@ Turbopack は、`sections` を持つ索引つきのソースマップを書く�
 そのため、制御のポートは `main` が 3411 か 3511、`xaa` が 3041、`dcr` が 3051 になる。
 
 `reuseExistingServer` は CI の外で真なので、手元では起動中の OP が使い回される。
-計測の無い OP が使い回されたときは、②-7 の fixture がテストを落とす。
+計測の無い OP が使い回されたときは、[②-7](#-7-e2e-のテストごとの到達) の fixture がテストを落とす。
 
 `tests/e2e` の `test:e2e:app-hono` と `test:e2e:app-nextjs` は、OP をビルドし、`bddgen` の後に `playwright test` を走らせる。
-`MARONN_REACH=1` のまま走らせると、Next.js のビルドも計るためのビルドになる（②-6-a）。
+`MARONN_REACH=1` のまま走らせると、Next.js のビルドも計るためのビルドになる（[②-6-a](#-6-a-計測を始める場所)）。
 
 ### ②-5-d 機能ファイルのテスト
 
@@ -567,7 +703,7 @@ Turbopack は、`sections` を持つ索引つきのソースマップを書く�
 `@http` のテストは、`tests/steps/support/http.ts` が `mergeTests(target, reach)` で作る。
 `reach` は `tests/e2e/fixtures.ts` の `test` なので、E2E の spec と同じに到達を記録する。
 その到達の行の `file` は、`bddgen` が生成した `tests/e2e/.features-gen/http/…/*.feature.spec.js` である。
-③ は、シナリオを `file` でなく `@id:` のタグで引く（③-2-a）。
+③ は、シナリオを `file` でなく `@id:` のタグで引く（[③-2-a](03-join.md#-2-a-引き当ての索引)）。
 
 プロセス内の設定は、報告のディレクトリを自分で決める。
 
@@ -577,7 +713,7 @@ const reports = process.env['MARONN_TEST_REPORTS']
   ?? (process.env['MARONN_REACH'] === '1' ? new URL('../../work/test-reports', import.meta.url).pathname : undefined);
 ```
 
-この規則は、`reportsDirectory`（②-1）と三つの点で違う。
+この規則は、`reportsDirectory`（[②-1](#-1-スイッチと報告のディレクトリ)）と三つの点で違う。
 
 | 場合 | プロセス内の設定 | `reportsDirectory` |
 |---|---|---|
@@ -590,14 +726,46 @@ const reports = process.env['MARONN_TEST_REPORTS']
 E2E の spec は、`test` を `tests/e2e/fixtures.ts` から取る。
 `@playwright/test` の `test` では到達が記録されないので、⑦ の lint が見張る。
 
-実装：`tests/e2e/reach/config.ts`（`target`、`reachOn`、`reachFile`、`reportReporters`、`reachRun`、`reachEnv`、`reachOps`）、`tests/e2e/reach/global-setup.ts`、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`tests/steps/support/http.ts`、`tests/e2e/package.json`（`test:e2e:app-hono`、`test:e2e:app-nextjs`）
+実装：
+
+- `tests/e2e/reach/config.ts`：`target`、`reachOn`、`reachFile`、`reportReporters`、`reachRun`、`reachEnv`、`reachOps`
+- `tests/e2e/reach/global-setup.ts`
+- `tests/e2e/playwright.config.ts`
+- `tests/steps/playwright.config.ts`
+- `tests/steps/support/http.ts`
+- `tests/e2e/package.json`：`test:e2e:app-hono`、`test:e2e:app-nextjs`
 
 ## ②-6 OP の中の計測
 
 OP のプロセスは V8 の precise coverage を取り、テストごとに計数を消して読む口を、別のポートに開く。
 
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S6 here
+  class S1,S2,S3,S4,S5,S7,S8 dim
+```
+
 OP に Istanbul を使わないのは、計測の変換を差し込む先が、OP の起動の仕方で違うからである。
-hono のアプリは `tsx` で動き、ライブラリは tsc が書いた `packages/*/dist` から読む（②-6-a）。
+hono のアプリは `tsx` で動き、ライブラリは tsc が書いた `packages/*/dist` から読む（[②-6-a](#-6-a-計測を始める場所)）。
 Next.js は、`next build`（Turbopack）がサーバーのコードをバンドルする。
 V8 の計数はランタイムが持つので、同じ口で両方の OP を計れる。
 
@@ -622,7 +790,7 @@ Playwright は、`webServer` を起動してから `globalSetup` を、`globalTe
 
 ### ②-6-a 計測を始める場所
 
-計測は、OP がアプリのモジュールを読む前に、`startReach`（②-6-b）で始める。
+計測は、OP がアプリのモジュールを読む前に、`startReach`（[②-6-b](#-6-b-startreach-の手順)）で始める。
 V8 がアプリのモジュールを最初の行から数えるためである。
 設計書の「確かめたこと」では、遅れて始めると走らなかった関数が結果から抜け、lcov がそれを走ったと数えた。
 
@@ -635,14 +803,14 @@ V8 がアプリのモジュールを最初の行から数えるためである�
 
 1. `MARONN_REACH=1` なら、`@maronn-openid-connect/test-reach/op` を動的に import し、`startReach` を待つ
 2. `./app.js` と `./settings.js` を動的に import して、アプリを作る
-3. 計るときは、アプリを `withAccessLog`（②-6-g）で包んでから `serve` する
+3. 計るときは、アプリを `withAccessLog`（[②-6-g](#-6-g-アクセスログ)）で包んでから `serve` する
 
 hono の OP の中で、ライブラリは `packages/*/dist` の JavaScript として動く。
 `core`、`experimental`、`google-login` の `exports` が `./dist/` を指すからである（`core` は `./dist/index.js`）。
-tsc は `sourceMap: true` で隣に `.js.map` を書き、②-6-e と ②-6-f はそれで `packages/*/src` に戻す。
+tsc は `sourceMap: true` で隣に `.js.map` を書き、[②-6-e](#-6-e-スクリプトの読み方) と [②-6-f](#-6-f-走った関数) はそれで `packages/*/src` に戻す。
 `test:e2e:app-hono` は、先にアプリの `build`（ライブラリの tsc）を走らせて、これらを作る。
 
-ソースマップの無い `dist` では、そのスクリプトは関数カタログのコードを含まないとみなされる（②-6-e）。
+ソースマップの無い `dist` では、そのスクリプトは関数カタログのコードを含まないとみなされる（[②-6-e](#-6-e-スクリプトの読み方)）。
 そのため、hono の OP の到達に `packages/*/src` が出なくなる。
 
 `register()` は、次の順に動く。
@@ -677,15 +845,15 @@ startReach(options?: {
 ```
 
 1. `MARONN_REACH` が `1` でなければ、何もせず `undefined` を返す
-2. `port` が正の整数でなければ投げる（`MARONN_REACH=1 needs MARONN_REACH_PORT, ...`）
+2. `port` が正の整数でなければ、`MARONN_REACH=1 needs MARONN_REACH_PORT, the control port of the reach` を投げる
 3. 生の計数のディレクトリ `<報告>/v8/<target>/` を作る（報告のディレクトリが無ければ `<報告>` は `<リポジトリ>/work/test-reports`）
 4. その中の `<role>-` で始まるファイルを消し、`<role>-<pid>-takes.jsonl` と `<role>-<pid>-sources.jsonl` を空で作る
 5. `process.setSourceMapsEnabled(true)` で、`findSourceMap` がソースマップを返すようにする
 6. `node:inspector/promises` の `Session` をつなぎ、`Profiler.enable`、`Debugger.enable`、`Debugger.setSkipAllPauses({ skip: true })`、`Profiler.startPreciseCoverage({ callCount: true, detailed: true })` を順に送る
-7. `accessLog` があれば、アクセスログを始める（②-6-g）
+7. `accessLog` があれば、アクセスログを始める（[②-6-g](#-6-g-アクセスログ)）
 8. 制御のポートを `127.0.0.1` で開く
 
-古い `<role>-` のファイルを消すのは、②-8 がディレクトリのファイルを全部読むからである。
+古い `<role>-` のファイルを消すのは、[②-8](#-8-e2e-の行のカバレッジ) がディレクトリのファイルを全部読むからである。
 `Debugger` を有効にするのは、`tsx` がメモリに置く生成後のコードを `Debugger.getScriptSource` で得るためである。
 このスレッドが止まると再開する者がいないので、`setSkipAllPauses` で止まらないようにする。
 
@@ -710,7 +878,7 @@ startReach(options?: {
 ポートを開けなければ、`startReach` は listen のエラーで投げる。
 
 取り出しは Promise の列で一つずつ行い、`reset` と `collect` が交わらないようにする。
-`functions` は `[{ file, line, name? }]` で、②-1-b と同じ規則で並べる。
+`functions` は `[{ file, line, name? }]` で、[②-1-b](#-1-b-到達の行) と同じ規則で並べる。
 
 ### ②-6-d 一回の取り出し
 
@@ -760,7 +928,7 @@ interface FunctionCoverage {
 }
 ```
 
-行のカバレッジ用には、`functionsForLines`（②-8-a）が残す関数を、さらに絞る。
+行のカバレッジ用には、`functionsForLines`（[②-8-a](#-8-a-取り出しに残す関数)）が残す関数を、さらに絞る。
 残すのは、`startOffset` が 0 か、関数カタログの範囲（`spans`）に重なるものである。
 バンドルには React や Next.js も入っているからである。
 
@@ -781,7 +949,7 @@ Playwright は実行の終わりに、OP が受け取れるシグナル無しで
 | ソースマップ | `catalog` が真になる条件 | `spans` |
 |---|---|---|
 | 無い | スクリプトのファイルが `isCatalogSource` | ファイルの全体 `[0, コードの長さ)` |
-| ある | `sources`（`sections` の中も）のどれかが、`sourcePathOf` で関数カタログのソースに戻る | 平らにしたマップ（②-4-c）からの `spansOf` |
+| ある | `sources`（`sections` の中も）のどれかが、`sourcePathOf` で関数カタログのソースに戻る | 平らにしたマップ（[②-4-c](#-4-c-索引つきのソースマップ)）からの `spansOf` |
 
 ```ts
 interface Script {
@@ -862,7 +1030,7 @@ interface ScriptSource {
 元の位置（`originalOf`）は次のように求める。
 
 1. `startOffset` と `endOffset` を、0 から数えた行と列にする（`lineStarts` の二分探索）
-2. ソースマップがあれば、行に 1 を足した `firstOriginalPositionIn(map, 始まり, 終わり)`（②-4-b）で元の位置を引き、`sourcePathOf` で絶対パスにする
+2. ソースマップがあれば、行に 1 を足した `firstOriginalPositionIn(map, 始まり, 終わり)`（[②-4-b](#-4-b-位置の引き方)）で元の位置を引き、`sourcePathOf` で絶対パスにする
 3. ソースマップが無ければ、スクリプトのパスと、始まりの行に 1 を足した行
 4. リポジトリからのパスにし、`isCatalogSource` が真なら `{ file, line }` とする
 
@@ -891,17 +1059,49 @@ interface ScriptSource {
 
 計測の口は、CLI が生成するコードに入らない。
 
-- `server.ts` と `instrumentation.ts` は、CLI が写す根の外にある
+- `server.ts` と `instrumentation.ts` は、CLI が写すディレクトリ（`include` の `oidc-provider`、`web`、`app`）の外にある
 - どちらも `MARONN_REACH=1` のときだけ、`test-reach` を動的に import する
 - `test-reach` は devDependency である
 - `packages/cli/src/__tests__/test-reach-isolation.test.ts` が、テンプレートに `test-reach` の名と `server.ts`、`instrumentation.ts` が無いことを確かめる
 - 同じテストが、どのフレームワーク、DB（`sql`、`kv`）、機能の組み（既定と全部）の生成物にも `test-reach` の名が無いことを確かめる
 
-実装：`apps/hono/src/server.ts`（`withAccessLog`）、`apps/hono/package.json`（`start`、`build`）、`apps/nextjs/src/instrumentation.ts`（`register`）、`apps/nextjs/next.config.mjs`、`packages/test-reach/src/op.js`（`startReach`、`take`、`scriptOf`、`originalOf`、`sourcePathOf`、`spansOf`、`meets`、`functionsForLines`、`sourceMapFileOf`）、`packages/cli/src/__tests__/test-reach-isolation.test.ts`
+実装：
+
+- `apps/hono/src/server.ts`：`withAccessLog`
+- `apps/hono/package.json`：`start`、`build`
+- `apps/nextjs/src/instrumentation.ts`：`register`
+- `apps/nextjs/next.config.mjs`
+- `packages/test-reach/src/op.js`：`startReach`、`take`、`scriptOf`、`originalOf`、`sourcePathOf`、`spansOf`、`meets`、`functionsForLines`、`sourceMapFileOf`
+- `packages/cli/src/__tests__/test-reach-isolation.test.ts`
 
 ## ②-7 E2E のテストごとの到達
 
 `tests/e2e/fixtures.ts` の `test` は、各テストの前後に全部の OP の計数を消して読み、リクエストの列と合わせて到達の行を書く。
+
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S7 here
+  class S1,S2,S3,S4,S5,S6,S8 dim
+```
 
 ```mermaid
 sequenceDiagram
@@ -934,7 +1134,7 @@ sequenceDiagram
 | `browser`（worker） | `newContext` と `newPage` を包み、作った context を見張る | テストが自分で開く context も記録する |
 | `context` | 見張る | 既定の context を記録する |
 | `request` | `Proxy` で包み、送るメソッドの応答を記録する | API の呼び出しを記録する |
-| `reach`（`auto`、`timeout` 60 秒） | ②-7-c の手順 | |
+| `reach`（`auto`、`timeout` 60 秒） | [②-7-c](#-7-c-一行の組み立て) の手順 | |
 
 context を見張るのは一度だけである（`WeakSet`）。
 見張りは、記録の最中の `response` のうち、`resourceType()` が `document`、`fetch`、`xhr` のものを記録する。
@@ -952,8 +1152,8 @@ context を見張るのは一度だけである（`WeakSet`）。
 
 | 順 | もと | 規則 |
 |---|---|---|
-| 1 | `Location` ヘッダ | 応答の URL を基にした URL の、クエリか、無ければフラグメントの `error` |
-| 2 | `WWW-Authenticate` ヘッダ | `/\berror="([^"]+)"/` |
+| 1 | `Location` ヘッダー | 応答の URL を基にした URL の、クエリか、無ければフラグメントの `error` |
+| 2 | `WWW-Authenticate` ヘッダー | `/\berror="([^"]+)"/` |
 | 3 | 本文 | ステータスが 400 以上で、`content-type` に `json` を含むとき、JSON の文字列の `error` |
 
 ブラウザの応答の本文は、読み取りの Promise を積んでおく。
@@ -973,8 +1173,13 @@ fixture は、終了の時刻を取る前にその読み取りを待つ。
 7. 各 OP のアクセスログから、開始から終了までの行を読む
 8. 下のフィールドで一行を作り、到達の行のファイルに足す
 
-答えない OP のメッセージは、計測の無い OP を止めて走らせ直すよう言う。
-手元では `reuseExistingServer` が、計測の無い OP を使い回しうるからである。
+`/reset` と `/collect` が失敗したときは、次のメッセージで落とす。
+答えない OP に計測の無い OP を止めるよう言うのは、手元では `reuseExistingServer` がそれを使い回しうるからである。
+
+| 場合 | メッセージ |
+|---|---|
+| OP が答えない | `MARONN_REACH=1, but the <role> OP (<issuer>) does not answer its reach control port <port>. Stop an OP started without MARONN_REACH (reuseExistingServer reuses it) and run again.` |
+| 応答が `ok` でない | `The reach control port of the <role> OP answered <path> with <status>: <本文>` |
 
 | フィールド | 値 |
 |---|---|
@@ -985,7 +1190,7 @@ fixture は、終了の時刻を取る前にその読み取りを待つ。
 | `tags` | `testInfo.tags`（シナリオは `@id:` を持つ） |
 | `retry` | `testInfo.retry`（最初の試行は 0） |
 | `status` | `passed` と `skipped` はそのまま、ほかは `failed` |
-| `functions` | 6 の関数（②-1-b の順） |
+| `functions` | 6 の関数（[②-1-b](#-1-b-到達の行) の順） |
 | `requests` | 7 の行と、記録したリクエストを合わせたもの（下の規則） |
 
 アクセスログの行は `/^(\d+) --> (\S+) (\S+) (\d{3})/` で読む。
@@ -1018,7 +1223,32 @@ fixture は、終了の時刻を取る前にその読み取りを待つ。
 
 OP が取り出しごとに書いた生の計数を、実行の終わりに一つの lcov にまとめる。
 
-lcov は、`tests/e2e` の devDependency の四つのライブラリで書く（版は ⑦-1-e）。
+```mermaid
+flowchart LR
+  S1["②-1<br/>スイッチ"]
+  subgraph VT["Vitest"]
+    direction LR
+    S2["②-2<br/>設定"] --> S3["②-3<br/>テストごとの到達"]
+  end
+  subgraph EE["E2E"]
+    direction LR
+    S5["②-5<br/>実行の設定"] --> S6["②-6<br/>OP の中の計測"]
+    S6 --> S7["②-7<br/>テストごとの到達"]
+    S6 --> S8["②-8<br/>行のカバレッジ"]
+  end
+  S4["②-4<br/>ソースマップ"]
+  S1 --> S2
+  S1 --> S5
+  S4 -.-> S3
+  S4 -.-> S6
+  S4 -.-> S8
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S8 here
+  class S1,S2,S3,S4,S5,S6,S7 dim
+```
+
+lcov は、`tests/e2e` の devDependency の四つのライブラリで書く（版は [⑦-1-e](07-build-ci.md#-1-e-依存)）。
 
 | ライブラリ | 使い道 |
 |---|---|
@@ -1106,7 +1336,7 @@ JSONL の空の行は飛ばす。
 
 | 正規化 | 規則 |
 |---|---|
-| 平らにする | `flattenSourceMap`（②-4-c） |
+| 平らにする | `flattenSourceMap`（[②-4-c](#-4-c-索引つきのソースマップ)） |
 | `sources` | 絶対パスにし（下の表）、file URL にする |
 | `sourcesContent` | 関数カタログのソースはマップの中身かディスクのファイル、ほかは空の文字列 |
 | `sourceRoot` | 除く |
@@ -1114,7 +1344,7 @@ JSONL の空の行は飛ばす。
 | `source` の形 | 絶対パス（`absoluteSource`） |
 |---|---|
 | `file://` で始まる | `fileURLToPath` |
-| Turbopack の `[project]`（②-6-e と同じ正規表現） | `<リポジトリ>/` に、残りを `decodeURIComponent` して付ける |
+| Turbopack の `[project]`（[②-6-e](#-6-e-スクリプトの読み方) と同じ正規表現） | `<リポジトリ>/` に、残りを `decodeURIComponent` して付ける |
 | ほか | `webpack://<名前>/` を除いて `decodeURIComponent` し、絶対パスでなければ生成後のファイルのディレクトリから解く |
 
 tsx はソースの中身を持たないので、ディスクから読む。
@@ -1160,13 +1390,18 @@ v8-to-istanbul は、除いたソースもファイルとして残すからで�
 
 例：`work/test-reports` では、`coverage/e2e/hono/lcov.info` が 313 ファイル、`nextjs` が 194 ファイルを持つ。
 
-実装：`packages/test-reach/src/op.js`（`functionsForLines`）、`tests/e2e/reach/lcov.mjs`（`coverageOf`、`writeLcov`、`normalizedSourceMap`、`absoluteSource`、`sourceSpans`、`enclosingCount`）、`tests/e2e/reach/global-teardown.ts`、`tests/e2e/reach/lcov.test.mjs`
+実装：
+
+- `packages/test-reach/src/op.js`：`functionsForLines`
+- `tests/e2e/reach/lcov.mjs`：`coverageOf`、`writeLcov`、`normalizedSourceMap`、`absoluteSource`、`sourceSpans`、`enclosingCount`
+- `tests/e2e/reach/global-teardown.ts`
+- `tests/e2e/reach/lcov.test.mjs`
 
 ## この章の出力
 
 - 報告のディレクトリ（書く側は `MARONN_TEST_REPORTS`、③ は `MAP_TEST_REPORTS` で同じディレクトリを名指す）
 - ③ が読むもの：`vitest/*.json`、`playwright/*.json`、`reach/*.jsonl`（到達の行、`RawReach`）
 - ⑦ が Codecov へ上げるもの：`coverage/vitest/<名前>/lcov.info`、`coverage/e2e/<実行先>/lcov.info`、`junit/*.xml`
-- CI では、`v8/` と `access/` を除いて artifact `test-reports` に入れ、③ の動く `map` ジョブへ渡す（⑦）
+- CI では、`v8/` と `access/` を除いて artifact `test-reports` に入れ、③ の動く `map` ジョブへ渡す（[⑦-5](07-build-ci.md#-5-ci-の-test-ジョブ)、[⑦-7](07-build-ci.md#-7-ci-の-map-ジョブ)）
 
-[全体像](README.md) ＞ [① テストを読む](01-read.md) ＞ ② 実行して計る ＞ [③ 結果と関数に結ぶ](03-join.md)
+[全体像](README.md) ｜ ← [① テストを読む](01-read.md) ｜ ② 実行して計る ｜ [③ 結果と関数に結ぶ](03-join.md) →

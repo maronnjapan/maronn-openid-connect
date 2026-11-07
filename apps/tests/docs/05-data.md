@@ -1,6 +1,6 @@
 # ⑤ データを書き出す
 
-[全体像](README.md) ＞ [④ PR の差分と検査](04-pull-request.md) ＞ ⑤ データを書き出す ＞ [⑥ テストのページ](06-viewer.md)
+[全体像](README.md) ｜ ← [④ PR の差分と検査](04-pull-request.md) ｜ ⑤ データを書き出す ｜ [⑥ テストのページ](06-viewer.md) →
 
 ```mermaid
 flowchart LR
@@ -38,9 +38,9 @@ flowchart LR
 
 | 項目 | 内容 |
 |---|---|
-| 入力 | ③ のカード（`TestCase[]`、結果と到達つき）と結びつけ（`Joined`）、`measured` と実行の時刻、④ のテストの差分（`TestDiff`）、地図の `MapData`（`flows`、`functions`、`bodies`、`sources`）、作業ツリーの木（`repository.head.trees`）とファイルの本文、観点の表 |
+| 入力 | ③ のカード（`TestCase[]`、結果と到達つき）と `Joined`、`measured` と実行の時刻、① の訳の無い言い回し（`untranslated`）、④ のテストの差分（`TestDiff`）、地図の `MapData`（`flows`、`functions`、`bodies`、`sources`）、作業ツリーの木（`repository.head.trees`）とファイルの本文、観点の表 |
 | 出力 | `apps/tests/public/data` の `tests.json`、`outline.json`、`tests/by-file/<hash>.json`、`tests/sources/<hash>.json`、`tests/diff.json` |
-| 実装 | `packages/test-catalog/src/build.ts`（`buildTests`、`writeFileCards`、`indexRefs`、`codeOfFrame`、`stepBlocks`、`outlineOf`、`shownFiles`）、`packages/test-catalog/src/model.ts`、`packages/test-catalog/src/join.ts`（`entryOf`、`countTests`）、`packages/map-analysis/src/build.ts`（`writeHashed`、`removeStale`） |
+| 実装 | `packages/test-catalog/src/build.ts`（`buildTests`、`writeFileCards`、`indexRefs`、`codeOfFrame`、`stepBlocks`、`outlineOf`、`shownFiles`）、`packages/test-catalog/src/model.ts`、`packages/test-catalog/src/join.ts`（`entryOf`、`countTests`）、`packages/map-analysis/src/build.ts`（`writeHashed`、`removeStale`）<br>作る順：[再現の手順](README.md#再現の手順)の [4](README.md#4-データの段への接続-2)、[8](README.md#8-データの仕上げ) |
 
 ```mermaid
 flowchart TB
@@ -70,6 +70,24 @@ flowchart TB
 ## ⑤-1 ファイルの一覧
 
 テストのページが読むファイルと、その間の参照を示す。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S1 here
+  class S2,S3,S4,S5,S6,S7,S8,S9,S10 dim
+```
 
 ```text
 apps/tests/public/data/          gitignore する
@@ -130,43 +148,51 @@ classDiagram
 
 `model.ts` の型のうち、`RawReach` と `TestRun` はこのデータに書かない。
 `RawReach` は、② が報告のディレクトリに書く到達の一行である。
-`TestRun` は、③ が報告から組む実行で、その `run` だけを索引に写す（⑤-10）。
+`TestRun` は、③ が報告から組む実行で、その `run` だけを索引に写す（[⑤-10](#-10-索引)）。
 
-このブランチのデータの大きさは次のとおりである（2026-11-07 の値で、例である）。
+例：このブランチのデータを `MAP_BASE=origin/main` で作ると、大きさは次のとおりである。
 
 | ファイル | 数 | 合計のバイト数 | 中央値 | 最大 |
 |---|---|---|---|---|
-| `tests.json` | 1 | 4,204,350 | | |
+| `tests.json` | 1 | 4,234,667 | | |
 | `outline.json` | 1 | 532,823 | | |
-| `tests/by-file/` | 465 | 14,108,129 | 15,837 | 326,601 |
-| `tests/sources/` | 844 | 6,364,320 | 4,516 | 109,290 |
-| `tests/diff.json` | 1 | 91,584 | | |
+| `tests/by-file/` | 466 | 14,229,632 | 16,005 | 326,601 |
+| `tests/sources/` | 847 | 6,426,858 | 4,541 | 109,290 |
+| `tests/diff.json` | 1 | 110,573 | | |
 
-合計は 25,301,206 バイトである。
+合計は 25,534,553 バイトである。
 最も大きいカードのファイルは、`tests/e2e/specs/dynamic-client-registration.spec.ts`（20 件）のものである。
 E2E のカードは実行先ごとに到達を持ち、その関数の列が長い。
 
-ページは、ファイルを次の時に読む（読み方の詳細は ⑥）。
+ページがどのファイルをいつ読むかは [⑥-2-a](06-viewer.md#-2-a-読むファイルと時) にある。
 
-```mermaid
-sequenceDiagram
-  participant P as テストのページ
-  participant D as data
-  P->>D: tests.json と outline.json
-  Note over P: 開いたときに一度
-  P->>D: tests/by-file/ハッシュ.json
-  Note over P: テストを開いたとき<br/>E2E の行に対象を出すとき
-  P->>D: tests/sources/ハッシュ.json
-  Note over P: コードを見せるとき
-  P->>D: tests/diff.json
-  Note over P: 索引の diff が true のときだけ
-```
+実装：
 
-実装：`packages/test-catalog/src/model.ts`、`packages/test-catalog/package.json`（`exports` の `./model`）、`.gitignore`（`apps/tests/public/data/`）
+- `packages/test-catalog/src/model.ts`
+- `packages/test-catalog/package.json`：`exports` の `./model`
+- `.gitignore`：`apps/tests/public/data/`
 
 ## ⑤-2 書き出しの順
 
 `buildTests(context, options)` が、ファイルを決まった順に書く。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S2 here
+  class S1,S3,S4,S5,S6,S7,S8,S9,S10 dim
+```
 
 ```ts
 interface TestBuildOptions {
@@ -183,7 +209,7 @@ flowchart TB
   D["tests/by-file を書き<br/>古いものを消す ⑤-4"]
   E["stepBlocks と outlineOf<br/>⑤-6 ⑤-7"]
   F["tests/sources を書き<br/>古いものを消す ⑤-8"]
-  G{"PR の地図か"}
+  G{"PR のビルドか"}
   H["tests/diff.json を書く<br/>④ ⑤-9"]
   I["tests/diff.json を消す"]
   J["tests.json と<br/>outline.json を書く"]
@@ -197,8 +223,8 @@ flowchart TB
 - 名前の決まった三つ（`tests.json`、`outline.json`、`tests/diff.json`）は、毎回上書きするか消す
 - `out` が無いときも、索引とアウトラインは組み立てる
 - そのときはファイルを書かないので、項目の `card` は無く、`sources` は空になる
-- 最後にログに一行足す（形は ⑦-2）
-- 地図に返すのは `{ sections }` で、PR の地図でなければ空の列である（④-8）
+- 最後にログに一行足す（形は [⑦-2](07-build-ci.md#-2-データの段)）
+- 地図に返すのは `{ sections }` で、PR のビルドでなければ空の列である（[④-8](04-pull-request.md#-8-書き出しと検査)）
 
 実装：`packages/test-catalog/src/build.ts`（`buildTests`、`TestBuildOptions`）
 
@@ -206,6 +232,24 @@ flowchart TB
 
 カードと本文のファイルは、中身のハッシュを名前にして書く。
 中身が変われば名前も変わるので、キャッシュが古いファイルを返すことは無い。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S3 here
+  class S1,S2,S4,S5,S6,S7,S8,S9,S10 dim
+```
 
 ```ts
 function hashed(id: string, content: string): string {
@@ -236,7 +280,7 @@ flowchart TB
 - 書かなかったファイルは、更新の時刻も変わらない
 - url は `./data/tests/by-file/<名前>` と `./data/tests/sources/<名前>` である
 
-例：`apps/hono/src/app.test.ts` のカードの url は `./data/tests/by-file/f1c19a2e2e0b9358015a15b4944396719e389a6d3f903a79c9a90f164f4f9d34.json` である。
+例：`apps/hono/src/app.test.ts` のカードの url は `./data/tests/by-file/e28e2b39338deff3bd064f7e5e214ed92901474d8839f65f6e3ac2ad780a5c63.json` である。
 このブランチのデータのファイルの名前は、上の式の値と一致する。
 
 実装：`packages/map-analysis/src/build.ts`（`hashed`、`writeHashed`、`removeStale`）
@@ -245,9 +289,27 @@ flowchart TB
 
 テストファイルごとに、そのファイルのカードの全文を一つのファイルに書く。
 
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S4 here
+  class S1,S2,S3,S5,S6,S7,S8,S9,S10 dim
+```
+
 - カードは、カタログの順（ファイルのパス、始まりの行）に並ぶ
-- ファイルは、パスの文字列の順に書く
-- 索引の各項目は、そのファイルの url を `card` に持つ（⑤-10-a）
+- ファイルは、パスを（コード単位の順に）並べ替えた順に書く
+- 索引の各項目は、そのファイルの url を `card` に持つ（[⑤-10-a](#-10-a-索引の項目)）
 - ページはテストを開くと、そのファイルを読み、`id` でカードを探す
 
 ```ts
@@ -279,8 +341,8 @@ classDiagram
     line text phrase ja
   }
   class RequestShape {
-    endpoint method path
-    params auth line
+    endpoint route method
+    path params auth line
   }
   class FeatureStep {
     keyword type text
@@ -288,6 +350,9 @@ classDiagram
   }
   class HelperRef {
     name depth
+  }
+  class NamedCodeRef {
+    name
   }
   class CodeRef {
     file
@@ -307,115 +372,56 @@ classDiagram
   TestCase *-- RequestShape : requests
   TestCase *-- FeatureStep : steps
   TestCase *-- HelperRef : helpers
+  TestCase *-- NamedCodeRef : routeCode
   TestCase *-- TestResult : result
   TestCase *-- TestReach : reach
   FeatureStep --> CodeRef : definition
   CodeRef <|-- HelperRef
+  CodeRef <|-- NamedCodeRef
 ```
 
 ### ⑤-4-a カードの型
 
-欄を決める規則は ① と ③ にある。
-ここでは、ファイルに書く形を示す。
+カードはファイルに `TestCase` の形のまま書き、型はそれを決める節にある。
+
+| 型 | 節 |
+|---|---|
+| `TestCase` | [①-9](01-read.md#-9-カードの組み立て) |
+| `Subject` | [①-9-b](01-read.md#-9-b-対象と根拠) |
+| `Assertion` | [①-4-g](01-read.md#-4-g-カードに残す形) |
+| `RequestShape`、`RequestRoute` | [①-5-f](01-read.md#-5-f-テストが届くエンドポイント) |
+| `CodeRef`、`NamedCodeRef` | [①-3-d](01-read.md#-3-d-describe-が名指す関数とコード) |
+| `HelperRef` | [①-6-e](01-read.md#-6-e-宣言の行) |
+| `FeatureStep` | [①-8-b](01-read.md#-8-b-シナリオのステップと定義) |
+| `TestResult` | [③-3](03-join.md#-3-結果のまとめ方) |
+| `TestReach` | [③-4-c](03-join.md#-4-c-要求のエンドポイント) |
+
+型の中の `TestKind` などの名前は、次の別名である。
 
 ```ts
 type TestKind = 'unit' | 'api' | 'e2e' | 'tool';
 type TestOutcome = 'success' | 'failure' | 'unknown';
 type Evidence = 'declared' | 'static' | 'coverage';
 type TestStatus = 'passed' | 'failed' | 'skipped';
+```
 
-interface TestCase {
-  id: string; // ①-10
-  kind: TestKind; // ①-9-a
-  root: string; // 根の名前、e2e、features、ツールの名前
-  source: { file: string; lines: [number, number]; form: 'code' | 'feature' };
-  title: string; // it かシナリオの名前（英語）
-  ja?: { title?: string }; // 訳
-  path: string[]; // describe の列。シナリオはフィーチャー（とアウトライン）の名前
-  subjects: Subject[]; // ①-9-b、③
-  requests?: RequestShape[]; // ①-5
-  outcome: TestOutcome; // ①-9-c
-  aspects: string[]; // ①-9-d
-  spec: string[]; // 'RFC 6749 §5.2' など
-  assertions: Assertion[]; // ①-4
-  errors?: string[]; // 期待するエラー（OAuth のエラーコードとエラークラス）
-  steps?: FeatureStep[]; // シナリオだけ
-  targets?: string[]; // 実行先（hono、nextjs、http）
-  evidence: Evidence[];
-  skipped?: boolean; // skip、todo、fixme
-  digest: string; // 本体（シナリオはステップ）の空白を除いたハッシュ
-  result?: TestResult; // ③
-  reach?: TestReach[]; // ③
-  helpers?: HelperRef[]; // ①-6
-}
+- `Subject` の `member` と `TestReach.members` は書かない（[作らなくてよいもの](README.md#作らなくてよいもの)）
+- 見つけ方が `coverage` の対象は、③ が到達から足すエンドポイントだけである
+- `routeCode` のファイルの本文も `tests/sources` に書く（[⑤-8](#-8-本文のファイル)）
 
-type Subject =
-  | { kind: 'function'; id: string; how: 'describe' | 'call' | 'declared' | 'coverage' }
-  | { kind: 'endpoint'; id: string; source: 'hono' | 'nextjs'; how: 'request' | 'declared' | 'coverage' }
-  | { kind: 'member'; id: string; how: 'coverage' };
+例：`apps/hono/src/operator.test.ts` の `should answer 401 to a request without the operator token` は次の二つを持つ。
 
-interface Assertion {
-  actual: string; // 確かめる値の言葉
-  matcher: string; // toBe など。Then のステップは 'step'
-  expected?: unknown; // リテラルのときだけ
-  negated?: boolean;
-  mode?: 'resolves' | 'rejects';
-  line: number;
-  text: string; // ページに出す英語の一行
-  phrase?: string; // 合った訳の表の言い回し
-  ja?: string;
-}
-
-interface RequestShape {
-  endpoint?: string;
-  method: string;
-  path: string; // 書いたまま（`${TEST_ISSUER}/token` は /token）
-  params?: string[]; // ボディかクエリのキー
-  auth?: string; // client_secret_basic、client_secret_post、bearer
-  line: number;
-}
-
-interface CodeRef {
-  file: string; // リポジトリのルートからのパス
-  lines: [number, number]; // 1 から数え、両端を含む
-}
-
-interface HelperRef extends CodeRef {
-  name: string;
-  depth?: number; // 無ければ 1
-}
-
-interface FeatureStep {
-  keyword: string; // 'Given ' など、書いたまま
-  type: 'context' | 'action' | 'outcome' | 'unknown';
-  text: string;
-  phrase?: string; // 合ったステップ定義の式
-  ja?: string;
-  table?: string[][]; // 先頭がヘッダの行
-  line: number;
-  definition?: CodeRef; // 合ったステップ定義のコード
-}
-
-interface TestResult {
-  status: TestStatus; // 実行先の中で最も悪いもの
-  targets: Record<string, { status: TestStatus; duration: number; attempts: number }>; // Vitest の実行先は ''
-}
-
-interface TestReach {
-  target?: string; // Vitest には無い
-  functions: string[]; // フレームの id
-  members?: string[];
-  requests?: Array<{ endpoint?: string; method: string; path: string; status: number; error?: string }>;
+```json
+{
+  "requests": [{ "route": "app", "method": "DELETE", "path": "/clients/rp-1/keys", "line": 71 }],
+  "routeCode": { "name": "createOperatorApp", "file": "apps/hono/src/operator.ts", "lines": [56, 78] }
 }
 ```
 
-- `Subject` の `member` と `TestReach.members` は型にあるが、今のコードは書かない
-- 根拠が `coverage` の対象は、③ が到達から足すエンドポイントだけである
-
 ### ⑤-4-b 例
 
-このブランチの `packages/core/src/access-token-issuer.test.ts` の最初のカードである。
-`reach.functions` は先頭の三つだけを示す。
+例：このブランチの `packages/core/src/access-token-issuer.test.ts` の最初のカードである。
+`reach.functions` は、十一個のうち先頭の三つだけを示す。
 
 ```json
 {
@@ -443,16 +449,37 @@ interface TestReach {
   "evidence": ["static", "coverage"],
   "digest": "1c323bed1bd35ace",
   "helpers": [{ "name": "buildPayload", "file": "packages/core/src/access-token-issuer.test.ts", "lines": [21, 31], "depth": 1 }],
-  "result": { "status": "passed", "targets": { "": { "status": "passed", "duration": 11.079122999999981, "attempts": 1 } } },
+  "result": { "status": "passed", "targets": { "": { "status": "passed", "duration": 7.246454999999969, "attempts": 1 } } },
   "reach": [{ "functions": ["core:access-token-issuer.ts#createJwtAccessTokenIssuer", "core:access-token.ts#generateAccessToken", "core:access-token.ts#validateAccessTokenExpiration"] }]
 }
 ```
 
-実装：`packages/test-catalog/src/build.ts`（`writeFileCards`）、`packages/test-catalog/src/model.ts`（`FileTests`、`TestCase` と、その中の型）
+実装：
+
+- `packages/test-catalog/src/build.ts`：`writeFileCards`
+- `packages/test-catalog/src/model.ts`：`FileTests`、`TestCase` と、その中の型
 
 ## ⑤-5 フレームとエンドポイントの参照
 
 索引に、フレームごとの数と、エンドポイントごとのテストの id を書く。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S5 here
+  class S1,S2,S3,S4,S6,S7,S8,S9,S10 dim
+```
 
 索引はカードを一度ずつ持ち、フレームとエンドポイントは id で名指す。
 多くのエンドポイントが届く関数には、計測した実行で千を超えるテストが到達する。
@@ -460,16 +487,16 @@ interface TestReach {
 
 ### ⑤-5-a フレームの数
 
-`frames` には、③ の結びつけで関連するテストが一つ以上あるフレームを、id の順に入れる。
+`frames` には、フレームのテスト（[③-6](03-join.md#-6-フレームのテスト)）が一つ以上あるフレームを、id の順に入れる。
 
 ```ts
 interface FrameTestsRef {
-  unit: number; // describe か宣言でそのフレームを名指すユニットテスト
+  unit: number; // フレームのユニットテストの数（③-6 の unit）
   success: number; // そのうち正常系
   failure: number; // そのうち異常系
   boundary: number; // そのうち観点に boundary を持つもの
-  reached: number; // 計測した実行でそのフレームに到達したテスト
-  related: number; // 名指す、確かめるところで呼ぶ、到達したテストの全部
+  reached: number; // フレームに到達したカードの数（③-6 の reached）
+  related: number; // フレームのテストの数（③-6 の tests）
 }
 ```
 
@@ -477,51 +504,62 @@ interface FrameTestsRef {
 
 ### ⑤-5-b エンドポイントのテスト
 
-`endpoints` には、③ の結びつけの全部のエンドポイントを、鍵 `<source>:<endpoint>` の順に入れる。
+`endpoints` には、`Joined.endpoints` の全部のエンドポイントを、鍵 `<source>:<endpoint>` の順に入れる。
 
 ```ts
 interface EndpointTestsRef {
-  counts: TestCounts; // そのエンドポイントのテスト全部の数
+  counts: TestCounts; // エンドポイントのテスト（③-7-c）を countTests（③-9）で数えたもの
   gaps: number; // そのエンドポイントの不足の数
   tests: string[]; // units に入らないテストの id
   units: Record<string, string[]>; // 届くフレームごとのユニットテストの id
-}
-
-interface TestCounts {
-  total: number;
-  kinds: Partial<Record<TestKind, number>>;
-  outcomes: Partial<Record<TestOutcome, number>>;
-  aspects: Record<string, number>; // 観点ごと（一枚を、持つ観点のそれぞれに数える）
-  evidence: Partial<Record<Evidence, number>>; // 根拠ごと（観点と同じ数え方）
-  results: Partial<Record<TestStatus | 'none', number>>; // 結果の無いカードは none
 }
 ```
 
 ```mermaid
 flowchart LR
-  A["エンドポイントの<br/>テスト一つ<br/>③ の結びつけ"] --> U{"ユニットテストで<br/>届くフレームを<br/>名指すか"}
+  A["エンドポイントの<br/>テスト一つ<br/>③-7-c"] --> U{"届くフレームの<br/>ユニットテストか"}
   U -->|"はい"| UN["units の<br/>そのフレームの列に入れる"]
   U -->|"いいえ"| T["tests に入れる"]
 ```
 
-- 名指すは、`describe` か宣言でそのフレームを対象にすること（③ の `FrameJoin.unit`）である
-- 名指す届くフレームが複数あれば、そのすべての列に入れる
+- フレームのユニットテスト（[③-6](03-join.md#-6-フレームのテスト) の `unit`）であるかで分ける
+- そのような届くフレームが複数あれば、そのすべての列に入れる
 - `units` の鍵はフレームの id の順で、テストの列が空のフレームは入れない
 - 列の中と `tests` の並びは、カタログの順である
 - `units` と `tests` を合わせると、`counts` が数えるテストのすべてになる
-- 計測した実行で処理本体を通っただけのユニットテスト（届くフレームを名指さない）は、`tests` に入る
-- `counts` は `countTests` が数える
-- 種類、期待結果、結果は一枚を一つに数え、観点と根拠は持つものそれぞれに一つずつ数える
+- 計測した実行で処理本体を通っただけのユニットテスト（届くフレームのユニットテストでない）は、`tests` に入る
 
-例：`hono:token` は、`counts.total` が 1,326（ユニット 1,244、API 23、E2E 59）、不足 69、`tests` 82 件、`units` 173 フレームである。
+例：`hono:token` は、`counts.total` が 1,328（ユニット 1,244、API 25、E2E 59）、不足 69、`tests` 84 件、`units` 173 フレームである。
+テストのページは、このうち `tests` と、エンドポイント自身のフレームの `units` だけを出す（ページのエンドポイントのテスト、[⑥-3-d](06-viewer.md#-3-d-ページが出すエンドポイントのテスト)）。
 
 この規則は `packages/test-catalog/src/__tests__/build.test.ts` の `indexRefs` が確かめる。
 
-実装：`packages/test-catalog/src/build.ts`（`indexRefs`）、`packages/test-catalog/src/join.ts`（`countTests`）
+実装：
+
+- `packages/test-catalog/src/build.ts`：`indexRefs`
+- `packages/test-catalog/src/join.ts`：`countTests`
 
 ## ⑤-6 コードの範囲
 
 ページが見せるコードを、ファイルのパスと行の範囲（**コードの範囲**、`CodeRef`）で表す。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S6 here
+  class S1,S2,S3,S4,S5,S7,S8,S9,S10 dim
+```
 
 ### ⑤-6-a フレームのコード
 
@@ -549,35 +587,56 @@ flowchart TB
 
 ### ⑤-6-b ステップのブロック
 
-関数を持たないステップは、エンドポイントのファイルの印 `// [step-id]` が始めるブロックをコードにする。
+関数を持たないステップは、ステップの目印コメント `// [step-id]` が始めるブロックをコードにする。
 Next.js のステップはすべてこれで、hono のステップにもある。
 
 `stepBlocks(data, trees, read)` は次の順に動く。
 
-1. 作業ツリーの木を、`tree.file`（`MapData.sources` の鍵）ごとに分ける
-2. hono、nextjs の順に、地図のエンドポイントを見る
-3. エンドポイントの `source` が無いか、`MapData.sources` にその `path` が無ければ飛ばす
-4. そのファイルの木を、エンドポイントの `root` の木を先に、ほかは始まりの行の順に並べる
+1. 作業ツリーの木（`head.trees` の各値の `tree`）を、`tree.file`（`MapData.sources` の鍵）ごとに分ける
+2. hono、nextjs の順に、`MapData.flows[source].endpoints` を見る
+3. `endpoint.source`（`MapData.sources` の鍵）が無いか、`MapData.sources[endpoint.source].path` が無ければ飛ばす
+4. そのファイルの木を、`tree.id === endpoint.root` の木を先に、ほかは `tree.lines[0]` の小さい順に並べ替える
 5. 関数を持たない各ステップについて、木を順に、ノードを前順（ノード、`pre`、`branches` の中）にたどる
 6. 最初に見つかった、`kind` が `block` で `step.id` がそのステップの id のノードの行を取る
 7. 本文が読めれば、範囲の始まりの空行を飛ばす（地図はブロックに上の空行を含める）
 8. `<source>:<endpoint>:<step>` の鍵で返す
 
-- 印の無いステップは、コードなしである
+- 目印コメントの無いステップは、コードなしである
 - 同じステップのブロックが Route Handler とその下の関数の両方にあれば、Route Handler のものを取る
 - 空行を飛ばすのは、始まりが終わりより前にある間だけである
 
 この規則は `build.test.ts` の `the code of the outline` と `stepBlocks` のテストが確かめる。
 
-実装：`packages/test-catalog/src/build.ts`（`codeOfFrame`、`stepBlocks`）、`packages/map-analysis/src/tree.ts`（`nodesOf`）
+実装：
+
+- `packages/test-catalog/src/build.ts`：`codeOfFrame`、`stepBlocks`
+- `packages/map-analysis/src/tree.ts`：`nodesOf`
 
 ## ⑤-7 アウトライン
 
 ページが `map.json` を読まずにテストの対象を名指せるよう、関数カタログの抜き出しを `outline.json` に書く。
 
 ```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S7 here
+  class S1,S2,S3,S4,S5,S6,S8,S9,S10 dim
+```
+
+```mermaid
 classDiagram
-  direction LR
+  direction TB
   class TestsOutline {
     version 1
   }
@@ -585,12 +644,12 @@ classDiagram
     key source id label summary
     path methods group layer root
   }
+  class OutlineFunction {
+    id name package module summary
+  }
   class OutlineStep {
     id label
     function calls
-  }
-  class OutlineFunction {
-    id name package module summary
   }
   class CodeRef {
     file
@@ -599,10 +658,10 @@ classDiagram
   TestsOutline *-- OutlineEndpoint : endpoints
   TestsOutline *-- OutlineFunction : functions
   OutlineEndpoint *-- OutlineStep : steps
+  OutlineFunction <.. OutlineStep : function と calls の id
   OutlineEndpoint --> CodeRef : code
   OutlineStep --> CodeRef : code
   OutlineFunction --> CodeRef : code
-  OutlineStep ..> OutlineFunction : function と calls の id
 ```
 
 ```ts
@@ -647,24 +706,24 @@ interface OutlineFunction {
 
 ### ⑤-7-a エンドポイントとステップ
 
-- エンドポイントは hono、nextjs の順で、それぞれ地図の順（`flows[source].endpoints`）に並べる
-- ③ の結びつけに無いエンドポイントは入れない
-- `root` は結びつけのものを使い、無ければ地図のものを使う
+- エンドポイントは hono、nextjs の順で、それぞれ地図の順（`flows[source].endpoints`）に入れる
+- `Joined.endpoints` に無いエンドポイントは入れない
+- `root` は `Joined` のものを使い、無ければ地図のものを使う
 - `summary` は、地図のエンドポイントにあるときだけ入れる
 - 関数のあるステップ（`functionId`）は、`function` とその関数のコードを持つ
 - 関数の無いステップは、あれば `calls` とブロックのコードを持つ
 
-関数の無いステップの `calls` は、ステップにもユニットテストを並べるためにある。
+関数の無いステップの `calls` は、そのステップの下にもユニットテストを出すためにある。
 
 1. 地図のステップの `calls` の重複を除く
-2. そのエンドポイントの `EndpointTestsRef.units`（⑤-5-b）に鍵のあるフレームだけを残す
+2. そのエンドポイントの `EndpointTestsRef.units`（[⑤-5-b](#-5-b-エンドポイントのテスト)）に鍵のあるフレームだけを残す
 3. 残りが無ければ、`calls` を入れない
 
 ### ⑤-7-b 名指す関数
 
 `functions` には、次のフレームを id の順に入れる。
 
-- 索引の `frames` の鍵（関連するテストのあるフレーム）
+- 索引の `frames` の鍵（フレームのテストのあるフレーム）
 - 各エンドポイントの `root`
 - ステップの `function`
 - 関数の無いステップの `calls`
@@ -674,7 +733,7 @@ interface OutlineFunction {
 
 ### ⑤-7-c 例
 
-このブランチの `hono:token` である。
+例：`hono:token` は次のとおりである。
 `summary` は短く切り、`steps` は先頭の一つだけを示す。
 
 ```json
@@ -717,8 +776,8 @@ interface OutlineFunction {
 }
 ```
 
-このブランチでは、エンドポイント 34（hono と nextjs に 17 ずつ）、ステップ 250、関数 1,060 である。
-ステップのうちコードの範囲を持つものは 185、`calls` を持つものは 43 である（値は例）。
+例：エンドポイントは 34（hono と nextjs に 17 ずつ）、ステップは 250、関数は 1,060 である。
+ステップのうちコードの範囲を持つものは 185、`calls` を持つものは 43 である。
 
 この規則は `build.test.ts` の `outlineOf` が確かめる。
 
@@ -728,6 +787,24 @@ interface OutlineFunction {
 
 ページがコードを見せるファイルの本文を、ファイルごとに一つ書く。
 
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S8 here
+  class S1,S2,S3,S4,S5,S6,S7,S9,S10 dim
+```
+
 ```ts
 interface TestSource {
   path: string; // リポジトリのルートからのパス
@@ -735,32 +812,38 @@ interface TestSource {
 }
 ```
 
-見せるファイル（`shownFiles`）は次のものの和で、重複を除いてパスの順に並べる。
+見せるファイル（`shownFiles`）は次のものの和で、重複を除いてパスを（コード単位の順に）並べ替える。
 
 ```mermaid
-flowchart LR
+flowchart TB
   A["テストファイル全部"]
-  B["カードの helpers の file"]
-  C["シナリオのステップの<br/>definition の file"]
-  D["アウトラインの<br/>エンドポイントの<br/>code の file"]
-  E["アウトラインの<br/>ステップの code の file"]
-  F["アウトラインの<br/>functions の code の file"]
+  subgraph CARD["カードから"]
+    direction TB
+    B["helpers の file"]
+    C["シナリオのステップの<br/>definition の file"]
+    G["routeCode の file"]
+    B ~~~ C ~~~ G
+  end
+  subgraph OUT["アウトラインから"]
+    direction TB
+    D["エンドポイントの<br/>code の file"]
+    E["ステップの<br/>code の file"]
+    F["functions の<br/>code の file"]
+    D ~~~ E ~~~ F
+  end
   S["見せるファイル"]
   A --> S
-  B --> S
-  C --> S
-  D --> S
-  E --> S
-  F --> S
+  CARD --> S
+  OUT --> S
 ```
 
 - 本文は作業ツリーから読み、読めないファイルは飛ばす
 - 書いたファイルの url を、索引の `sources[パス]` に入れる
 - 本文に色は付けない（設計では、色を付けると 20 MB を超えるためとしている）
-- ページが自分で字句に分けて色を付ける（⑥）
+- ページが自分で字句に分けて色を付ける（[⑥-12-c](06-viewer.md#-12-c-typescript-の色づけ)）
 
-このブランチでは 844 ファイルである（値は例）。
-テストファイルが 465、ほか（ヘルパー、ステップ定義、関数、処理本体のファイル）が 379 である。
+例：このブランチでは 847 ファイルである。
+テストファイルが 466、ほか（ヘルパー、ステップ定義、ルートの実装、関数、処理本体のファイル）が 381 である。
 
 例：`packages/core/src/access-token-issuer.test.ts` の本文の url は `./data/tests/sources/d2081499fcdc6e2b3a7fc0448030eddc9912fb04296dde7f2d9de5f00b3daee4.json` である。
 中身は次の形で、`text` は 5,482 文字ある（先頭だけを示す）。
@@ -777,88 +860,36 @@ flowchart LR
 
 ## ⑤-9 PR の差分のファイル
 
-PR の地図のビルドでだけ、④ の `TestDiff` を `tests/diff.json` に書く。
+PR のビルドでだけ、④ の `TestDiff` を `tests/diff.json` に書く。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S9 here
+  class S1,S2,S3,S4,S5,S6,S7,S8,S10 dim
+```
 
 - 名前は決まっていて、ハッシュにしない
 - 書いたときは、索引の `diff` を `true` にする
-- PR の地図でないビルドは、前のビルドが残したものを消す
+- PR のビルドでなければ、前のビルドが残したものを消す
 
-```mermaid
-classDiagram
-  direction LR
-  class TestDiff {
-    added string[]
-    removed string[]
-    renamed 前と後の id の組
-  }
-  class Modified {
-    id
-    what
-    assertions
-  }
-  class Counts {
-    before after
-    byKind byEndpoint
-  }
-  class FrameVerdict {
-    frame related touched
-    untouched reason
-    failuresWithoutTest
-    before after
-  }
-  class DiffCard {
-    id kind title outcome aspects
-    source path ja examples endpoints
-  }
-  TestDiff *-- Modified : modified
-  TestDiff *-- Counts : counts
-  TestDiff *-- FrameVerdict : frames
-  TestDiff *-- DiffCard : cards
-```
+形は [④-4](04-pull-request.md#-4-カードの差分) の `TestDiff` で、そのまま JSON にして書く。
 
-`Modified`、`Counts`、`FrameVerdict`、`DiffCard` は図のための名前で、コードでは `TestDiff` の中の型である。
+例：このブランチを `MAP_BASE=origin/main` で作ると、足したテスト 331、ほかは 0、判定 0、カード 331 である。
+`counts` は `before` 5,731、`after` 6,062、`byEndpoint` の鍵は 32 個（`hono:token` は `[50, 57]`）である。
 
-```ts
-interface TestDiff {
-  added: string[]; // ④-4-a
-  removed: string[];
-  renamed: Array<[before: string, after: string]>; // ④-4-b
-  modified: Array<{
-    id: string;
-    what: Array<'title' | 'assertions' | 'subjects' | 'requests' | 'body'>; // ④-4-c
-    assertions?: { added: Assertion[]; removed: Assertion[] };
-  }>;
-  counts: {
-    before: number;
-    after: number;
-    byKind: Record<string, [number, number]>; // ④-4-d
-    byEndpoint: Record<string, [number, number]>;
-  };
-  frames: Array<{
-    frame: string; // ④-6
-    related: string[];
-    touched: string[];
-    untouched: boolean;
-    reason?: { text: string; note: string };
-    failuresWithoutTest: string[];
-    before: { outcomes: string[]; aspects: string[]; errors: string[] };
-    after: { outcomes: string[]; aspects: string[]; errors: string[] };
-  }>;
-  cards: Record<
-    string,
-    Pick<TestCase, 'id' | 'kind' | 'title' | 'outcome' | 'aspects' | 'source' | 'path'> & {
-      ja?: string;
-      examples?: number;
-      endpoints?: string[];
-    }
-  >; // ④-4-e
-}
-```
-
-このブランチを `MAP_BASE=origin/main` で作ると、足したテスト 277、ほかは 0、判定 0、カード 277 である。
-`counts` は `before` 5,731、`after` 6,008、`byEndpoint` の鍵は 32 個（`hono:token` は `[48, 55]`）である（値は例）。
-
-`cards` の値の例（アウトラインの行）：
+例：`cards` の値の一つ（シナリオアウトラインの行）は次のとおりである。
 
 ```json
 {
@@ -875,12 +906,35 @@ interface TestDiff {
 }
 ```
 
-実装：`packages/test-catalog/src/build.ts`（`buildTests` の PR の部分）、`packages/test-catalog/src/diff.ts`（`diffCatalogs`）
+このカードは関数の対象を持たないので、`functions` と `calls` は無い。
+
+実装：
+
+- `packages/test-catalog/src/build.ts`：`buildTests` の PR の部分
+- `packages/test-catalog/src/diff.ts`：`diffCatalogs`、`cardOf`
 
 ## ⑤-10 索引
 
 ページが最初に読む索引を `tests.json` に書く。
 索引は全部のカードを一度ずつ、期待結果とステップを除いて持つ。
+
+```mermaid
+flowchart LR
+  S1["⑤-1<br/>一覧"] --> S2["⑤-2<br/>順"] --> S3["⑤-3<br/>ハッシュ"]
+  S3 --> S4["⑤-4<br/>カード"]
+  S3 --> S8["⑤-8<br/>本文"]
+  S5["⑤-5<br/>参照"] --> S7["⑤-7<br/>アウトライン"]
+  S6["⑤-6<br/>コードの範囲"] --> S7
+  S7 --> S8
+  S4 --> S10["⑤-10<br/>索引"]
+  S5 --> S10
+  S8 --> S10
+  S9["⑤-9<br/>PR の差分"] --> S10
+  classDef here fill:#fde68a,stroke:#b45309,stroke-width:3px,color:#111
+  classDef dim fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class S10 here
+  class S1,S2,S3,S4,S5,S6,S7,S8,S9 dim
+```
 
 ```mermaid
 classDiagram
@@ -895,8 +949,9 @@ classDiagram
   class TestEntry {
     id kind root title ja
     file lines form path
-    outcome aspects subjects evidence
-    targets skipped result reached card
+    outcome aspects subjects routes
+    evidence targets skipped
+    result reached card
   }
   class FrameTestsRef {
     unit success failure boundary
@@ -945,23 +1000,22 @@ interface TestsIndex {
 
 | 欄 | 中身 |
 |---|---|
-| `run` | 報告を読んだときだけ入れる（下の規則） |
-| `measured` | 報告の到達の行を一つでも読めば `true` |
-| `tests` | カードごとの項目（⑤-10-a）。カタログの順 |
-| `counts` | 全部のカードを `countTests` で数えたもの（⑤-5-b） |
-| `unknown` | 規則で読めなかったカードの数（⑤-10-b） |
-| `untranslated` | 訳の表に日本語の無い言い回し。並べたもの（①） |
-| `gaps` | ⑤-10-c |
+| `run` | 報告のディレクトリがあれば入れる。<br>`at` は [③-1-a](03-join.md#-1-a-読む形) の開始の時刻で、無ければ `{}` |
+| `measured` | 到達を一つでも読んだか（[③-1-a](03-join.md#-1-a-読む形)、[③-4-a](03-join.md#-4-a-残す到達の行)） |
+| `tests` | カードごとの項目（[⑤-10-a](#-10-a-索引の項目)）。<br>カタログの順 |
+| `counts` | 全部のカードを `countTests` で数えたもの（[③-9](03-join.md#-9-テストの数え方)） |
+| `unknown` | 規則で読めなかったカードの数（[⑤-10-b](#-10-b-読めなかった数)） |
+| `untranslated` | 訳の表に日本語の無い言い回しを、（コード単位の順に）並べ替えたもの（[①-4-f](01-read.md#-4-f-日本語)、[①-8-b](01-read.md#-8-b-シナリオのステップと定義)） |
+| `gaps` | [⑤-10-c](#-10-c-不足の並べ方) |
 | `requiredAspects` | 観点の表の `required` |
-| `sources` | ⑤-8 |
-| `aspectLabels` | 観点の表の id から `label`（`boundary` から `境界値`）。表の順 |
+| `sources` | [⑤-8](#-8-本文のファイル) |
+| `aspectLabels` | 観点の表の id から `label`（`boundary` から `境界値`）。<br>表の順 |
 | `diff` | `tests/diff.json` を書いたときだけ `true` |
 
-- `at` は、最初に読んだ Vitest の報告の `startTime` を ISO 8601 にしたものである
-- Vitest の報告に無ければ、最初に読んだ Playwright の報告の `stats.startTime` である
-- `ref` と `commit` は型にあるが、今のコードは書かない
+`run` の `ref` と `commit` は書かない（[作らなくてよいもの](README.md#作らなくてよいもの)）。
 
-このブランチでは、`run` が `{ "at": "2026-11-07T13:11:32.141Z" }`、`measured` が `true` である（値は例）。
+例：`run` は `{ "at": "2026-11-07T19:47:44.818Z" }`、`measured` は `true` である。
+項目は 6,062、`frames` は 1,052、`endpoints` は 34、`sources` は 847、`gaps` は 350 である。
 
 ### ⑤-10-a 索引の項目
 
@@ -981,6 +1035,7 @@ interface TestEntry {
   outcome: TestOutcome;
   aspects: string[];
   subjects: Subject[];
+  routes?: RequestRoute[]; // endpoint の無いリクエストの route を、出た順に重複なく
   evidence: Evidence[];
   targets?: string[];
   skipped?: boolean; // true のときだけ
@@ -990,10 +1045,11 @@ interface TestEntry {
 }
 ```
 
-- 項目に入れないのは、`spec`、`assertions`、`errors`、`requests`、`steps`、`digest`、`helpers`、実行先ごとの結果、到達の中身である
+- 項目に入れないのは、`spec`、`assertions`、`errors`、`requests`、`routeCode`、`steps`、`digest`、`helpers`、実行先ごとの結果、到達の中身である
 - これらは、テストを開いたときにカードのファイルから読む
+- `routes` は、一覧がカードを読まずに、自前やアプリのルートへのテストと、走らせるまでパスが分からないテストを見分けるためにある
 
-例（このブランチの `apps/hono/src/app.test.ts` の項目）：
+例：`apps/hono/src/app.test.ts` の項目は次のとおりである。
 
 ```json
 {
@@ -1011,9 +1067,12 @@ interface TestEntry {
   "evidence": ["static"],
   "result": "passed",
   "reached": 52,
-  "card": "./data/tests/by-file/f1c19a2e2e0b9358015a15b4944396719e389a6d3f903a79c9a90f164f4f9d34.json"
+  "card": "./data/tests/by-file/e28e2b39338deff3bd064f7e5e214ed92901474d8839f65f6e3ac2ad780a5c63.json"
 }
 ```
+
+同じファイルの `should answer the health check` は、`"subjects": []` と `"routes": ["app"]` を持つ。
+`routes` を持つ項目は 51 で、`own` が 34、`app` が 17 である。
 
 ### ⑤-10-b 読めなかった数
 
@@ -1023,17 +1082,16 @@ interface TestEntry {
 | `outcome` | ツールでなく、期待結果が `unknown` |
 | `aspect` | ツールでなく、観点が一つも無い |
 
-このブランチでは、`subject` 332、`outcome` 22、`aspect` 4,062 である（値は例）。
+例：`subject` 325、`outcome` 22、`aspect` 4,062 である。
 
 ### ⑤-10-c 不足の並べ方
 
-③ はエンドポイントごとに不足を出す。
-索引は、同じ関数の「ユニットテストが無い」を一つにまとめる。
+③ はエンドポイントごとに不足を出し（形と規則は [③-8](03-join.md#-8-不足)）、索引は同じ関数の `no-unit-test` を一つにまとめる。
 
 ```mermaid
 flowchart TB
-  A["エンドポイントごとの不足<br/>結びつけの順"] --> B{"no-unit-test で<br/>frame があるか"}
-  B -->|"いいえ"| D["source と endpoint を<br/>付けて並べる"]
+  A["エンドポイントごとの不足<br/>エンドポイントの順 ③-7-a"] --> B{"no-unit-test で<br/>frame があるか"}
+  B -->|"いいえ"| D["source と endpoint を<br/>付けて入れる"]
   B -->|"はい"| C["フレームごとに<br/>一つにまとめ<br/>endpoints に鍵を足す"]
   D -->|"一番目"| E["gaps"]
   C -->|"二番目<br/>初めて出た順"| E
@@ -1041,26 +1099,12 @@ flowchart TB
 ```
 
 - まとめた不足は、最初に出たものの欄（`text`、`reached`）を持つ
-- `endpoints` は、そのフレームに届くエンドポイントの鍵を、結びつけの順に持つ
+- `endpoints` は、そのフレームに届くエンドポイントの鍵を、エンドポイントの順（[③-7-a](03-join.md#-7-a-エンドポイントの並び)）に持つ
 - ほかの不足の `source` と `endpoint` は、そのエンドポイントの `hono` か `nextjs` と id である
 - 並びは、ほかの不足、まとめた不足、機能の不足の順である
-- フレームごとの不足（③ の `FrameJoin.gaps`）は書かない
+- フレームごとの不足（[③-8-c](03-join.md#-8-c-フレームの不足) の `FrameJoin.gaps`）は書かない
 
-```ts
-interface Gap {
-  kind: 'no-unit-test' | 'failure-untested' | 'step-unreached' | 'aspect-missing' | 'feature-without-e2e';
-  frame?: string;
-  error?: string; // failure-untested
-  step?: string; // step-unreached
-  aspect?: string; // aspect-missing
-  feature?: string; // feature-without-e2e
-  reached?: number; // no-unit-test、計測した実行だけ
-  text: string; // ページに出す言葉
-}
-```
-
-不足を決める規則は ③ にある。
-このブランチでは 350 件で、`no-unit-test` 321、`failure-untested` 25、`aspect-missing` 2、`feature-without-e2e` 2 である（値は例）。
+例：不足は 350 件で、`no-unit-test` 321、`failure-untested` 25、`aspect-missing` 2、`feature-without-e2e` 2 である。
 
 ```json
 [
@@ -1072,7 +1116,11 @@ interface Gap {
 
 二つ目の `endpoints` は、18 個のうち先頭の四つだけを示す。
 
-実装：`packages/test-catalog/src/build.ts`（`buildTests` の索引と不足の部分）、`packages/test-catalog/src/join.ts`（`entryOf`、`countTests`）
+実装：
+
+- `packages/test-catalog/src/build.ts`：`buildTests` の索引と不足の部分
+- `packages/test-catalog/src/join.ts`：`entryOf`、`countTests`
+- `packages/test-catalog/src/run.ts`：`readRun`
 
 ## この章の出力
 
@@ -1080,4 +1128,4 @@ interface Gap {
 - ⑥ は、型を `@maronn-openid-connect/test-catalog/model` から読む
 - ⑦ のビルドで、テストのページの `vite build` が `public/data` を `dist/data` に写し、`copy-tests-viewer.mjs` が地図の `dist/tests/` に写す
 
-[全体像](README.md) ＞ [④ PR の差分と検査](04-pull-request.md) ＞ ⑤ データを書き出す ＞ [⑥ テストのページ](06-viewer.md)
+[全体像](README.md) ｜ ← [④ PR の差分と検査](04-pull-request.md) ｜ ⑤ データを書き出す ｜ [⑥ テストのページ](06-viewer.md) →

@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

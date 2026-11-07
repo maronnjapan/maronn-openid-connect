@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';

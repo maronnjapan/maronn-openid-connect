@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { reachEnv, reachRun, reportReporters } from './reach/config';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const opPort = Number(process.env.E2E_OP_PORT ?? '3010');
@@ -243,7 +244,11 @@ export default defineConfig({
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    // MARONN_TEST_REPORTS or MARONN_REACH=1: the JSON and JUnit reports.
+    ...reportReporters(),
   ],
+  // MARONN_REACH=1: one test at a time, and the reach files (reach/config.ts).
+  ...reachRun(),
   use: {
     baseURL,
     trace: 'retain-on-failure',
@@ -301,6 +306,8 @@ export default defineConfig({
         ...(process.env.OIDC_D1_PERSIST_PATH
           ? { OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH }
           : {}),
+        // MARONN_REACH=1: the control port and the access log of the reach.
+        ...reachEnv('main', baseURL),
       },
     },
     // EXPERIMENTAL (Cross-App Access): the second OP instance — the resource
@@ -331,6 +338,7 @@ export default defineConfig({
               OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
                 ? `${process.env.OIDC_SQLITE_PATH}-xaa`
                 : '.data/oidc-e2e-xaa.sqlite',
+              ...reachEnv('xaa', xaaIssuer),
             },
           },
         ]
@@ -365,6 +373,7 @@ export default defineConfig({
               OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
                 ? `${process.env.OIDC_SQLITE_PATH}-dcr`
                 : '.data/oidc-e2e-dcr.sqlite',
+              ...reachEnv('dcr', dcrIssuer),
             },
           },
         ]

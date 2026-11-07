@@ -26,6 +26,8 @@ interface TestContext {
   diff: TestDiff | undefined;
   /** The diff is still being read. */
   loading: boolean;
+  /** Why the diff of a map that has one could not be read. */
+  failed?: string | undefined;
   /** The changes whose related tests did not change, without a reason (MapChanges.untested): the check fails on them. */
   untested: ReadonlySet<string>;
   /** The entries of the index by id, for the names of the related tests. */
@@ -81,7 +83,9 @@ function RelatedTests({ entry, context, labels }: { entry: FrameChangeEntry; con
   const frame = context.diff?.frames.find((candidate) => candidate.frame === entry.id);
   const untested = context.untested.has(entry.id);
   if (frame === undefined && !untested && entry.testReason === undefined) {
-    return context.loading && (entry.kind === 'added' || entry.kind === 'modified') ? <p className="note">関連するテストを読み込んでいます…</p> : null;
+    if (entry.kind !== 'added' && entry.kind !== 'modified') return null;
+    if (context.loading) return <p className="note">関連するテストを読み込んでいます…</p>;
+    return context.failed !== undefined ? <p className="note">関連するテストを読み込めませんでした: {context.failed}</p> : null;
   }
   const word = (key: 'outcomes' | 'aspects' | 'errors') => (item: string) => (key === 'outcomes' ? (OUTCOME_WORDS[item as 'success'] ?? item) : key === 'aspects' ? (labels[item] ?? item) : item);
   const moved =
@@ -172,7 +176,9 @@ function PrTests({ data, framework, context, onOpenEndpoint, onOpenFunction }: {
     return (
       <section className="pr-tests" aria-label="テスト">
         <h3>テスト</h3>
-        <p className="note">{context.loading ? 'テストの差分を読み込んでいます…' : 'この地図にはテストの差分がありません。'}</p>
+        <p className="note">
+          {context.loading ? 'テストの差分を読み込んでいます…' : context.failed !== undefined ? `テストの差分を読み込めませんでした: ${context.failed}` : 'この地図にはテストの差分がありません。'}
+        </p>
       </section>
     );
   }
@@ -443,7 +449,16 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
   const untestedIds = useMemo(() => new Set(changes.untested ?? []), [changes.untested]);
   // The map of a pull request with tests: the diff of the tests (read after the page), the changes the check of the tests fails on.
   const testing: TestContext | undefined =
-    data.tests === undefined ? undefined : { diff: loadedDiff.state === 'ready' ? loadedDiff.value : undefined, loading: loadedDiff.state === 'loading', untested: untestedIds, entries, onOpen: setOpen };
+    data.tests === undefined
+      ? undefined
+      : {
+          diff: loadedDiff.state === 'ready' ? loadedDiff.value : undefined,
+          loading: loadedDiff.state === 'loading',
+          failed: loadedDiff.state === 'failed' ? loadedDiff.message : undefined,
+          untested: untestedIds,
+          entries,
+          onOpen: setOpen,
+        };
   const labels = tests?.aspectLabels ?? {};
   const untested = (changes.untested ?? []).map((id) => changes.frames.find((entry) => entry.id === id)).filter((entry): entry is FrameChangeEntry => entry !== undefined);
   const reasoned = changes.frames.filter((entry) => entry.testReason !== undefined);

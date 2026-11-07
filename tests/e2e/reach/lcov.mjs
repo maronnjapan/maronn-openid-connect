@@ -72,8 +72,15 @@ function normalizedSourceMap(payload, generated, root, wanted) {
 }
 
 /**
- * The generated range of each source of the catalog in a script: from its
- * first mapped offset to the end of its last one.
+ * The generated range of each source of the catalog in a script, as
+ * v8-to-istanbul turns it back into the lines of the source: from the
+ * offset that maps to the earliest position of the source to the one that
+ * maps to its latest. v8-to-istanbul reads a range by the original
+ * positions of its two ends, and the generated order is not the original
+ * one: tsx puts a `__name(fn, "fn")` after each function, which maps back to
+ * the name of the function, so a range up to the last generated mapping
+ * would end on the line that declares the last function and leave its body
+ * at 1.
  * @param {string} source The generated source.
  * @param {any} sourceMap The normalized source map.
  * @param {(path: string) => boolean} wanted
@@ -82,20 +89,34 @@ function normalizedSourceMap(payload, generated, root, wanted) {
 function sourceSpans(source, sourceMap, wanted) {
   const lineStarts = [0];
   for (let index = source.indexOf('\n'); index !== -1; index = source.indexOf('\n', index + 1)) lineStarts.push(index + 1);
-  /** @type {Map<number, { startOffset: number, endOffset: number }>} */
+  /** @typedef {{ offset: number, line: number, column: number }} Mapped */
+  /** @type {(a: Mapped, b: Mapped) => number} */
+  const compare = (a, b) => a.line - b.line || a.column - b.column;
+  /** @type {Map<number, { first: Mapped, last: Mapped, earliest: Mapped, latest: Mapped }>} */
   const spans = new Map();
   for (const [line, segments] of decodeSourceMap(sourceMap).lines.entries()) {
     const lineStart = lineStarts[line];
     if (lineStart === undefined) break;
     for (const segment of segments) {
       if (segment.length < 4) continue;
-      const offset = lineStart + segment[0];
-      const span = spans.get(segment[1]);
-      if (span === undefined) spans.set(segment[1], { startOffset: offset, endOffset: offset + 1 });
-      else span.endOffset = Math.max(span.endOffset, offset + 1);
+      const mapped = { offset: lineStart + (segment[0] ?? 0), line: segment[2] ?? 0, column: segment[3] ?? 0 };
+      const span = spans.get(segment[1] ?? 0);
+      if (span === undefined) {
+        spans.set(segment[1] ?? 0, { first: mapped, last: mapped, earliest: mapped, latest: mapped });
+        continue;
+      }
+      if (mapped.offset < span.first.offset) span.first = mapped;
+      if (mapped.offset > span.last.offset) span.last = mapped;
+      if (compare(mapped, span.earliest) < 0) span.earliest = mapped;
+      if (compare(mapped, span.latest) > 0) span.latest = mapped;
     }
   }
-  return [...spans].filter(([index]) => wanted(sourceMap.sources[index])).map(([, span]) => span);
+  return [...spans]
+    .filter(([index]) => wanted(sourceMap.sources[index]))
+    .map(([, { first, last, earliest, latest }]) =>
+      // A source whose earliest position comes after its latest in the generated code keeps the plain range.
+      earliest.offset < latest.offset + 1 ? { startOffset: earliest.offset, endOffset: latest.offset + 1 } : { startOffset: first.offset, endOffset: last.offset + 1 },
+    );
 }
 
 /**

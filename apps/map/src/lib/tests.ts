@@ -114,6 +114,16 @@ export function statusMark(status: TestStatus | undefined): { text: string; tone
   return { text: '—', tone: 'none', title: '実行結果なし' };
 }
 
+/**
+ * The targets an E2E test shows a result for: those its result was recorded under when it ran (an `@http` scenario runs
+ * on hono and nextjs), else the targets it is tagged with, without a result.
+ */
+export function resultTargets(test: Pick<TestCase, 'targets' | 'result'>): Array<{ target: string; status: TestStatus | undefined }> {
+  const recorded = Object.entries(test.result?.targets ?? {}).filter(([target]) => target !== '');
+  if (recorded.length > 0) return recorded.map(([target, result]) => ({ target, status: result.status }));
+  return (test.targets ?? []).map((target) => ({ target, status: undefined }));
+}
+
 /** The badge of an outline row whose call or step is a function with tests: `ユニット 9`, `（境界値 1）`, `到達 38`, the split in its tooltip. */
 export interface RowTests {
   unit: string;

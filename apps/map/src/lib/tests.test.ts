@@ -21,6 +21,7 @@ import {
   outcomeWords,
   relationWords,
   requestWords,
+  resultTargets,
   routeOf,
   routeWords,
   setChange,
@@ -163,6 +164,20 @@ describe('the card of an entry of the index', () => {
     expect(cardUrlOf(index, { kind: 'api', subjects: [{ kind: 'function', id: 'core:a.ts#f', how: 'call' }, { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] })).toBe('endpoint-token');
     expect(cardUrlOf(index, { kind: 'unit', subjects: [] })).toBeUndefined();
     expect(cardUrlOf(index, { kind: 'tool', subjects: [], card: 'file-cards' })).toBe('file-cards');
+  });
+
+  it('should show an E2E result on the targets it ran on, and the tagged targets before it ran', () => {
+    const passed = { status: 'passed' as const, duration: 1, attempts: 1 };
+    const failed = { status: 'failed' as const, duration: 1, attempts: 2 };
+    expect(resultTargets(card('http', { kind: 'e2e', targets: ['http'], result: { status: 'failed', targets: { hono: passed, nextjs: failed } } }))).toEqual([
+      { target: 'hono', status: 'passed' },
+      { target: 'nextjs', status: 'failed' },
+    ]);
+    expect(resultTargets(card('tagged', { kind: 'e2e', targets: ['hono', 'nextjs'] }))).toEqual([
+      { target: 'hono', status: undefined },
+      { target: 'nextjs', status: undefined },
+    ]);
+    expect(resultTargets(card('unit', { result: { status: 'passed', targets: { '': passed } } }))).toEqual([]);
   });
 
   it('should list a card the way the index does', () => {

@@ -15,6 +15,7 @@ import {
   latestOf,
   outcomeWords,
   relationWords,
+  resultTargets,
   routeOf,
   routeWords,
   tabSubject,
@@ -131,10 +132,10 @@ function E2eList({ tests, endpoints, source, context }: { tests: readonly TestCa
       {tests.map((test) => (
         <TestRow key={test.id} test={test} language={language} labels={labels} onOpen={onOpen}>
           <p className="test-route mono">{routeWords(routeOf(test, endpoints, source)) || '通るエンドポイントを読めませんでした'}</p>
-          {(test.targets ?? []).length > 0 ? (
+          {resultTargets(test).length > 0 ? (
             <p className="result-targets">
-              {(test.targets ?? []).map((target) => (
-                <ResultMark key={target} status={test.result?.targets[target]?.status} target={target} />
+              {resultTargets(test).map(({ target, status }) => (
+                <ResultMark key={target} status={status} target={target} />
               ))}
             </p>
           ) : null}

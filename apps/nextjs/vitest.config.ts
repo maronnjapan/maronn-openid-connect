@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { testReports } from '@maronn-openid-connect/test-reach/vitest';
 import { defineConfig } from 'vitest/config';
 
 const packages = fileURLToPath(new URL('../../packages/', import.meta.url));
@@ -33,5 +34,8 @@ export default defineConfig({
       OIDC_SQLITE_PATH: ':memory:',
       OIDC_ISSUER: 'https://op.example.com',
     },
+    // MARONN_REACH=1: the functions each test runs, kept to these roots of the
+    // function catalog. MARONN_TEST_REPORTS: the JSON and JUnit reports.
+    ...testReports({ root: import.meta.url, roots: ['apps/nextjs/src/app', 'packages/core/src', 'packages/experimental/src', 'packages/google-login/src'] }),
   },
 });

@@ -50,6 +50,7 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/cli#readme",
   "devDependencies": {
+    "@maronn-openid-connect/test-reach": "workspace:*",
     "@types/express": "^5.0.5",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",

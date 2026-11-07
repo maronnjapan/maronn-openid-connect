@@ -1,3 +1,4 @@
+import { testReports } from '@maronn-openid-connect/test-reach/vitest';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -26,5 +27,8 @@ export default defineConfig({
 
     // Include test files
     include: ['src/**/*.{test,spec}.{js,ts}'],
+    // MARONN_REACH=1: the functions each test runs, kept to these roots of the
+    // function catalog. MARONN_TEST_REPORTS: the JSON and JUnit reports.
+    ...testReports({ root: import.meta.url, roots: ['packages/core/src'] }),
   },
 });

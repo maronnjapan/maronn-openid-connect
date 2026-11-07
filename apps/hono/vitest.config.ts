@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { testReports } from '@maronn-openid-connect/test-reach/vitest';
 import { defineConfig } from 'vitest/config';
 
 const packages = fileURLToPath(new URL('../../packages/', import.meta.url));
@@ -26,5 +27,8 @@ export default defineConfig({
   test: {
     globals: false,
     include: ['src/**/*.test.{ts,tsx}'],
+    // MARONN_REACH=1: the functions each test runs, kept to these roots of the
+    // function catalog. MARONN_TEST_REPORTS: the JSON and JUnit reports.
+    ...testReports({ root: import.meta.url, roots: ['apps/hono/src/oidc-provider', 'apps/hono/src/web', 'packages/core/src', 'packages/experimental/src', 'packages/google-login/src'] }),
   },
 });

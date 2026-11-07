@@ -47,7 +47,6 @@ test.describe('signing key rotation (OIDC Core 1.0 §10.1.1)', () => {
     const rotation = await request.post(`${issuer}/operator/signing-keys/rotate`, {
       headers: { Authorization: `Bearer ${operatorToken}` },
     });
-    test.skip(rotation.status() === 404, 'This OP has no signing key rotation route');
     expect(rotation.status()).toBe(200);
     const { kid } = (await rotation.json()) as { kid: string };
 
@@ -64,7 +63,6 @@ test.describe('signing key rotation (OIDC Core 1.0 §10.1.1)', () => {
 
     const rotation = await request.post(`${issuer}/operator/signing-keys/rotate`);
 
-    test.skip(rotation.status() === 404, 'This OP has no signing key rotation route');
     expect(rotation.status()).toBe(401);
   });
 });

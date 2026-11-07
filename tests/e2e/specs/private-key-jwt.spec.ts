@@ -22,7 +22,7 @@ const jwksUri = `${clientBaseURL}/jwks.json`;
  * checks iss, sub, aud, exp and jti, and refuses a replay.
  *
  * The clients register themselves (RFC 7591), so the spec skips when the OP
- * has no registration endpoint or does not advertise private_key_jwt.
+ * was generated without dynamic-client-registration.
  * playwright.config.ts starts the OP with OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI=1
  * (the RP serves its keys over http on 127.0.0.1) and with
  * OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS=0, so a rotated key is fetched
@@ -36,16 +36,13 @@ test.describe('private_key_jwt (OIDC Core 1.0 §9)', () => {
   test.beforeEach(async ({ request, baseURL }) => {
     const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
     test.skip(typeof metadata['registration_endpoint'] !== 'string', 'This OP was generated without dynamic-client-registration');
-    test.skip(
-      !(metadata['token_endpoint_auth_methods_supported'] as string[] | undefined)?.includes('private_key_jwt'),
-      'This OP does not advertise private_key_jwt',
-    );
   });
 
   // OIDC Discovery 1.0 §3 / RFC 8414 §2.
   test('should advertise private_key_jwt with its signing algs and without none', async ({ request, baseURL }) => {
     const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
 
+    expect(metadata['token_endpoint_auth_methods_supported']).toContain('private_key_jwt');
     expect(metadata['token_endpoint_auth_signing_alg_values_supported']).toEqual([
       'RS256',
       'RS384',

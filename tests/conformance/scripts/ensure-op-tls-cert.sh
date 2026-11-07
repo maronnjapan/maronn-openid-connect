@@ -15,7 +15,8 @@
 # is never turned off.
 #
 # The CA and both keys are local to this run and are not secrets of anything
-# else. Files that exist are kept, so a rerun keeps the same CA.
+# else. Files that exist are kept, so a rerun keeps the same CA (a new CA
+# reissues the certificates).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +28,7 @@ CA_KEY="${CERT_DIR}/ca.key"
 mkdir -p "${CERT_DIR}"
 
 if [[ ! -f "${CA_CERT}" || ! -f "${CA_KEY}" ]]; then
-  # Certificates of an earlier, self-signed layout do not chain to a new CA.
+  # A new CA reissues every certificate: the ones already here do not chain to it.
   rm -f "${CERT_DIR}"/*.crt "${CERT_DIR}"/*.key "${CERT_DIR}"/*.csr "${CERT_DIR}"/*.srl
   openssl req \
     -x509 \

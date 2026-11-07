@@ -268,7 +268,7 @@ interface のメンバーの実装を持つノードの要約は、そのメン�
 
 何を変えたかは木の差分が、どこに効くかは地図が示し、変更メモ（[changes/](changes/README.md)）には意図と背景を書く。
 地図のビルドは、変更メモの見出しが名前を挙げる関数が実在するかを確かめ、コードを変えた関数で節の無いものを「説明の無い変更」として PR コメントの先頭に一覧する。
-CI（`.github/workflows/map-preview.yml` の地図のビルド）を落とすのは、エンドポイントに届く関数か、エンドポイントの処理本体に説明の節が無いときと、それらの関連するテストをこの PR が足しも変えもせず、節に `テストを変えない理由:` の行も無いときである。
+CI（`.github/workflows/ci.yml` の `map` ジョブの地図のビルド）を落とすのは、エンドポイントに届く関数か、エンドポイントの処理本体に説明の節が無いときと、それらの関連するテストをこの PR が足しも変えもせず、節に `テストを変えない理由:` の行も無いときである。
 コメントや書き方だけの変更と、追えない呼び出しのほかからは届かない変更では落とさない。
 本文の質は検査せず、自動要約を隣に並べる。
 PR のコメントは、説明の無い変更（と足す節の雛形）、変更メモの要旨、変わった関数の表（札、関数、場所、自動要約、届くエンドポイント、メモの一行目）、新しい失敗が捕まる場所と追えない呼び出し、テストの節、プレビューの URL の順に並べる。
@@ -335,7 +335,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 名前の無い選択（exit ケース）と、同じフレームで重なる名前（番号だけで区別した名前を含む）、ノードに属さない行、PR が変えた行のうちノードに属さないもの、説明の無い変更である。
 全機能オンの `/token` に、refresh_token と authorization_code の名前付きの選択があることも確かめる。
 これは地図の出力に対する検査で、貢献者のコードの形には向けない。
-図の検査（`src/lib/diagram.data.test.ts`）も同じ考えで、ビルドしたデータがあるときだけ走る（`map-preview.yml` では `build:map` の後のテスト）。
+図の検査（`src/lib/diagram.data.test.ts`）も同じ考えで、ビルドしたデータがあるときだけ走る（`ci.yml` の `map` ジョブでは `build:map` の後のテスト）。
 決定と終わりがどのフレームの図からも欠けないこと、`try` の枠が自分の箱だけを囲むこと、図がステップと守りをアウトラインと同じに畳むこと、幅に合わせて見出しが 11px に届くフレームが 9 割を下回らないことを確かめる。
 
 `MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` は、ページに出す PR の番号、タイトル、URL である。
@@ -367,10 +367,12 @@ Worker の名前は `wrangler.jsonc` の `name` で変える。
 
 ## PR ごとのプレビューと main のデプロイ
 
-`.github/workflows/map-preview.yml` が、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
+`.github/workflows/ci.yml` の `map` ジョブが、`test` ジョブの後に、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
+`test` ジョブが書いたテストの結果と到達（`work/test-reports` の artifact `test-reports`）を `MAP_TEST_REPORTS` で受け取り、地図に載せる。
+テストが落ちても、そこまでの結果で地図を作る。
 
 - **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。URL と変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
-- **PR を閉じた**：その Preview を `wrangler preview delete --name pr-<番号>` で消す
+- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Preview を `wrangler preview delete --name pr-<番号>` で消す
 - **main への push**：`wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`）を更新する
 
 Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`wrangler preview` が失敗したときは `.github/scripts/map-preview.mjs` が PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` し、閉じたときにその Worker も消す。

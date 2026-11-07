@@ -900,16 +900,26 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 - `MapChanges.otherFiles` はテストの変更を数えず、テストファイルの変更は `testFiles` に数える
 - 地図のデータを読む `packages/test-catalog` は `packages/map-analysis` の上に置き、`buildMap` の拡張（`BuildOptions.extend`）として map.json と changes.md を書く前に走る。解析がテストを知らずに済み、データの書き出しは一度で済む
 
-## 11. 確かめてから決めること
+## 11. 確かめたこと
 
-実装の最初に確かめる。
+実装の最初に確かめると決めていた五つを、実装で測った（2026-11、`packages/test-reach` と `tests/e2e/fixtures.ts`）。
 
-- Vitest の istanbul プロバイダーが計数を置くグローバルの名前と、`isolate` の設定で計数がファイルごとに作り直されるか
-- `next start` で、`instrumentation.ts` の `register()` が Route Handler を実行するのと同じプロセスで動くか
-- Turbopack の `next build` でサーバーのソースマップを出す設定と、`v8-to-istanbul` がそれで `app/` の元の行に戻せるか
-- tsx が付けるソースマップを、`v8-to-istanbul` が引けるか（`node:module` の `findSourceMap()`）
-- V8 の分岐（ブロック）の計数の精度。V8 はこれを best effort とするので、決定の側の到達を足す前に測る
+- **Vitest の istanbul の計数**：`globalThis.__VITEST_COVERAGE__` に置かれる（`@vitest/coverage-istanbul` の `COVERAGE_STORE_KEY`）。既定の `isolate: true` ではテストファイルごとに別のプロセスで、グローバルも作り直される。ファイルの最初の `beforeAll` の時点で、そのファイルの import と import のときに走ったコードの計数がすでにあるので、テストの前後の差分を取れば、そのテストの分だけが残る。`--no-isolate` では計数がファイルをまたいで増え続けるが、テストごとの差分は 67 件中 60 件が一致し、残る 7 件はキャッシュされた初回の呼び出しの差で、コードのとおりの振る舞いである。リポジトリに `concurrent` は無い。計数の位置は Vite の変換後のコードの座標なので、データに付く `inputSourceMap` で元の行に戻す（`source-map.js` の VLQ の読み取り）
+- **`register()` と Route Handler**：`next start` で同じプロセスで動く。`register()` で開いた制御のポートが、`/token` のリクエストに `app/token/route.ts` の `POST` と `token` を返し、Next.js の E2E の全体を計れた
+- **Next.js のサーバーのソースマップ**：Next 16.4.3 の `next build`（Turbopack）は設定なしで `.next/server/**/*.js.map` を書く。ただし既定のビルドはサーバーのコードを縮めるので、関数の名前が変わり、位置が別のファイルを指すことがある。そこで到達を取るビルド（`MARONN_REACH=1` で `next build`）だけ、`next.config.mjs` で `experimental.serverSourceMaps` を有効にし `serverMinification` を切る。これで `app/` のコードは元の行にちょうど戻り、ライブラリの関数は関数の中の最初の行に戻る（複数行のシグネチャでは一行下になるが、関数の範囲の中にある）。`v8-to-istanbul` は、索引つきのソースマップを平らにし、相対の `sources` を解決すれば使える
+- **tsx のソースマップ**：tsx の下で `findSourceMap()` は tsx の埋め込みのソースマップ（`sourcesContent` が無いので lcov の段はディスクから元のソースを読む）と、`packages/*/dist` の tsc の `.js.map` を返し、位置はちょうど戻る。計測はアプリのモジュールを読む前に始める必要がある。遅れて始めると、走らなかった関数が V8 の結果から抜け、lcov がそれを走ったものと数える。`apps/hono/src/server.ts` は `startReach()` の後にアプリを動的に import する
+- **V8 のブロックの計数**：冷えた状態（30 回）、温まった状態（3,000 回）、最適化の後（300,000 回）、リセットの後のどれでも正確だった。V8 は親と同じ回数のブロックを結果から省くので、決定の側の到達を足すときは、入れ子から省かれたブロックを補う
 
-実際の PR で測って決める。
+計測の仕組みとして決めたこと。
 
-- 名前の変更の対応づけの閾値（期待結果の 8 割）
+- Vitest のテストごとの到達は、setup ファイルの `afterEach` で差分を取り、テストの `meta` で reporter に渡して `reach/vitest-<pkg>.jsonl` に書く。edge-runtime の環境の core でもワーカーの中でファイルを書かずに済む
+- E2E の OP は、それぞれの issuer のポートの次のポートに制御の口（`/reset`、`/collect`）を開く（`MARONN_REACH_PORT`）。fixture はテストの前に全部の OP（main、XAA、DCR）を `/reset` し、答えない OP があればテストを落とす。計測の無い起動中のサーバーが使い回されて、何も計らないまま通るのを防ぐためである。到達を取る実行は Playwright のワーカーを一つにする
+- ブラウザに見えない RP の裏の通信（`/token`、`/userinfo`、`/introspect` など）は、OP のアクセスログ（hono は `hono/logger`、Next.js は Node の `http.server.response.finish` の diagnostics channel）を、テストの始まりと終わりの時刻で切って足す
+- E2E の lcov は、テストごとの V8 の計数を `v8-to-istanbul` で Istanbul の形にし、Playwright の global teardown で合わせて書く。モジュールの読み込みで走る行（import、型、コメント）は走った行として数わるので、行の割合は高めに出る
+- 計測の口は生成物に入らない。`server.ts` と `instrumentation.ts` は CLI が抽出する根の外にあり、`packages/cli` のテストが、どのフレームワーク、DB、機能の組み合わせのテンプレートと生成物にも `test-reach` が無いことを確かめる
+
+残っていること。
+
+- 失敗したテストが途中で止めた RP のポーリング（デバイスと CIBA）は、次のテストの計数とログの時間に入りうる
+- 決定の側の到達（`branches`）は、ブロックの計数を集めているが、地図にはまだ載せていない
+- 名前の変更の対応づけの閾値（期待結果の 8 割）は、実際の PR で測って決める

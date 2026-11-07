@@ -13,14 +13,28 @@
  *   (`// @aspect boundary`) and subjects (`// @subject <id>`).
  * - Its expectations are the `expect(...)` chains of its body (words.ts).
  * - Its requests are the requests its body sends, or the functions of the
- *   same file its body calls send: `app.request(url, init)`, `fetch()`,
- *   `request.get()` / `.post()` of Playwright, `page.goto()`, a `Request`
- *   handed to a Route Handler, and the URL `toHaveURL()` expects. The path of
- *   the URL is its fixed part (`${TEST_ISSUER}/token` → `/token`).
+ *   same file its body calls send: `app.request(url, init)`, `app.fetch()`,
+ *   `fastify.inject()`, `fetch(url)` to a server it runs, `request.get()` /
+ *   `.post()` of Playwright, `page.goto()`, a `Request` handed to a Route
+ *   Handler, and the URL `toHaveURL()` expects. The path of the URL is its
+ *   fixed part (`${TEST_ISSUER}/token` → `/token`), also when a helper builds
+ *   it (`requestTo(authorizePath(params))`, the helper of a test support
+ *   module read in its own file); a test of a table (`it.each(PATHS)`) sends
+ *   the requests of each row, its parameters bound to the row's values
+ *   (tableRows); a request sent to an app whose URL has no fixed part has
+ *   the path ''. A Request only built for a context
+ *   (`contextOf(requestTo('/token'))`) is no request, nor a `fetch()` the
+ *   file mocks. A request that reaches no endpoint says why (`route`: a
+ *   route the test registers itself, a route of the app, a path known at
+ *   run time).
  * - Its subjects are the functions of the catalog its describe blocks name
  *   (through the imports of the file, by the types: `describe` names the
  *   function as the README asks), the functions of the catalog its body
- *   calls, the endpoints its requests reach, and what its author declares.
+ *   calls, the endpoints its requests reach (a route the test registers on
+ *   the path itself is no endpoint: ownRoutes), and what its author declares.
+ *   The code each describe block names, of the catalog or not (an app, a
+ *   class), is kept too (CodeTest.pathCode): it answers the requests of the
+ *   test that reach no endpoint.
  * - Its helpers are the functions its body calls (or hands to a call) that
  *   are no function of the catalog and no call of a test framework: the
  *   functions of its file, found by the scopes the name is used in (a
@@ -50,7 +64,7 @@ import {
   type Node,
   type SourceFile,
 } from '@maronn-openid-connect/map-analysis';
-import type { Assertion, RequestShape, Subject } from './model.js';
+import type { Assertion, NamedCodeRef, RequestRoute, RequestShape, Subject } from './model.js';
 import { plainValue, sayExpectation, type Expectation, type Value } from './words.js';
 
 /** What a test of the code is before the catalog decides its kind, its aspects and its id. */
@@ -68,6 +82,8 @@ export interface CodeTest {
   described: string[];
   /** For each block of its path, the function of the catalog its name names (the id salts the test id: two modules with functions of one name keep their tests apart). */
   pathIds: Array<string | undefined>;
+  /** For each block of its path, the code its name names, of the catalog or not (CodeReadOptions.describedCode): what answers its requests to routes that are no endpoint. */
+  pathCode: Array<NamedCodeRef | undefined>;
   /** The functions of the catalog its body calls in what it checks: inside an `expect(...)`, or to compute a value an expectation checks (the calls that only arrange state are left out). */
   called: string[];
   /** The endpoints it reaches other than by the path of a request: the Route Handler (Next.js) it calls, the page it expects to be at. */
@@ -133,6 +149,21 @@ export interface CodeReadOptions {
    * function); without it the reader finds the helpers of the file only.
    */
   helperOf?(name: Node): HelperDeclaration | undefined;
+  /**
+   * The code a name of a describe block names (CodeTest.pathCode): the
+   * declaration an imported name refers to by the types (`imported`, its
+   * node), else one of that name at the top of the module the test file
+   * tests (`app.test.ts` → `app.ts`); a function, a class or a variable of
+   * the repository that is no test and no test support code. Without it no
+   * block names code.
+   */
+  describedCode?(name: string, file: SourceFile, imported: Node | undefined): NamedCodeRef | undefined;
+  /**
+   * The value a name refers to when it is a constant of a test support
+   * module (`PROVIDER_PATH_PREFLIGHTS`), by the types: the initializer of its
+   * declaration, the table of an `it.each` the reader reads the rows of.
+   */
+  valueOf?(name: Node): Node | undefined;
 }
 
 const DESCRIBE = new Set(['describe', 'suite']);
@@ -383,11 +414,15 @@ function returnedBy(fn: Node): Node[] {
 
 /**
  * The URL of a request as written (undefined parts when it has no fixed path):
- * a string, a template (`${TEST_ISSUER}/token`), `a + '/x'`, a constant of
+ * a string, a template (`${TEST_ISSUER}/token`), `a + '/x'` (or
+ * `origin + authorizePath(params)`, the path on the right), a constant of
  * the file, `new URL('/x', base)`, `new Request(url, init)`, a helper that
  * builds the request from its first argument (`requestTo('/userinfo')`,
  * `formPost('/introspect', fields)`: `post` in its name makes it a POST), or
- * a function of the file whose result is one of these.
+ * a function whose result is one of these: a function of the file, or a
+ * helper of a test support module (FileScope.imported: `authorizePath(params)`
+ * returns `'/authorize?' + ...`), read in its own file, a helper it calls in
+ * turn too.
  */
 export function urlOf(file: SourceFile, node: Node | undefined, scope: FileScope, seen = new Set<string>()): UrlShape {
   if (node === undefined) return {};
@@ -402,7 +437,10 @@ export function urlOf(file: SourceFile, node: Node | undefined, scope: FileScope
   if (is(value, SyntaxKind.BinaryExpression) && any(value)['operatorToken'].kind === SyntaxKind.PlusToken) {
     const right = stringOf(unwrap(value['right'] as Node));
     if (right !== undefined && right.startsWith('/')) return pathPart(pathOfText(right));
-    return urlOf(file, value['left'] as Node, scope, seen);
+    const left = urlOf(file, value['left'] as Node, scope, seen);
+    if (left.path !== undefined || right !== undefined) return left;
+    // An origin and the path a helper builds (`origin + authorizePath(params)`).
+    return urlOf(file, value['right'] as Node, scope, seen);
   }
   if (is(value, SyntaxKind.NewExpression)) {
     const name = nameOf(unwrap(value['expression'] as Node));
@@ -418,19 +456,24 @@ export function urlOf(file: SourceFile, node: Node | undefined, scope: FileScope
   if (is(value, SyntaxKind.Identifier)) {
     const name = value['text'] as string;
     const initializer = scope.constants.get(name);
-    if (initializer === undefined || seen.has(name)) return {};
-    seen.add(name);
+    const key = `${file.fileName}\u0000${name}`;
+    if (initializer === undefined || seen.has(key)) return {};
+    seen.add(key);
     return urlOf(file, initializer, scope, seen);
   }
   if (is(value, SyntaxKind.CallExpression)) {
     const callee = unwrap(value['expression'] as Node);
     const name = is(callee, SyntaxKind.Identifier) ? (callee['text'] as string) : is(callee, SyntaxKind.PropertyAccessExpression) ? nameOf(callee['name']) : undefined;
     const args = (value['arguments'] as Node[] | undefined) ?? [];
-    const local = name === undefined || seen.has(`fn:${name}`) ? undefined : scope.functions.get(name);
-    if (local !== undefined) {
-      seen.add(`fn:${name}`);
-      for (const returned of returnedBy(local)) {
-        const url = urlOf(file, returned, scope, seen);
+    const key = `${file.fileName}\u0000fn:${name ?? ''}`;
+    const local = name === undefined || seen.has(key) ? undefined : scope.functions.get(name);
+    // A function of the file, else a helper of a test support module the name refers to (its returns read in its own file).
+    const imported = local !== undefined || name === undefined || seen.has(key) || !is(callee, SyntaxKind.Identifier) ? undefined : scope.imported?.(callee);
+    const returning = local !== undefined ? { file, fn: local, scope } : imported;
+    if (returning !== undefined) {
+      seen.add(key);
+      for (const returned of returnedBy(returning.fn)) {
+        const url = urlOf(returning.file, returned, returning.scope, seen);
         if (url.path !== undefined) return url;
       }
     }
@@ -536,6 +579,12 @@ const PLAYWRIGHT_METHODS: Record<string, string> = { get: 'GET', post: 'POST', p
 export interface FileScope {
   constants: Map<string, Node>;
   functions: Map<string, Node>;
+  /**
+   * The function of a test support module a called name refers to, by the
+   * types (CodeReadOptions.helperOf), with its file and the scope of that
+   * file: urlOf reads what it returns. Absent, no other file is read.
+   */
+  imported?(name: Node): { file: SourceFile; fn: Node; scope: FileScope } | undefined;
 }
 
 /** The constants and functions declared at the top of a file and in the blocks of its tests (see FileScope). */
@@ -559,12 +608,57 @@ export function scopeOf(file: SourceFile): FileScope {
   return scope;
 }
 
-/** The requests a body sends, directly or through the functions of the file it calls (each read once). */
+/**
+ * Whether a file stubs the global fetch (`vi.spyOn(globalThis, 'fetch')`,
+ * `vi.stubGlobal('fetch', ...)`, `globalThis.fetch = ...`): its `fetch(url)`
+ * calls answer from the stub, and send no request to an app.
+ */
+export function stubsGlobalFetch(file: SourceFile): boolean {
+  let stubs = false;
+  const isGlobal = (node: Node | undefined) => node !== undefined && /^(globalThis|global|window|self)$/.test(textOf(file, unwrap(node)));
+  walk(file, (node) => {
+    if (stubs) return false;
+    if (is(node, SyntaxKind.CallExpression)) {
+      const callee = textOf(file, unwrap(node['expression'] as Node)).replace(/\s+/g, '');
+      const args = (node['arguments'] as Node[] | undefined) ?? [];
+      const second = args[1] === undefined ? undefined : stringOf(unwrap(args[1]));
+      const first = args[0] === undefined ? undefined : stringOf(unwrap(args[0]));
+      if ((/(^|\.)spyOn$/.test(callee) && isGlobal(args[0]) && second === 'fetch') || (/(^|\.)stubGlobal$/.test(callee) && first === 'fetch')) stubs = true;
+    } else if (is(node, SyntaxKind.BinaryExpression) && any(node)['operatorToken'].kind === SyntaxKind.EqualsToken) {
+      const left = unwrap(node['left'] as Node);
+      if (is(left, SyntaxKind.PropertyAccessExpression) && nameOf(left['name']) === 'fetch' && isGlobal(left['expression'] as Node)) stubs = true;
+    }
+    return !stubs;
+  });
+  return stubs;
+}
+
+/** Whether a scope around a node declares a name (a parameter, a variable, a function of its own): the name is not the global one. */
+function declaredAround(name: string, at: Node): boolean {
+  for (let scope = at.parent; scope !== undefined; scope = scope.parent) if (scopeNames(scope).has(name)) return true;
+  return false;
+}
+
+/**
+ * The requests a body sends, directly or through the functions of the file
+ * it calls (each read once). A request handed to an app, a handler or a
+ * server (`app.request()`, `app.fetch()`, `fastify.inject()`, `fetch(url)`)
+ * is sent whatever its URL: one whose URL has no fixed path (a parameter of
+ * the test, the URL of a server it starts) has the path '' and the route
+ * `unknown`. A `fetch(url)` of the file's own (a parameter, a mock it
+ * declares) or of a file that stubs the global fetch sends nothing; neither
+ * does a Request built and not handed to an app
+ * (`contextOf(requestTo('/token'))`). Its endpoint is the endpoint its path
+ * is, unless the test registers a route of its own on the path (ownRoutes:
+ * the route `own`); a path no endpoint has is a route of the app (`app`).
+ */
 function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: CodeReadOptions, imported: ReadonlyMap<string, string | undefined>): { requests: RequestShape[]; routes: string[] } {
   const requests: RequestShape[] = [];
   const routes: string[] = [];
   const visited = new Set<Node>();
-  const own = ownRoutes(file);
+  const own = ownRoutesOf(file);
+  let stubbed: boolean | undefined;
+  const stubsFetch = () => (stubbed ??= stubsGlobalFetch(file));
   const push = (shape: Omit<RequestShape, 'line'>, at: Node) => {
     const line = startLine(file, at);
     const known = requests.find((request) => request.method === shape.method && request.path === shape.path && request.line === line);
@@ -591,27 +685,36 @@ function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: Cod
         const method = is(callee, SyntaxKind.PropertyAccessExpression) ? nameOf(callee['name']) : undefined;
         const name = is(callee, SyntaxKind.Identifier) ? (callee['text'] as string) : undefined;
         // The body and the headers may be in the request call, in the helper that builds its URL, or in the arguments of the helper of the test that sends it.
-        const shape = (url: UrlShape, verb: string) => {
-          if (url.path === undefined) return;
+        // A request sent to an app is kept without a fixed path (''); a page or a request of Playwright only with one.
+        const shape = (url: UrlShape, verb: string, sent = false) => {
+          if (url.path === undefined && !sent) return;
+          const path = url.path ?? '';
           const nodes = [...args, ...callers];
           // The fields a test hands to the helper that sends the request (`post({ grant_type: ... })`) are its params.
           const fields = callers[0] === undefined ? undefined : unwrap(callers[0]);
           const params = [...new Set([...paramsIn(file, nodes, scope.constants), ...(is(fields, SyntaxKind.ObjectLiteralExpression) ? ((fields['properties'] as Node[]) ?? []).map((property) => nameOf(any(property)['name'] as Node | undefined)).filter((key): key is string => key !== undefined) : [])])];
           const auth = authOf(file, nodes, params);
-          const endpoint = own.has(url.path) ? undefined : options.endpointOfPath(url.path);
-          push({ ...(endpoint === undefined ? {} : { endpoint }), method: verb, path: url.path, ...(params.length === 0 ? {} : { params }), ...(auth === undefined ? {} : { auth }) }, node);
+          const endpoint = path === '' || own.has(path) ? undefined : options.endpointOfPath(path);
+          const route: RequestRoute | undefined = endpoint !== undefined ? undefined : path === '' ? 'unknown' : own.has(path) ? 'own' : 'app';
+          push({ ...(endpoint === undefined ? {} : { endpoint }), ...(route === undefined ? {} : { route }), method: verb, path, ...(params.length === 0 ? {} : { params }), ...(auth === undefined ? {} : { auth }) }, node);
         };
-        if ((method === 'request' || method === 'fetch' || method === 'inject') && args.length > 0 && !/^(request|api|context)$/i.test(textOf(file, any(callee)['expression'] as Node))) {
+        const receiver = is(callee, SyntaxKind.PropertyAccessExpression) ? textOf(file, any(callee)['expression'] as Node) : undefined;
+        // `globalThis.fetch(url)` is the global fetch, as `fetch(url)` is.
+        const globalFetch = method === 'fetch' && receiver !== undefined && /^(globalThis|global|window|self)$/.test(receiver);
+        if ((method === 'request' || method === 'fetch' || method === 'inject') && !globalFetch && args.length > 0 && !/^(request|api|context)$/i.test(receiver ?? '')) {
           // `app.request(url, init)`, `app.fetch(new Request(...))`, `fastify.inject({ method, url })`.
           const url = method === 'inject' ? injectUrl(file, args[0], scope) : urlOf(file, args[0], scope);
-          shape(url, methodIn(args[1]) ?? url.method ?? 'GET');
+          shape(url, methodIn(args[1]) ?? url.method ?? 'GET', true);
         } else if (method === 'goto' && args.length > 0) shape(urlOf(file, args[0], scope), 'GET');
-        else if (method !== undefined && PLAYWRIGHT_METHODS[method] !== undefined && args.length > 0 && /request|api|context/i.test(textOf(file, any(callee)['expression'] as Node))) {
+        else if (method !== undefined && !globalFetch && PLAYWRIGHT_METHODS[method] !== undefined && args.length > 0 && /request|api|context/i.test(receiver ?? '')) {
           const url = urlOf(file, args[0], scope);
           shape(url, method === 'fetch' ? (methodIn(args[1]) ?? url.method ?? 'GET') : (PLAYWRIGHT_METHODS[method] as string));
-        } else if (name === 'fetch' && args.length > 0) {
-          const url = urlOf(file, args[0], scope);
-          shape(url, methodIn(args[1]) ?? url.method ?? 'GET');
+        } else if (((name === 'fetch' && !declaredAround('fetch', callee)) || globalFetch) && args.length > 0) {
+          // `fetch(url)` to a server the test runs: not a fetch of its own (a mock it declares, a parameter), nor one the file stubs.
+          if (!stubsFetch()) {
+            const url = urlOf(file, args[0], scope);
+            shape(url, methodIn(args[1]) ?? url.method ?? 'GET', true);
+          }
         } else if (name !== undefined) {
           // A Route Handler of Next.js (`POST(request)`), or a function of this file that may send the request.
           const target = imported.get(name);
@@ -636,8 +739,9 @@ function requestsOf(file: SourceFile, body: Node, scope: FileScope, options: Cod
 }
 
 /**
- * The paths a test file registers a handler of its own on (`router.post('/token', (c) => ...)`):
- * a request to one of them reaches the test's route, not the endpoint of the provider.
+ * The paths a test file registers a handler of its own on (`router.post('/token', (c) => ...)`,
+ * `router.get('status', ...)` for `/status`): a request to one of them reaches the test's route,
+ * not the endpoint of the provider.
  */
 export function ownRoutes(file: SourceFile): Set<string> {
   const routes = new Set<string>();
@@ -651,10 +755,94 @@ export function ownRoutes(file: SourceFile): Set<string> {
     const handler = args[args.length - 1] === undefined ? undefined : unwrap(args[args.length - 1] as Node);
     // A handler of the test's own, or a router of its own mounted on the path.
     const owned = handler !== undefined && (is(handler, SyntaxKind.ArrowFunction) || is(handler, SyntaxKind.FunctionExpression) || method === 'mount' || method === 'route');
-    if (path !== undefined && path.startsWith('/') && args.length > 1 && owned) routes.add(path);
+    if (path === undefined || args.length < 2 || !owned) return true;
+    // A route registered without its leading slash (`'status'`) is matched with it.
+    if (path.startsWith('/')) routes.add(path);
+    else if (/^[\w.~-]/.test(path)) routes.add(`/${path}`);
     return true;
   });
   return routes;
+}
+
+/** The own routes of each file read (ownRoutes), as a test of a table reads its body once a row. */
+const ownRoutesByFile = new WeakMap<SourceFile, Set<string>>();
+
+function ownRoutesOf(file: SourceFile): Set<string> {
+  let routes = ownRoutesByFile.get(file);
+  if (routes === undefined) {
+    routes = ownRoutes(file);
+    ownRoutesByFile.set(file, routes);
+  }
+  return routes;
+}
+
+/**
+ * The values the parameters of a test of a table (`it.each(table)(title,
+ * fn)`, `it.for(table)(...)`) take in each row, one map a row by the names
+ * its function binds: `({ path }) => ...` for a row that is an object,
+ * `(path) => ...` for one that is a string, `(method, path) => ...` (or
+ * `([method, path]) => ...` with `for`) for one that is an array. The table
+ * is an array literal of the test, a constant of its file, or a constant of
+ * a test support module (CodeReadOptions.valueOf); only the values written
+ * as strings are bound. Undefined for a test of no table, or of a table the
+ * reader cannot read.
+ */
+export function tableRows(call: Node, fn: Node, scope: FileScope, options: Pick<CodeReadOptions, 'valueOf'>): Array<Map<string, Node>> | undefined {
+  const callee = unwrap(any(call)['expression'] as Node);
+  if (!is(callee, SyntaxKind.CallExpression)) return undefined;
+  const each = unwrap(callee['expression'] as Node);
+  const how = is(each, SyntaxKind.PropertyAccessExpression) ? nameOf(each['name']) : undefined;
+  if (how !== 'each' && how !== 'for') return undefined;
+  const arrayOf = (node: Node | undefined, depth = 0): Node | undefined => {
+    if (node === undefined || depth > 3) return undefined;
+    const value = unwrap(node);
+    if (is(value, SyntaxKind.ArrayLiteralExpression)) return value;
+    if (!is(value, SyntaxKind.Identifier)) return undefined;
+    return arrayOf(scope.constants.get(value['text'] as string) ?? options.valueOf?.(value), depth + 1);
+  };
+  const table = arrayOf(((callee['arguments'] as Node[] | undefined) ?? [])[0]);
+  if (table === undefined) return undefined;
+  const parameters = ((any(fn)['parameters'] as Node[] | undefined) ?? []).map((parameter) => any(parameter)['name'] as Node | undefined);
+  const bind = (bound: Map<string, Node>, name: Node | undefined, node: Node | undefined) => {
+    if (name === undefined || node === undefined) return;
+    const value = unwrap(node);
+    if (is(name, SyntaxKind.Identifier)) {
+      if (stringOf(value) !== undefined) bound.set(name['text'] as string, value);
+    } else if (is(name, SyntaxKind.ObjectBindingPattern) && is(value, SyntaxKind.ObjectLiteralExpression)) {
+      for (const element of (name['elements'] as Node[] | undefined) ?? []) {
+        const key = nameOf((any(element)['propertyName'] ?? any(element)['name']) as Node | undefined);
+        const property = ((value['properties'] as Node[] | undefined) ?? []).find((candidate) => is(candidate, SyntaxKind.PropertyAssignment) && nameOf(candidate['name'] as Node) === key);
+        bind(bound, any(element)['name'] as Node | undefined, property === undefined ? undefined : (any(property)['initializer'] as Node));
+      }
+    } else if (is(name, SyntaxKind.ArrayBindingPattern) && is(value, SyntaxKind.ArrayLiteralExpression)) {
+      const items = (value['elements'] as Node[] | undefined) ?? [];
+      ((name['elements'] as Node[] | undefined) ?? []).forEach((element, index) => {
+        if (is(element, SyntaxKind.BindingElement)) bind(bound, element['name'] as Node, items[index]);
+      });
+    }
+  };
+  const rows: Array<Map<string, Node>> = [];
+  for (const element of (any(table)['elements'] as Node[] | undefined) ?? []) {
+    const row = unwrap(element);
+    const bound = new Map<string, Node>();
+    // `each` spreads a row that is an array over the parameters; `for` hands every row as the first one.
+    if (how === 'each' && is(row, SyntaxKind.ArrayLiteralExpression)) parameters.forEach((name, index) => bind(bound, name, ((row['elements'] as Node[] | undefined) ?? [])[index]));
+    else bind(bound, parameters[0], row);
+    rows.push(bound);
+  }
+  return rows.some((row) => row.size > 0) ? rows : undefined;
+}
+
+/** The requests of a test of a table: its body read once a row, its parameters bound to the row's values, each request once in the order of the rows. */
+function requestsOfRows(file: SourceFile, body: Node, scope: FileScope, options: CodeReadOptions, imported: ReadonlyMap<string, string | undefined>, rows: ReadonlyArray<ReadonlyMap<string, Node>>): { requests: RequestShape[]; routes: string[] } {
+  const requests: RequestShape[] = [];
+  const routes: string[] = [];
+  for (const row of rows) {
+    const read = requestsOf(file, body, { ...scope, constants: new Map([...scope.constants, ...row]) }, options, imported);
+    for (const request of read.requests) if (!requests.some((known) => known.method === request.method && known.path === request.path && known.line === request.line)) requests.push(request);
+    for (const route of read.routes) if (!routes.includes(route)) routes.push(route);
+  }
+  return { requests, routes };
 }
 
 /** The URL of a `fastify.inject({ method, url })`. */
@@ -908,9 +1096,33 @@ export function fileHelpers(file: SourceFile, helperOf: CodeReadOptions['helperO
   return helperReader(file, importsOf(file), new Map(), helperOf);
 }
 
+/** The scopes of the files of test support modules a test file reads the helpers of, by file (they are read for every test file that imports them). */
+const supportScopes = new WeakMap<SourceFile, FileScope>();
+
+/**
+ * A scope of a test file whose calls of a helper of a test support module
+ * read that helper in its own file (FileScope.imported), and the helpers it
+ * calls in turn; without `helperOf` the file alone.
+ */
+function withImports(scope: FileScope, helperOf: CodeReadOptions['helperOf']): FileScope {
+  if (helperOf === undefined) return scope;
+  const imported = (name: Node): { file: SourceFile; fn: Node; scope: FileScope } | undefined => {
+    const declaration = helperOf(name);
+    if (declaration === undefined) return undefined;
+    const file = declaration.fn.getSourceFile();
+    let own = supportScopes.get(file);
+    if (own === undefined) {
+      own = scopeOf(file);
+      supportScopes.set(file, own);
+    }
+    return { file, fn: declaration.fn, scope: { ...own, imported } };
+  };
+  return { ...scope, imported };
+}
+
 /** The test cases of a file of test code (see the module comment). */
 export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeTest[] {
-  const scope = scopeOf(file);
+  const scope = withImports(scopeOf(file), options.helperOf);
   const importNodes = importsOf(file);
   const imported = new Map<string, string | undefined>();
   for (const [name, node] of importNodes) imported.set(name, options.importTarget(node));
@@ -919,22 +1131,22 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
   const helpersOf = helperReader(file, importNodes, imported, options.helperOf);
   const tests: CodeTest[] = [];
 
-  const visit = (statements: readonly Node[], path: string[], described: string[], skipped: boolean, pathIds: Array<string | undefined> = []) => {
+  const visit = (statements: readonly Node[], path: string[], described: string[], skipped: boolean, pathIds: Array<string | undefined> = [], pathCode: Array<NamedCodeRef | undefined> = []) => {
     for (const statement of statements) {
       // Tests written in a loop or under a condition.
       if (is(statement, SyntaxKind.ForOfStatement) || is(statement, SyntaxKind.ForStatement) || is(statement, SyntaxKind.ForInStatement)) {
         const body = statement['statement'] as Node;
-        visit(is(body, SyntaxKind.Block) ? (body['statements'] as Node[]) : [body], path, described, skipped, pathIds);
+        visit(is(body, SyntaxKind.Block) ? (body['statements'] as Node[]) : [body], path, described, skipped, pathIds, pathCode);
         continue;
       }
       if (is(statement, SyntaxKind.IfStatement)) {
         for (const branch of [statement['thenStatement'], statement['elseStatement']] as Array<Node | undefined>) {
-          if (branch !== undefined) visit(is(branch, SyntaxKind.Block) ? (branch['statements'] as Node[]) : [branch], path, described, skipped, pathIds);
+          if (branch !== undefined) visit(is(branch, SyntaxKind.Block) ? (branch['statements'] as Node[]) : [branch], path, described, skipped, pathIds, pathCode);
         }
         continue;
       }
       if (is(statement, SyntaxKind.Block)) {
-        visit(statement['statements'] as Node[], path, described, skipped, pathIds);
+        visit(statement['statements'] as Node[], path, described, skipped, pathIds, pathCode);
         continue;
       }
       if (!is(statement, SyntaxKind.ExpressionStatement)) continue;
@@ -944,7 +1156,7 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
         const callee = unwrap(call['expression'] as Node);
         if (is(callee, SyntaxKind.PropertyAccessExpression) && nameOf(callee['name']) === 'forEach') {
           const fn = callbackOf(call);
-          visit(statementsOf(fn), path, described, skipped, pathIds);
+          visit(statementsOf(fn), path, described, skipped, pathIds, pathCode);
           continue;
         }
       }
@@ -956,8 +1168,10 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
       const title = titleOf(file, args[0]);
       const fn = callbackOf(call);
       if (kind.kind === 'describe') {
-        const target = imported.get(describedName(title));
-        visit(statementsOf(fn), [...path, title], target === undefined ? described : [...described, target], skipped || kind.skipped, [...pathIds, target]);
+        const name = describedName(title);
+        const target = imported.get(name);
+        const code = name === '' ? undefined : options.describedCode?.(name, file, importNodes.get(name));
+        visit(statementsOf(fn), [...path, title], target === undefined ? described : [...described, target], skipped || kind.skipped, [...pathIds, target], [...pathCode, code]);
         continue;
       }
       const comments = readComments(leadingComments(file, statement), options.specReferencesOf);
@@ -1046,7 +1260,9 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
           return true;
         });
       }
-      const { requests, routes } = fn === undefined ? { requests: [], routes: [] } : requestsOf(file, fn, scope, options, imported);
+      // A test of a table sends the requests of each row (`it.each(PATHS)('should answer $path', ({ path }) => ...)`).
+      const rows = fn === undefined ? undefined : tableRows(call, fn, scope, options);
+      const { requests, routes } = fn === undefined ? { requests: [], routes: [] } : rows === undefined ? requestsOf(file, fn, scope, options, imported) : requestsOfRows(file, fn, scope, options, imported, rows);
       const endpoints = [...routes];
       for (const url of urls) {
         const endpoint = options.endpointOfPath(url);
@@ -1062,6 +1278,7 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
         requests,
         described: [...new Set(described)],
         pathIds,
+        pathCode,
         called,
         endpoints,
         urls,

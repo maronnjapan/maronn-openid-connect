@@ -118,8 +118,15 @@ function guaranteeOf(tests: readonly TestCase[]): { outcomes: string[]; aspects:
   };
 }
 
-/** The card of a test as the diff keeps it. */
-function cardOf(test: TestCase, examples: number): TestDiff['cards'][string] {
+/** The functions a test has as its subjects by some ways (`describe`, `declared`, `call`), each once in the order of its subjects. */
+function functionKeys(test: TestCase, ways: ReadonlyArray<string>): string[] {
+  return [...new Set(test.subjects.filter((subject) => subject.kind === 'function' && ways.includes(subject.how)).map((subject) => subject.id))];
+}
+
+/** The card of a test as the diff keeps it: the functions its describe names or it is declared for apart from those whose results it checks (TestDiffCard). */
+export function cardOf(test: TestCase, examples: number): TestDiff['cards'][string] {
+  const functions = functionKeys(test, ['describe', 'declared']);
+  const calls = functionKeys(test, ['call']).filter((id) => !functions.includes(id));
   return {
     id: test.id,
     kind: test.kind,
@@ -131,6 +138,8 @@ function cardOf(test: TestCase, examples: number): TestDiff['cards'][string] {
     ...(test.ja?.title === undefined ? {} : { ja: test.ja.title }),
     ...(examples > 1 ? { examples } : {}),
     ...(endpointKeys(test).length === 0 ? {} : { endpoints: endpointKeys(test) }),
+    ...(functions.length === 0 ? {} : { functions }),
+    ...(calls.length === 0 ? {} : { calls }),
   };
 }
 

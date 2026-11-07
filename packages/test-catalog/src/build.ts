@@ -13,8 +13,9 @@
  *   - tests/by-file/<hash>.json: the cards of the tests of a file, read when
  *     the reader opens one of them;
  *   - tests/sources/<hash>.json: the text of a file the viewer shows: a test
- *     file, or the file of a helper, of a step definition, of a function or
- *     of an endpoint body (TestsIndex.sources);
+ *     file, or the file of a helper, of a step definition, of a function, of
+ *     an endpoint body, or of the app a test sends requests to routes that
+ *     are no endpoint of (TestsIndex.sources);
  *   - tests/diff.json: in the build of a pull request, the diff of the tests.
  *
  * The run (MAP_TEST_REPORTS: the directory a run with MARONN_TEST_REPORTS
@@ -271,14 +272,16 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
 /**
  * The files the viewer shows code of, in the order of their paths: the test
  * files, and the files of the helpers of the tests, of the step definitions
- * the steps matched, of the functions, the endpoint bodies and the steps of
- * the outline (TestsIndex.sources).
+ * the steps matched, of the code that answers the requests of the API tests
+ * to routes that are no endpoint (TestCase.routeCode), of the functions, the
+ * endpoint bodies and the steps of the outline (TestsIndex.sources).
  */
 export function shownFiles(files: readonly TestFile[], tests: readonly TestCase[], outline: TestsOutline): string[] {
   const shown = new Set<string>(files.map((file) => file.path));
   for (const test of tests) {
     for (const helper of test.helpers ?? []) shown.add(helper.file);
     for (const step of test.steps ?? []) if (step.definition !== undefined) shown.add(step.definition.file);
+    if (test.routeCode !== undefined) shown.add(test.routeCode.file);
   }
   for (const endpoint of outline.endpoints) {
     if (endpoint.code !== undefined) shown.add(endpoint.code.file);

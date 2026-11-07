@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Compiler, Resolver, type AnalysisRoot, type Project } from '@maronn-openid-connect/map-analysis';
-import { helperResolver, scenarioHelpers, stepDefinitionCode } from '../catalog.js';
+import { codeKind, describedCodeResolver, helperResolver, routeCodeOf, scenarioHelpers, stepDefinitionCode, supportValueResolver } from '../catalog.js';
 import { codeSubjects, pathOfText, readCodeTests, readComments, type CodeReadOptions, type CodeTest } from '../read-code.js';
 import { readDefinitions } from '../vocabulary.js';
 
@@ -31,6 +31,8 @@ function compileTests(files: Record<string, string>) {
     endpointOfFunction: () => undefined,
     specReferencesOf: (text) => [...text.matchAll(/RFC \d{4} §[\d.]+/g)].map((match) => match[0]),
     helperOf,
+    describedCode: describedCodeResolver(project, directory),
+    valueOf: supportValueResolver(project, directory),
     ...extra,
   });
   return {
@@ -339,12 +341,15 @@ describe('ownRoutes', () => {
         "import { describe, expect, it } from 'vitest';",
         'declare const router: { post(path: string, handler: () => unknown): void; mount(path: string, child: unknown): void; request(url: string): Promise<Response> };',
         "router.post('/token', () => 'own');",
+        "router.post('status', () => 'own');",
         "router.mount('/login/google', {});",
         "describe('router', () => {",
         "  it('should answer its own route', async () => {",
         "    expect((await router.request('/token')).status).toBe(200);",
         "    expect((await router.request('/login/google')).status).toBe(200);",
+        "    expect((await router.request('/status')).status).toBe(200);",
         "    expect((await router.request('/userinfo')).status).toBe(401);",
+        "    expect((await router.request('/health')).status).toBe(404);",
         '  });',
         '});',
       ].join('\n'),
@@ -352,13 +357,225 @@ describe('ownRoutes', () => {
   });
   afterAll(() => fixture.dispose());
 
-  it('should not take a request to a route the test registers or mounts itself for a request to the endpoint', () => {
+  it('should not take a request to a route the test registers or mounts itself for a request to the endpoint, and say which route it reaches', () => {
     const [test] = fixture.read('router.test.ts');
-    expect(test?.requests.map((request) => [request.path, request.endpoint])).toEqual([
-      ['/token', undefined],
-      ['/login/google', undefined],
-      ['/userinfo', 'userinfo'],
+    expect(test?.requests.map((request) => [request.path, request.endpoint, request.route])).toEqual([
+      ['/token', undefined, 'own'],
+      ['/login/google', undefined, 'own'],
+      // A route registered without its leading slash.
+      ['/status', undefined, 'own'],
+      ['/userinfo', 'userinfo', undefined],
+      // A path of the app no endpoint has.
+      ['/health', undefined, 'app'],
     ]);
+  });
+});
+
+describe('the kind of a test by the requests it sends', () => {
+  const SUPPORT = [
+    "export const ISSUER = 'https://op.example.com';",
+    '/** The path of an authorization request. */',
+    'export function authorizePath(params: Record<string, string>): string {',
+    "  return '/authorize?' + new URLSearchParams(params).toString();",
+    '}',
+    '/** A request to the issuer. */',
+    'export function requestTo(path: string, init?: RequestInit): Request {',
+    '  return new Request(new URL(path, ISSUER), init);',
+    '}',
+    '/** A context of a request, as a step reads it. */',
+    'export function contextOf(request: Request): { req: Request } {',
+    '  return { req: request };',
+    '}',
+    '/** What the app answers to OPTIONS on some paths. */',
+    'export const PREFLIGHTS: ReadonlyArray<{ path: string; status: number }> = [',
+    "  { path: '/token', status: 204 },",
+    "  { path: '/userinfo', status: 204 },",
+    "  { path: '/health', status: 405 },",
+    '];',
+  ].join('\n');
+  const APP = [
+    "import { describe, expect, it, vi } from 'vitest';",
+    "import { authenticate } from './auth';",
+    "import { authorizePath, contextOf, PREFLIGHTS, requestTo } from './test-helpers';",
+    'declare const app: { request(input: string | Request, init?: object): Promise<Response>; post(path: string, handler: () => unknown): void };',
+    'declare function serverUrl(): string;',
+    "app.post('/token', () => 'own');",
+    "describe('authenticate', () => {",
+    "  it('should answer the route the test registers', async () => {",
+    "    expect((await app.request('/token', { method: 'POST' })).status).toBe(200);",
+    '  });',
+    "  it('should send the authorization request a helper of a support module builds', async () => {",
+    "    expect((await app.request(requestTo(authorizePath({ client_id: 'c-1' })))).status).toBe(302);",
+    '  });',
+    "  it('should read a request built for a context', () => {",
+    "    const c = contextOf(requestTo('/userinfo'));",
+    '    expect(authenticate(c.req.url)).toBe(c.req.url);',
+    '  });',
+    "  it.each(['/token', '/userinfo'])('should answer OPTIONS %s', async (path) => {",
+    "    expect((await app.request(path, { method: 'OPTIONS' })).status).toBe(204);",
+    '  });',
+    "  it.each(PREFLIGHTS)('should answer OPTIONS $path with $status', async ({ path, status }) => {",
+    "    expect((await app.request(path, { method: 'OPTIONS' })).status).toBe(status);",
+    '  });',
+    "  it('should send a request to a URL the test gets at run time', async () => {",
+    '    expect((await app.request(serverUrl())).status).toBe(200);',
+    '  });',
+    '});',
+  ].join('\n');
+  const SERVED = [
+    "import { describe, expect, it, vi } from 'vitest';",
+    'declare function serve(): Promise<{ url: string }>;',
+    "describe('a server', () => {",
+    "  it('should fetch the server it starts', async () => {",
+    '    const server = await serve();',
+    "    expect((await fetch(server.url + '/', { redirect: 'manual' })).status).toBe(200);",
+    '  });',
+    "  it('should call a fetch of its own', async () => {",
+    "    const fetch = vi.fn(async (_url: string) => new Response('{}'));",
+    "    await fetch('https://op.example.com/token');",
+    '    expect(fetch).toHaveBeenCalledTimes(1);',
+    '  });',
+    '});',
+  ].join('\n');
+  const STUBBED = [
+    "import { describe, expect, it, vi } from 'vitest';",
+    "describe('the JWKS of a client', () => {",
+    "  it('should answer from the stub of fetch', async () => {",
+    "    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));",
+    "    expect((await fetch('https://op.example.com/.well-known/jwks.json')).status).toBe(200);",
+    '  });',
+    '});',
+  ].join('\n');
+  const ENDPOINTS: Record<string, string> = { '/token': 'token', '/userinfo': 'userinfo', '/authorize': 'authorize', '/.well-known/jwks.json': 'jwks' };
+  let fixture: ReturnType<typeof compileTests>;
+  beforeAll(() => {
+    fixture = compileTests({ 'auth.ts': SOURCE, 'test-helpers.ts': SUPPORT, 'app.test.ts': APP, 'served.test.ts': SERVED, 'stubbed.test.ts': STUBBED });
+  });
+  afterAll(() => fixture.dispose());
+  const read = (path: string) => fixture.read(path, { endpointOfPath: (requested) => ENDPOINTS[requested] });
+  const kindOf = (test: CodeTest | undefined) => codeKind({ place: 'catalog' }, test as CodeTest);
+  const endpointsOf = (test: CodeTest | undefined) => codeSubjects(test as CodeTest, ['hono'], () => true).filter((subject) => subject.kind === 'endpoint');
+
+  it('should make a test that requests a route it registers itself an API test, with no endpoint for its subject', () => {
+    const [own] = read('app.test.ts');
+    expect(own?.requests).toEqual([{ method: 'POST', path: '/token', route: 'own', line: 9 }]);
+    expect([kindOf(own), endpointsOf(own)]).toEqual(['api', []]);
+    expect(codeSubjects(own as CodeTest, ['hono'], () => true)).toEqual([{ kind: 'function', id: 'lib:auth.ts#authenticate', how: 'describe' }]);
+  });
+
+  it('should take the path a helper of a support module returns for the path of the request, and the endpoint of the path', () => {
+    const [, built] = read('app.test.ts');
+    expect(built?.requests).toEqual([{ endpoint: 'authorize', method: 'GET', path: '/authorize', line: 12 }]);
+    expect([kindOf(built), endpointsOf(built)]).toEqual(['api', [{ kind: 'endpoint', id: 'authorize', source: 'hono', how: 'request' }]]);
+  });
+
+  it('should send the requests of each row of the table of a test, an array of the test or a constant of a support module', () => {
+    const [, , , strings, objects] = read('app.test.ts');
+    // The file registers POST /token itself: a row of /token reaches that route.
+    expect(strings?.requests).toEqual([
+      { route: 'own', method: 'OPTIONS', path: '/token', line: 19 },
+      { endpoint: 'userinfo', method: 'OPTIONS', path: '/userinfo', line: 19 },
+    ]);
+    expect(objects?.requests).toEqual([
+      { route: 'own', method: 'OPTIONS', path: '/token', line: 22 },
+      { endpoint: 'userinfo', method: 'OPTIONS', path: '/userinfo', line: 22 },
+      { route: 'app', method: 'OPTIONS', path: '/health', line: 22 },
+    ]);
+    expect(endpointsOf(objects).map((subject) => subject.id)).toEqual(['userinfo']);
+  });
+
+  it('should keep a request sent to an app whose path the test gets at run time, with the path empty, no endpoint and the route unknown', () => {
+    const [, , , , , runtime] = read('app.test.ts');
+    expect(runtime?.requests).toEqual([{ route: 'unknown', method: 'GET', path: '', line: 25 }]);
+    expect([kindOf(runtime), endpointsOf(runtime)]).toEqual(['api', []]);
+  });
+
+  it('should leave a test that only builds a Request for a context a unit test', () => {
+    const [, , context] = read('app.test.ts');
+    expect([context?.requests, kindOf(context)]).toEqual([[], 'unit']);
+  });
+
+  it('should take a fetch of the server a test starts for a request, and not a fetch of its own nor one the file stubs', () => {
+    const [served, own] = read('served.test.ts');
+    expect([served?.requests, kindOf(served)]).toEqual([[{ route: 'app', method: 'GET', path: '/', line: 6 }], 'api']);
+    expect([own?.requests, kindOf(own)]).toEqual([[], 'unit']);
+    const [stubbed] = read('stubbed.test.ts');
+    expect([stubbed?.requests, kindOf(stubbed)]).toEqual([[], 'unit']);
+  });
+
+  it('should keep the kinds of the E2E specs and of the tests of the tools by their place', () => {
+    const [own] = read('app.test.ts');
+    expect([codeKind({ place: 'e2e' }, own as CodeTest), codeKind({ place: 'tool' }, own as CodeTest), codeKind({ place: 'catalog' }, { requests: [], endpoints: ['register'] })]).toEqual(['e2e', 'tool', 'api']);
+  });
+});
+
+describe('the code that answers the requests to routes that are no endpoint', () => {
+  const SERVER = [
+    '/** A router of the routes a server registers. */',
+    'export class Router {',
+    '  private readonly routes = new Map<string, () => Response>();',
+    '  get(path: string, handler: () => Response): void {',
+    '    this.routes.set(path, handler);',
+    '  }',
+    '  async request(path: string): Promise<Response> {',
+    '    return this.routes.get(path)?.() ?? new Response(null, { status: 404 });',
+    '  }',
+    '}',
+    '/** The app of the server, with its health check. */',
+    'export function createServer(): Router {',
+    '  const router = new Router();',
+    "  router.get('/health', () => new Response('ok'));",
+    '  return router;',
+    '}',
+    'export function check(response: Response): boolean {',
+    '  return response.ok;',
+    '}',
+  ].join('\n');
+  const TESTS = [
+    "import { describe, expect, it } from 'vitest';",
+    "import { check, Router } from './server';",
+    "import { serve } from './test-helpers';",
+    "describe('Router', () => {",
+    "  describe('Routing', () => {",
+    "    it('should answer a route it registers', async () => {",
+    '      const router = new Router();',
+    "      router.get('/token', () => new Response('own'));",
+    "      expect((await router.request('/token')).status).toBe(200);",
+    '    });',
+    '  });',
+    '});',
+    "describe('createServer', () => {",
+    "  it('should answer the health check', async () => {",
+    "    expect((await serve().request('/health')).status).toBe(200);",
+    '  });',
+    '});',
+    "describe('check', () => {",
+    "  it('should check the answer of the health check', async () => {",
+    "    expect(check(await serve().request('/health'))).toBe(true);",
+    '  });',
+    '});',
+  ].join('\n');
+  const HELPERS = ["import { createServer } from './server';", 'export function serve() {', '  return createServer();', '}'].join('\n');
+  let fixture: ReturnType<typeof compileTests>;
+  beforeAll(() => {
+    fixture = compileTests({ 'server.ts': SERVER, 'server.test.ts': TESTS, 'test-helpers.ts': HELPERS });
+  });
+  afterAll(() => fixture.dispose());
+
+  it('should take the class an imported name of a describe is, and keep it for its block of the path', () => {
+    const [router] = fixture.read('server.test.ts');
+    expect(router?.pathCode).toEqual([{ name: 'Router', file: 'src/server.ts', lines: [1, 10] }, undefined]);
+    expect([router?.requests.map((request) => request.route), routeCodeOf(router as CodeTest)]).toEqual([['own'], { name: 'Router', file: 'src/server.ts', lines: [1, 10] }]);
+  });
+
+  it('should take the function of a name the file does not import in the module the file tests', () => {
+    const [, health] = fixture.read('server.test.ts');
+    expect([health?.requests.map((request) => request.route), routeCodeOf(health as CodeTest)]).toEqual([['app'], { name: 'createServer', file: 'src/server.ts', lines: [11, 16] }]);
+  });
+
+  it('should give no route code when the describe names a function of the catalog the test tests', () => {
+    const [, , checked] = fixture.read('server.test.ts');
+    expect([checked?.pathIds, routeCodeOf(checked as CodeTest)]).toEqual([['lib:server.ts#check'], undefined]);
   });
 });
 

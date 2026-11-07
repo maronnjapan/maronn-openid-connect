@@ -15,11 +15,15 @@
  *
  * - `e2e`: a Playwright test of tests/e2e/specs, or a scenario of a feature
  *   file that runs over HTTP (`@http`), against a running OP.
- * - `api`: a test of apps/* that sends a request to the path of an endpoint
- *   (`app.request()`, a Request handed to a Route Handler), or a scenario
- *   that runs in the process (`@hono`, `@nextjs`).
- * - `unit`: a test of packages/* or apps/* whose subject is a function of the
- *   catalog and that sends no request.
+ * - `api`: a test of the code (packages/*, apps/*) that sends an HTTP
+ *   request to an app or a handler (`app.request()`, `app.fetch()`,
+ *   `fastify.inject()`, `fetch()` to a server it runs, a Request handed to a
+ *   Route Handler), whether its path is that of an endpoint of the provider
+ *   (an endpoint subject) or of a route the test registers itself (none),
+ *   or a scenario that runs in the process (`@hono`, `@nextjs`).
+ * - `unit`: a test of packages/* or apps/* that sends no request: it calls
+ *   the functions it tests. A Request it only builds (for a context) or a
+ *   fetch it mocks is no request.
  * - `tool`: a test of the CLI, the map, the analysis, the test catalog, the
  *   tests viewer and the scripts; listed, never under an endpoint.
  */
@@ -57,12 +61,32 @@ export interface Assertion {
   ja?: string;
 }
 
+/**
+ * Why a request of an API test reaches no endpoint of the OP:
+ *
+ * - `own`: the test registers a route of its own on the path
+ *   (`router.post('/token', (c) => ...)`), even the path of an endpoint;
+ * - `app`: the path is a route of the app the test sends it to that is no
+ *   endpoint (`/health`, the operator's API, a path nothing serves);
+ * - `unknown`: its URL has no fixed part in the code, so its path is known
+ *   only when the test runs.
+ */
+export type RequestRoute = 'own' | 'app' | 'unknown';
+
 /** A request a case sends. */
 export interface RequestShape {
-  /** The endpoint its path matched, by id. */
+  /** The endpoint its path matched, by id; absent for a path no endpoint has, or a route the test registers itself on the path (`route` says which). */
   endpoint?: string;
+  /** Why it reaches no endpoint, for a request without `endpoint` (RequestRoute). */
+  route?: RequestRoute;
   method: string;
-  /** The path as written (`/token`, `${TEST_ISSUER}/token` → `/token`). */
+  /**
+   * The path as written (`/token`, `${TEST_ISSUER}/token` → `/token`, a
+   * helper's `authorizePath(params)` → `/authorize`, a row of the table of
+   * an `it.each` → each path of the table, one request a row); '' when its
+   * URL has no fixed part (a parameter of the test, the URL of a server it
+   * starts), with the route `unknown`.
+   */
   path: string;
   /** The keys of its body or query (`grant_type`, `code`). */
   params?: string[];
@@ -79,6 +103,12 @@ export interface CodeRef {
   /** The path from the repository root. */
   file: string;
   lines: [number, number];
+}
+
+/** A range of a file that declares a name: a function, a class, a variable. */
+export interface NamedCodeRef extends CodeRef {
+  /** The name it declares (`createOperatorApp`, `WebRouter`). */
+  name: string;
 }
 
 /** A helper a test calls: a function of its own file or of a test support module, not a function it tests. */
@@ -126,7 +156,25 @@ export interface TestCase {
   /** The `describe` blocks it is in, or the feature (and the outline) of a scenario. */
   path: string[];
   subjects: Subject[];
+  /**
+   * The requests it sends, in the order of the code: every request of an API
+   * test (to an endpoint, or not); the requests of an E2E test to the
+   * endpoints of the provider (not those to the RP); the action steps of a
+   * scenario. A unit test sends none.
+   */
   requests?: RequestShape[];
+  /**
+   * The code that answers the requests of an API test that reach no
+   * endpoint of the OP (RequestShape.route): the app, the router or the
+   * function its innermost describe that names a declaration names,
+   * followed through the imports of its file by the types (`createOperatorApp`
+   * of apps/hono/src/operator.ts, the class `WebRouter`), else found at the
+   * top of the module its file tests (`app.test.ts` → `app.ts`), whether the
+   * function catalog has it or not. Absent when that describe names a
+   * function it tests (its subject shows it). Its file is in
+   * TestsIndex.sources.
+   */
+  routeCode?: NamedCodeRef;
   outcome: TestOutcome;
   /** boundary, authentication, authorization, security, ... (aspects.yaml). */
   aspects: string[];
@@ -250,6 +298,13 @@ export interface TestEntry {
   outcome: TestOutcome;
   aspects: string[];
   subjects: Subject[];
+  /**
+   * Why the requests of an API test that reach no endpoint of the OP reach
+   * none (RequestShape.route), each once: the lists tell a test of routes of
+   * its own or of the app from one of paths known at run time without its
+   * card.
+   */
+  routes?: RequestRoute[];
   evidence: Evidence[];
   targets?: string[];
   skipped?: boolean;
@@ -322,7 +377,9 @@ export interface TestsIndex {
   /**
    * The url of the text (TestSource) of every file the viewer shows, by its
    * path: the test files, and the files of the helpers, the step
-   * definitions, the functions and the endpoint bodies the tests name.
+   * definitions, the functions and the endpoint bodies the tests name, and
+   * of the code that answers the requests of the API tests to routes that
+   * are no endpoint (TestCase.routeCode).
    */
   sources: Record<string, string>;
   /** The labels of the aspects (`boundary` → `境界値`). */
@@ -437,6 +494,36 @@ export interface TestDiff {
     before: { outcomes: string[]; aspects: string[]; errors: string[] };
     after: { outcomes: string[]; aspects: string[]; errors: string[] };
   }>;
-  /** The cards of the tests the diff names (added, removed, renamed and modified, before and after), by id. */
-  cards: Record<string, Pick<TestCase, 'id' | 'kind' | 'title' | 'outcome' | 'aspects' | 'source' | 'path'> & { ja?: string; examples?: number; endpoints?: string[] }>;
+  /**
+   * The cards of the tests the diff names (added, removed, renamed and
+   * modified, before and after, and the touched tests of the frames), by id:
+   * a removed test is in no catalog the viewer reads, so its card is all
+   * there is of it.
+   */
+  cards: Record<string, TestDiffCard>;
+}
+
+/** A test as the diff keeps it (TestDiff.cards): enough to list it where the viewer lists it. */
+export interface TestDiffCard extends Pick<TestCase, 'id' | 'kind' | 'title' | 'outcome' | 'aspects' | 'source' | 'path'> {
+  /** Its Japanese title. */
+  ja?: string;
+  /** The rows of an outline counted on its first row, when more than one. */
+  examples?: number;
+  /** The endpoints it requests or declares (`hono:token`), those a measured run added left out. */
+  endpoints?: string[];
+  /**
+   * The functions it tests by its describe or its declaration (its function
+   * subjects of how `describe` or `declared`), by id, each once: the frames
+   * whose unit tests it is (FrameJoin.unit, EndpointTestsRef.units), so the
+   * viewer lists a removed unit test under an endpoint and a step only where
+   * its live version was.
+   */
+  functions?: string[];
+  /**
+   * The functions whose results its expectations check (its function
+   * subjects of how `call` that are none of `functions`), by id, each once:
+   * with `functions`, the functions the viewer lists it under by what it
+   * tests (the unit tests by function, the target of its row).
+   */
+  calls?: string[];
 }

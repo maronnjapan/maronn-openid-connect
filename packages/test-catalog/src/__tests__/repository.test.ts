@@ -125,6 +125,46 @@ describe('the catalog of the repository', () => {
     expect([unauthorized?.outcome, unauthorized?.errors, unauthorized?.aspects.includes('authentication')]).toEqual(['failure', ['invalid_client'], true]);
   });
 
+  it('should read a test that sends a request to an app as an API test, with the endpoint of its path unless the route is its own', () => {
+    const of = (file: string) => tests.filter((test) => test.source.file === file);
+    const endpoints = (test: TestCase) => test.subjects.filter((subject) => subject.kind === 'endpoint' && subject.how !== 'coverage').map((subject) => subject.id);
+    // createCorsMiddleware's app registers POST /token itself: API tests of the middleware, not of the token endpoint.
+    const cors = of('apps/hono/src/oidc-provider/cors.test.ts').filter((test) => test.path[0] === 'createCorsMiddleware');
+    expect(cors.length).toBeGreaterThan(0);
+    expect(cors.every((test) => test.kind === 'api' && endpoints(test).length === 0 && (test.requests ?? []).length > 0 && (test.requests ?? []).every((request) => request.endpoint === undefined))).toBe(true);
+    // app.request(requestTo(authorizePath(params))): the path the helper of the support module builds.
+    const page = of('apps/hono/src/oidc-provider/endpoints/authorize/page.test.ts');
+    expect(page.length).toBeGreaterThan(0);
+    expect(page.every((test) => test.kind === 'api' && endpoints(test).includes('authorize'))).toBe(true);
+    // A Request built for a context, and a fetch the file stubs, send nothing.
+    for (const file of ['apps/hono/src/oidc-provider/endpoints/token/steps/authenticate-client.test.ts', 'apps/hono/src/oidc-provider/features/id-jag/config.test.ts', 'packages/experimental/src/dynamic-client-registration/registration-request.test.ts']) {
+      expect([file, of(file).length > 0 && of(file).every((test) => test.kind === 'unit' && test.requests === undefined)]).toEqual([file, true]);
+    }
+    expect(tests.filter((test) => ['core', 'experimental', 'google-login'].includes(test.root) && test.kind !== 'unit')).toEqual([]);
+  });
+
+  it('should say why a request of an API test reaches no endpoint, and give the code that answers it', () => {
+    const of = (file: string) => tests.filter((test) => test.source.file === file && test.kind === 'api');
+    const routes = (test: TestCase) => [...new Set((test.requests ?? []).filter((request) => request.endpoint === undefined).map((request) => request.route))];
+    // WebRouter's tests register their routes, /token among them: the code that answers them is the class their describe names.
+    const router = of('apps/hono/src/web/web-router.test.ts');
+    expect(router.length).toBeGreaterThan(0);
+    expect(router.every((test) => test.routeCode?.name === 'WebRouter' && test.routeCode.file === 'apps/hono/src/web/web-router.ts')).toBe(true);
+    expect(router.find((test) => test.title === 'should answer a GET route with the response of its handler')?.requests).toEqual([expect.objectContaining({ method: 'GET', path: '/token', route: 'own' })]);
+    // The operator's API and the health check are routes of the app, answered by the functions the describes name (outside the function catalog).
+    expect([...new Set(of('apps/hono/src/operator.test.ts').map((test) => [routes(test).join(), test.routeCode?.name, test.routeCode?.file].join(' ')))]).toEqual(['app createOperatorApp apps/hono/src/operator.ts']);
+    const health = of('apps/hono/src/app.test.ts').find((test) => test.title === 'should answer the health check');
+    expect([routes(health as TestCase), health?.routeCode?.name, health?.routeCode?.file]).toEqual([['app'], 'createServerApp', 'apps/hono/src/app.ts']);
+    // createCorsMiddleware's own route on /token: the function its describe names is the code it tests, no route code apart.
+    expect(of('apps/hono/src/oidc-provider/cors.test.ts').every((test) => routes(test).join() === 'own' && test.routeCode === undefined)).toBe(true);
+    // it.each(PROVIDER_PATH_PREFLIGHTS): the paths of the table of the support module, each an endpoint of the provider.
+    for (const file of ['apps/hono/src/web/express/apply.test.ts', 'apps/hono/src/web/fastify/apply.test.ts']) {
+      const preflights = of(file).find((test) => test.title === 'should hand OPTIONS $path to the provider');
+      const endpoints = new Set(preflights?.subjects.filter((subject) => subject.kind === 'endpoint' && subject.how === 'request').map((subject) => subject.id));
+      expect([file, (preflights?.requests ?? []).length > 20, (preflights?.requests ?? []).every((request) => request.method === 'OPTIONS' && request.endpoint !== undefined), ['authorize', 'token', 'userinfo', 'jwks', 'discovery'].every((id) => endpoints.has(id))]).toEqual([file, true, true, true]);
+    }
+  });
+
   it('should give a test the helpers of its file and of the test support modules it imports, and nothing of the catalog', () => {
     const exchange = tests.find((test) => test.source.file === 'apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts' && test.title.startsWith('should exchange the code'));
     expect(exchange?.helpers?.find((helper) => helper.name === 'provider')?.file).toBe('apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts');

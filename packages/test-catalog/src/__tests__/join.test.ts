@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FrameChangeEntry, FunctionEntry, MapChanges, MapData } from '@maronn-openid-connect/map-analysis';
 import { parseAspects } from '../aspects.js';
 import { diffCatalogs, expectationOverlap } from '../diff.js';
-import { joinTests, reachableFrames } from '../join.js';
+import { entryOf, joinTests, reachableFrames } from '../join.js';
 import { testsMarkdown } from '../markdown.js';
 import type { Assertion, TestCase } from '../model.js';
 import { CaseFinder, FrameLocator, readRun, repositoryPath } from '../run.js';
@@ -104,6 +104,23 @@ describe('joinTests', () => {
     const joined = joinTests([unit, reached], DATA, ASPECTS, true);
     expect(joined.frames.get(VERIFY)?.reached).toBe(1);
     expect(joined.endpoints.get('hono:token')?.gaps.filter((gap) => gap.kind === 'step-unreached').map((gap) => gap.step)).toEqual(['authenticate-client']);
+  });
+});
+
+describe('entryOf', () => {
+  it('should give the entry of an API test why its requests reach no endpoint, each once', () => {
+    const own = card('own', {
+      kind: 'api',
+      root: 'hono',
+      requests: [
+        { route: 'own', method: 'POST', path: '/token', line: 1 },
+        { endpoint: 'userinfo', method: 'GET', path: '/userinfo', line: 2 },
+        { route: 'app', method: 'GET', path: '/health', line: 3 },
+        { route: 'own', method: 'GET', path: '/token', line: 4 },
+      ],
+    });
+    expect(entryOf(own).routes).toEqual(['own', 'app']);
+    expect(entryOf(card('endpoint', { kind: 'api', requests: [{ endpoint: 'token', method: 'POST', path: '/token', line: 1 }] })).routes).toBeUndefined();
   });
 });
 
@@ -219,6 +236,28 @@ describe('diffCatalogs', () => {
   it('should count a change whose related test the pull request changed as touched, and the new failures no test expects', () => {
     const diff = diffCatalogs([named('kept')], [named('kept', { digest: 'other' })], DATA, changes([entry({ failuresAdded: ['TokenError(invalid_request)', 'RangeError'] })]), false);
     expect(diff.frames.map((frame) => [frame.touched, frame.untouched, frame.failuresWithoutTest])).toEqual([[['kept'], false, ['TokenError(invalid_request)']]]);
+  });
+
+  it('should give the card of a test the functions it names or declares apart from those it calls, a removed test too, those a run added left out', () => {
+    const removed = named('gone', {
+      title: 'should accept a secret of 8 characters',
+      subjects: [
+        { kind: 'function', id: VERIFY, how: 'describe' },
+        { kind: 'function', id: AUTH, how: 'call' },
+        { kind: 'function', id: VERIFY, how: 'declared' },
+        { kind: 'function', id: NEXT, how: 'coverage' },
+        { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' },
+      ],
+      assertions: [said('x')],
+    });
+    const added = card('fresh', { kind: 'api', root: 'hono', subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }], assertions: [said('y')] });
+    const diff = diffCatalogs([removed, named('kept')], [named('kept', { assertions: [said('a')] }), added], DATA, changes([]), false);
+    expect([diff.removed, diff.added, diff.modified.map((change) => change.id)]).toEqual([['gone'], ['fresh'], ['kept']]);
+    // The frames of its describe and its declaration are those whose unit tests it is (FrameJoin.unit); the functions it calls only place it by what it tests.
+    expect(diff.cards['gone']).toMatchObject({ kind: 'unit', functions: [VERIFY], calls: [AUTH], endpoints: ['hono:token'] });
+    expect([diff.cards['kept']?.functions, diff.cards['kept']?.calls]).toEqual([[VERIFY], undefined]);
+    expect(diff.cards['fresh']).toMatchObject({ kind: 'api', endpoints: ['hono:token'] });
+    expect(diff.cards['fresh']?.functions).toBeUndefined();
   });
 
   it('should count the API tests of an endpoint the change reaches as related when the run was not measured', () => {

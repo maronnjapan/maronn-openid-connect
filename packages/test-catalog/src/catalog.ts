@@ -28,6 +28,8 @@ import {
   Compiler,
   is,
   isAlias,
+  isTestPath,
+  nameOf,
   overlayConfigs,
   overlayOf,
   Resolver,
@@ -46,7 +48,7 @@ import {
 import { aspectsOf, type AspectTable } from './aspects.js';
 import { isTestSupportPath, type TestFile } from './discover.js';
 import { fileTestId, hashedTestId } from './id.js';
-import type { Assertion, CodeRef, FeatureStep, HelperRef, RequestShape, Subject, TestCase, TestKind, TestOutcome } from './model.js';
+import type { Assertion, CodeRef, FeatureStep, HelperRef, NamedCodeRef, RequestShape, Subject, TestCase, TestKind, TestOutcome } from './model.js';
 import { codeSubjects, declarationLines, fileHelpers, readCodeTests, type CodeTest, type HelperDeclaration } from './read-code.js';
 import { readFeatureTags, readFeatureTests, type FeatureTest } from './read-feature.js';
 import { holesOf, type StepDefinition, type Translations, type Vocabulary } from './vocabulary.js';
@@ -157,10 +159,7 @@ export function digestOf(text: string): string {
 export function helperResolver(project: Project, repository: string): (name: Node) => HelperDeclaration | undefined {
   const byNode = new Map<Node, HelperDeclaration | null>();
   const bySymbol = new Map<number, HelperDeclaration | null>();
-  const pathOf = (absolute: string): string | undefined => {
-    const path = relative(repository, absolute).split('\\').join('/');
-    return path.startsWith('..') || isAbsolute(path) ? undefined : path;
-  };
+  const pathOf = (absolute: string): string | undefined => repositoryPath(repository, absolute);
   /** The declarations of a symbol (NodeHandle: its kind, its file, the node it resolves to) that are test support code, as a helper. */
   const declarationOf = (handles: ReadonlyArray<{ kind: SyntaxKind; path: string; resolve(project?: Project): Node | undefined }>): HelperDeclaration | undefined => {
     const own = handles.flatMap((handle) => {
@@ -211,6 +210,135 @@ export function helperResolver(project: Project, repository: string): (name: Nod
     }
     byNode.set(name, found);
     return found ?? undefined;
+  };
+}
+
+/** The path of a file from the root of the repository, or undefined for a file outside it. */
+function repositoryPath(repository: string, absolute: string): string | undefined {
+  const path = relative(repository, absolute).split('\\').join('/');
+  return path.startsWith('..') || isAbsolute(path) ? undefined : path;
+}
+
+/** Whether a path of the repository is code the viewer may show for what a test tests: a source of the code, not a test, a test support module or a declaration file. */
+function isProductCode(path: string): boolean {
+  return /\.[cm]?[jt]sx?$/.test(path) && !/\.d\.[cm]?ts$/.test(path) && !isTestSupportPath(path) && !path.includes('node_modules/');
+}
+
+/** The top-level declaration of a name in a file: a function with a body (from its first overload), a class, or the statement of a variable. */
+function topDeclaration(file: SourceFile, name: string): { first: Node; last: Node } | undefined {
+  let first: Node | undefined;
+  for (const statement of (any(file)['statements'] as Node[] | undefined) ?? []) {
+    if (is(statement, SyntaxKind.FunctionDeclaration) && nameOf(statement['name'] as Node | undefined) === name) {
+      first ??= statement;
+      if (statement['body'] !== undefined) return { first, last: statement };
+    } else if (is(statement, SyntaxKind.ClassDeclaration) && nameOf(statement['name'] as Node | undefined) === name) {
+      return { first: statement, last: statement };
+    } else if (is(statement, SyntaxKind.VariableStatement)) {
+      const declarations = (any(statement['declarationList'] as Node)['declarations'] as Node[] | undefined) ?? [];
+      if (declarations.some((declaration) => nameOf(any(declaration)['name'] as Node | undefined) === name)) return { first: statement, last: statement };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The code a name of a describe block names, by the types of a project
+ * (CodeReadOptions.describedCode): for an imported name, the declaration its
+ * symbol resolves to through the aliases of the imports and re-exports, a
+ * function (from its first overload to its implementation), a class or the
+ * statement of a variable, in a file of the repository that is product code
+ * (isProductCode); for a name the file does not import, a declaration of
+ * that name at the top of the module the test file tests (`app.test.ts` →
+ * `app.ts`, `.tsx` too), when the project has that module. The answers are
+ * kept by node and by symbol.
+ */
+export function describedCodeResolver(project: Project, repository: string): (name: string, file: SourceFile, imported: Node | undefined) => NamedCodeRef | undefined {
+  const byNode = new Map<Node, NamedCodeRef | null>();
+  const bySymbol = new Map<number, NamedCodeRef | null>();
+  const declared = (node: Node, name: string, path: string): NamedCodeRef | undefined => {
+    const file = node.getSourceFile();
+    const found = topDeclaration(file, name);
+    if (found !== undefined) return { name, file: path, lines: declarationLines(file, found.first, found.last) };
+    // A declaration that is not at the top of its file (a namespace): its own lines.
+    const statement = is(node, SyntaxKind.VariableDeclaration) && is(node.parent?.parent, SyntaxKind.VariableStatement) ? (node.parent.parent as Node) : node;
+    return { name, file: path, lines: declarationLines(file, statement) };
+  };
+  const byTypes = (imported: Node, name: string): NamedCodeRef | undefined => {
+    let symbol = project.checker.getSymbolAtLocation(imported);
+    if (symbol !== undefined && isAlias(symbol)) {
+      const target = project.checker.getAliasedSymbol(symbol);
+      symbol = project.checker.isUnknownSymbol(target) ? undefined : target;
+    }
+    if (symbol === undefined) return undefined;
+    const cached = bySymbol.get(symbol.id);
+    if (cached !== undefined) return cached ?? undefined;
+    let found: NamedCodeRef | undefined;
+    for (const handle of symbol.declarations) {
+      if (handle.kind !== SyntaxKind.FunctionDeclaration && handle.kind !== SyntaxKind.ClassDeclaration && handle.kind !== SyntaxKind.VariableDeclaration) continue;
+      const path = repositoryPath(repository, handle.path);
+      if (path === undefined || !isProductCode(path)) continue;
+      const node = handle.resolve(project);
+      if (node === undefined) continue;
+      found = declared(node, nameOf(any(node)['name']) ?? name, path);
+      if (found !== undefined) break;
+    }
+    bySymbol.set(symbol.id, found ?? null);
+    return found;
+  };
+  const byModule = (file: SourceFile, name: string): NamedCodeRef | undefined => {
+    const tested = file.fileName.replace(/\.(test|spec)(\.[cm]?[jt]sx?)$/, '$2');
+    if (tested === file.fileName) return undefined;
+    for (const candidate of [...new Set([tested, tested.replace(/\.ts$/, '.tsx'), tested.replace(/\.tsx$/, '.ts')])]) {
+      const source = project.program.getSourceFile(candidate);
+      const path = source === undefined ? undefined : repositoryPath(repository, candidate);
+      if (source === undefined || path === undefined || !isProductCode(path)) continue;
+      const found = topDeclaration(source, name);
+      if (found !== undefined) return { name, file: path, lines: declarationLines(source, found.first, found.last) };
+    }
+    return undefined;
+  };
+  return (name, file, imported) => {
+    if (imported === undefined) return byModule(file, name);
+    const known = byNode.get(imported);
+    if (known !== undefined) return known ?? undefined;
+    let found: NamedCodeRef | undefined;
+    try {
+      found = byTypes(imported, name);
+    } catch {
+      // A name the types cannot answer for (a broken file): no code.
+      found = undefined;
+    }
+    byNode.set(imported, found ?? null);
+    return found;
+  };
+}
+
+/**
+ * The initializer of the constant a name refers to by the types of a
+ * project, when it is declared in a test support module (discover.ts
+ * isTestSupportPath, not a test): the table of an `it.each` the test imports
+ * (CodeReadOptions.valueOf).
+ */
+export function supportValueResolver(project: Project, repository: string): (name: Node) => Node | undefined {
+  return (name) => {
+    try {
+      let symbol = project.checker.getSymbolAtLocation(name);
+      if (symbol !== undefined && isAlias(symbol)) {
+        const target = project.checker.getAliasedSymbol(symbol);
+        symbol = project.checker.isUnknownSymbol(target) ? undefined : target;
+      }
+      for (const handle of symbol?.declarations ?? []) {
+        if (handle.kind !== SyntaxKind.VariableDeclaration) continue;
+        const path = repositoryPath(repository, handle.path);
+        if (path === undefined || !isTestSupportPath(path) || isTestPath(path)) continue;
+        const node = handle.resolve(project);
+        const initializer = node === undefined ? undefined : (any(node)['initializer'] as Node | undefined);
+        if (initializer !== undefined) return initializer;
+      }
+    } catch {
+      // A name the types cannot answer for: no value.
+    }
+    return undefined;
   };
 }
 
@@ -298,6 +426,21 @@ export function scenarioHelpers(lists: ReadonlyArray<readonly HelperRef[]>): Hel
   return helpers;
 }
 
+/**
+ * The code that answers the requests of a test to routes that are no
+ * endpoint (TestCase.routeCode): what its innermost describe that names
+ * code names, unless that is a function of the catalog it imports (its
+ * describe subject, whose code the viewer shows as the function it tests).
+ */
+export function routeCodeOf(test: Pick<CodeTest, 'pathIds' | 'pathCode'>): NamedCodeRef | undefined {
+  for (let index = test.pathCode.length - 1; index >= 0; index -= 1) {
+    if (test.pathIds[index] !== undefined) return undefined;
+    const code = test.pathCode[index];
+    if (code !== undefined) return code;
+  }
+  return undefined;
+}
+
 /** The card of a test of the code. */
 function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (id: string) => boolean, aspects: AspectTable): TestCase {
   const sources = sourcesOf(file.root);
@@ -305,6 +448,9 @@ function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (i
   const errors = test.expectations.flatMap(expectedErrors);
   const statuses = test.expectations.filter((expectation) => isStatus(expectation.actual) && expectation.args[0]?.kind === 'number').map((expectation) => (expectation.args[0] as { value: number }).value);
   const headers = test.expectations.map((expectation) => headerOf(expectation.actual)).filter((header): header is string => header !== undefined);
+  // An API test keeps every request it sends, to an endpoint or to a route of its own (a unit test sends none); an E2E test also requests the RP (`/start`), which is not on the map, so it keeps those to the endpoints, as a tool does.
+  const requests = kind === 'api' ? test.requests : test.requests.filter((request) => request.endpoint !== undefined);
+  const routeCode = kind === 'api' && requests.some((request) => request.endpoint === undefined) ? routeCodeOf(test) : undefined;
   const evidence: TestCase['evidence'] = [];
   if (test.comments.subjects.length > 0) evidence.push('declared');
   if (subjects.some((subject) => subject.how !== 'declared')) evidence.push('static');
@@ -317,8 +463,8 @@ function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (i
     ...(test.comments.ja === undefined ? {} : { ja: { title: test.comments.ja } }),
     path: test.path,
     subjects,
-    // The requests to the endpoints: an E2E test also requests the RP (`/start`), which is not on the map.
-    ...(test.requests.some((request) => request.endpoint !== undefined) ? { requests: test.requests.filter((request) => request.endpoint !== undefined) } : {}),
+    ...(requests.length === 0 ? {} : { requests }),
+    ...(routeCode === undefined ? {} : { routeCode }),
     outcome: outcomeOf(test.expectations.some(expectsFailure), test.expectations.length > 0),
     aspects: kind === 'tool' ? [] : aspectsOf(aspects, { declared: test.comments.aspects, names: [...test.path, test.title], errors, statuses, headers }),
     spec: test.comments.spec,
@@ -333,12 +479,20 @@ function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (i
   return card;
 }
 
-/** The kind of a test of the code by where it is and what it does (design §1). */
-function codeKind(file: TestFile, test: CodeTest): TestKind {
+/**
+ * The kind of a test of the code by where it is and what it does (design
+ * §1): a test of a tool or an E2E spec by its place; else an API test when it
+ * sends a request to an app or a handler (read-code.ts requestsOf: to the
+ * path of an endpoint, to a route it registers itself, to a path it gets at
+ * run time) or calls a Route Handler, a unit test when it sends none. Its
+ * endpoint subjects are another rule: only a request whose path is an
+ * endpoint of the provider, not a route of the test's own, gives one
+ * (codeSubjects).
+ */
+export function codeKind(file: Pick<TestFile, 'place'>, test: Pick<CodeTest, 'requests' | 'endpoints'>): TestKind {
   if (file.place === 'tool') return 'tool';
   if (file.place === 'e2e') return 'e2e';
-  const sendsRequests = test.requests.some((request) => request.endpoint !== undefined) || test.endpoints.length > 0;
-  return sendsRequests && (file.root === 'hono' || file.root === 'nextjs') ? 'api' : 'unit';
+  return test.requests.length > 0 || test.endpoints.length > 0 ? 'api' : 'unit';
 }
 
 /** What a `Then` step expects (design §3): a status by its value; an error code or a failure, a failure; anything else, success. */
@@ -456,20 +610,35 @@ export function readCatalog(input: CatalogInput): CatalogResult {
   const tests: TestCase[] = [];
   let definitions = new Map<string, StepDefinitionCode>();
   try {
-    const projects = new Map<string, { project: Project; resolver?: Resolver; helperOf: (name: Node) => HelperDeclaration | undefined }>();
+    const projects = new Map<
+      string,
+      {
+        project: Project;
+        resolver?: Resolver;
+        helperOf: (name: Node) => HelperDeclaration | undefined;
+        describedCode: (name: string, file: SourceFile, imported: Node | undefined) => NamedCodeRef | undefined;
+        valueOf: (name: Node) => Node | undefined;
+      }
+    >();
     const projectOf = (file: TestFile) => {
       const analysisRoot = file.place === 'catalog' ? repo.roots.find((candidate: AnalysisRoot) => candidate.name === file.root) : undefined;
       const config = analysisRoot === undefined ? otherConfig : overlayOf(root, analysisRoot);
       let entry = projects.get(config);
       if (entry === undefined) {
         const project = compiler.project(config);
-        entry = { project, helperOf: helperResolver(project, root), ...(analysisRoot === undefined ? {} : { resolver: new Resolver(project, { repository: root, roots: repo.roots, isFunction, paragraph: (text) => text }) }) };
+        entry = {
+          project,
+          helperOf: helperResolver(project, root),
+          describedCode: describedCodeResolver(project, root),
+          valueOf: supportValueResolver(project, root),
+          ...(analysisRoot === undefined ? {} : { resolver: new Resolver(project, { repository: root, roots: repo.roots, isFunction, paragraph: (text) => text }) }),
+        };
         projects.set(config, entry);
       }
       return entry;
     };
     for (const file of codeFiles) {
-      const { project, resolver, helperOf } = projectOf(file);
+      const { project, resolver, helperOf, describedCode, valueOf } = projectOf(file);
       const source = project.program.getSourceFile(join(root, file.path));
       if (source === undefined) {
         warnings.push(`${file.path}: not in the program of its project; its tests are not in the catalog`);
@@ -510,6 +679,9 @@ export function readCatalog(input: CatalogInput): CatalogResult {
             return ja;
           },
           helperOf,
+          // The code a describe names answers the requests of an API test to routes that are no endpoint; the E2E specs and the tools have none.
+          ...(file.place === 'catalog' ? { describedCode } : {}),
+          valueOf,
         });
       } catch (error) {
         warnings.push(`${file.path}: could not be read (${error instanceof Error ? error.message : String(error)})`);

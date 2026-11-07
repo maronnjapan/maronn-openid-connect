@@ -83,6 +83,7 @@ export function countTests(tests: readonly TestCase[]): TestCounts {
 /** A card as the index lists it (model.ts TestEntry). */
 export function entryOf(test: TestCase): TestEntry {
   const reached = test.reach === undefined ? undefined : new Set(test.reach.flatMap((reach) => reach.functions)).size;
+  const routes = [...new Set((test.requests ?? []).flatMap((request) => (request.endpoint === undefined && request.route !== undefined ? [request.route] : [])))];
   return {
     id: test.id,
     kind: test.kind,
@@ -96,6 +97,7 @@ export function entryOf(test: TestCase): TestEntry {
     outcome: test.outcome,
     aspects: test.aspects,
     subjects: test.subjects,
+    ...(routes.length === 0 ? {} : { routes }),
     evidence: test.evidence,
     ...(test.targets === undefined ? {} : { targets: test.targets }),
     ...(test.skipped === true ? { skipped: true } : {}),

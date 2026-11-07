@@ -218,29 +218,21 @@ describe('resolveRequestUriParams', () => {
 });
 
 describe('rejectUnsupportedRequestParams with request_uri', () => {
-  it('should reject request_uri with request_uri_not_supported by default', () => {
+  it('should reject a request_uri that is still present with request_uri_not_supported', () => {
     expect(() => rejectUnsupportedRequestParams({ request_uri: REQUEST_URI }, 'https://rp.example.com/cb')).toThrowError(
       expect.objectContaining({ error: 'request_uri_not_supported' }),
     );
   });
 
-  it('should let request_uri through when requestUriParameterSupported is true', () => {
-    expect(
-      rejectUnsupportedRequestParams({ request_uri: REQUEST_URI }, 'https://rp.example.com/cb', undefined, {
-        requestUriParameterSupported: true,
-      }),
-    ).toBeUndefined();
-  });
-
-  it('should reject request with request_uri with invalid_request when request_uri is supported', () => {
+  it('should reject request_uri with request_uri_not_supported even when request is supported', () => {
     expect(() =>
       rejectUnsupportedRequestParams({ request: JWT, request_uri: REQUEST_URI }, 'https://rp.example.com/cb', 'st', {
-        requestUriParameterSupported: true,
+        requestParameterSupported: true,
       }),
     ).toThrowError(
       expect.objectContaining({
-        error: 'invalid_request',
-        errorDescription: 'request and request_uri must not be used together',
+        error: 'request_uri_not_supported',
+        errorDescription: 'request_uri parameter (Request Object by reference) is not supported',
         redirectUri: 'https://rp.example.com/cb',
         state: 'st',
       }),

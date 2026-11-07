@@ -22,11 +22,10 @@ export interface ConsentScreen {
   csrfToken: string;
   /** Scopes this End-User is asked to grant (already narrowed by the scope policy). */
   scopes: string[];
-  /** Client requesting the authorization. */
-  clientId: string;
   /**
-   * The client as the page shows it (OIDC Dynamic Client Registration 1.0 §2):
-   * client_name, logo_uri, policy_uri, tos_uri and client_uri (client-display.ts).
+   * The client requesting the authorization, as the page shows it (OIDC
+   * Dynamic Client Registration 1.0 §2): client_id, client_name, logo_uri,
+   * policy_uri, tos_uri and client_uri (client-display.ts).
    */
   client: ClientDisplay;
 }

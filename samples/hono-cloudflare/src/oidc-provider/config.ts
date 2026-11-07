@@ -133,7 +133,9 @@ export interface ProviderConfig {
    * endpoints of their features), and dynamic client registration accepts
    * them as token_endpoint_auth_signing_alg. By default the algs core
    * verifies: RS256, RS384, RS512 (RFC 7518 §3.3) and ES256, ES384, ES512
-   * (§3.4). none and the HS algs are never accepted.
+   * (§3.4). none and the HS algs are never accepted. The list must not be
+   * empty while the OP advertises private_key_jwt (RFC 8414 §2), as it always
+   * does: discovery throws otherwise.
    */
   tokenEndpointAuthSigningAlgValuesSupported: readonly string[];
   /**
@@ -293,9 +295,10 @@ export interface RegisteredClient extends ClientInfo, TokenClientInfo {
 /**
  * A client as registerClient() (db/clients.ts) takes it: the RegisteredClient
  * and its public keys by purpose (keys). A purpose names the process that uses
- * the keys, such as request_object for the signed Request Objects the OP
- * verifies (OIDC Core 1.0 §6.3.2), or private_key_jwt and dpop for processes a
- * project adds. Register the same key under two purposes to use it for both.
+ * the keys: request_object for signed Request Objects (OIDC Core 1.0 §6.3.2)
+ * and private_key_jwt for client assertions (§9), which the OP verifies, or
+ * another one such as dpop (RFC 9449) for a process a project adds. Register
+ * the same key under two purposes to use it for both.
  * A client with a jwksUri registers no keys: registerClient() rejects both.
  *
  * clientSecret is the secret as the client presents it; registerClient()

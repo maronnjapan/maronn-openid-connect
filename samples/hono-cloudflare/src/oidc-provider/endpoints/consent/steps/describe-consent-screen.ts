@@ -19,7 +19,7 @@ export const meta = step({
 /**
  * 同意フォームに表示する内容を返す。
  *
- * 内容は、トランザクションの `csrf_token` とクライアント ID、クライアントの表示、エンドユーザーに許可を求めるスコープである。
+ * 内容は、トランザクションの `csrf_token`、クライアントの表示（`client_id` を含む）、エンドユーザーに許可を求めるスコープである。
  * クライアントの表示は、`clientResolver` で引いたクライアントの `client_name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` で、表示してよい URL だけに絞る（client-display.ts の `resolveClientDisplay()`、OIDC Dynamic Client Registration 1.0 §2 / §9.1）。
  * スコープは、要求されたもののうち、このエンドユーザーに許可できるものに絞る。
  *
@@ -45,7 +45,6 @@ export async function describeConsentScreen(
     kind: 'screen',
     csrfToken: transaction.csrfToken,
     scopes: displayedScopes,
-    clientId: transaction.clientId,
     client: await resolveClientDisplay(c.get('clientResolver'), c.get('config'), transaction.clientId),
   };
 }

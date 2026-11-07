@@ -90,6 +90,7 @@ export const keys = {
 
 /** Client: id is the client_id, in the key. The OP does not know a deleted client (is_deleted). */
 export interface ClientRecord {
+  /** The client_name of the client; null when it registered none. */
   name: string | null;
   client_type: 'public' | 'confidential';
   is_deleted: boolean;
@@ -97,9 +98,12 @@ export interface ClientRecord {
    * Client_auth (with its Client_secret): the methods the client may
    * authenticate with at the token endpoint. A public client has none. A
    * confidential client has one entry per method it may use:
-   * client_secret_basic, client_secret_post or both. Every entry carries the
-   * same secret, the hash from hashClientSecret() of the client's one
-   * client_secret (RFC 7591 §2).
+   * client_secret_basic, client_secret_post, private_key_jwt, or several of
+   * them. The entries of the secret methods carry the same secret, the hash
+   * from hashClientSecret() of the client's one client_secret (RFC 7591 §2).
+   * A private_key_jwt entry has no secret: its client assertion (OIDC Core 1.0
+   * §9) is verified with the keys of the private_key_jwt purpose
+   * (keys.clientJwks()) or the keys of jwks_uri.
    */
   client_auths: ClientAuthRecord[];
   /** Redirect_Uri: the redirect URIs of the client. */
@@ -114,60 +118,64 @@ export interface ClientRecord {
   /**
    * Not in the ER model: the response types the client may use at the
    * authorization endpoint (id_token and id_token token for the Implicit
-   * Flow). Empty or absent (a record written before the field existed): code
-   * only.
+   * Flow). Empty: code only.
    */
-  response_types?: string[];
+  response_types: string[];
   /**
    * Not in the ER model: the jwks_uri of the client (RFC 7591 §2), the URL of
-   * the JWK Set the OP fetches its public keys from. A client with one gets the
-   * keys of its jwks_uri for the purposes it serves, not those of
-   * keys.clientJwks(). Absent (a record written before the field existed): no
-   * jwks_uri.
+   * the JWK Set the OP fetches its public keys from. The keys of the purposes
+   * of clientJwksUriPurposes come from it, not from keys.clientJwks(), and a
+   * client with one registers no keys there. null: no jwks_uri.
    */
-  jwks_uri?: string;
+  jwks_uri: string | null;
   /**
    * Not in the ER model: the request_object_signing_alg of the client (OpenID
    * Connect Dynamic Client Registration 1.0 §2). Every Request Object of the
-   * client must be signed with this alg. Absent: any alg the OP accepts.
+   * client must be signed with this alg. null: any alg the OP accepts.
    */
-  request_object_signing_alg?: string;
+  request_object_signing_alg: string | null;
   /**
-   * Not in the ER model: the client authenticates with private_key_jwt (OIDC
-   * Core 1.0 §9), with its keys of the private_key_jwt purpose
-   * (keys.clientJwks()) or its jwks_uri. signing_alg is its
-   * token_endpoint_auth_signing_alg (OpenID Connect Dynamic Client
-   * Registration 1.0 §2); null accepts every alg the OP accepts. Absent: no
-   * private_key_jwt.
+   * Not in the ER model: the token_endpoint_auth_signing_alg of the client
+   * (OpenID Connect Dynamic Client Registration 1.0 §2). Every private_key_jwt
+   * client assertion (OIDC Core 1.0 §9) must be signed with this alg. null:
+   * any alg the OP accepts.
    */
-  private_key_jwt?: { signing_alg: string | null };
+  token_endpoint_auth_signing_alg: string | null;
   /**
    * Not in the ER model: the request_uris of the client (OpenID Connect
-   * Dynamic Client Registration 1.0 §2). Absent: none.
+   * Dynamic Client Registration 1.0 §2), the URLs of the Request Objects it
+   * passes by reference (OIDC Core 1.0 §6.2). Empty: none.
    */
-  request_uris?: string[];
+  request_uris: string[];
   /**
-   * Not in the ER model: the URLs the login and consent screens show about the
-   * client (OpenID Connect Dynamic Client Registration 1.0 §2). Its
-   * client_name is name. Absent: none.
+   * Not in the ER model: the logo_uri, policy_uri, tos_uri and client_uri of
+   * the client (OpenID Connect Dynamic Client Registration 1.0 §2), what the
+   * login and consent screens show about it. null: none.
    */
-  display_uris?: { logo_uri?: string; policy_uri?: string; tos_uri?: string; client_uri?: string };
+  logo_uri: string | null;
+  policy_uri: string | null;
+  tos_uri: string | null;
+  client_uri: string | null;
 }
 
-/** One Client_auth of ClientRecord.client_auths, with its Client_secret. */
-export interface ClientAuthRecord {
-  client_auth_type: 'client_secret_basic' | 'client_secret_post';
-  secret: string;
-}
+/**
+ * One Client_auth of ClientRecord.client_auths: a secret method with its
+ * Client_secret, or private_key_jwt, which has no secret.
+ */
+export type ClientAuthRecord =
+  | { client_auth_type: 'client_secret_basic' | 'client_secret_post'; secret: string }
+  | { client_auth_type: 'private_key_jwt' };
 
 /**
  * Client_jwk: the public keys of a client for one purpose, as a JWK Set
  * (RFC 7517 §5). The purpose is part of the key and names the process that
- * uses the keys: request_object for the signed Request Objects the OP verifies
- * (OIDC Core 1.0 §6.3.2), or another one such as private_key_jwt (OIDC Core
- * 1.0 §9) or dpop (RFC 9449) for a process a project adds. The OP reads the
- * record of a purpose each time a process needs its keys, so a key added to it
- * or removed from it takes effect at once. Never store a private key.
+ * uses the keys: request_object for signed Request Objects (OIDC Core 1.0
+ * §6.3.2) and private_key_jwt for client assertions (§9), which the OP
+ * verifies, or another one such as dpop (RFC 9449) for a process a project
+ * adds. Any purpose is accepted, so a project can add a purpose of its own.
+ * The OP reads the record of a purpose each time a process needs its keys, so
+ * a key added to it or removed from it takes effect at once. Never store a
+ * private key.
  */
 export interface ClientJwksRecord {
   keys: Array<Record<string, unknown>>;

@@ -53,11 +53,11 @@ export interface LoginPageParams {
   loginHint?: string;
   /**
    * The client asking for the authorization (OIDC Dynamic Client
-   * Registration 1.0 §2): its client_name, logo_uri, policy_uri, tos_uri and
-   * client_uri, already narrowed to the URLs the page may show
-   * (client-display.ts).
+   * Registration 1.0 §2): its client_id, client_name, logo_uri, policy_uri,
+   * tos_uri and client_uri, already narrowed to the URLs the page may show
+   * (client-display.ts). The page always shows it.
    */
-  client?: ClientDisplay;
+  client: ClientDisplay;
   /**
    * The other ways to sign in that the features offer (the login methods of
    * features/feature.ts, such as Sign in with Google), already rendered.
@@ -75,13 +75,12 @@ export interface ConsentPageParams {
   csrfToken: string;
   /** Scopes requested by the client */
   scopes: string[];
-  /** Client ID requesting authorization */
-  clientId: string;
   /**
-   * The client asking for the authorization (OIDC Dynamic Client
-   * Registration 1.0 §2), as for the login page.
+   * The client requesting the authorization (OIDC Dynamic Client
+   * Registration 1.0 §2), as for the login page: its clientId is the
+   * client_id of the request.
    */
-  client?: ClientDisplay;
+  client: ClientDisplay;
 }
 
 /**
@@ -351,7 +350,7 @@ export function DecisionOutcome(props: { approved: boolean; clientId: string }):
  *
  * ユーザー名の欄には `login_hint` を初期値として入れる。
  * 前の試行が失敗していれば、フォームの上にエラーと、わかる場合は残りの試行回数を表示する。
- * 認可を求めるクライアントが分かれば、その名前、ロゴ、ポリシーと利用規約のリンクをフォームの上に表示する（`ClientSummary`）。
+ * フォームの上には、認可を求めるクライアントを、名前（無ければ `client_id`）、ロゴ、ポリシーと利用規約のリンクで示す（`ClientSummary`）。
  * 名前の `strong` は画面に一つだけ置く。
  *
  * @spec OIDC Dynamic Client Registration 1.0 §2
@@ -362,11 +361,9 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
   return (
     <Layout title="Login">
       <h1>Login</h1>
-      {params.client === undefined ? null : (
-        <ClientSummary client={params.client}>
-          Sign in to continue to <strong>{clientDisplayName(params.client)}</strong>.
-        </ClientSummary>
-      )}
+      <ClientSummary client={params.client}>
+        Sign in to continue to <strong>{clientDisplayName(params.client)}</strong>.
+      </ClientSummary>
       <FormError error={params.error} remainingAttempts={params.remainingAttempts} />
       <form method="post" action="/login">
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
@@ -394,7 +391,7 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
  *
  * 承認と拒否のボタンは、`action=approve` か `action=deny` を、`csrf_token` とともに `/consent` へ POST する。
  * 同意のハンドラは `approve` と `deny` 以外の値を 400 で拒否するので、画面を作り変えるときもボタンの値は変えない。
- * クライアントは、分かれば名前、ロゴ、ポリシーと利用規約のリンクで（`ClientSummary`）、名前がなければ `client_id` で示す。
+ * クライアントは名前（無ければ `client_id`）、ロゴ、ポリシーと利用規約のリンクで示す（`ClientSummary`）。
  * 名前の `strong` は画面に一つだけ置く。
  *
  * @spec OIDC Core 1.0 §3.1.2.4
@@ -404,8 +401,8 @@ function defaultConsentPage(params: ConsentPageParams): JSX.Element {
   return (
     <Layout title="Consent">
       <h1>Authorize Application</h1>
-      <ClientSummary client={params.client ?? { clientId: params.clientId }}>
-        Client <strong>{clientDisplayName(params.client ?? { clientId: params.clientId })}</strong> is requesting access to the following scopes:
+      <ClientSummary client={params.client}>
+        Client <strong>{clientDisplayName(params.client)}</strong> is requesting access to the following scopes:
       </ClientSummary>
       <ScopeList scopes={params.scopes} />
       <form method="post" action="/consent">

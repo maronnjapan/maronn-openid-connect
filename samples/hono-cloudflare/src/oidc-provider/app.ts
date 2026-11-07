@@ -93,8 +93,7 @@ export interface OidcProviderOptions {
    * request-object feature). Defaults to globalThis.fetch. Pass a fetch that
    * goes through an egress proxy to keep the fetches away from the networks
    * of the OP: the destination checks see the host of a URL, not the
-   * addresses its name resolves to. It replaces clientJwksFetch, which only
-   * the jwks_uri fetch used.
+   * addresses its name resolves to.
    */
   outboundFetch?: typeof fetch;
   /**

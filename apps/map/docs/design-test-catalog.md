@@ -918,6 +918,7 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 - E2E の OP は、それぞれの issuer のポートの次のポートに制御の口（`/reset`、`/collect`）を開く（`MARONN_REACH_PORT`）。fixture はテストの前に全部の OP（main、XAA、DCR）を `/reset` し、答えない OP があればテストを落とす。計測の無い起動中のサーバーが使い回されて、何も計らないまま通るのを防ぐためである。到達を取る実行は Playwright のワーカーを一つにする
 - ブラウザに見えない RP の裏の通信（`/token`、`/userinfo`、`/introspect` など）は、OP のアクセスログ（hono は `hono/logger`、Next.js は Node の `http.server.response.finish` の diagnostics channel）を、テストの始まりと終わりの時刻で切って足す
 - E2E の lcov は、テストごとの V8 の計数を `v8-to-istanbul` で Istanbul の形にし、Playwright の global teardown で合わせて書く。モジュールの読み込みで走る行（import、型、コメント）は走った行として数えられ、行の割合は高めに出る
+- リセットの後の計数から、V8 は走らなかった関数を省く。そこで各テストの計数では、ソースごとに、元の位置の最も前から最も後ろまでを、囲む関数の回数（リセットの後は 0、モジュールを読み込んだテストでは 1）にしてから V8 の範囲を当てる（`tests/e2e/reach/lcov.mjs`）。生成物の最後の対応までにすると、tsx が関数の後に置く `__name(fn, "fn")` が関数の名前の位置に戻るため、最後の関数の本体が走ったことになる
 - 計測の口は生成物に入らない。`server.ts` と `instrumentation.ts` は CLI が抽出する根の外にあり、`packages/cli` のテストが、どのフレームワーク、DB、機能の組み合わせのテンプレートと生成物にも `test-reach` が無いことを確かめる
 
 残っていること。

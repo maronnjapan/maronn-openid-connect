@@ -915,7 +915,7 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 - Vitest のテストごとの到達は、setup ファイルの `afterEach` で差分を取り、テストの `meta` で reporter に渡して `reach/vitest-<pkg>.jsonl` に書く。edge-runtime の環境の core でもワーカーの中でファイルを書かずに済む
 - E2E の OP は、それぞれの issuer のポートの次のポートに制御の口（`/reset`、`/collect`）を開く（`MARONN_REACH_PORT`）。fixture はテストの前に全部の OP（main、XAA、DCR）を `/reset` し、答えない OP があればテストを落とす。計測の無い起動中のサーバーが使い回されて、何も計らないまま通るのを防ぐためである。到達を取る実行は Playwright のワーカーを一つにする
 - ブラウザに見えない RP の裏の通信（`/token`、`/userinfo`、`/introspect` など）は、OP のアクセスログ（hono は `hono/logger`、Next.js は Node の `http.server.response.finish` の diagnostics channel）を、テストの始まりと終わりの時刻で切って足す
-- E2E の lcov は、テストごとの V8 の計数を `v8-to-istanbul` で Istanbul の形にし、Playwright の global teardown で合わせて書く。モジュールの読み込みで走る行（import、型、コメント）は走った行として数わるので、行の割合は高めに出る
+- E2E の lcov は、テストごとの V8 の計数を `v8-to-istanbul` で Istanbul の形にし、Playwright の global teardown で合わせて書く。モジュールの読み込みで走る行（import、型、コメント）は走った行として数えられ、行の割合は高めに出る
 - 計測の口は生成物に入らない。`server.ts` と `instrumentation.ts` は CLI が抽出する根の外にあり、`packages/cli` のテストが、どのフレームワーク、DB、機能の組み合わせのテンプレートと生成物にも `test-reach` が無いことを確かめる
 
 残っていること。

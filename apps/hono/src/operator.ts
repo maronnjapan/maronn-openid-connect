@@ -55,10 +55,11 @@ export function clearClientKeys(db: Database, clientId: string): boolean {
   return true;
 }
 
+/** Build the operator routes, which answer only a request that presents the operator token. */
 export function createOperatorApp(
   db: Database,
   token: string,
-  rotateSigningKey?: () => Promise<{ kid: string; kids: string[] }>,
+  rotateSigningKey: () => Promise<{ kid: string; kids: string[] }>,
 ): Hono {
   const operator = new Hono();
   operator.use('*', async (c, next) => {
@@ -82,8 +83,6 @@ export function createOperatorApp(
   });
   // OIDC Core 1.0 §10.1.1: rotate the OP's signing key while the app runs. The
   // new key signs from the next request on, and the old one stays in the JWKS.
-  if (rotateSigningKey !== undefined) {
-    operator.post('/signing-keys/rotate', async (c) => c.json(await rotateSigningKey()));
-  }
+  operator.post('/signing-keys/rotate', async (c) => c.json(await rotateSigningKey()));
   return operator;
 }

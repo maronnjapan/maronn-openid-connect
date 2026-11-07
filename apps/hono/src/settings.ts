@@ -188,11 +188,6 @@ export const echoRequestedAcr: AcrResolver = async ({ requestedAcrValues }) => {
   return { acr, amr: ['pwd'] };
 };
 
-/** An RS256 signing key generated at startup: tokens do not survive a restart. */
-export function createEphemeralSigningKeyProvider(keyId: string): SigningKeyProvider {
-  return createRotatingSigningKeyProvider(keyId).signingKeyProvider;
-}
-
 /** The signing keys of the app and the way to rotate them while it runs. */
 export interface RotatingSigningKeys {
   signingKeyProvider: SigningKeyProvider;

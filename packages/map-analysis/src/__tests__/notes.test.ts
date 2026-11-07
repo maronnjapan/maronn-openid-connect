@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FrameChangeEntry } from '../model.js';
-import { attachNotes, draftHeading, draftSections, isNote, parseNote, referencesOf, resolveReference, withoutComments } from '../notes.js';
+import { attachNotes, draftHeading, draftSections, draftTestSections, isNote, parseNote, referencesOf, resolveReference, withoutComments } from '../notes.js';
 import { noteName } from '../draft.js';
 
 function entry(id: string, name: string, kind: FrameChangeEntry['kind'] = 'modified', extra: Partial<FrameChangeEntry> = {}): FrameChangeEntry {
@@ -59,6 +59,47 @@ describe('parseNote', () => {
 
   it('should leave nothing of a text of HTML comments only', () => {
     expect(withoutComments('<!-- a -->\n\n<!-- b -->\n')).toBe('');
+  });
+});
+
+describe('the reason not to change the tests', () => {
+  it('should read the line apart from the text, with a half or a full width colon, and take an empty one as no reason', () => {
+    const note = parseNote(['# t', '', '## buildTokenResponse', '', '`scope` の空白を落とした。', '', 'テストを変えない理由: レスポンスの形は変えていない。', '', '## verifyClientSecret', '', 'テストを変えない理由：', '', '## sign', '', 'テストを変えない理由：既存の 3 件が同じ期待で通る。'].join('\n'));
+    expect(note.sections.map((section) => [section.heading, section.text, section.reason])).toEqual([
+      ['buildTokenResponse', '`scope` の空白を落とした。', 'レスポンスの形は変えていない。'],
+      ['verifyClientSecret', '', undefined],
+      ['sign', '', '既存の 3 件が同じ期待で通る。'],
+    ]);
+  });
+
+  it('should give a frame the reason of a section that names it, without counting the reason as the explanation of the change', () => {
+    const frames = [entry('core:a.ts#sign', 'sign'), entry('core:b.ts#verify', 'verify')];
+    const note = { file: 'apps/map/changes/x.md', ...parseNote(['## sign', '', 'テストを変えない理由: 形は同じ。', '', '## verify', '', '短い秘密を拒む。'].join('\n')) };
+    attachNotes(frames, [note], [], () => entry('core:z.ts#z', 'z'));
+    expect(frames.map((frame) => [frame.id, frame.documented, frame.testReason])).toEqual([
+      ['core:a.ts#sign', false, { text: '形は同じ。', note: 'apps/map/changes/x.md' }],
+      ['core:b.ts#verify', true, undefined],
+    ]);
+  });
+
+  it('should draft the related tests in a comment and an empty reason line, in a new section or in one of its own', () => {
+    const tests = new Map([['core:a.ts#sign', { related: ['should sign the ID token', 'should reject a token -->'] }]]);
+    expect(draftSections([{ id: 'core:a.ts#sign', name: 'sign', summary: ['条件 `x` を足した'], reach: [] }], tests)).toBe(
+      [
+        '## sign <!-- core:a.ts#sign -->',
+        '',
+        '<!-- 自動要約: 条件 `x` を足した -->',
+        '<!-- 届く先: なし -->',
+        '<!-- なぜ変えたか、何に気をつけるかを書く（何を変えたかとどこに効くかは地図が出す） -->',
+        '',
+        '<!-- 関連するテスト（2）: should sign the ID token / should reject a token - ->。どれかを変えるか、変えない理由を次の行に書く -->',
+        'テストを変えない理由:',
+        '',
+      ].join('\n'),
+    );
+    expect(draftTestSections([{ id: 'core:b.ts#verify', name: 'verify' }], new Map())).toBe(
+      ['## verify <!-- core:b.ts#verify -->', '', '<!-- 関連するテスト: なし。テストを足すか、テストを足さない理由を次の行に書く -->', 'テストを変えない理由:', ''].join('\n'),
+    );
   });
 });
 

@@ -1,0 +1,28 @@
+{
+  "name": "@maronn-openid-connect/test-reach",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The measurement of what each test runs, for the OIDC Provider Map: the Istanbul counters of a Vitest test and the V8 precise coverage of the OpenID Providers the E2E tests drive, taken before and after each test; only with MARONN_REACH=1, and never in the generated code",
+  "type": "module",
+  "exports": {
+    "./vitest": {
+      "types": "./src/vitest.d.ts",
+      "import": "./src/vitest.js"
+    },
+    "./vitest-setup": "./src/vitest-setup.js",
+    "./vitest-reporter": "./src/vitest-reporter.js",
+    "./op": {
+      "types": "./src/op.d.ts",
+      "import": "./src/op.js"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@maronn-openid-connect/test-catalog",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The tests on the OIDC Provider Map: every test case read as a card (what it tests, what it expects, the requests it sends) joined to the function catalog, with the results and the reach of a run and the diff of a pull request; apps/map shows what it writes",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./model": {
+      "types": "./src/model.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber-expressions": "19.0.0",
+    "@cucumber/gherkin": "^39.1.0",
+    "@cucumber/messages": "^32.3.1",
+    "@maronn-openid-connect/cli": "workspace:*",
+    "@maronn-openid-connect/map-analysis": "workspace:*",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "yaml": "^2.9.1"
+  }
+}

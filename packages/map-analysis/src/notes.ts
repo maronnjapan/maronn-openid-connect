@@ -14,6 +14,13 @@
  * What changed and where it takes effect the map computes; a note says why.
  * So a section counts as an explanation when it has any text besides HTML
  * comments, and nothing else about its text is checked.
+ *
+ * A line `テストを変えない理由: …` (the colon half or full width) of a
+ * section says why the pull request changes none of the tests related to the
+ * frames it names (the diff of the tests, packages/test-catalog, fails on
+ * such a change without one). It is read apart from the text: it does not
+ * explain why the code changed, and a line with nothing after the colon (the
+ * place the draft leaves for it) is no reason.
  */
 import type { ChangeNoteText, FrameChangeEntry } from './model.js';
 
@@ -31,9 +38,14 @@ export interface NoteSection {
   references: string[];
   /** Whether the references are ids (from the HTML comment): they name one frame each. */
   byId: boolean;
-  /** The text of the section, its HTML comments left out. */
+  /** The text of the section, its HTML comments and its `テストを変えない理由:` lines left out. */
   text: string;
+  /** What its first `テストを変えない理由:` line with words after the colon says. */
+  reason?: string;
 }
+
+/** A line that says why the tests stay as they are (see the module comment). */
+const REASON_LINE = /^\s*テストを変えない理由\s*[:：]\s*(.*?)\s*$/;
 
 export interface ParsedNote {
   title?: string;
@@ -97,7 +109,10 @@ export function parseNote(text: string): ParsedNote {
   note.sections = sections.map(({ heading, lines }) => {
     const ids = [...heading.matchAll(/<!--\s*([^>]*?)\s*-->/g)].flatMap((match) => (match[1] as string).split(/[\s,]+/)).filter((id) => /[:#]/.test(id));
     const visible = heading.replace(/<!--[\s\S]*?-->/g, '').trim();
-    return { heading: visible, references: ids.length > 0 ? ids : referencesOf(visible), byId: ids.length > 0, text: withoutComments(lines.join('\n')) };
+    const reasons = lines.map((line) => REASON_LINE.exec(line)?.[1]).filter((reason): reason is string => reason !== undefined);
+    const reason = reasons.find((text) => withoutComments(text) !== '');
+    const text = withoutComments(lines.filter((line) => !REASON_LINE.test(line)).join('\n'));
+    return { heading: visible, references: ids.length > 0 ? ids : referencesOf(visible), byId: ids.length > 0, text, ...(reason === undefined ? {} : { reason: withoutComments(reason) }) };
   });
   return note;
 }
@@ -173,9 +188,9 @@ export function attachNotes(
         }
         matched = true;
         for (const target of targets) {
-          const text: ChangeNoteText = { file: note.file, heading: section.heading, text: section.text };
+          const text: ChangeNoteText = { file: note.file, heading: section.heading, text: section.text, ...(section.reason === undefined ? {} : { reason: section.reason }) };
           target.notes ??= [];
-          if (!target.notes.some((existing) => existing.file === text.file && existing.text === text.text)) target.notes.push(text);
+          if (!target.notes.some((existing) => existing.file === text.file && existing.text === text.text && existing.reason === text.reason)) target.notes.push(text);
         }
       }
       if (!matched) result.unmatched.push({ file: note.file, heading: section.heading, text: section.text });
@@ -187,6 +202,9 @@ export function attachNotes(
     const line = words[0]?.trim().split('\n')[0]?.trim();
     if (line !== undefined && line !== '') frame.noteLine = line;
     else delete frame.noteLine;
+    const reason = (frame.notes ?? []).find((note) => note.reason !== undefined);
+    if (reason?.reason !== undefined) frame.testReason = { text: reason.reason, note: reason.file };
+    else delete frame.testReason;
   }
   return result;
 }
@@ -197,23 +215,60 @@ export function draftHeading(frame: Pick<FrameChangeEntry, 'id' | 'name'>): stri
 }
 
 /**
+ * What the draft says about the tests of a frame the diff of the tests
+ * (packages/test-catalog) fails on: the tests related to it, and that its
+ * section needs a `テストを変えない理由:` line unless a test changes.
+ */
+export interface DraftTests {
+  /** The related tests, by their titles. */
+  related: string[];
+}
+
+/** The lines a draft adds for the tests of a frame: its related tests in an HTML comment, and the empty place for the reason. */
+export function draftTestLines(tests: DraftTests): string[] {
+  const shown = tests.related.slice(0, 10).map((title) => title.replace(/-->/g, '- ->'));
+  const more = tests.related.length > shown.length ? ` ほか ${tests.related.length - shown.length}` : '';
+  return [
+    tests.related.length === 0
+      ? '<!-- 関連するテスト: なし。テストを足すか、テストを足さない理由を次の行に書く -->'
+      : `<!-- 関連するテスト（${tests.related.length}）: ${shown.join(' / ')}${more}。どれかを変えるか、変えない理由を次の行に書く -->`,
+    'テストを変えない理由:',
+  ];
+}
+
+/**
  * The sections of a draft of a note for the frames that need one: each a
  * heading with the frame's id, what the map computed (the summary of the
  * diff and the endpoints it reaches) in HTML comments, and an empty line for
- * the author to say why.
+ * the author to say why. For a frame `tests` names, the related tests and an
+ * empty `テストを変えない理由:` line follow (see draftTestLines).
  */
-export function draftSections(frames: ReadonlyArray<Pick<FrameChangeEntry, 'id' | 'name' | 'summary' | 'reach'>>): string {
+export function draftSections(frames: ReadonlyArray<Pick<FrameChangeEntry, 'id' | 'name' | 'summary' | 'reach'>>, tests?: ReadonlyMap<string, DraftTests>): string {
   const sections = frames.map((frame) => {
     const summary = frame.summary.length === 0 ? '変更あり' : frame.summary.slice(0, 6).join(' / ');
     const endpoints = [...new Set(frame.reach.map((way) => `${way.source}:${way.endpoint}`))];
+    const own = tests?.get(frame.id);
     return [
       draftHeading(frame),
       '',
       `<!-- 自動要約: ${summary.replace(/-->/g, '- ->')} -->`,
       `<!-- 届く先: ${endpoints.length === 0 ? 'なし' : endpoints.join(', ')} -->`,
       '<!-- なぜ変えたか、何に気をつけるかを書く（何を変えたかとどこに効くかは地図が出す） -->',
+      ...(own === undefined ? [] : ['', ...draftTestLines(own)]),
       '',
     ].join('\n');
   });
   return sections.join('\n');
+}
+
+/**
+ * The sections of a draft for frames that have a section already but fail
+ * the diff of the tests: the heading again, with only the related tests and
+ * the place for the reason (a second section naming a frame adds to the
+ * first).
+ */
+export function draftTestSections(frames: ReadonlyArray<Pick<FrameChangeEntry, 'id' | 'name'>>, tests: ReadonlyMap<string, DraftTests>): string {
+  return frames
+    .map((frame) => [draftHeading(frame), '', ...draftTestLines(tests.get(frame.id) ?? { related: [] }), ''].join('\n'))
+    .join('\n');
 }

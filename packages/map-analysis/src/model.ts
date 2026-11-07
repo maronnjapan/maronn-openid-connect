@@ -378,6 +378,22 @@ export interface MapData {
   sources: Record<string, { path: string; url: string }>;
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
+  /** The tests of the map (packages/test-catalog): where the page reads them and how many there are. */
+  tests?: TestsPointer;
+}
+
+/**
+ * Where the data of the tests is (packages/test-catalog writes it next to
+ * map.json) and how many tests the catalog holds; the page shows the tests
+ * when it is there and stays whole without it.
+ */
+export interface TestsPointer {
+  /** The url of the index (`./data/tests.json`). */
+  index: string;
+  /** How many test cases the catalog holds. */
+  count: number;
+  /** The url of the diff of the tests, in the map of a pull request. */
+  diff?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +458,10 @@ export interface ChangeNoteText {
   file: string;
   /** The heading of the section. */
   heading: string;
+  /** Its text, the HTML comments and the `テストを変えない理由:` line left out. */
   text: string;
+  /** What its `テストを変えない理由:` line says: why the pull request changes none of the frame's tests. */
+  reason?: string;
 }
 
 /** A change note of the pull request: what its text before the first heading says the pull request does. */
@@ -537,6 +556,8 @@ export interface FrameChangeEntry {
   noteLine?: string;
   /** A note with text names it. */
   documented: boolean;
+  /** The first `テストを変えない理由:` line of the sections that name it, and the note it is in. */
+  testReason?: { text: string; note: string };
   /**
    * A change the map requires a note for: its code changed (not only its
    * comments or its layout, which leave the tree the same) and it reaches an
@@ -562,6 +583,15 @@ export interface MapChanges {
   undocumented: string[];
   /** Changed lines of the files of the catalog outside every frame (imports, types, constants). */
   outside: Array<{ file: string; lines: number[] }>;
-  /** The changed files that hold no frame: tests, documents, the CLI, the map itself. */
+  /** The changed files that hold no frame and no test: documents, the CLI, the map itself (the tests have their own diff). */
   otherFiles: number;
+  /** The changed test files (tests, specs and feature files), which the diff of the tests reads. */
+  testFiles?: number;
+  /**
+   * The changed frames that require a note (`required`) whose related tests
+   * the pull request neither added nor changed, without a reason not to in
+   * their note (`テストを変えない理由:`): the check of the map fails on them.
+   * Set by the diff of the tests (packages/test-catalog).
+   */
+  untested?: string[];
 }

@@ -37,6 +37,16 @@ export interface ExtractionDefinition {
 /** The name of the tsconfig the analysis lays over a root's own (virtual: it is never written). */
 export const OVERLAY_CONFIG = 'tsconfig.map-analysis.json';
 
+/**
+ * Whether a path of the repository is a test: a test or spec of Vitest or
+ * Playwright (`*.test.ts`, `*.spec.ts`, `*.test.mjs`, ...) or a feature file
+ * of Gherkin. The map reads none of them as frames; the diff of the tests
+ * (packages/test-catalog) reads them.
+ */
+export function isTestPath(path: string): boolean {
+  return /\.(test|spec)\.(c|m)?[jt]sx?$/.test(path) || path.endsWith('.feature');
+}
+
 /** The nearest directory at or above `directory` that holds a tsconfig.json, from the root of the repository. */
 function projectOf(repository: string, directory: string): string {
   let current = directory;

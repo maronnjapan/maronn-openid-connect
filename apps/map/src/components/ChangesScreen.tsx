@@ -1,10 +1,13 @@
-import { useState } from 'react';
-import type { DiffHunk, FrameChangeEntry, MapData, Reach } from '../types';
+import { useMemo, useState, type ReactNode } from 'react';
+import type { DiffHunk, FrameChangeEntry, MapData, Reach, TestDiff, TestEntry, TestsIndex } from '../types';
 import { allHunks, catchWords, changeName, groupChanges, markOf, narrowing, wayGroups, wayLabel, type ChangeIndex } from '../lib/changes';
 import { locationOf } from '../lib/model';
-import { entryOf } from '../lib/trace';
+import { KIND_WORDS, OUTCOME_WORDS, diffKinds, endpointDiffs, setChange, signed, titleText } from '../lib/tests';
+import { entryOf, sourceOf } from '../lib/trace';
 import { Badge, ChangeNotes, ChangeSummary, DiffView, Inline, NoteText } from './ChangeParts';
+import { TestDrawer, TestWords } from './TestParts';
 import { fetchFrame } from './useFrames';
+import { useTestDiff, useTestLanguage } from './useTests';
 
 export interface ChangesScreenProps {
   data: MapData;
@@ -14,6 +17,295 @@ export interface ChangesScreenProps {
   onOpenEndpoint: (id: string) => void;
   /** Open the trace of an endpoint along a way to a change: its frames open and its sides chosen. */
   onOpenWay: (way: Reach) => void;
+  /** The index of the tests, once read: the names of the related tests and their cards. */
+  tests?: TestsIndex | undefined;
+}
+
+/** What the rows of the changes read of the diff of the tests (tests/diff.json). */
+interface TestContext {
+  diff: TestDiff | undefined;
+  /** The diff is still being read. */
+  loading: boolean;
+  /** The changes whose related tests did not change, without a reason (MapChanges.untested): the check fails on them. */
+  untested: ReadonlySet<string>;
+  /** The entries of the index by id, for the names of the related tests. */
+  entries: ReadonlyMap<string, TestEntry>;
+  /** Open the card of a test of the index. */
+  onOpen: (entry: TestEntry) => void;
+}
+
+/** What changed of a test, in words. */
+const WHAT_WORDS: Record<TestDiff['modified'][number]['what'][number], string> = { title: '名前', assertions: '期待', subjects: '対象', requests: 'リクエスト', body: '本体' };
+
+/** A test the diff names, by its card in the diff (its name in English), opening its card of the index when the index has it. */
+function DiffTest({ id, diff, context, children }: { id: string; diff: TestDiff; context: TestContext; children?: ReactNode }) {
+  const card = diff.cards[id];
+  const entry = context.entries.get(id);
+  const title = titleText({ title: card?.title ?? id }, 'en');
+  return (
+    <li className="test-row">
+      <div className="test-row-head">
+        {card !== undefined ? <span className="kind">{KIND_WORDS[card.kind]}</span> : null}
+        {entry !== undefined ? (
+          <button type="button" className="test-open" onClick={() => context.onOpen(entry)} title="このテストの札とソースを開く">
+            <TestWords text={title} />
+          </button>
+        ) : (
+          <TestWords text={title} />
+        )}
+        {card !== undefined && card.outcome !== 'unknown' ? <span className="chip">{OUTCOME_WORDS[card.outcome]}</span> : null}
+        {card?.examples !== undefined ? <span className="chip">{card.examples} 行</span> : null}
+      </div>
+      {card !== undefined ? (
+        <p className="where mono">
+          {card.source.file}:{card.source.lines[0]}
+        </p>
+      ) : null}
+      {children}
+    </li>
+  );
+}
+
+/** A set of words a changed frame's tests gained and lost: `+境界値 −認証`. */
+function setWords(change: { added: readonly string[]; removed: readonly string[] }, word: (item: string) => string): string {
+  return [...change.added.map((item) => `+${word(item)}`), ...change.removed.map((item) => `−${word(item)}`)].join(' ');
+}
+
+/**
+ * The tests of a changed frame (design §5): how many relate to it and which
+ * of them the pull request added or changed, whether the check fails on it
+ * or its note says why its tests stay, the new failures no test expects, and
+ * how the outcomes, aspects and errors its tests check changed.
+ */
+function RelatedTests({ entry, context, labels }: { entry: FrameChangeEntry; context: TestContext; labels: Readonly<Record<string, string>> }) {
+  const frame = context.diff?.frames.find((candidate) => candidate.frame === entry.id);
+  const untested = context.untested.has(entry.id);
+  if (frame === undefined && !untested && entry.testReason === undefined) {
+    return context.loading && (entry.kind === 'added' || entry.kind === 'modified') ? <p className="note">関連するテストを読み込んでいます…</p> : null;
+  }
+  const word = (key: 'outcomes' | 'aspects' | 'errors') => (item: string) => (key === 'outcomes' ? (OUTCOME_WORDS[item as 'success'] ?? item) : key === 'aspects' ? (labels[item] ?? item) : item);
+  const moved =
+    frame === undefined
+      ? []
+      : (
+          [
+            ['期待', 'outcomes'],
+            ['観点', 'aspects'],
+            ['期待するエラー', 'errors'],
+          ] as const
+        )
+          .map(([label, key]) => ({ label, words: setWords(setChange(frame.before[key], frame.after[key]), word(key)) }))
+          .filter((change) => change.words !== '');
+  return (
+    <section className="related-tests">
+      <h4>関連するテスト</h4>
+      {frame !== undefined ? (
+        <p className="note">
+          関連するテスト {frame.related.length} 件 · このPRで足した・変えたもの {frame.touched.length} 件
+        </p>
+      ) : null}
+      {untested ? (
+        <p className="untested-line">
+          <span className="badge badge-required">テスト未変更</span> この変更に関連するテストを、このPRは足しも変えもしていません。理由の行が無いので、地図の検査が落ちます。
+        </p>
+      ) : null}
+      {entry.testReason !== undefined ? (
+        <p className="reason-line">
+          テストを変えない理由: 「<Inline text={entry.testReason.text} />」 <span className="where mono">{entry.testReason.note}</span>
+        </p>
+      ) : null}
+      {frame !== undefined && context.diff !== undefined && frame.touched.length > 0 ? (
+        <ul className="test-list">
+          {frame.touched.map((id) => (
+            <DiffTest key={id} id={id} diff={context.diff as TestDiff} context={context} />
+          ))}
+        </ul>
+      ) : null}
+      {frame !== undefined && frame.failuresWithoutTest.length > 0 ? (
+        <p className="note">
+          新しく外へ出る失敗で、期待するテストが無いもの:{' '}
+          {frame.failuresWithoutTest.map((error, at) => (
+            <span key={error}>
+              {at > 0 ? '、' : ''}
+              <code>{error}</code>
+            </span>
+          ))}
+        </p>
+      ) : null}
+      {moved.length > 0 ? <p className="note">関連するテストの保証範囲の変化: {moved.map((change) => `${change.label} ${change.words}`).join(' · ')}</p> : null}
+      {frame !== undefined && frame.related.length > 0 ? (
+        <details>
+          <summary>関連するテストの一覧（{frame.related.length}）</summary>
+          <ul className="plain related-list">
+            {frame.related.slice(0, 80).map((id) => {
+              const test = context.entries.get(id);
+              return (
+                <li key={id}>
+                  {test === undefined ? (
+                    <span className="mono">{id}</span>
+                  ) : (
+                    <button type="button" className="link" onClick={() => context.onOpen(test)}>
+                      <TestWords text={titleText(test, 'en')} />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+            {frame.related.length > 80 ? <li className="muted">ほか {frame.related.length - 80} 件</li> : null}
+          </ul>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * The section テスト of the page (design §5 地図が出すもの): the cases before
+ * and after by kind, the endpoints whose tests changed in number, the tests
+ * added, changed, renamed and removed (their names in English), the changed
+ * frames with their related tests, and the new failures no test expects.
+ * The results and the coverage are Codecov's comment.
+ */
+function PrTests({ data, framework, context, onOpenEndpoint, onOpenFunction }: { data: MapData; framework: string; context: TestContext; onOpenEndpoint: (id: string) => void; onOpenFunction: (id: string) => void }) {
+  const { diff } = context;
+  if (diff === undefined) {
+    return (
+      <section className="pr-tests" aria-label="テスト">
+        <h3>テスト</h3>
+        <p className="note">{context.loading ? 'テストの差分を読み込んでいます…' : 'この地図にはテストの差分がありません。'}</p>
+      </section>
+    );
+  }
+  const kinds = diffKinds(diff);
+  const moved = kinds.filter((row) => row.before !== row.after);
+  const source = sourceOf(framework);
+  const endpoints = data.flows[framework]?.endpoints ?? [];
+  const byEndpoint = endpointDiffs(diff, source);
+  const failures = diff.frames.flatMap((frame) => frame.failuresWithoutTest.map((error) => ({ error, frame: frame.frame })));
+  const list = (heading: string, ids: readonly string[], extra?: (id: string) => ReactNode) =>
+    ids.length === 0 ? null : (
+      <details className="tests-lazy" open={ids.length <= 20}>
+        <summary>
+          {heading}（{ids.length}）
+        </summary>
+        <ul className="test-list">
+          {ids.map((id) => (
+            <DiffTest key={id} id={id} diff={diff} context={context}>
+              {extra?.(id)}
+            </DiffTest>
+          ))}
+        </ul>
+      </details>
+    );
+  return (
+    <section className="pr-tests" aria-label="テスト">
+      <h3>テスト</h3>
+      <p>
+        テストケース: {diff.counts.before.toLocaleString('en-US')} → {diff.counts.after.toLocaleString('en-US')}（{signed(diff.counts.after - diff.counts.before)}）
+        {moved.length > 0 ? `  ${moved.map((row) => `${row.label} ${signed(row.after - row.before)}`).join('、')}` : ''}
+      </p>
+      <p className="note">{kinds.map((row) => `${row.label} ${row.before} → ${row.after}`).join(' · ')}</p>
+      <p className="note">
+        追加 {diff.added.length} · 変更 {diff.modified.length} · 名前の変更 {diff.renamed.length} · 削除 {diff.removed.length}
+      </p>
+      {byEndpoint.length > 0 ? (
+        <p className="note">
+          テストの数が変わったエンドポイント（{source}）:{' '}
+          {byEndpoint.map((row, at) => {
+            const endpoint = endpoints.find((candidate) => candidate.id === row.endpoint);
+            return (
+              <span key={row.key}>
+                {at > 0 ? '、' : ''}
+                <button type="button" className="link mono" onClick={() => onOpenEndpoint(row.endpoint)}>
+                  {endpoint?.path ?? row.endpoint}
+                </button>{' '}
+                {row.before} → {row.after}（{signed(row.after - row.before)}）
+              </span>
+            );
+          })}
+        </p>
+      ) : null}
+      {list('追加したテスト', diff.added)}
+      {list(
+        '変えたテスト',
+        diff.modified.map((change) => change.id),
+        (id) => {
+          const change = diff.modified.find((candidate) => candidate.id === id);
+          if (change === undefined) return null;
+          return (
+            <div className="test-change">
+              <p className="note">変えたところ: {change.what.map((what) => WHAT_WORDS[what]).join('、')}</p>
+              {change.assertions !== undefined ? (
+                <ul className="plain exprs">
+                  {change.assertions.removed.map((assertion, at) => (
+                    <li key={`r${at}`} lang="en">
+                      <del>{assertion.text}</del>
+                    </li>
+                  ))}
+                  {change.assertions.added.map((assertion, at) => (
+                    <li key={`a${at}`} lang="en">
+                      <ins>{assertion.text}</ins>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          );
+        },
+      )}
+      {diff.renamed.length > 0 ? (
+        <details className="tests-lazy" open={diff.renamed.length <= 20}>
+          <summary>名前を変えたテスト（{diff.renamed.length}）</summary>
+          <ul className="plain">
+            {diff.renamed.map(([before, after]) => (
+              <li key={`${before}>${after}`} lang="en">
+                <del>{diff.cards[before]?.title ?? before}</del> → {diff.cards[after]?.title ?? after}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {list('消したテスト', diff.removed)}
+      {diff.frames.length > 0 ? (
+        <section aria-label="変えた関数ごとの関連するテスト">
+          <h4>変えた関数ごとの関連するテスト（{diff.frames.length}）</h4>
+          <ul className="plain pr-test-frames">
+            {diff.frames.map((frame) => {
+              const card = data.functions[frame.frame];
+              const name = card !== undefined ? `${card.name}()` : (data.bodies[frame.frame]?.name ?? frame.frame);
+              return (
+                <li key={frame.frame}>
+                  {card !== undefined ? (
+                    <button type="button" className="link mono" onClick={() => onOpenFunction(frame.frame)}>
+                      {name}
+                    </button>
+                  ) : (
+                    <span className="mono">{name}</span>
+                  )}
+                  : 関連するテスト {frame.related.length} 件、このPRで足した・変えたもの {frame.touched.length} 件
+                  {frame.untouched ? frame.reason !== undefined ? '（テストを変えない理由あり）' : <> <span className="badge badge-required">テスト未変更</span></> : null}
+                  {frame.failuresWithoutTest.length > 0 ? <span className="muted">（期待するテストが無い新しい失敗 {frame.failuresWithoutTest.length}）</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+      {failures.length > 0 ? (
+        <section aria-label="新しく外へ出る失敗を期待するテストが無いもの">
+          <h4>新しく外へ出る失敗を期待するテストが無いもの（{failures.length}）</h4>
+          <ul className="plain">
+            {failures.map((failure) => (
+              <li key={`${failure.frame}/${failure.error}`}>
+                <code>{failure.error}</code> <span className="muted">（{data.functions[failure.frame]?.name ?? failure.frame} から）</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      <p className="note">テストの結果とカバレッジの変化は Codecov のコメントにあります。</p>
+    </section>
+  );
 }
 
 /** The revision the changes are compared with: its name and its commit, or the commit alone when the name is the commit. */
@@ -102,8 +394,8 @@ function Ways({ data, entry, framework, onOpenWay }: { data: MapData; entry: Fra
   );
 }
 
-/** One changed frame: its badge and name, where it is, the diff in words, the notes, the diff, and the ways it reaches the endpoints. */
-function ChangeRow({ data, entry, framework, onOpenFunction, onOpenWay }: { data: MapData; entry: FrameChangeEntry; framework: string; onOpenFunction: (id: string) => void; onOpenWay: (way: Reach) => void }) {
+/** One changed frame: its badge and name, where it is, the diff in words, the notes, the diff, the ways it reaches the endpoints, and its related tests. */
+function ChangeRow({ data, entry, framework, onOpenFunction, onOpenWay, testing, labels = {} }: { data: MapData; entry: FrameChangeEntry; framework: string; onOpenFunction: (id: string) => void; onOpenWay: (way: Reach) => void; testing?: TestContext | undefined; labels?: Readonly<Record<string, string>> }) {
   const name = changeName(data, entry);
   const opens = entry.kind !== 'removed' && entry.body !== true && data.functions[entry.id] !== undefined;
   return (
@@ -120,6 +412,7 @@ function ChangeRow({ data, entry, framework, onOpenFunction, onOpenWay }: { data
         <span className="muted mono where-inline">{locationOf(entry)}</span>
         {entry.from !== undefined ? <span className="muted">（{entry.from} から移した）</span> : null}
         {entry.required && !entry.documented ? <span className="badge badge-required">説明なし</span> : null}
+        {testing?.untested.has(entry.id) === true ? <span className="badge badge-required">テスト未変更</span> : null}
       </div>
       <ChangeSummary change={entry} data={data} framework={framework} onOpenFunction={onOpenFunction} />
       <ChangeNotes change={entry} />
@@ -130,6 +423,7 @@ function ChangeRow({ data, entry, framework, onOpenFunction, onOpenWay }: { data
           <Ways data={data} entry={entry} framework={framework} onOpenWay={onOpenWay} />
         </section>
       ) : null}
+      {testing !== undefined ? <RelatedTests entry={entry} context={testing} labels={labels} /> : null}
     </li>
   );
 }
@@ -140,8 +434,19 @@ function ChangeRow({ data, entry, framework, onOpenFunction, onOpenWay }: { data
  * then every changed frame with the diff in words, its notes, its diff and
  * the ways it reaches the endpoints (each opens the trace along it).
  */
-export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEndpoint, onOpenWay }: ChangesScreenProps) {
+export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEndpoint, onOpenWay, tests }: ChangesScreenProps) {
   const { changes } = index;
+  const loadedDiff = useTestDiff(data);
+  const [language, setLanguage] = useTestLanguage();
+  const [open, setOpen] = useState<TestEntry | null>(null);
+  const entries = useMemo(() => new Map((tests?.tests ?? []).map((test) => [test.id, test])), [tests]);
+  const untestedIds = useMemo(() => new Set(changes.untested ?? []), [changes.untested]);
+  // The map of a pull request with tests: the diff of the tests (read after the page), the changes the check of the tests fails on.
+  const testing: TestContext | undefined =
+    data.tests === undefined ? undefined : { diff: loadedDiff.state === 'ready' ? loadedDiff.value : undefined, loading: loadedDiff.state === 'loading', untested: untestedIds, entries, onOpen: setOpen };
+  const labels = tests?.aspectLabels ?? {};
+  const untested = (changes.untested ?? []).map((id) => changes.frames.find((entry) => entry.id === id)).filter((entry): entry is FrameChangeEntry => entry !== undefined);
+  const reasoned = changes.frames.filter((entry) => entry.testReason !== undefined);
   const groups = groupChanges(changes);
   const missing = changes.frames.filter((entry) => (entry.kind === 'added' || entry.kind === 'modified') && !entry.documented);
   const counted = changes.frames.filter((entry) => entry.kind !== 'noted').length;
@@ -170,7 +475,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
         </div>
         {pullRequest?.title !== undefined ? <p className="lead">{pullRequest.title}</p> : null}
         <p className="note">
-          変えた関数とエンドポイントの処理 {counted} 個 · 地図に載らないファイルの変更 {changes.otherFiles} 個 · 何を変えたかとどこに効くかは地図が計算し、なぜ変えたかは変更メモ（<code>apps/map/changes/*.md</code>）が書きます
+          変えた関数とエンドポイントの処理 {counted} 個 · テストのファイルの変更 {changes.testFiles ?? 0} 個{data.tests !== undefined ? '（下の「テスト」）' : ''} · テストでもなく地図にも載らないファイルの変更 {changes.otherFiles} 個 · 何を変えたかとどこに効くかは地図が計算し、なぜ変えたかは変更メモ（<code>apps/map/changes/*.md</code>）が書きます
         </p>
       </header>
       <div className="work changes-work">
@@ -185,10 +490,51 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
               </p>
               <ul className="change-list">
                 {missing.map((entry) => (
-                  <ChangeRow key={entry.id} data={data} entry={entry} framework={framework} onOpenFunction={onOpenFunction} onOpenWay={onOpenWay} />
+                  <ChangeRow key={entry.id} data={data} entry={entry} framework={framework} onOpenFunction={onOpenFunction} onOpenWay={onOpenWay} testing={testing} labels={labels} />
                 ))}
               </ul>
 
+            </section>
+          ) : null}
+          {untested.length > 0 ? (
+            <section className="undocumented untested" aria-label="関連するテストに変更の無い実装の変更">
+              <h3>関連するテストに変更の無い実装の変更（{untested.length}）</h3>
+              <p className="note">
+                エンドポイントに届く実装の変更で、関連するテストをこのPRが足しも変えもしていないものです（地図の検査が落ちます）。テストを足すか変えるか、変えないのが妥当なら、変更メモのその関数の節に <code>テストを変えない理由: …</code> の行を書いてください。書く場所は <code>pnpm --filter @maronn-openid-connect/map changes:draft</code> が空けます。
+              </p>
+              <ul className="change-list">
+                {untested.map((entry) => (
+                  <ChangeRow key={entry.id} data={data} entry={entry} framework={framework} onOpenFunction={onOpenFunction} onOpenWay={onOpenWay} testing={testing} labels={labels} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {reasoned.length > 0 ? (
+            <section className="pr-reasons" aria-label="テストを変えない理由が書かれた変更">
+              <h3>テストを変えない理由が書かれた変更（{reasoned.length}）</h3>
+              <ul className="change-list">
+                {reasoned.map((entry) => {
+                  const frame = testing?.diff?.frames.find((candidate) => candidate.frame === entry.id);
+                  return (
+                    <li key={entry.id} className="change-row">
+                      <div className="change-row-head">
+                        <Badge mark={markOf(entry.kind)} />
+                        {data.functions[entry.id] !== undefined ? (
+                          <button type="button" className="link mono" onClick={() => onOpenFunction(entry.id)}>
+                            {changeName(data, entry)}
+                          </button>
+                        ) : (
+                          <span className="mono">{changeName(data, entry)}</span>
+                        )}
+                        {frame !== undefined ? <span className="muted">関連するテスト {frame.related.length} 件</span> : null}
+                      </div>
+                      <p className="reason-line">
+                        「<Inline text={entry.testReason?.text ?? ''} />」 <span className="where mono">{entry.testReason?.note}</span>
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
           ) : null}
           <section className="pr-notes" aria-label="変更メモ">
@@ -251,7 +597,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
               </summary>
               <ul className="change-list">
                 {group.frames.map((entry) => (
-                  <ChangeRow key={entry.id} data={data} entry={entry} framework={framework} onOpenFunction={onOpenFunction} onOpenWay={onOpenWay} />
+                  <ChangeRow key={entry.id} data={data} entry={entry} framework={framework} onOpenFunction={onOpenFunction} onOpenWay={onOpenWay} testing={testing} labels={labels} />
                 ))}
               </ul>
             </details>
@@ -277,6 +623,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
               ) : null}
             </section>
           ) : null}
+          {testing !== undefined ? <PrTests data={data} framework={framework} context={testing} onOpenEndpoint={onOpenEndpoint} onOpenFunction={onOpenFunction} /> : null}
         </div>
         <aside className="side-panel" aria-label="変更が届くエンドポイント">
           <h3>変更が届くエンドポイント（{framework}）</h3>
@@ -301,6 +648,9 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
           </ul>
         </aside>
       </div>
+      {open !== null && tests !== undefined ? (
+        <TestDrawer data={data} index={tests} framework={framework} entry={open} language={language} onLanguage={setLanguage} onClose={() => setOpen(null)} onOpenFunction={onOpenFunction} onOpenEndpoint={onOpenEndpoint} />
+      ) : null}
     </section>
   );
 }

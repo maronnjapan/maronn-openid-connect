@@ -4,6 +4,8 @@
  *     #<framework>--<endpoint>[--<step>][/<frame>]...[;d=<decision>:<side>,...]...[;e][;f=<frame>]
  *     #<framework>--fn--<name>[--<package>--<module>][/<frame>]...[;...]
  *     #<framework>--changes   (#changes too)
+ *     #<framework>--wiring    (#wiring too)
+ *     #<framework>--tests     (#tests too)
  *
  * A frame is the chain of call nodes that opened it, joined with dots
  * (`/s0b1s0/s0b1s0.s2`); a decision is keyed by its frame and node the same
@@ -29,20 +31,27 @@ export interface View {
   changes?: boolean;
   /** The inventory of wiring whose endpoint destination the analysis cannot establish. */
   wiring?: boolean;
+  /** The list of the tests: their counts, by endpoint and feature, the gaps and the cases the rules could not read. */
+  tests?: boolean;
   trace: TraceState;
   /** A node the trace selects once it shows, keyed like a decision (the changed node a way leads to); not in the hash. */
   target?: string;
+  /** The tab of the pane beside the trace the page opens on (`tests` from the list of the tests); not in the hash. */
+  tab?: string;
 }
 
-/** A view without the node it asked its trace to select (View.target): what a view another page opens starts from. */
+/** A view without the node it asked its trace to select (View.target) and the tab it asked to open on (View.tab): what a view another page opens starts from. */
 export function plainView(view: View): View {
   const next = { ...view };
   delete next.target;
+  delete next.tab;
   return next;
 }
 
 /** The part of a hash that names the page of the changes of the pull request. */
 const CHANGES = 'changes';
+/** The part of a hash that names the list of the tests. */
+const TESTS = 'tests';
 
 function decode(part: string): string {
   try {
@@ -98,6 +107,7 @@ export function buildHash(view: View, data: MapData): string {
   }
   if (view.changes === true) return `${view.framework}--${CHANGES}`;
   if (view.wiring === true) return `${view.framework}--wiring`;
+  if (view.tests === true) return `${view.framework}--${TESTS}`;
   if (view.endpoint !== null) return `${view.framework}--${view.endpoint}${view.step === null ? '' : `--${view.step}`}${trace}`;
   return '';
 }
@@ -123,6 +133,7 @@ export function parseHash(hash: string, data: MapData, defaults: View): View {
   const parts = head.split('--').map(decode);
   if (parts[0] === CHANGES && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, changes: true, trace: EMPTY_TRACE };
   if (parts[0] === 'wiring' && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, wiring: true, trace: EMPTY_TRACE };
+  if (parts[0] === TESTS && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, tests: true, trace: EMPTY_TRACE };
   if (parts[0] === 'fn') {
     const fn = functionOf(data, parts.slice(1));
     return fn === undefined ? defaults : { ...defaults, fn, trace };
@@ -136,7 +147,12 @@ export function parseHash(hash: string, data: MapData, defaults: View): View {
   const view: View = { framework, endpoint: null, step: null, fn: null, trace };
   const flow = data.flows[framework];
   const endpoint = flow?.endpoints.find((candidate) => candidate.id === parts[1]);
-  if (endpoint === undefined) return parts[1] === CHANGES ? { ...view, changes: true, trace: EMPTY_TRACE } : parts[1] === 'wiring' ? { ...view, wiring: true, trace: EMPTY_TRACE } : { ...view, trace: EMPTY_TRACE };
+  if (endpoint === undefined) {
+    if (parts[1] === CHANGES) return { ...view, changes: true, trace: EMPTY_TRACE };
+    if (parts[1] === 'wiring') return { ...view, wiring: true, trace: EMPTY_TRACE };
+    if (parts[1] === TESTS) return { ...view, tests: true, trace: EMPTY_TRACE };
+    return { ...view, trace: EMPTY_TRACE };
+  }
   view.endpoint = endpoint.id;
   if (parts[2] && endpoint.steps.some((step) => step.id === parts[2])) view.step = parts[2];
   return view;

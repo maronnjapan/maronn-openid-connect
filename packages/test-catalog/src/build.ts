@@ -206,12 +206,14 @@ export function stepBlocks(data: MapData, trees: Iterable<FlowTree>, read?: (pat
 
 /**
  * The endpoints of hono and Next.js with their steps, and the functions the
- * index and the steps name (TestsOutline), each with its code. The functions
- * named are those of `frames`, every frame a test names as a subject or
- * reached (joined.frames), the roots and the functions of the steps. A step
+ * index and the steps name and, transitively, what they call (TestsOutline),
+ * each with its code. The functions named are those of `frames`, every frame
+ * a test names as a subject or reached (joined.frames), the roots and the
+ * functions of the steps. A step
  * without a function of its own (a block of a Route Handler) names the frames
  * it calls that have unit tests of the endpoint (`refs`, the endpoints of the
- * index). The code of a step is its function's, or its block's (`blocks`,
+ * index) in `calls`, and all its callees in `codeCalls` for reading the code.
+ * The code of a step is its function's, or its block's (`blocks`,
  * stepBlocks).
  */
 export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string>, refs: TestsIndex['endpoints'] = indexRefs(joined).endpoints, blocks: ReadonlyMap<string, CodeRef> = new Map()): TestsOutline {
@@ -231,10 +233,12 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
           const code = codeOfFrame(data, step.functionId);
           return { id: step.id, label: step.label, function: step.functionId, ...(code === undefined ? {} : { code }) };
         }
-        const calls = [...new Set(step.calls ?? [])].filter((id) => units[id] !== undefined);
-        for (const id of calls) named.add(id);
+        const candidates = [...new Set(step.calls ?? [])];
+        const calls = candidates.filter((id) => units[id] !== undefined);
+        const codeCalls = candidates.filter((id) => data.functions[id] !== undefined || data.bodies[id] !== undefined);
+        for (const id of [...calls, ...codeCalls]) named.add(id);
         const code = blocks.get(`${source}:${endpoint.id}:${step.id}`);
-        return { id: step.id, label: step.label, ...(calls.length === 0 ? {} : { calls }), ...(code === undefined ? {} : { code }) };
+        return { id: step.id, label: step.label, ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
       });
       const code = codeOfFrame(data, root);
       endpoints.push({
@@ -253,6 +257,12 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
       });
     }
   }
+  // Set iteration visits newly added callees too; a shared or recursive call is visited once.
+  for (const id of named) {
+    for (const callee of (data.functions[id] ?? data.bodies[id])?.calls ?? []) {
+      if (data.functions[callee] !== undefined || data.bodies[callee] !== undefined) named.add(callee);
+    }
+  }
   const functions: TestsOutline['functions'] = {};
   for (const id of [...named].sort()) {
     const fn = data.functions[id];
@@ -264,7 +274,10 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
         : body !== undefined
           ? { id, name: body.name, package: body.package, module: body.module, ...(body.summary ? { summary: body.summary } : {}), ...(code === undefined ? {} : { code }) }
           : undefined;
-    if (entry !== undefined) functions[id] = entry;
+    if (entry !== undefined) {
+      const calls = [...new Set((fn ?? body)?.calls ?? [])].filter((callee) => data.functions[callee] !== undefined || data.bodies[callee] !== undefined);
+      functions[id] = { ...entry, ...(calls.length === 0 ? {} : { calls }) };
+    }
   }
   return { version: 1, endpoints, functions };
 }

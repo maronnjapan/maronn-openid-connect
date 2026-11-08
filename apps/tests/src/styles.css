@@ -3181,6 +3181,111 @@ button.pr-row:hover,
   gap: 8px 16px;
 }
 
+.called-code {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.code-path ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.code-path li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.code-path button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.code-path [aria-current] {
+  color: var(--text);
+}
+
+.code-path .mono {
+  font-family: var(--mono);
+}
+
+.code-calls {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+.code-calls summary {
+  padding: 8px 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.code-calls ul {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.code-call {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.code-call:hover {
+  background: var(--code-bg);
+}
+
+.code-call:focus-visible {
+  outline-offset: -3px;
+}
+
+.code-call-name {
+  font-weight: 600;
+}
+
+.code-call-module {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.code-call-summary {
+  color: var(--text-2);
+}
+
 /* The helpers and the step definitions of a test, each opening its code in place. */
 
 .helpers {

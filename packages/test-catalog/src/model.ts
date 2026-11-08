@@ -415,6 +415,8 @@ export interface OutlineStep {
    * (EndpointTestsRef.units), so the step has unit tests like a step of hono.
    */
   calls?: string[];
+  /** All catalog functions the block calls, including those without unit tests, for browsing its code. */
+  codeCalls?: string[];
   /**
    * The code of the step: the function of a step of hono; the block of the
    * Route Handler of Next.js, from its marker (`// [step-id]`) to its last
@@ -452,12 +454,15 @@ export interface OutlineFunction {
   summary?: string;
   /** Its code, the JSDoc and the overloads included (FunctionEntry.source of the map). */
   code?: CodeRef;
+  /** The catalog functions or endpoint bodies this code calls, in the order of their first call. */
+  calls?: string[];
 }
 
 /**
  * outline.json: what the viewer needs of the function catalog to name what
  * the tests test, so it reads no map.json: the endpoints of hono and Next.js
- * with their steps, and the functions the tests and the steps name.
+ * with their steps, the functions the tests and the steps name, and the
+ * functions they call, transitively.
  */
 export interface TestsOutline {
   version: 1;

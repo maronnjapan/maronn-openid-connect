@@ -646,10 +646,11 @@ classDiagram
   }
   class OutlineFunction {
     id name package module summary
+    calls
   }
   class OutlineStep {
     id label
-    function calls
+    function calls codeCalls
   }
   class CodeRef {
     file
@@ -691,6 +692,7 @@ interface OutlineStep {
   label: string; // 日本語の名前
   function?: string; // ステップの関数のフレームの id
   calls?: string[]; // 関数の無いステップだけ（下の規則）
+  codeCalls?: string[]; // テストの有無を問わない、コードを辿るための呼び出し先
   code?: CodeRef; // 関数のコードか、ブロック（⑤-6-b）
 }
 
@@ -701,6 +703,7 @@ interface OutlineFunction {
   module: string;
   summary?: string; // 空でないときだけ
   code?: CodeRef; // ⑤-6-a
+  calls?: string[]; // 呼び出す関数やエンドポイント本体の id（最初の呼び出しの順）
 }
 ```
 
@@ -719,6 +722,8 @@ interface OutlineFunction {
 2. そのエンドポイントの `EndpointTestsRef.units`（[⑤-5-b](#-5-b-エンドポイントのテスト)）に鍵のあるフレームだけを残す
 3. 残りが無ければ、`calls` を入れない
 
+コードを辿るための `codeCalls` には、地図のステップの `calls` のうち、地図の `functions` か `bodies` にあるものを、重複を除いて入れる。ユニットテストの有無では絞らない。
+
 ### ⑤-7-b 名指す関数
 
 `functions` には、次のフレームを id の順に入れる。
@@ -726,10 +731,13 @@ interface OutlineFunction {
 - 索引の `frames` の鍵（フレームのテストのあるフレーム）
 - 各エンドポイントの `root`
 - ステップの `function`
-- 関数の無いステップの `calls`
+- 関数の無いステップの `calls` と `codeCalls`
+- 以上のフレームが呼ぶ関数と、さらにその関数が呼ぶ関数（地図の `calls` を再帰的に辿る）
 
 地図の `functions` か `bodies` にあるものだけを入れ、どちらにも無い id は入れない。
 `name`、`package`、`module`、`summary` は地図のものである。
+呼び出し先の `calls` も地図から入れる。未知の id と重複は除き、呼び出し順を保つ。
+循環する呼び出しでも各フレームは一度だけ取り込み、テストの無い呼び出し先のコードとソースも表示できるようにする。
 
 ### ⑤-7-c 例
 

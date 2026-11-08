@@ -74,6 +74,16 @@ const PANE_DEFAULT = 42;
 const PANE_MIN = 20;
 const PANE_MAX = 80;
 const PANE_KEY = 'map.paneWidth';
+const PANE_OPEN_KEY = 'map.paneOpen';
+
+/** Keep the outline alone by default; restore a reader's choice to work with the pane beside it. */
+function readPaneOpen(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(PANE_OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 /** Where the reader's choice to show the code of every row is kept (a convenience of this browser only). */
 const CODE_KEY = 'map.outline.code';
@@ -127,8 +137,8 @@ interface PathDiff {
  * frame in focus): the diagram of that frame, the diff of that frame and of
  * the frames the outline opens below it in the order they run, the detail
  * of that frame (with no selection needed) and of the node selected in it,
- * and the tabs a page adds. The pane starts on the diagram and keeps the tab
- * the reader picks: selecting a row moves the pane to the row's frame and
+ * and the tabs a page adds. The pane opens on request, starts on the diagram
+ * and keeps the tab the reader picks: selecting a row moves it to that frame and
  * keeps the tab. The outline and the diagram fold the same steps the same
  * way (one set of the steps the reader opened or folded), and the pane
  * always speaks of a frame the outline shows. A narrow screen shows the
@@ -140,6 +150,25 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const tabsId = useId();
   const [tab, setTab] = useState<Tab>('diagram');
   const [overlay, setOverlay] = useState(false);
+  const [paneOpen, setPaneOpen] = useState(readPaneOpen);
+  const paneToggle = useRef<HTMLButtonElement>(null);
+  const paneVisible = !mobile && paneOpen;
+  /** Show or hide the optional pane without changing the trace, its selection or its tab. */
+  const togglePane = () => {
+    if (mobile) {
+      setOverlay(true);
+      return;
+    }
+    const next = !paneOpen;
+    setPaneOpen(next);
+    try {
+      globalThis.localStorage?.setItem(PANE_OPEN_KEY, next ? '1' : '0');
+    } catch {
+      // The pane still opens and closes when browser storage is unavailable.
+    }
+    if (!next) paneToggle.current?.focus();
+  };
+  useEffect(() => setOverlay(false), [mobile]);
   // The share of the width the pane takes, set by dragging the splitter (or its keys) and kept for this browser.
   const [paneWidth, setPaneWidth] = useState(readPaneWidth);
   const work = useRef<HTMLDivElement>(null);
@@ -634,10 +663,36 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     document.getElementById(`${tabsId}-tab-${pane.id}`)?.focus();
   };
 
+  const paneTabs = (
+    <div className="pane-heading">
+      <div className="seg pane-tabs" role="tablist" aria-label="図と詳細の切り替え" onKeyDown={onTabsKey}>
+        {panes.map((pane) => (
+          <button
+            key={pane.id}
+            id={`${tabsId}-tab-${pane.id}`}
+            type="button"
+            role="tab"
+            aria-selected={pane.id === current?.id}
+            aria-controls={`${tabsId}-panel`}
+            tabIndex={pane.id === current?.id ? 0 : -1}
+            onClick={() => setTab(pane.id)}
+          >
+            {pane.label}
+          </button>
+        ))}
+      </div>
+      {!mobile ? <button type="button" className="icon pane-close" aria-label="図と詳細を閉じる" onClick={togglePane}>×</button> : null}
+    </div>
+  );
+  const paneContent = (
+    <div className="pane-content" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-tab-${current?.id ?? 'diagram'}`} tabIndex={0}>
+      {current?.content}
+    </div>
+  );
+
   return (
     <div className="trace-area">
-      <SelectionBar selections={selections} state={state} onState={onState} onExpandChanges={expand} changesBelow={below} onPick={(selection) => setPending({ target: selection.target })} />
-      <div className={`work${mobile ? '' : ' with-pane'}`} ref={work} style={mobile ? undefined : { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(0, ${paneWidth}%)` }}>
+      <div className={`work${paneVisible ? ' with-pane' : ' outline-only'}`} ref={work} style={paneVisible ? { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(0, ${paneWidth}%)` } : undefined}>
         <div className="outline">
           {root === undefined ? (
             <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
@@ -671,25 +726,29 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
                 if (row.frame !== focusKey && known.has(row.frame)) onState({ ...state, focus: row.frame });
               }}
               onOpenFunction={onOpenFunction}
+              tools={
+                <>
+                  <SelectionBar selections={selections} state={state} onState={onState} onExpandChanges={expand} changesBelow={below} onPick={(selection) => setPending({ target: selection.target })} />
+                  <button ref={paneToggle} type="button" className="code-button pane-toggle" aria-expanded={mobile ? overlay : paneOpen} aria-controls={`${tabsId}-pane`} onClick={togglePane}>
+                    図・詳細
+                  </button>
+                </>
+              }
             />
           )}
         </div>
         {mobile ? (
           <>
-            <div className="mobile-pane-buttons">
-              {panes.map((pane) => (
-                <button key={pane.id} type="button" className="code-button" onClick={() => { setTab(pane.id); setOverlay(true); }}>
-                  {pane.label}
-                </button>
-              ))}
-            </div>
             {overlay && current !== undefined ? (
-              <DetailDrawer title={current.label} onClose={() => setOverlay(false)} className={current.id === 'diagram' ? 'pane-drawer diagram-drawer' : 'pane-drawer'}>
-                {current.content}
+              <DetailDrawer title="図と詳細" onClose={() => setOverlay(false)} className={current.id === 'diagram' ? 'pane-drawer diagram-drawer' : 'pane-drawer'}>
+                <div className="pane mobile-pane" id={`${tabsId}-pane`}>
+                  {paneTabs}
+                  {paneContent}
+                </div>
               </DetailDrawer>
             ) : null}
           </>
-        ) : (
+        ) : paneVisible ? (
           <>
           <div
             className="splitter"
@@ -709,29 +768,12 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
             onDoubleClick={resetPane}
             onKeyDown={onSplitterKey}
           />
-          <aside className="pane" aria-label="図と詳細">
-            <div className="seg pane-tabs" role="tablist" aria-label="図と詳細の切り替え" onKeyDown={onTabsKey}>
-              {panes.map((pane) => (
-                <button
-                  key={pane.id}
-                  id={`${tabsId}-tab-${pane.id}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={pane.id === current?.id}
-                  aria-controls={`${tabsId}-panel`}
-                  tabIndex={pane.id === current?.id ? 0 : -1}
-                  onClick={() => setTab(pane.id)}
-                >
-                  {pane.label}
-                </button>
-              ))}
-            </div>
-            <div className="pane-content" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-tab-${current?.id ?? 'diagram'}`}>
-              {current?.content}
-            </div>
+          <aside className="pane" id={`${tabsId}-pane`} aria-label="図と詳細" onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); togglePane(); } }}>
+            {paneTabs}
+            {paneContent}
           </aside>
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );

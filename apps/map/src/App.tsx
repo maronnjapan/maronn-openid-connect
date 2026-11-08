@@ -219,28 +219,16 @@ function ProviderMap({ data }: { data: MapData }) {
               ☰
             </button>
           ) : null}
-          <h1>OIDC Provider Map</h1>
-          {changes !== undefined ? (
-            <button type="button" className="changes-button" aria-pressed={onChanges} onClick={openChanges} title="このPRで変えた関数と、その説明">
-              このPRの変更
-              <span className="count">{changes.changes.frames.filter((change) => change.kind !== 'noted').length}</span>
-            </button>
-          ) : null}
-          <button type="button" className="changes-button" aria-pressed={onWiring} onClick={openWiring} title="型や呼び出しから届く先を確定できない配線">
-            追えない配線<span className="count">{data.wiring?.length ?? 0}</span>
-          </button>
-          {/* The tests are a page of their own (apps/tests), deployed beside the map at ./tests/. */}
-          <a className="changes-button header-link" href="./tests/" title="テストケースの一覧とそのコード（別のページ）">
-            テスト
-          </a>
-          <div className="seg" role="group" aria-label="フレームワーク">
-            {data.frameworks.map((name) => (
-              <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...plainView(view), framework: name, step: null, trace: EMPTY_TRACE }, 'replace')}>
-                {name}
-              </button>
-            ))}
-          </div>
+          <h1 className="brand"><span className="brand-title">地図</span><span className="brand-sub">OIDC Provider</span></h1>
+          <label className="framework-select">
+            <span className="visually-hidden">フレームワーク</span>
+            <select value={view.framework} onChange={(event) => navigate({ ...plainView(view), framework: event.target.value, step: null, trace: EMPTY_TRACE }, 'replace')}>
+              {data.frameworks.map((name) => <option key={name} value={name}>{name === 'nextjs' ? 'Next.js' : name.charAt(0).toUpperCase() + name.slice(1)}</option>)}
+            </select>
+          </label>
           <Search data={data} endpoints={endpoints} onPick={onPick} />
+          {/* The tests are a page of their own (apps/tests), deployed beside the map at ./tests/. */}
+          <a className="header-link" href="./tests/" title="テストケースの一覧とそのコード">テスト</a>
         </header>
       </MobileMenuSection>
       <div className="body">
@@ -261,6 +249,9 @@ function ProviderMap({ data }: { data: MapData }) {
                 setEnabled(next);
               }}
               onEndpoint={openEndpoint}
+              onChanges={openChanges}
+              onWiring={openWiring}
+              page={onChanges ? 'changes' : onWiring ? 'wiring' : 'endpoint'}
             />
           </MobileMenuSection>
         ) : null}

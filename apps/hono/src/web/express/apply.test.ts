@@ -187,7 +187,7 @@ describe('applyOidc', () => {
       const response = await fetch(origin + authorizePath(authorizationParams()), { redirect: 'manual' });
 
       expect(response.status).toBe(302);
-      expect(response.headers.get('Location')).toBe('https://op.example.com/login');
+      expect(response.headers.get('Location')).toBe(`https://op.example.com/login?transaction_id=${response.headers.getSetCookie()[0]?.split(';')[0]?.split('=')[1]}`);
       expect(response.headers.getSetCookie()).toEqual([
         expect.stringMatching(/^__Host-oidc_txn=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=600$/),
       ]);

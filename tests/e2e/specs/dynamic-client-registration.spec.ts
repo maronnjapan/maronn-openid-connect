@@ -492,7 +492,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     // OIDC Core 1.0 §6.3.2: an ES256 Request Object verifies with the P-256 key
     // of the jwks_uri, so the OP goes on to sign the user in.
     await page.goto(await requestObjectAuthorizationUrl(request, clientId, 'ES256'));
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
     // An RS256 one is refused: the client registered ES256.
     const refused = await request.get(await requestObjectAuthorizationUrl(request, clientId, 'RS256'), {
       maxRedirects: 0,
@@ -726,12 +726,12 @@ async function authorizeImplicitInBrowser(
 
 /** Log in as testuser and approve the consent screen, which names the registered client. */
 async function loginAndApprove(page: Page, issuer: string, clientId: string): Promise<void> {
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
 
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
   // The consent screen names the dynamically registered client.
   await expect(page.locator('strong')).toHaveText(clientId);
   await page.getByRole('button', { name: 'Approve' }).click();

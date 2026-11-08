@@ -69,7 +69,7 @@ describe('defaultViews', () => {
     // OIDC Core 1.0 §3.1.2.1: login_hint is unauthenticated input that pre-fills the form.
     it('should escape login_hint in the username field', async () => {
       const html = await renderView(
-        defaultViews.loginPage({ csrfToken: 'csrf-1', loginHint: '"><script>alert(1)</script>' }),
+        defaultViews.loginPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', loginHint: '"><script>alert(1)</script>' }),
       ).text();
 
       expect(html).toContain('value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"');
@@ -78,7 +78,7 @@ describe('defaultViews', () => {
 
     it('should embed the csrf_token and show the failure with the attempts left', async () => {
       const html = await renderView(
-        defaultViews.loginPage({ csrfToken: 'csrf-1', error: 'Invalid credentials', remainingAttempts: 3 }),
+        defaultViews.loginPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', error: 'Invalid credentials', remainingAttempts: 3 }),
       ).text();
 
       expect(html).toContain('<input type="hidden" name="csrf_token" value="csrf-1"/>');
@@ -90,7 +90,7 @@ describe('defaultViews', () => {
     // OIDC Core 1.0 §3.1.2.4: the decision values the consent step accepts are approve and deny.
     it('should list the scopes and offer the approve and deny decisions', async () => {
       const html = await renderView(
-        defaultViews.consentPage({ csrfToken: 'csrf-1', clientId: 'client-1', scopes: ['openid', 'email'] }),
+        defaultViews.consentPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', clientId: 'client-1', scopes: ['openid', 'email'] }),
       ).text();
 
       expect(html).toContain('<strong>client-1</strong>');

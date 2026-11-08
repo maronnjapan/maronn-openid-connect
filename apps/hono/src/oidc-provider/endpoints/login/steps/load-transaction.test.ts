@@ -13,7 +13,7 @@ const NO_TRANSACTION_MESSAGE =
   'No authorization request is in progress in this browser. Start again from the application.';
 
 function loginRequest(cookie?: string): Request {
-  return requestTo('/login', cookie === undefined ? {} : { headers: { Cookie: cookie } });
+  return requestTo('/login?transaction_id=txn-1', cookie === undefined ? {} : { headers: { Cookie: cookie } });
 }
 
 describe('loadTransaction', () => {
@@ -33,7 +33,7 @@ describe('loadTransaction', () => {
   });
 
   it('should answer 400 when the transaction of the cookie is not stored', async () => {
-    const { c } = await providerContext({ request: loginRequest(transactionCookie('finished-txn')) });
+    const { c } = await providerContext({ request: requestTo('/login?transaction_id=finished-txn', { headers: { Cookie: transactionCookie('finished-txn') } }) });
 
     expect(await loadTransaction(c)).toEqual({
       kind: 'error',

@@ -25,11 +25,11 @@ export type AuthorizationOutcome =
   | { kind: 'authorization_response'; response: AuthorizationResponse }
   /**
    * Interactive authentication is needed: continue on the login screen. cookies
-   * carries the transaction cookie, the only place the transaction id goes.
+   * carries the transaction cookie; transactionId is also carried in the screen URL.
    */
-  | { kind: 'login'; cookies: string[] }
+  | { kind: 'login'; transactionId: string; cookies: string[] }
   /** The End-User is signed in but consent is needed: continue on the consent screen. */
-  | { kind: 'consent'; cookies: string[] }
+  | { kind: 'consent'; transactionId: string; cookies: string[] }
   /** OIDC Core 1.0 §3.1.2.2: the error cannot be redirected and stays on the OP. */
   | { kind: 'error'; error: string; errorDescription?: string }
   /** An unexpected failure: OAuth error JSON (500). */

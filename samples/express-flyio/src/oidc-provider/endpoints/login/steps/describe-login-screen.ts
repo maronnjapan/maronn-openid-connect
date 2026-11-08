@@ -39,6 +39,7 @@ export async function describeLoginScreen(
   }
   return {
     kind: 'screen',
+    transactionId,
     csrfToken: transaction.csrfToken,
     loginHint: transaction.loginHint,
     loginMethods,

@@ -106,11 +106,11 @@ async function authorize(page: Page, issuer: string): Promise<{ code: string; co
   }).toString();
 
   await page.goto(authorizationUrl.toString());
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.waitForURL((url) => url.pathname === '/multiple-auth-methods-callback');
   const callback = new URL(page.url());

@@ -10,6 +10,7 @@
  * file only turns its outcome into HTTP.
  */
 import { Hono } from 'hono';
+import { buildTransactionPath } from '@maronn-openid-connect/core';
 import { respondToClient } from '../../pages/authorization-response.js';
 import { renderAuthorizationErrorPage } from '../../pages/errors.js';
 import { redirectWithCookies } from '../../pages/respond.js';
@@ -21,8 +22,7 @@ export const authorizePage = new Hono<{ Variables: Record<string, any> }>();
 /**
  * OP の画面（`/login` か `/consent`）の URL を返す。
  *
- * URL にはクエリを付けない。
- * トランザクション ID は、結果に入っているトランザクションの Cookie（`cookies.ts` の `buildTransactionCookie()`）だけでブラウザに渡すので、閲覧履歴、ログ、共有した画面に出ることはない。
+ * Include the random transaction ID in the URL; the screen requires it to match the cookie.
  *
  * URL はリクエストの URL ではなく `config.issuer` から作る。
  * 実行環境によってはリクエストの URL を `Host` ヘッダーから求めるので、リクエストの URL から作ると、送信者がリダイレクト先のオリジンを選べてしまう（RFC 9700 §2.1 は、信頼できる URI にだけリダイレクトするよう求めている）。
@@ -30,9 +30,9 @@ export const authorizePage = new Hono<{ Variables: Record<string, any> }>();
  * 画面のパスは絶対パスなので、`issuer` がパスを含んでいても、使うのはそのオリジンだけである。
  * そのため、生成されたルートは、オリジンの下のパスに組み込む構成に対応していない。
  */
-function screenUrl(c: any, path: '/login' | '/consent'): string {
+function screenUrl(c: any, path: '/login' | '/consent', transactionId: string): string {
   const config = c.get('config');
-  return new URL(path, config.issuer).toString();
+  return new URL(buildTransactionPath(path, transactionId), config.issuer).toString();
 }
 
 /**
@@ -56,10 +56,10 @@ function respond(c: any, outcome: AuthorizationOutcome): Response {
     return respondToClient(c, outcome.response);
   }
   if (outcome.kind === 'login') {
-    return redirectWithCookies(screenUrl(c, '/login'), outcome.cookies);
+    return redirectWithCookies(screenUrl(c, '/login', outcome.transactionId), outcome.cookies);
   }
   if (outcome.kind === 'consent') {
-    return redirectWithCookies(screenUrl(c, '/consent'), outcome.cookies);
+    return redirectWithCookies(screenUrl(c, '/consent', outcome.transactionId), outcome.cookies);
   }
   if (outcome.kind === 'error') {
     // リダイレクトできないエラー（未知の `client_id`、登録されていない `redirect_uri`、フラグメントを含む `redirect_uri`、対応するリクエストが見つからない `request_uri`）は、クライアントへ返さず OP で応答する（OIDC Core 1.0 §3.1.2.2）。

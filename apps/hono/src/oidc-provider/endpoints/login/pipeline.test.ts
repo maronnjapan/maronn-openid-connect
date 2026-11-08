@@ -21,13 +21,13 @@ async function postContext(
   await storeTransaction(db, input.transaction ?? sampleTransaction());
   const { c } = await providerContext({
     db,
-    request: formPost('/login', {}, { Cookie: input.cookie ?? transactionCookie(), ...input.headers }),
+    request: formPost('/login?transaction_id=txn-1', {}, { Cookie: input.cookie ?? transactionCookie(), ...input.headers }),
   });
   return { c, db };
 }
 
 function submission(password = 'correct-password', csrfToken = CSRF_TOKEN) {
-  return { csrfToken, username: 'alice', password };
+  return { transactionId: 'txn-1', csrfToken, username: 'alice', password };
 }
 
 describe('prepareLogin', () => {
@@ -35,13 +35,13 @@ describe('prepareLogin', () => {
   it('should describe the form for the transaction of the cookie', async () => {
     const db = createEmptyDatabase();
     await storeTransaction(db, sampleTransaction({ loginHint: 'alice' }));
-    const { c } = await providerContext({ db, request: requestTo('/login', { headers: { Cookie: transactionCookie() } }) });
+    const { c } = await providerContext({ db, request: requestTo('/login?transaction_id=txn-1', { headers: { Cookie: transactionCookie() } }) });
 
-    expect(await prepareLogin(c)).toEqual({ kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: 'alice', loginMethods: [] });
+    expect(await prepareLogin(c)).toEqual({ kind: 'screen', transactionId: 'txn-1', csrfToken: CSRF_TOKEN, loginHint: 'alice', loginMethods: [] });
   });
 
   it('should answer the error page when the browser is in no transaction', async () => {
-    const { c } = await providerContext({ request: requestTo('/login') });
+    const { c } = await providerContext({ request: requestTo('/login?transaction_id=txn-1') });
 
     expect(await prepareLogin(c)).toMatchObject({ kind: 'error', statusCode: 400 });
   });
@@ -65,6 +65,18 @@ describe('submitLogin', () => {
       expect(await submitLogin(c, submission())).toMatchObject({ kind: 'error', statusCode: 400 });
     });
 
+    it.each(['', 'another-flow'])('should reject a mismatched hidden transaction ID (%s) without changing the transaction or session', async (transactionId) => {
+      const { c, db } = await postContext();
+      const before = db.transactions.get('auth_txn:' + TRANSACTION_ID);
+
+      expect(await submitLogin(c, { ...submission('wrong-password'), transactionId })).toEqual({
+        kind: 'error', error: 'Invalid authorization transaction.', statusCode: 400,
+      });
+      expect(db.transactions.get('auth_txn:' + TRANSACTION_ID)).toEqual(before);
+      expect(db.browserSessions.size).toBe(0);
+      expect(db.authSessions.size).toBe(0);
+    });
+
     it('should refuse a csrf_token of another transaction with 403', async () => {
       const { c } = await postContext();
 
@@ -82,7 +94,7 @@ describe('submitLogin', () => {
 
       expect(await submitLogin(c, submission('wrong-password'))).toEqual({
         kind: 'invalid_credentials',
-        screen: { kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: undefined, loginMethods: [] },
+        screen: { kind: 'screen', transactionId: 'txn-1', csrfToken: CSRF_TOKEN, loginHint: undefined, loginMethods: [] },
         remainingAttempts: 4,
       });
     });
@@ -105,6 +117,7 @@ describe('submitLogin', () => {
 
       expect(outcome).toEqual({
         kind: 'authenticated',
+        transactionId: 'txn-1',
         cookies: [`session_id=${sessionId}; HttpOnly; Secure; SameSite=Lax; Path=/`],
       });
       expect(db.browserSessions.get(sessionId)).toMatchObject({ subject: 'alice' });

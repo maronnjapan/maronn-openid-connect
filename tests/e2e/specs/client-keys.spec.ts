@@ -94,7 +94,7 @@ test.describe('client keys', () => {
 
     // The Request Object is verified, so the OP asks the user to sign in.
     await page.goto((await signedRequestObjectUrl(key, issuer)).url);
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
 
     // The operator removes the key; the next request already misses it.
     await database.removeKey(key.publicJwk.kid, 'request_object');
@@ -192,11 +192,11 @@ async function signedRequestObjectUrl(
 /** Sign in and approve in the browser, and return the URL the OP redirected back to. */
 async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
   await page.goto(authorizationUrl);
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.waitForURL((url) => url.pathname === '/client-keys-callback');
   return new URL(page.url());

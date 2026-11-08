@@ -1,10 +1,11 @@
 import { expect, test } from '../fixtures';
-import type { BrowserContext, Page } from '@playwright/test';
+import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
 const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
+const invalidScreenStatus = (process.env.E2E_OP_PACKAGE ?? '').includes('nextjs') ? 404 : 400;
 
 /**
  * Bind every interactive authorization request to the cookie, the URL and the
@@ -13,6 +14,37 @@ const clientBaseURL =
  */
 test.describe('Auth transaction cookie', () => {
   for (const screen of ['login', 'consent'] as const) {
+    for (const reference of ['cookie', 'query'] as const) {
+      test(`should reject the ${screen} reload after its ${reference} is replaced with another live transaction`, async ({ page, context, browser }) => {
+        await openScreen(page, screen);
+        const originalId = await page.locator('input[name="transaction_id"]').inputValue();
+        const originalCsrf = await page.locator('input[name="csrf_token"]').inputValue();
+        const other = await separateLoginTransaction(browser);
+        expect(other.transactionId).not.toBe(originalId);
+
+        await replaceScreenReference(page, context, reference, other.transactionId);
+        await expect(page.locator('input[name="transaction_id"]')).toHaveValue(originalId);
+        const cookiesAfterTampering = await context.cookies();
+
+        const response = await page.reload();
+
+        expect(response?.status()).toBe(invalidScreenStatus);
+        await expect(page.locator('form')).toHaveCount(0);
+        await expect(page.locator('input[name="transaction_id"]')).toHaveCount(0);
+        await expect(page.locator('input[name="csrf_token"]')).toHaveCount(0);
+        const html = await page.content();
+        expect(html).not.toContain(originalCsrf);
+        expect(html).not.toContain(other.csrfToken);
+        expect(await context.cookies()).toEqual(cookiesAfterTampering);
+
+        // Rendering the error must not repair the mismatched references.
+        const repeated = await page.reload();
+        expect(repeated?.status()).toBe(invalidScreenStatus);
+        await expect(page.locator('form')).toHaveCount(0);
+        expect(await context.cookies()).toEqual(cookiesAfterTampering);
+      });
+    }
+
     for (const query of ['', '?transaction_id=another-flow', '?transaction_id=one&transaction_id=two']) {
       test(`should refuse the ${screen} screen with an absent, mismatched or repeated URL reference (${query})`, async ({ page, baseURL }) => {
         const issuer = requireBaseUrl(baseURL);
@@ -281,6 +313,39 @@ test.describe('Auth transaction cookie', () => {
     await secondTab.close();
   });
 });
+
+/** Start another live authorization transaction without changing the original browser's cookies. */
+async function separateLoginTransaction(browser: Browser): Promise<{ transactionId: string; csrfToken: string }> {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await openScreen(page, 'login');
+    return {
+      transactionId: await page.locator('input[name="transaction_id"]').inputValue(),
+      csrfToken: await page.locator('input[name="csrf_token"]').inputValue(),
+    };
+  } finally {
+    await context.close();
+  }
+}
+
+/** Replace just the cookie or displayed URL reference while leaving the current form untouched. */
+async function replaceScreenReference(
+  page: Page,
+  context: BrowserContext,
+  reference: 'cookie' | 'query',
+  transactionId: string,
+): Promise<void> {
+  if (reference === 'cookie') {
+    const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-oidc_txn');
+    if (!cookie) throw new Error('The authorization response must set the transaction cookie');
+    await context.addCookies([{ ...cookie, value: transactionId }]);
+    return;
+  }
+  const url = new URL(page.url());
+  url.searchParams.set('transaction_id', transactionId);
+  await page.evaluate((value) => window.history.replaceState(null, '', value), url.toString());
+}
 
 /** Open the requested screen using the real authorization and password flow. */
 async function openScreen(page: Page, screen: 'login' | 'consent'): Promise<void> {

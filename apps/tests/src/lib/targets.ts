@@ -427,6 +427,8 @@ export interface BlockCode {
   /** The step's label. */
   name: string;
   code?: CodeRef;
+  /** All functions called in the block, including those without unit tests. */
+  calls?: string[];
 }
 
 /** The code that answers an API test's requests to routes that are no endpoint (TestCase.routeCode): 「ルートの実装」. */
@@ -609,7 +611,7 @@ export function codePanel(db: Db, target: CodeTarget): CodePanel | undefined {
     const fn = functionCode(db, step.function);
     return { title: step.label, subtitle, items: [{ ...fn, code: fn.code ?? step.code }] };
   }
-  const block: TestedCode[] = step.code === undefined ? [] : [{ kind: 'block', id: step.id, name: step.label, code: step.code }];
+  const block: TestedCode[] = step.code === undefined ? [] : [{ kind: 'block', id: step.id, name: step.label, code: step.code, ...(step.codeCalls === undefined ? {} : { calls: step.codeCalls }) }];
   const calls = stepCode(db, step);
   return { title: step.label, subtitle, items: [...block, ...(calls.length > 0 || block.length > 0 ? calls : stepFrames(step)).map((id) => functionCode(db, id))] };
 }

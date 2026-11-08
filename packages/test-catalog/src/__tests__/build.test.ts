@@ -193,21 +193,22 @@ describe('outlineOf', () => {
 
   it('should give a step of Next.js the frames its block calls that have unit tests of the endpoint, each once', () => {
     expect(outline.endpoints[2]?.steps).toEqual([
-      { id: 'authenticate-client', label: 'クライアントを認証する', calls: [VERIFY] },
-      { id: 'respond', label: '応答する' },
+      { id: 'authenticate-client', label: 'クライアントを認証する', calls: [VERIFY], codeCalls: [VERIFY, CLAIMS] },
+      { id: 'respond', label: '応答する', codeCalls: [CLAIMS] },
     ]);
   });
 
   it('should name the frames of the index, the roots and the functions of the steps from the functions and the endpoint bodies of the map', () => {
     expect(outline.functions).toEqual({
-      [AUTH]: { id: AUTH, name: 'authenticateTokenClient', package: 'hono', module: 'oidc-provider/endpoints/token/steps/authenticate-client.ts', summary: 'クライアントを認証する。' },
+      [AUTH]: { id: AUTH, name: 'authenticateTokenClient', package: 'hono', module: 'oidc-provider/endpoints/token/steps/authenticate-client.ts', summary: 'クライアントを認証する。', calls: [VERIFY] },
       [VERIFY]: { id: VERIFY, name: 'verifyClientSecret', package: 'core', module: 'client-auth.ts' },
-      [NEXT]: { id: NEXT, name: 'token', package: 'nextjs', module: 'app/token/route.ts' },
-      'endpoint:token': { id: 'endpoint:token', name: 'POST /token', package: 'hono', module: 'oidc-provider/endpoints/token/pipeline.ts', summary: 'トークンの処理の本体' },
-      'endpoint:userinfo': { id: 'endpoint:userinfo', name: 'GET /userinfo', package: 'hono', module: 'oidc-provider/endpoints/userinfo/pipeline.ts' },
+      [NEXT]: { id: NEXT, name: 'token', package: 'nextjs', module: 'app/token/route.ts', calls: [VERIFY] },
+      [CLAIMS]: { id: CLAIMS, name: 'claimsOf', package: 'core', module: 'claims.ts' },
+      'endpoint:token': { id: 'endpoint:token', name: 'POST /token', package: 'hono', module: 'oidc-provider/endpoints/token/pipeline.ts', summary: 'トークンの処理の本体', calls: [AUTH] },
+      'endpoint:userinfo': { id: 'endpoint:userinfo', name: 'GET /userinfo', package: 'hono', module: 'oidc-provider/endpoints/userinfo/pipeline.ts', calls: [CLAIMS] },
     });
-    // Neither a function no test and no step names (claimsOf, unused) nor a frame the map does not have (gone).
-    expect(Object.keys(outline.functions)).not.toContain(CLAIMS);
+    // A callee without tests (claimsOf) is included; unrelated and unknown functions are not.
+    expect(Object.keys(outline.functions)).not.toContain(UNUSED);
     expect(Object.keys(outline.functions)).not.toContain('core:gone.ts#gone');
   });
 
@@ -259,6 +260,28 @@ describe('the code of the outline', () => {
   const calls = card('claims', { kind: 'api', root: 'hono', subjects: [{ kind: 'function', id: CLAIMS, how: 'call' }, { kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] });
   const joined = joinTests([reject, calls], CODED, ASPECTS, false);
   const outline = outlineOf(CODED, joined, []);
+
+  it('should include the code and source files of untested callees at every depth, once even with cycles', () => {
+    const data = {
+      ...CODED,
+      flows: {},
+      functions: {
+        [AUTH]: { ...CODED.functions[AUTH]!, calls: [UNUSED, UNUSED, 'missing'] },
+        [UNUSED]: { ...CODED.functions[UNUSED]!, calls: [VERIFY] },
+        [VERIFY]: { ...CODED.functions[VERIFY]!, calls: [AUTH, VERIFY] },
+      },
+    } as MapData;
+    const result = outlineOf(data, joinTests([], data, ASPECTS, false), [AUTH]);
+    expect(Object.keys(result.functions).sort()).toEqual([AUTH, UNUSED, VERIFY].sort());
+    expect(result.functions[AUTH]?.calls).toEqual([UNUSED]);
+    expect(result.functions[UNUSED]?.calls).toEqual([VERIFY]);
+    expect(result.functions[VERIFY]?.calls).toEqual([AUTH, VERIFY]);
+    expect(shownFiles([], [], result)).toEqual([
+      'apps/hono/src/oidc-provider/endpoints/token/steps/authenticate-client.ts',
+      'packages/core/src/client-auth.ts',
+      'packages/core/src/unused.ts',
+    ]);
+  });
 
   it('should give each endpoint the code of its body: the pipeline of hono, the Route Handler of Next.js', () => {
     expect(Object.fromEntries(outline.endpoints.map((endpoint) => [endpoint.key, endpoint.code]))).toEqual({

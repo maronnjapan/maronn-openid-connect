@@ -6,7 +6,8 @@
  * endpoints of a test (and hono / Next.js).
  */
 import type { CodeRef } from '@maronn-openid-connect/test-catalog/model';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { calledFunctions, followCall } from '../lib/calls';
 import { formatCode, withoutPanel, type CodeTarget, type Source } from '../lib/route';
 import { codeKey, type TestedCode } from '../lib/targets';
 import { useApp } from './app-context';
@@ -83,6 +84,73 @@ function FunctionCaption({ name, summary }: { name: string; summary?: string }) 
   );
 }
 
+/** Read callees in place, keeping the tested code and every caller one click away. */
+function CalledCode({ calls, root, label, children }: { calls?: readonly string[]; root?: string; label: string; children: ReactNode }) {
+  const { db } = useApp();
+  const [path, setPath] = useState<string[]>([]);
+  const current = path[path.length - 1];
+  const fn = current === undefined ? undefined : db.functions[current];
+  const functions = calledFunctions(db, current === undefined ? calls : fn?.calls);
+  const heading = useRef<HTMLElement>(null);
+  const previous = useRef(path);
+  useEffect(() => {
+    if (previous.current !== path) heading.current?.focus();
+    previous.current = path;
+  }, [path]);
+  return (
+    <div className="called-code">
+      {(functions.length > 0 || path.length > 0) && (
+        <nav className="code-path" aria-label="コードの呼び出し経路" tabIndex={-1} ref={heading}>
+          <ol>
+            <li>
+              {path.length === 0 ? (
+                <span aria-current="location">{label}</span>
+              ) : (
+                <button type="button" onClick={() => setPath([])}>{label}</button>
+              )}
+            </li>
+            {path.map((id, index) => (
+              <li key={id}>
+                <span aria-hidden="true">›</span>
+                {index === path.length - 1 ? (
+                  <span className="mono" aria-current="location">{db.functions[id]?.name ?? id}</span>
+                ) : (
+                  <button type="button" className="mono" onClick={() => setPath(path.slice(0, index + 1))}>
+                    {db.functions[id]?.name ?? id}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
+        </nav>
+      )}
+      {functions.length > 0 && (
+        <details className="code-calls" key={current ?? 'root'}>
+          <summary>
+            このコードから呼ぶ関数 <span className="num">{functions.length}</span> 件
+          </summary>
+          <ul>
+            {functions.map((callee) => (
+              <li key={callee.id}>
+                <button type="button" className="code-call" onClick={() => setPath(followCall(path, callee.id, root))}>
+                  <span className="mono code-call-name">{callee.name}</span>
+                  <span className="code-call-module">{callee.package}:{callee.module}</span>
+                  {callee.summary !== undefined && callee.summary !== '' && (
+                    <span className="code-call-summary"><Words text={callee.summary} /></span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {current === undefined ? children : (
+        <RefView code={fn?.code} caption={<FunctionCaption name={fn?.name ?? current} summary={fn?.summary} />} missing={`${fn?.name ?? current} のコードはデータにありません。`} />
+      )}
+    </div>
+  );
+}
+
 /** The caption of an endpoint: 「エンドポイント METHOD path（Hono）」. */
 function EndpointCaption({ methods, path, source }: { methods: readonly string[]; path: string; source: Source }) {
   return (
@@ -132,6 +200,7 @@ export interface TestedChoice {
  * caption says only where the code is.
  */
 export function TestedCodeView({ items, empty, named, choice }: { items: readonly TestedCode[]; empty: ReactNode; named?: boolean; choice: TestedChoice }) {
+  const { db } = useApp();
   if (items.length === 0) return <p className="note tested-empty">{empty}</p>;
   const found = items.findIndex((candidate) => codeKey(candidate) === choice.chosen);
   const item = items[found === -1 ? 0 : found] as TestedCode;
@@ -141,6 +210,8 @@ export function TestedCodeView({ items, empty, named, choice }: { items: readonl
     return { value: codeKey(candidate), label: <span className={candidate.kind === 'block' ? undefined : 'mono'}>{chip.label}</span>, title: chip.title, quiet: candidate.kind === 'endpoint' && !candidate.named };
   });
   const alone = named === true && items.length === 1;
+  const root = item.kind === 'function' ? item.id : item.kind === 'endpoint' && version !== undefined ? db.byEndpoint.get(version.key)?.root : undefined;
+  const calls = item.kind === 'block' ? item.calls : root === undefined ? undefined : db.functions[root]?.calls;
   return (
     <div className="tested-code">
       {(items.length > 1 || (item.kind === 'endpoint' && item.versions.length > 1)) && (
@@ -157,21 +228,23 @@ export function TestedCodeView({ items, empty, named, choice }: { items: readonl
           )}
         </div>
       )}
-      {item.kind === 'function' ? (
-        <RefView code={item.code} caption={alone ? <KindOnly kind="関数" /> : <FunctionCaption name={item.name} summary={item.summary} />} missing={`${item.name} のコードはデータにありません。`} />
-      ) : item.kind === 'route-code' ? (
-        <RefView code={item.code} caption={<RouteCodeCaption name={item.name} />} missing={`${item.name} のコードはデータにありません。`} />
-      ) : item.kind === 'block' ? (
-        <RefView code={item.code} caption={<KindOnly kind="手順のコード" />} missing={`「${item.name}」のコードはデータにありません。`} />
-      ) : version === undefined ? (
-        <p className="note">{item.path} のコードはデータにありません。</p>
-      ) : (
-        <RefView
-          code={version.code}
-          caption={alone && item.versions.length === 1 ? <KindOnly kind="エンドポイントの本体" /> : <EndpointCaption methods={version.methods} path={item.path} source={version.source} />}
-          missing={`${version.label}（${SOURCE_NAMES[version.source]}）のコードはデータにありません。`}
-        />
-      )}
+      <CalledCode key={`${codeKey(item)}:${version?.source ?? ''}`} calls={calls} root={root} label={chipOf(item).label}>
+        {item.kind === 'function' ? (
+          <RefView code={item.code} caption={alone ? <KindOnly kind="関数" /> : <FunctionCaption name={item.name} summary={item.summary} />} missing={`${item.name} のコードはデータにありません。`} />
+        ) : item.kind === 'route-code' ? (
+          <RefView code={item.code} caption={<RouteCodeCaption name={item.name} />} missing={`${item.name} のコードはデータにありません。`} />
+        ) : item.kind === 'block' ? (
+          <RefView code={item.code} caption={<KindOnly kind="手順のコード" />} missing={`「${item.name}」のコードはデータにありません。`} />
+        ) : version === undefined ? (
+          <p className="note">{item.path} のコードはデータにありません。</p>
+        ) : (
+          <RefView
+            code={version.code}
+            caption={alone && item.versions.length === 1 ? <KindOnly kind="エンドポイントの本体" /> : <EndpointCaption methods={version.methods} path={item.path} source={version.source} />}
+            missing={`${version.label}（${SOURCE_NAMES[version.source]}）のコードはデータにありません。`}
+          />
+        )}
+      </CalledCode>
     </div>
   );
 }

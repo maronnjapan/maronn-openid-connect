@@ -14,6 +14,9 @@ export interface SidebarProps {
   selected: string | null;
   onToggleFeature: (id: string, on: boolean) => void;
   onEndpoint: (id: string) => void;
+  onChanges: () => void;
+  onWiring: () => void;
+  page: 'endpoint' | 'changes' | 'wiring';
 }
 
 /** The tier of a feature in words: on by default, of the experimental package, or a login method of an extension. */
@@ -24,7 +27,7 @@ const TIER_LABELS: Record<MapFeature['tier'], string> = { stable: '既定', expe
  * make the configuration (folded, so the list stays short). In the map of a
  * pull request, an endpoint whose diagram shows a change carries its badge.
  */
-export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint }: SidebarProps) {
+export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint, onChanges, onWiring, page }: SidebarProps) {
   const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, endpoint)])), [changes, endpoints]);
   const rows: React.ReactNode[] = [];
   let group: string | null = null;
@@ -61,6 +64,16 @@ export function Sidebar({ data, changes, framework, enabled, endpoints, selected
   const on = data.features.filter((feature) => enabled.has(feature.id)).length;
   return (
     <nav className="sidebar" aria-label="構成">
+      <div className="sidebar-pages">
+        {changes !== undefined ? (
+          <button type="button" aria-current={page === 'changes' ? 'page' : undefined} onClick={onChanges}>
+            このPRの変更 <span className="count">{changes.changes.frames.filter((change) => change.kind !== 'noted').length}</span>
+          </button>
+        ) : null}
+        <button type="button" aria-current={page === 'wiring' ? 'page' : undefined} onClick={onWiring}>
+          追えない配線 <span className="count">{data.wiring?.length ?? 0}</span>
+        </button>
+      </div>
       <details className="features">
         <summary>
           機能 <span className="muted">{on} / {data.features.length} 有効</span>

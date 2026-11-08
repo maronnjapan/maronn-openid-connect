@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { Decisions, Selection } from '../types';
 import type { TraceState } from '../lib/trace';
 import { Inline } from './ChangeParts';
@@ -49,6 +50,14 @@ const GROUPS: ReadonlyArray<{ kind: Selection['kind']; heading: string }> = [
  * shows their union. Every row is on until one is picked.
  */
 export function SelectionBar({ selections, state, onState, onExpandChanges, changesBelow = 0, onPick }: SelectionBarProps) {
+  const popup = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (popup.current?.open && event.target instanceof Node && !popup.current.contains(event.target)) popup.current.open = false;
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
   const picked = (selection: Selection) => state.choices.some((choice) => same(choice, selection.decisions));
   const toggle = (selection: Selection) => {
     if (picked(selection)) {
@@ -63,72 +72,81 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
   const count = state.choices.length;
   return (
     <MobileMenuSection section="cases">
-      <details className="selections">
+      <details className="selections" ref={popup} onKeyDown={(event) => {
+        if (event.key === 'Escape' && popup.current?.open) {
+          event.preventDefault();
+          popup.current.open = false;
+          popup.current.querySelector('summary')?.focus();
+        }
+      }}>
         <summary>
-          <span className="selections-title">よく使う選択</span>
-          <span className="selections-current">{count === 0 ? 'すべての分岐を表示' : `${count} 個を選択中`}</span>
+          <span className="selections-title">道筋を選ぶ</span>
+          {count > 0 ? <span className="selections-current">{count} 個を選択中</span> : null}
+          {state.errors ? <span className="selections-current">エラー時</span> : null}
         </summary>
-        <div className="selections-head">
-          <span className="note">選ぶと、その道筋で通らない行が灰色になります（行は消えません）。複数選ぶと和集合です。分岐ごとの側はアウトラインのボタンでも選べます。</span>
-          <span className="selections-actions">
-            <button type="button" onClick={() => onState({ ...state, choices: [] })} disabled={count === 0}>
-              すべて表示
-            </button>
-            <label className="toggle">
-              <input type="checkbox" checked={state.errors} onChange={(event) => onState({ ...state, errors: event.target.checked })} /> エラー時
-            </label>
-          </span>
-        </div>
-        {GROUPS.map(({ kind, heading }) => {
-          const list = selections.filter((selection) => selection.kind === kind);
-          if (list.length === 0) return null;
-          const item = (selection: Selection, index: number, label = selection.name) => (
-            <label key={`${kind}-${index}`} className={`selection${picked(selection) ? ' checked' : ''}${kind === 'failure' ? ' error' : ''}`} title={`${selection.name} ${selection.note ?? ''}`.replace(/`/g, '').trim()}>
-              <input type="checkbox" checked={picked(selection)} onChange={() => toggle(selection)} />
-              <span>
-                <Inline text={label} />
-              </span>
-              {selection.note !== undefined && selection.note !== '' && kind !== 'exit' && kind !== 'failure' ? (
-                <span className="muted">
-                  <Inline text={selection.note} />
+        <div className="selections-panel">
+          <div className="selections-head">
+            <span className="note">選ぶと、その道筋で通らない行が灰色になります（行は消えません）。複数選ぶと和集合です。分岐ごとの側はアウトラインのボタンでも選べます。</span>
+            <span className="selections-actions">
+              <button type="button" onClick={() => onState({ ...state, choices: [] })} disabled={count === 0}>
+                すべて表示
+              </button>
+              <label className="toggle">
+                <input type="checkbox" checked={state.errors} onChange={(event) => onState({ ...state, errors: event.target.checked })} /> エラー時
+              </label>
+            </span>
+          </div>
+          {GROUPS.map(({ kind, heading }) => {
+            const list = selections.filter((selection) => selection.kind === kind);
+            if (list.length === 0) return null;
+            const item = (selection: Selection, index: number, label = selection.name) => (
+              <label key={`${kind}-${index}`} className={`selection${picked(selection) ? ' checked' : ''}${kind === 'failure' ? ' error' : ''}`} title={`${selection.name} ${selection.note ?? ''}`.replace(/`/g, '').trim()}>
+                <input type="checkbox" checked={picked(selection)} onChange={() => toggle(selection)} />
+                <span>
+                  <Inline text={label} />
                 </span>
-              ) : null}
-            </label>
-          );
-          if (kind === 'failure') {
-            // The failures by what fails, each with where it is thrown: its own throw by the way to it, one from below by the function.
+                {selection.note !== undefined && selection.note !== '' && kind !== 'exit' && kind !== 'failure' ? (
+                  <span className="muted">
+                    <Inline text={selection.note} />
+                  </span>
+                ) : null}
+              </label>
+            );
+            if (kind === 'failure') {
+              // The failures by what fails, each with where it is thrown: its own throw by the way to it, one from below by the function.
+              return (
+                <section key={kind} className="selection-group">
+                  <h4>
+                    {heading}（{list.length}）
+                  </h4>
+                  <div className="selection-failures">
+                    {failureGroups(list).map(({ error, items }) => (
+                      <div key={error} className="selection-failure">
+                        <code className="selection-error">{error}</code>
+                        <div className="selection-list">{items.map((selection, index) => item(selection, index, (selection.frames ?? []).length > 0 && selection.failure !== undefined ? `${selection.failure.name} から` : selection.name))}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            }
             return (
               <section key={kind} className="selection-group">
-                <h4>
-                  {heading}（{list.length}）
-                </h4>
-                <div className="selection-failures">
-                  {failureGroups(list).map(({ error, items }) => (
-                    <div key={error} className="selection-failure">
-                      <code className="selection-error">{error}</code>
-                      <div className="selection-list">{items.map((selection, index) => item(selection, index, (selection.frames ?? []).length > 0 && selection.failure !== undefined ? `${selection.failure.name} から` : selection.name))}</div>
-                    </div>
-                  ))}
-                </div>
+                <h4>{heading}</h4>
+                <div className="selection-list">{list.map((selection, index) => item(selection, index))}</div>
               </section>
             );
-          }
-          return (
-            <section key={kind} className="selection-group">
-              <h4>{heading}</h4>
-              <div className="selection-list">{list.map((selection, index) => item(selection, index))}</div>
-            </section>
-          );
-        })}
-      </details>
-      {onExpandChanges !== undefined && changesBelow > 0 ? (
-        <div className="expand-changes">
-          <button type="button" className="code-button" onClick={onExpandChanges}>
-            変更まで展開（{changesBelow}）
-          </button>
-          <span className="note">この下で変わった関数まで、間の呼び出しをすべて開きます</span>
+          })}
+          {onExpandChanges !== undefined && changesBelow > 0 ? (
+            <div className="expand-changes">
+              <button type="button" className="code-button" onClick={onExpandChanges}>
+                変更まで展開（{changesBelow}）
+              </button>
+              <span className="note">この下で変わった関数まで、間の呼び出しをすべて開きます</span>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </details>
     </MobileMenuSection>
   );
 }

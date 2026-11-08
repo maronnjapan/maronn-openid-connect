@@ -61,6 +61,8 @@ export interface TraceViewProps {
   onState: (next: TraceState) => void;
   onSelect: (row: { frame: string; node: TreeNode; frameId: string } | null) => void;
   onOpenFunction: (id: string) => void;
+  /** Optional choices and panes, grouped with the row display in one toolbar. */
+  tools?: ReactNode;
 }
 
 /** The small label of a decision before its words. */
@@ -137,7 +139,7 @@ function exitTags(exits: ReadonlyArray<{ node: TreeNode; on: boolean }>): Array<
  * opens the frame), a removed node shows struck through, and a call that
  * leads to changes, a member's implementations among them, says how many.
  */
-export function TraceView({ data, changes, rootId, source, state, trees, diffs, enabled, rows, onToggle, showCode, onShowCode, memberDiff, selected, onState, onSelect, onOpenFunction }: TraceViewProps) {
+export function TraceView({ data, changes, rootId, source, state, trees, diffs, enabled, rows, onToggle, showCode, onShowCode, memberDiff, selected, onState, onSelect, onOpenFunction, tools }: TraceViewProps) {
   const [details, setDetails] = useState<Set<string>>(() => new Set());
   const [openDiffs, setOpenDiffs] = useState<Set<string>>(() => new Set());
   const ids = frameIds(rootId, state.open, trees);
@@ -436,9 +438,7 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
             </button>
           ))}
         </span>
-        <span className="note outline-hint" title="行を押すと、右の欄がその行のフレームに移ります（タブはそのまま。図ではその箱を、詳細ではその行の説明を示します）。</> でその行の詳しい説明を開きます。">
-          行を押すと右の欄がその行を示す · &lt;/&gt; で詳しく
-        </span>
+        {tools}
       </div>
       <ol className="trace" aria-label="処理の流れ" ref={list}>
         {rows.map((row) => {

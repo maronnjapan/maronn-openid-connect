@@ -488,6 +488,7 @@ export default defineConfig({
               OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
                 ? `${process.env.OIDC_SQLITE_PATH}-rotation`
                 : '.data/oidc-e2e-rotation.sqlite',
+              ...reachEnv('rotation', rotationIssuer),
             },
           },
         ]

@@ -976,29 +976,29 @@ describe('createProviderStores', () => {
       expect(await stores.upstreamLoginStore.find('nonce-new')).toEqual({ provider: 'google', transactionId: 'txn-1', expiresAt });
     });
   });
-});
 
-// OIDC Core 1.0 §9 / RFC 7523 §3: a private_key_jwt client assertion is used once.
-describe('clientAssertionJtiStore', () => {
-  it('should answer true for a new key and false for the same key before it expires', async () => {
-    const first = await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
-    vi.setSystemTime(NOW_MS + 59_000);
-    const replayed = await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
+  // OIDC Core 1.0 §9 / RFC 7523 §3: a private_key_jwt client assertion is used once.
+  describe('clientAssertionJtiStore', () => {
+    it('should answer true for a new key and false for the same key before it expires', async () => {
+      const first = await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
+      vi.setSystemTime(NOW_MS + 59_000);
+      const replayed = await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
 
-    expect(first).toBe(true);
-    expect(replayed).toBe(false);
-  });
+      expect(first).toBe(true);
+      expect(replayed).toBe(false);
+    });
 
-  it('should answer true for another key', async () => {
-    await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
+    it('should answer true for another key', async () => {
+      await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
 
-    expect(await stores.clientAssertionJtiStore.consume('["client-1","jti-2"]', NOW + 60)).toBe(true);
-  });
+      expect(await stores.clientAssertionJtiStore.consume('["client-1","jti-2"]', NOW + 60)).toBe(true);
+    });
 
-  it('should answer true again once the remembered key has expired', async () => {
-    await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
-    vi.setSystemTime(NOW_MS + 61_000);
+    it('should answer true again once the remembered key has expired', async () => {
+      await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 60);
+      vi.setSystemTime(NOW_MS + 61_000);
 
-    expect(await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 120)).toBe(true);
+      expect(await stores.clientAssertionJtiStore.consume('["client-1","jti-1"]', NOW + 120)).toBe(true);
+    });
   });
 });

@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -183,11 +184,11 @@ function authorize(request: APIRequestContext, authorizationUrl: string) {
 /** Sign in and approve in the browser, and return the URL the OP redirected back to. */
 async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
   await page.goto(authorizationUrl);
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.waitForURL((url) => url.pathname === '/request-object-callback');
   return new URL(page.url());

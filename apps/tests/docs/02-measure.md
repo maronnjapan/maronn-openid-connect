@@ -148,7 +148,7 @@ flowchart LR
 
 - `<名前>` は、パッケージ名からスコープを除いたもの（`@maronn-openid-connect/app-hono` は `app-hono`）
 - `<実行先>` は `hono` か `nextjs`
-- `<役>` は OP のインスタンスで、`main`、`xaa`、`dcr` のどれか
+- `<役>` は OP のインスタンスで、`main`、`xaa`、`dcr`、`rotation` のどれか
 - `<pid>` は OP のプロセスの番号
 
 ③ が読むのは、`vitest/`、`playwright/`、`reach/` である。
@@ -676,11 +676,12 @@ flowchart LR
 | `main` | いつも | `E2E_ISSUER`（無ければ `http://<ホスト>:<E2E_OP_PORT、既定 3010>`） |
 | `xaa` | 二つのアプリと `sample-hono-cloudflare` | `E2E_XAA_ISSUER`（無ければ `http://<ホスト>:<E2E_XAA_OP_PORT、既定 3040>`） |
 | `dcr` | 二つのアプリ、`sample-hono-cloudflare`、`sample-express-flyio` | `E2E_DCR_ISSUER`（無ければ `http://<ホスト>:<E2E_DCR_OP_PORT、既定 3050>`） |
+| `rotation` | `apps/hono` と四つの sample | `E2E_ROTATION_ISSUER`（無ければ `http://<ホスト>:<E2E_ROTATION_OP_PORT、既定 3060>`） |
 
 `<ホスト>` は `E2E_HOST`、無ければ `127.0.0.1` である。
 制御のポートは issuer の URL から決まり、`*_PORT` の変数からではない。
 `test:e2e:app-hono` は 3410、`test:e2e:app-nextjs` は 3510 を、`E2E_OP_PORT` と `E2E_ISSUER` の両方に設定する。
-そのため、制御のポートは `main` が 3411 か 3511、`xaa` が 3041、`dcr` が 3051 になる。
+そのため、制御のポートは `main` が 3411 か 3511、`xaa` が 3041、`dcr` が 3051、`rotation` が 3061 になる。
 
 `reuseExistingServer` は CI の外で真なので、手元では起動中の OP が使い回される。
 計測の無い OP が使い回されたときは、[②-7](#-7-e2e-のテストごとの到達) の fixture がテストを落とす。
@@ -776,7 +777,7 @@ sequenceDiagram
   participant G as global setup と teardown
   participant W as ワーカー
   C->>C: reachEnv で OP ごとの環境を作る
-  C->>O: webServer で main、xaa、dcr を起動する
+  C->>O: webServer で main、xaa、dcr、rotation を起動する
   O->>O: startReach が計測と制御のポートを始める
   C->>G: global setup が到達の行のファイルを空にする
   loop テストごと、ワーカーは一つ

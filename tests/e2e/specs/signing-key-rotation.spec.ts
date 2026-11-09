@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -84,7 +85,7 @@ async function jwksKids(request: APIRequestContext, issuer: string): Promise<str
 }
 
 /** Signs in, approves and redeems the code, and returns the ID Token the token endpoint issued. */
-async function issueIdToken(page: import('@playwright/test').Page, request: APIRequestContext, issuer: string): Promise<string> {
+async function issueIdToken(page: Page, request: APIRequestContext, issuer: string): Promise<string> {
   const codeVerifier = randomBytes(32).toString('base64url');
   const authorizeUrl = new URL('/authorize', issuer);
   authorizeUrl.search = new URLSearchParams({
@@ -101,11 +102,11 @@ async function issueIdToken(page: import('@playwright/test').Page, request: APIR
   }).toString();
 
   await page.goto(authorizeUrl.toString());
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.waitForURL((url) => url.pathname === '/multiple-auth-methods-callback');
   const code = requireString(new URL(page.url()).searchParams.get('code'), 'code');

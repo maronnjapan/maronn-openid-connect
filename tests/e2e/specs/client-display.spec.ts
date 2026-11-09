@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -38,7 +39,7 @@ test.describe('client display metadata (OIDC Dynamic Client Registration 1.0 §2
     });
 
     await page.goto(authorizeUrl(issuer, clientId));
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
     await expect(page.locator('strong')).toHaveText('E2E Display Client');
     await expect(page.getByRole('img', { name: 'E2E Display Client logo' })).toHaveAttribute('src', 'https://rp.example.com/logo.png');
     await expect(page.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', 'https://rp.example.com/privacy');
@@ -48,7 +49,7 @@ test.describe('client display metadata (OIDC Dynamic Client Registration 1.0 §2
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
 
-    await expect(page).toHaveURL(/\/consent$/);
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
     await expect(page.locator('strong')).toHaveText('E2E Display Client');
     await expect(page.getByRole('img', { name: 'E2E Display Client logo' })).toHaveAttribute('src', 'https://rp.example.com/logo.png');
     await expect(page.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', 'https://rp.example.com/privacy');
@@ -66,7 +67,7 @@ test.describe('client display metadata (OIDC Dynamic Client Registration 1.0 §2
     });
 
     await page.goto(authorizeUrl(issuer, clientId));
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
 
     await expect(page.locator('strong')).toHaveText('E2E Insecure Logo Client');
     await expect(page.locator('img')).toHaveCount(0);

@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -84,7 +85,7 @@ async function skipUnlessLogoutEnabled(
  */
 async function completeAuthorizationCodeFlow(page: Page, issuer: string): Promise<string> {
   await page.goto(`${clientBaseURL}/start`);
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
@@ -92,7 +93,7 @@ async function completeAuthorizationCodeFlow(page: Page, issuer: string): Promis
   // A prior spec (or the first scenario) may have recorded consent for this
   // subject and client, in which case the consent screen is skipped. The
   // consent URL carries no query (the transaction travels in its cookie).
-  await page.waitForURL(/\/consent$|\/callback\?/);
+  await page.waitForURL(/\/consent\?transaction_id=|\/callback\?/);
   if (new URL(page.url()).pathname === '/consent') {
     await page.getByRole('button', { name: 'Approve' }).click();
   }
@@ -106,7 +107,7 @@ async function completeAuthorizationCodeFlow(page: Page, issuer: string): Promis
 /** A fresh authorization must land on the login screen: the SSO session is gone. */
 async function expectLoginRequired(page: Page, issuer: string): Promise<void> {
   await page.goto(`${clientBaseURL}/start`);
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

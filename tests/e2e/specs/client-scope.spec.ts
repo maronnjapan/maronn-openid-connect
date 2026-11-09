@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -43,7 +44,11 @@ test.describe('Registered client scope (RFC 7591 §2)', () => {
     const response = await request.get(authorizeUrl(issuer, 'openid profile'), { maxRedirects: 0 });
 
     expect(response.status()).toBe(302);
-    expect(requireHeader(response.headers(), 'location')).toBe(`${issuer}/login`);
+    const transactionId = /^__Host-oidc_txn=([A-Za-z0-9_-]{43});/.exec(
+      requireHeader(response.headers(), 'set-cookie'),
+    )?.[1];
+    expect(transactionId).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(requireHeader(response.headers(), 'location')).toBe(`${issuer}/login?transaction_id=${transactionId}`);
   });
 
   test('should refuse a device authorization request for an unregistered scope', async ({

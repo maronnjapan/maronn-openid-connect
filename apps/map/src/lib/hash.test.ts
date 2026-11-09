@@ -67,4 +67,9 @@ describe('the view in a hash', () => {
     expect(parseHash('#nextjs--wiring', data, defaults)).toEqual(wiring);
     expect(parseHash('#wiring', data, defaults)).toEqual({ ...defaults, wiring: true });
   });
+
+  it('should open the default view for an old link to the list of the tests, which moved to its own page', () => {
+    expect(parseHash('#tests', data, defaults)).toEqual(defaults);
+    expect(parseHash('#nextjs--tests', data, defaults)).toEqual({ ...defaults, framework: 'nextjs' });
+  });
 });

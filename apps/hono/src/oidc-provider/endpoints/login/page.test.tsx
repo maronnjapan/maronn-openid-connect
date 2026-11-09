@@ -24,15 +24,19 @@ async function setUp(transaction = sampleTransaction()) {
 
 function loginPost(password: string): Request {
   return formPost(
-    '/login',
-    { csrf_token: CSRF_TOKEN, username: 'alice', password },
+    '/login?transaction_id=txn-1',
+    { transaction_id: 'txn-1', csrf_token: CSRF_TOKEN, username: 'alice', password },
     { Cookie: transactionCookie(), 'Sec-Fetch-Site': 'same-origin' },
   );
 }
 
 describe('renderLoginPage', () => {
   it('should render the default login view with the csrf_token', async () => {
-    const response = renderLoginPage(contextOf(), { csrfToken: 'csrf-1', client: { clientId: 'client-1' } });
+    const response = renderLoginPage(contextOf(), {
+      transactionId: 'txn-1',
+      csrfToken: 'csrf-1',
+      client: { clientId: 'client-1' },
+    });
 
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('<input type="hidden" name="csrf_token" value="csrf-1"/>');
@@ -42,6 +46,7 @@ describe('renderLoginPage', () => {
     const views = createViews({ loginPage: (params: LoginPageParams) => <form>{params.csrfToken}</form> });
 
     const response = renderLoginPage(contextOf(undefined, { views }), {
+      transactionId: 'txn-1',
       csrfToken: 'csrf-1',
       client: { clientId: 'client-1' },
     });
@@ -57,7 +62,7 @@ describe('consentScreenUrl', () => {
       config: createProviderConfig({ issuer: 'https://op.example.com' }),
     });
 
-    expect(consentScreenUrl(c)).toBe('https://op.example.com/consent');
+    expect(consentScreenUrl(c, 'txn-1')).toBe('https://op.example.com/consent?transaction_id=txn-1');
   });
 });
 
@@ -67,7 +72,7 @@ describe('loginPage', () => {
     it('should render the form for the transaction of the cookie', async () => {
       const { app } = await setUp(sampleTransaction({ loginHint: 'alice' }));
 
-      const response = await app.request(requestTo('/login', { headers: { Cookie: transactionCookie() } }));
+      const response = await app.request(requestTo('/login?transaction_id=txn-1', { headers: { Cookie: transactionCookie() } }));
       const html = await response.text();
 
       expect(response.status).toBe(200);
@@ -80,7 +85,7 @@ describe('loginPage', () => {
     it('should forbid caches from storing the form', async () => {
       const { app } = await setUp();
 
-      const response = await app.request(requestTo('/login', { headers: { Cookie: transactionCookie() } }));
+      const response = await app.request(requestTo('/login?transaction_id=txn-1', { headers: { Cookie: transactionCookie() } }));
 
       expect(response.headers.get('Cache-Control')).toBe('no-store');
     });
@@ -88,7 +93,7 @@ describe('loginPage', () => {
     it('should answer the error page with 400 when the browser is in no transaction', async () => {
       const { app } = await setUp();
 
-      const response = await app.request(requestTo('/login'));
+      const response = await app.request(requestTo('/login?transaction_id=txn-1'));
 
       expect(response.status).toBe(400);
       expect(await response.text()).toContain(
@@ -106,7 +111,7 @@ describe('loginPage', () => {
       const [sessionId] = [...db.browserSessions.keys()];
 
       expect(response.status).toBe(302);
-      expect(response.headers.get('Location')).toBe('https://op.example.com/consent');
+      expect(response.headers.get('Location')).toBe('https://op.example.com/consent?transaction_id=txn-1');
       expect(response.headers.getSetCookie()).toEqual([
         `session_id=${sessionId}; HttpOnly; Secure; SameSite=Lax; Path=/`,
       ]);
@@ -135,8 +140,8 @@ describe('loginPage', () => {
 
       const response = await app.request(
         formPost(
-          '/login',
-          { csrf_token: CSRF_TOKEN, username: 'alice', password: 'correct-password' },
+          '/login?transaction_id=txn-1',
+          { transaction_id: 'txn-1', csrf_token: CSRF_TOKEN, username: 'alice', password: 'correct-password' },
           { Cookie: transactionCookie(), 'Sec-Fetch-Site': 'cross-site' },
         ),
       );

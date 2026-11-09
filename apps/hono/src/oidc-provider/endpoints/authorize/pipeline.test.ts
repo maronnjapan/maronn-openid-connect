@@ -95,7 +95,7 @@ describe('processAuthorizationRequest', () => {
       const outcome = await authorize(db, authorizationParams());
 
       const [transactionId] = transactionIdsOf(db);
-      expect(outcome).toEqual({ kind: 'login', cookies: [transactionCookie(transactionId!)] });
+      expect(outcome).toEqual({ kind: 'login', transactionId, cookies: [transactionCookie(transactionId!)] });
       expect(db.transactions.get('auth_txn:' + transactionId)?.value).toMatchObject({
         clientId: CLIENT_ID,
         redirectUri: REDIRECT_URI,
@@ -118,7 +118,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, authorizationParams({ id_token_hint: hint }), { cookie });
 
-      expect(outcome).toEqual({ kind: 'login', cookies: [transactionCookie(transactionIdsOf(db)[0]!)] });
+      expect(outcome).toEqual({ kind: 'login', transactionId: transactionIdsOf(db)[0], cookies: [transactionCookie(transactionIdsOf(db)[0]!)] });
       expect(db.codes.size).toBe(0);
     });
   });
@@ -146,7 +146,7 @@ describe('processAuthorizationRequest', () => {
       const outcome = await authorize(db, authorizationParams(), { cookie });
 
       const [transactionId] = transactionIdsOf(db);
-      expect(outcome).toEqual({ kind: 'consent', cookies: [transactionCookie(transactionId!)] });
+      expect(outcome).toEqual({ kind: 'consent', transactionId, cookies: [transactionCookie(transactionId!)] });
       expect(db.authSessions.get(transactionId!)).toMatchObject({ subject: SUBJECT });
     });
   });
@@ -304,7 +304,7 @@ describe('processAuthorizationRequest', () => {
       const outcome = await authorize(db, implicitParams());
 
       const [transactionId] = transactionIdsOf(db);
-      expect(outcome).toEqual({ kind: 'login', cookies: [transactionCookie(transactionId!)] });
+      expect(outcome).toEqual({ kind: 'login', transactionId, cookies: [transactionCookie(transactionId!)] });
       const transaction = db.transactions.get('auth_txn:' + transactionId)?.value;
       expect(transaction).toMatchObject({ responseType: 'id_token token', responseMode: 'fragment', nonce: NONCE });
       expect(transaction).not.toHaveProperty('codeChallenge');
@@ -452,7 +452,7 @@ describe('processAuthorizationRequest', () => {
       const outcome = await authorize(db, hybridParams());
 
       const [transactionId] = transactionIdsOf(db);
-      expect(outcome).toEqual({ kind: 'login', cookies: [transactionCookie(transactionId!)] });
+      expect(outcome).toEqual({ kind: 'login', transactionId, cookies: [transactionCookie(transactionId!)] });
       expect(db.transactions.get('auth_txn:' + transactionId)?.value).toMatchObject({
         responseType: 'code id_token token',
         responseMode: 'fragment',

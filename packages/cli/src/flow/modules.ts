@@ -21,7 +21,7 @@ const APP_ROUTER_LAYOUT: ModuleMap = {
   discovery: '.well-known/openid-configuration/route.ts',
   jwks: '.well-known/jwks.json/route.ts',
   authorize: 'authorize/route.ts',
-  login: 'login/actions.ts',
+  login: 'login/submit/route.ts',
   'login-google': '(google-login)/login/google/route.ts',
   consent: 'consent/decision/route.ts',
   token: 'token/route.ts',

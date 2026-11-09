@@ -43,6 +43,7 @@ export async function describeConsentScreen(
 
   return {
     kind: 'screen',
+    transactionId,
     csrfToken: transaction.csrfToken,
     scopes: displayedScopes,
     client: await resolveClientDisplay(c.get('clientResolver'), c.get('config'), transaction.clientId),

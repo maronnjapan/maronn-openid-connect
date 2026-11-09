@@ -25,8 +25,8 @@ async function setUp(loggedIn = true) {
 
 function consentPost(action: string): Request {
   return formPost(
-    '/consent',
-    { csrf_token: CSRF_TOKEN, action },
+    '/consent?transaction_id=txn-1',
+    { transaction_id: 'txn-1', csrf_token: CSRF_TOKEN, action },
     { Cookie: transactionCookie(), 'Sec-Fetch-Site': 'same-origin' },
   );
 }
@@ -34,6 +34,7 @@ function consentPost(action: string): Request {
 describe('renderConsentPage', () => {
   it('should render the default consent view', async () => {
     const response = renderConsentPage(contextOf(), {
+      transactionId: 'txn-1',
       csrfToken: 'csrf-1',
       scopes: ['openid'],
       client: { clientId: 'client-1' },
@@ -53,6 +54,7 @@ describe('renderConsentPage', () => {
     });
 
     const response = renderConsentPage(contextOf(undefined, { views }), {
+      transactionId: 'txn-1',
       csrfToken: 'csrf-1',
       scopes: ['openid', 'email'],
       client: { clientId: 'client-1' },
@@ -67,7 +69,7 @@ describe('consentPage', () => {
     it('should render the client, the scopes and the csrf_token of the transaction', async () => {
       const { app } = await setUp();
 
-      const response = await app.request(requestTo('/consent', { headers: { Cookie: transactionCookie() } }));
+      const response = await app.request(requestTo('/consent?transaction_id=txn-1', { headers: { Cookie: transactionCookie() } }));
       const html = await response.text();
 
       expect(response.status).toBe(200);
@@ -81,7 +83,7 @@ describe('consentPage', () => {
     it('should forbid caches from storing the form', async () => {
       const { app } = await setUp();
 
-      const response = await app.request(requestTo('/consent', { headers: { Cookie: transactionCookie() } }));
+      const response = await app.request(requestTo('/consent?transaction_id=txn-1', { headers: { Cookie: transactionCookie() } }));
 
       expect(response.headers.get('Cache-Control')).toBe('no-store');
     });
@@ -89,7 +91,7 @@ describe('consentPage', () => {
     it('should answer the error page with 400 when the browser is in no transaction', async () => {
       const { app } = await setUp();
 
-      expect((await app.request(requestTo('/consent'))).status).toBe(400);
+      expect((await app.request(requestTo('/consent?transaction_id=txn-1'))).status).toBe(400);
     });
   });
 

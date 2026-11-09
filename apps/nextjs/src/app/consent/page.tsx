@@ -1,3 +1,4 @@
+import { buildTransactionPath } from '@maronn-openid-connect/core';
 import { resolveClientDisplay } from '../_oidc-provider/client-display';
 import { ClientSummary, clientDisplayName } from '../_oidc-provider/client-summary';
 import { clientResolver, config, stores } from '../_oidc-provider/provider';
@@ -13,29 +14,21 @@ import { requireTransaction } from '../_oidc-provider/transaction';
 export const dynamic = 'force-dynamic';
 
 /**
- * Consent page (React Server Component).
+ * Render the consent form only when the URL transaction ID matches the cookie.
+ * Preserve transaction_id in the action URL and hidden field, and csrf_token in
+ * its hidden field: the submit handler requires all references to match.
  *
  * It shows the client asking for the authorization by its client_name, logo
  * and policy links (OIDC Dynamic Client Registration 1.0 §2,
  * client-summary.tsx), or its client_id when it registered no name.
- *
- * A real Next.js page, so the consent UI can be built with JSX and React
- * components. The form posts to the consent decision Route Handler
- * (decision/route.ts), which answers with the authorization response: a
- * redirect, or the form a form_post response is posted from. Keep the hidden
- * csrf_token field when customizing it: neither the URL nor the form names the
- * transaction — the browser's transaction cookie does — and the handler
- * accepts the token only for that transaction.
- *
- * A browser with no live transaction renders not-found.tsx (see
- * requireTransaction() in _oidc-provider/transaction.ts).
  */
-export default async function ConsentPage() {
-  const { transactionId, transaction } = await requireTransaction();
+export default async function ConsentPage({ searchParams }: { searchParams: Promise<{ transaction_id?: string | string[] }> }) {
+  const { transaction_id } = await searchParams;
+  const { transactionId, transaction } = await requireTransaction(transaction_id);
 
   // Show only what THIS End-User can actually grant (resolveGrantableScopes in
   // scopes.ts). The subject comes from the login step's hand-off; without one
-  // the request is shown as-is, and the Server Action stops on the same missing
+  // the request is shown as-is, and the decision handler stops on the same missing
   // session.
   const requestedScopes = transaction.scope.split(' ').filter(Boolean);
   const consentSession = await stores.authSessionStore.get(transactionId);
@@ -63,7 +56,8 @@ export default async function ConsentPage() {
         everything else, so keep both values when customizing this markup:
         renaming 'approve' makes every approval fail with an error page.
       */}
-      <form method="post" action="/consent/decision">
+      <form method="post" action={buildTransactionPath('/consent/decision', transactionId)}>
+        <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
         <button type="submit" name="action" value="approve">
           Approve

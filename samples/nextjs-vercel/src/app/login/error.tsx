@@ -4,7 +4,7 @@ import { ErrorView } from '../_oidc-provider/error-view';
 
 /**
  * Error boundary of the login page (Next.js error.js): the screen for an
- * exception nobody expected while rendering the page or running loginAction —
+ * exception nobody expected while rendering the page —
  * a store outage, a bug. Expected outcomes never land here: they redirect to the
  * OP's error page or call notFound().
  *

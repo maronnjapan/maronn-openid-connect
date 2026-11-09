@@ -240,6 +240,32 @@ const STORE_KEY_PREFIX = 'auth_txn:';
 
 // --- Functions ---
 
+/** Reject missing or mismatched transaction IDs before looking up or changing a transaction. */
+export function validateTransactionId(
+  transactionId: string | undefined,
+  references: readonly unknown[],
+): asserts transactionId is string {
+  if (!transactionId || references.length === 0 || references.some(
+    (reference) => reference !== transactionId,
+  )) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.InvalidTransactionBinding,
+      'Invalid authorization transaction.',
+    );
+  }
+}
+
+/** Return the URL's transaction ID, or undefined when it is missing, empty or repeated. */
+export function getTransactionIdFromUrl(url: string): string | undefined {
+  const values = new URL(url).searchParams.getAll('transaction_id');
+  return values.length === 1 ? values[0] || undefined : undefined;
+}
+
+/** Return a screen path with the transaction ID encoded in its query. */
+export function buildTransactionPath(path: string, transactionId: string): string {
+  return path + '?' + new URLSearchParams({ transaction_id: transactionId }).toString();
+}
+
 /**
  * createAuthTransaction のオプション
  */

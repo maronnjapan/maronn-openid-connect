@@ -14,6 +14,7 @@ describe('describeLoginScreen', () => {
 
     expect(screen).toEqual({
       kind: 'screen',
+      transactionId: 'txn-1',
       csrfToken: CSRF_TOKEN,
       loginHint: 'alice',
       client: { clientId: 'client-1' },
@@ -28,6 +29,7 @@ describe('describeLoginScreen', () => {
 
     expect(screen).toEqual({
       kind: 'screen',
+      transactionId: 'txn-1',
       csrfToken: CSRF_TOKEN,
       loginHint: undefined,
       client: { clientId: 'client-1' },

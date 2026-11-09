@@ -51,7 +51,7 @@ describe('reuseExistingSession', () => {
       const { c, db, stores } = await ssoContext();
       await signIn(stores, { authTime });
 
-      expect(await reuseExistingSession(c, inputOf())).toEqual({ kind: 'consent', cookies: [TRANSACTION_COOKIE] });
+      expect(await reuseExistingSession(c, inputOf())).toEqual({ kind: 'consent', transactionId: TRANSACTION_ID, cookies: [TRANSACTION_COOKIE] });
       expect(db.authSessions.get(TRANSACTION_ID)).toEqual({ subject: SUBJECT, authTime, sessionId: SESSION_ID });
     });
 
@@ -63,6 +63,7 @@ describe('reuseExistingSession', () => {
 
       expect(await reuseExistingSession(c, inputOf({ promptValues: ['consent'] }))).toEqual({
         kind: 'consent',
+      transactionId: TRANSACTION_ID,
         cookies: [TRANSACTION_COOKIE],
       });
     });

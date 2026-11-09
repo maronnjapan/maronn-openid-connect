@@ -14,6 +14,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import {
   AuthTransactionError,
+  buildTransactionPath,
+  getTransactionIdFromUrl,
+  validateTransactionId,
   completeAuthTransaction,
   createAuthorizationCode,
   getAuthTransaction,
@@ -75,7 +78,16 @@ export async function POST(request: NextRequest): Promise<Response> {
   // トランザクションの Cookie から、このブラウザが進めているトランザクションを読み込む。
   // Cookie がない、トランザクションが見つからない（すでに終わったものを含む）、期限切れのときは、エンドユーザーがクライアントのアプリケーションからやり直す必要があるので、OP のエラーページへリダイレクトする。
   const transactionId = parseTransactionId(request.headers.get('Cookie'));
-  const transaction = transactionId === undefined ? undefined : await findTransaction(transactionId);
+  try {
+    validateTransactionId(transactionId, [
+      getTransactionIdFromUrl(request.url),
+      form.getAll('transaction_id').length === 1 ? form.get('transaction_id') : undefined,
+    ]);
+  } catch (error) {
+    if (error instanceof AuthTransactionError) return redirectToErrorPage(error.code, error.message);
+    throw error;
+  }
+  const transaction = await findTransaction(transactionId);
   if (transactionId === undefined || transaction === undefined) {
     return redirectToErrorPage(
       'transaction_not_found',
@@ -137,7 +149,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   // 認証したサブジェクトがなければ、ログインのステップが飛ばされたか期限が切れているので、`/login` へリダイレクトする。
   const session = await stores.authSessionStore.get(transactionId);
   if (!session) {
-    return NextResponse.redirect(new URL('/login', config.issuer), 303);
+    return NextResponse.redirect(new URL(buildTransactionPath('/login', transactionId), config.issuer), 303);
   }
 
   // [issue-implicit-response] (feature: implicit-flow) インプリシットフロー: トークンを直接発行する — OIDC Core 1.0 §3.2.2.5

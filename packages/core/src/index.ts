@@ -280,6 +280,9 @@ export {
   createAuthTransaction,
   getAuthTransaction,
   validateCsrfToken,
+  validateTransactionId,
+  getTransactionIdFromUrl,
+  buildTransactionPath,
   // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: トランザクションを開始した User-Agent への束縛
   computeTransactionBindingHash,
   validateTransactionBinding,

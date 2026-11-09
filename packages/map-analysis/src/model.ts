@@ -442,7 +442,12 @@ export interface ChangeNoteText {
   file: string;
   /** The heading of the section. */
   heading: string;
+  /** Its text, the HTML comments and the `テストを変えない理由:` line left out. */
   text: string;
+  /** What its `テストを変えない理由:` line says: why the pull request changes none of the frame's tests. */
+  reason?: string;
+  /** It has a `テストを変えない理由:` line, an empty one (the place the draft left) included. */
+  reasonLine?: boolean;
 }
 
 /** A change note of the pull request: what its text before the first heading says the pull request does. */
@@ -537,6 +542,8 @@ export interface FrameChangeEntry {
   noteLine?: string;
   /** A note with text names it. */
   documented: boolean;
+  /** The first `テストを変えない理由:` line of the sections that name it, and the note it is in. */
+  testReason?: { text: string; note: string };
   /**
    * A change the map requires a note for: its code changed (not only its
    * comments or its layout, which leave the tree the same) and it reaches an
@@ -562,6 +569,15 @@ export interface MapChanges {
   undocumented: string[];
   /** Changed lines of the files of the catalog outside every frame (imports, types, constants). */
   outside: Array<{ file: string; lines: number[] }>;
-  /** The changed files that hold no frame: tests, documents, the CLI, the map itself. */
+  /** The changed files that hold no frame and no test: documents, the CLI, the map itself (the tests have their own diff). */
   otherFiles: number;
+  /** The changed test files (tests, specs and feature files), which the diff of the tests reads. */
+  testFiles?: number;
+  /**
+   * The changed frames that require a note (`required`) whose related tests
+   * the pull request neither added nor changed, without a reason not to in
+   * their note (`テストを変えない理由:`): the check of the map fails on them.
+   * Set by the diff of the tests (packages/test-catalog).
+   */
+  untested?: string[];
 }

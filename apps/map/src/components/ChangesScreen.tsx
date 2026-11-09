@@ -170,7 +170,7 @@ export function ChangesScreen({ data, index, framework, onOpenFunction, onOpenEn
         </div>
         {pullRequest?.title !== undefined ? <p className="lead">{pullRequest.title}</p> : null}
         <p className="note">
-          変えた関数とエンドポイントの処理 {counted} 個 · 地図に載らないファイルの変更 {changes.otherFiles} 個 · 何を変えたかとどこに効くかは地図が計算し、なぜ変えたかは変更メモ（<code>apps/map/changes/*.md</code>）が書きます
+          変えた関数とエンドポイントの処理 {counted} 個 · 地図に載らないファイルの変更 {changes.otherFiles + (changes.testFiles ?? 0)} 個 · 何を変えたかとどこに効くかは地図が計算し、なぜ変えたかは変更メモ（<code>apps/map/changes/*.md</code>）が書きます
         </p>
       </header>
       <div className="work changes-work">

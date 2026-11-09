@@ -250,7 +250,7 @@ describe('applyOidc', () => {
       });
 
       expect(response.statusCode).toBe(302);
-      expect(response.headers['location']).toBe('https://op.example.com/login');
+      expect(response.headers['location']).toBe(`https://op.example.com/login?transaction_id=${setCookiesOf(response.headers)[0]?.split(';')[0]?.split('=')[1]}`);
       expect(setCookiesOf(response.headers)).toEqual([
         expect.stringMatching(/^__Host-oidc_txn=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=600$/),
       ]);

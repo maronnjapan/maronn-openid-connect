@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -140,11 +141,11 @@ test.describe('acr_values', () => {
 async function authorize(page: Page, acrValues: string | undefined): Promise<void> {
   const query = acrValues === undefined ? '' : `?acr_values=${encodeURIComponent(acrValues)}`;
   await page.goto(`${clientBaseURL}/start${query}`);
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
 }

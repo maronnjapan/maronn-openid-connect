@@ -1,4 +1,5 @@
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { Locator } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -165,12 +166,12 @@ async function completeAuthorizationCodeFlow(
   issuer: string,
 ): Promise<string> {
   await page.goto(`${clientBaseURL}/start`);
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
 
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
 
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));

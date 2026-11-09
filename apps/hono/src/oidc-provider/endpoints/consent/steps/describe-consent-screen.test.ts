@@ -12,6 +12,7 @@ describe('describeConsentScreen', () => {
 
     expect(await describeConsentScreen(c, TRANSACTION_ID, sampleTransaction({ scope: 'openid  profile email' }))).toEqual({
       kind: 'screen',
+      transactionId: 'txn-1',
       csrfToken: CSRF_TOKEN,
       scopes: ['openid', 'profile', 'email'],
       client: { clientId: 'client-1' },

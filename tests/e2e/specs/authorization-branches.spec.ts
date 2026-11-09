@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -243,7 +244,7 @@ test.describe('Authorization endpoint browser branches', () => {
 
     await page.goto(`${clientBaseURL}/start?id_token_hint=${encodeURIComponent(testUserIdToken)}`);
 
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
     const stopped = new URL(page.url());
     expect(stopped.pathname).toBe('/login');
     expect(stopped.searchParams.get('code')).toBe(null);
@@ -259,11 +260,11 @@ test.describe('Authorization endpoint browser branches', () => {
 });
 
 async function login(page: Page, username: string): Promise<void> {
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill(username);
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
 }
 
 async function loginAndApprove(page: Page, username: string): Promise<void> {

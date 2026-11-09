@@ -4,7 +4,7 @@ import { loginMethodsOf } from '../_oidc-provider/feature';
 import { features } from '../_oidc-provider/features';
 import { clientResolver, config, stores } from '../_oidc-provider/provider';
 import { requireTransaction } from '../_oidc-provider/transaction';
-import { loginAction } from './actions';
+import { buildTransactionPath } from '@maronn-openid-connect/core';
 
 // The page renders the transaction named by this browser's transaction cookie,
 // so it must always render dynamically (never from a static cache). No cache
@@ -16,31 +16,24 @@ export const dynamic = 'force-dynamic';
 
 interface LoginPageProps {
   searchParams: Promise<{
+    transaction_id?: string | string[];
     error?: string;
     remaining?: string;
   }>;
 }
 
 /**
- * Login page (React Server Component).
- *
- * A real Next.js page, so the UI can be built with JSX, components, CSS modules
- * and the rest of the React ecosystem. The form posts to the loginAction Server
- * Action (actions.ts), which checks the credentials and starts the OP session.
- * Keep the hidden csrf_token field when customizing it: neither the URL nor the
- * form names the transaction — the browser's transaction cookie does — and the
- * action accepts the token only for that transaction.
+ * Render the login form only when the URL transaction ID matches the cookie.
+ * Preserve transaction_id in the action URL and hidden field, and csrf_token in
+ * its hidden field: the submit handler requires all references to match.
  *
  * Above the form it shows the client asking for the authorization: its
  * client_name, logo_uri, policy_uri and tos_uri (OIDC Dynamic Client
  * Registration 1.0 §2, client-summary.tsx).
- *
- * A browser with no live transaction renders not-found.tsx (see
- * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { error, remaining } = await searchParams;
-  const { transactionId, transaction } = await requireTransaction();
+  const { error, remaining, transaction_id } = await searchParams;
+  const { transactionId, transaction } = await requireTransaction(transaction_id);
 
   // The client asking for the authorization, as the page shows it (OIDC
   // Dynamic Client Registration 1.0 §2): its name, logo and policy links,
@@ -71,7 +64,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           {errorMessage}
         </p>
       ) : null}
-      <form action={loginAction}>
+      <form method="post" action={buildTransactionPath('/login/submit', transactionId)}>
+        <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
         <div>
           <label htmlFor="username">Username:</label>

@@ -61,7 +61,7 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
   if (sameOriginError) return sameOriginError;
 
   // [load-transaction] Cookie が指すトランザクションを読み込む
-  const loaded = await loadTransaction(c);
+  const loaded = await loadTransaction(c, [input.transactionId]);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
 

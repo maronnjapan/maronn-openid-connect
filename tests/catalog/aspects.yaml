@@ -1,0 +1,83 @@
+# テストの観点の語彙（apps/map/docs/design-test-catalog.md の「正常系、異常系、境界値」）。
+#
+# テストの観点は、正常系か異常系かとは別の軸で、次の順で決まる。
+#
+# 1. 宣言: 機能ファイルのタグ（`@boundary`、`@auth`）と、テストコードの `it` の直上の
+#    `// @aspect boundary` コメント。`tags` は宣言のタグの別名
+# 2. この表: `it` と `describe` の名前（シナリオの名前）に `words` のどれかが含まれるか、
+#    期待結果が `errors` のエラーコード、`statuses` のステータス、`headers` のヘッダーを
+#    確かめていれば、その観点
+# 3. どれにも当たらなければ観点なし（地図のテストの一覧に「観点なし」として出る）
+#
+# 語は大文字と小文字を区別せず、語の境目で照合する。表に無い言い回しは拾えないので、
+# 拾えなかったテストは表を直すか宣言を足す。このリポジトリのテストの名前に多く現れる語
+# （scope、state、nonce、signature など）は、観点を区別しないので表に入れない。
+aspects:
+  boundary:
+    label: 境界値
+    tags: [boundary]
+    words:
+      - boundary
+      - exactly
+      - at the limit
+      - at most
+      - at least
+      - maximum
+      - minimum
+      - one more
+      - one less
+      - too long
+      - too short
+      - longer than
+      - shorter than
+      - expired
+      - expiry
+      - empty
+      - off by one
+  authentication:
+    label: 認証
+    tags: [auth, authentication]
+    words:
+      - authenticate
+      - authentication
+      - credential
+      - credentials
+      - client secret
+      - client_secret
+      - private_key_jwt
+      - client_assertion
+    errors: [invalid_client, login_required]
+    statuses: [401]
+    headers: [WWW-Authenticate]
+  authorization:
+    label: 認可
+    tags: [authorization, authz]
+    words:
+      - consent
+      - permission
+      - forbidden
+      - not allowed
+      - unauthorized_client
+    errors: [insufficient_scope, access_denied, unauthorized_client, consent_required, invalid_scope]
+    statuses: [403]
+  security:
+    label: セキュリティ
+    tags: [security]
+    words:
+      - replay
+      - replayed
+      - reuse
+      - reused
+      - forged
+      - tampered
+      - pkce
+      - code_verifier
+      - csrf
+      - injection
+      - open redirect
+      - downgrade
+      - timing
+# エンドポイントごとに求める観点。どれかのテストを持たないエンドポイントは「不足」として地図に出る。
+required:
+  - authentication
+  - boundary

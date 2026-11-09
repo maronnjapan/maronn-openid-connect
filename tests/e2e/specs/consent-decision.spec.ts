@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -31,7 +32,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
 
     await page.getByRole('button', { name: 'Approve' }).click();
 
@@ -50,7 +51,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
 
     await page.evaluate(() => {
       document.querySelector('form')?.submit();
@@ -71,7 +72,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
 
     await page.evaluate(() => {
       document.querySelector<HTMLButtonElement>('button[value="approve"]')?.setAttribute(
@@ -94,7 +95,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
 
     await page.getByRole('button', { name: 'Deny' }).click();
 

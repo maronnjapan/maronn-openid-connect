@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test } from '../fixtures';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
@@ -261,11 +262,11 @@ function authorizationRequest(
 }
 
 async function login(page: Page, issuer: string): Promise<void> {
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
 }
 
 /** Wait for the browser to land on the redirect URI and return the URL it landed on. */

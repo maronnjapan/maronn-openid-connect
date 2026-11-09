@@ -27,6 +27,7 @@ import {
   validateAcrValuesParameter,
   validateIdTokenHint,
   createAuthTransaction,
+  buildTransactionPath,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
@@ -544,9 +545,8 @@ function badRequest(errorDescription: string): Response {
 /**
  * ログイン画面か同意画面へ 302 でリダイレクトする。
  *
- * レスポンスには、トランザクションの Cookie を `Set-Cookie` ヘッダーで付け、URL にはクエリを付けない。
- * トランザクション ID は `HttpOnly` のトランザクションの Cookie だけでブラウザに渡すので、閲覧履歴、ログ、共有した画面に出ることはない。
- * 画面は、その Cookie からトランザクションを見つける（`_oidc-provider/transaction.ts` の `requireTransaction()`）。
+ * Set the transaction cookie and carry its random ID in the URL.
+ * The destination screen rejects the request unless both references match.
  *
  * URL はリクエストの URL ではなく `config.issuer` から作る。
  * 実行環境によってはリクエストの URL を `Host` ヘッダーから求めるので、リクエストの URL から作ると、送信者がリダイレクト先のオリジンを選べてしまう（OIDC Discovery 1.0 §3、RFC 9700 §2.1）。
@@ -556,7 +556,7 @@ function redirectToScreen(
   transactionId: string,
   ttlSeconds: number,
 ): Response {
-  const response = NextResponse.redirect(new URL(path, config.issuer), 302);
+  const response = NextResponse.redirect(new URL(buildTransactionPath(path, transactionId), config.issuer), 302);
   response.headers.append('Set-Cookie', buildTransactionCookie(transactionId, ttlSeconds));
   return response;
 }

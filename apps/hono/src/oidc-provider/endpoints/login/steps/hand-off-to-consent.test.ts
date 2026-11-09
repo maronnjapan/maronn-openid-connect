@@ -18,6 +18,7 @@ describe('handOffToConsent', () => {
 
     expect(await handOffToConsent(c, TRANSACTION_ID, 'alice', 'sid-1', 1700000000)).toEqual({
       kind: 'authenticated',
+      transactionId: TRANSACTION_ID,
       cookies: ['session_id=sid-1; HttpOnly; Secure; SameSite=Lax; Path=/'],
     });
   });

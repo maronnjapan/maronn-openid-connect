@@ -1,6 +1,6 @@
 /**
  * Starting the OP browser session once the End-User is authenticated — shared
- * by every login method (the password form's Server Action and the Google
+ * by every login method (the password form’s Route Handler and the Google
  * callback in login/google/route.ts).
  */
 import { cookies } from 'next/headers';

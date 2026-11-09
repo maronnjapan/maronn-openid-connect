@@ -39,34 +39,17 @@ export function buildSessionCookie(sessionId: string): string {
 }
 
 /**
- * Auth transaction cookie - which authorization request this browser is in the
- * middle of (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4).
+ * The browser's current authorization transaction (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4).
  *
- * /authorize hands the transaction id to the browser in this HttpOnly cookie
- * and nowhere else: the /login and /consent URLs carry no query, and their
- * forms embed only csrf_token. Every login / consent step reads the transaction
- * out of this cookie and accepts a submission only when the posted csrf_token
- * belongs to that transaction, so the cookie and the HTML have to come
- * together.
+ * /authorize puts the random ID in this HttpOnly cookie and the screen URL.
+ * Login and consent require the cookie and URL to match before showing a form.
+ * POSTs also require the hidden transaction_id to match, then check the stored
+ * csrf_token before authenticating, recording a decision or issuing a code.
+ * Knowing a URL or copying its form never substitutes for the matching cookie.
  *
- * Why not the URL: an id in the URL leaks through browser history, access logs
- * or a shared screen. Whoever picks it up could open the consent page, read
- * csrf_token off it and finish the flow; worse, an attacker could start a flow
- * with their OWN client and lure the victim to it, so that the victim's
- * authorization code is delivered to the attacker's client - a case the RP's
- * state check cannot catch. Neither works when the id only ever lives in a
- * cookie that page scripts cannot read and other sites cannot set.
- *
- * One cookie per browser: a second /authorize (another tab) replaces it, and a
- * form still open in the first tab is then refused - its csrf_token belongs to
- * the replaced transaction - instead of completing the wrong request.
- *
- * The '__Host-' prefix makes the browser refuse this cookie unless it comes
- * from this exact host with Secure, Path=/ and no Domain. Without it a sibling
- * subdomain (evil.example.com next to op.example.com) could plant its own
- * transaction in the victim's browser ("cookie tossing") - and the csrf_token
- * of that planted transaction is one the attacker already knows. Browsers
- * accept the prefix on http://localhost as well, so local development works.
+ * A second /authorize replaces the browser's cookie, so older tabs are refused.
+ * The __Host- prefix requires Secure, Path=/ and no Domain, preventing a sibling
+ * subdomain from setting this cookie. Keep those attributes when customizing it.
  */
 export const TRANSACTION_COOKIE_NAME = '__Host-oidc_txn';
 

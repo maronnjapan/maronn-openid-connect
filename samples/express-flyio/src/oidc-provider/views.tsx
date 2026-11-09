@@ -28,17 +28,16 @@
 import type { Child } from 'hono/jsx';
 import type { JSX } from 'hono/jsx/jsx-runtime';
 import { raw } from 'hono/html';
+import { buildTransactionPath } from '@maronn-openid-connect/core';
 
 // ============================================================
 // View Parameter Types
 // ============================================================
 
 export interface LoginPageParams {
-  /**
-   * CSRF token (must be included as the hidden csrf_token form field). The form
-   * carries nothing else about the transaction: the browser's transaction cookie
-   * says which one this is, and the token has to belong to it.
-   */
+  /** The cookie and URL ID; preserve it in the form action and hidden transaction_id. */
+  transactionId: string;
+  /** The stored token; preserve the hidden csrf_token field. */
   csrfToken: string;
   /** Error message from a previous failed attempt */
   error?: string;
@@ -59,11 +58,9 @@ export interface LoginPageParams {
 }
 
 export interface ConsentPageParams {
-  /**
-   * CSRF token (must be included as the hidden csrf_token form field). The form
-   * carries nothing else about the transaction: the browser's transaction cookie
-   * says which one this is, and the token has to belong to it.
-   */
+  /** The cookie and URL ID; preserve it in the form action and hidden transaction_id. */
+  transactionId: string;
+  /** The stored token; preserve the hidden csrf_token field. */
   csrfToken: string;
   /** Scopes requested by the client */
   scopes: string[];
@@ -144,7 +141,7 @@ export interface RenderViewInit {
  * 非同期のコンポーネントを含むビューは HTML の `Promise` になり、その HTML はできあがってからストリームで送る。
  * そのため、レスポンス（とページがそれに付ける Cookie）は、その場で同期的に作れる。
  *
- * どの画面も、このブラウザの Cookie が指すトランザクションかセッションに合わせて描画するが、URL はそのどちらも示さない（`/login` と `/consent` は、どのトランザクションでも同じ URL である）。
+ * Screens are specific to the transaction or session in this browser’s cookie.
  * 保存された写しがあると、あるトランザクションの `csrf_token`、`login_hint`、クライアントを、別のブラウザやあとのフローに見せてしまう。
  * そのため既定では、ブラウザにも中継サーバーにもページを保存させない（RFC 9111 §5.2.2.5）。
  * キャッシュの扱いが違う画面は、`init.headers` で自分の `Cache-Control` を渡す。
@@ -298,7 +295,8 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
     <Layout title="Login">
       <h1>Login</h1>
       <FormError error={params.error} remainingAttempts={params.remainingAttempts} />
-      <form method="post" action="/login">
+      <form method="post" action={buildTransactionPath('/login', params.transactionId)}>
+        <input type="hidden" name="transaction_id" value={params.transactionId} />
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <CredentialFields username={params.loginHint ?? ''} />
         <button type="submit">Login</button>
@@ -333,7 +331,8 @@ function defaultConsentPage(params: ConsentPageParams): JSX.Element {
       <h1>Authorize Application</h1>
       <p>Client <strong>{params.clientId}</strong> is requesting access to the following scopes:</p>
       <ScopeList scopes={params.scopes} />
-      <form method="post" action="/consent">
+      <form method="post" action={buildTransactionPath('/consent', params.transactionId)}>
+        <input type="hidden" name="transaction_id" value={params.transactionId} />
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <button type="submit" name="action" value="approve">Approve</button>
         <button type="submit" name="action" value="deny">Deny</button>

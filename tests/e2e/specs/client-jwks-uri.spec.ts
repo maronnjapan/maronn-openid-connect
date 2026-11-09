@@ -84,7 +84,7 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
     const issuer = requireBaseUrl(baseURL);
     // The OP fetches the jwks_uri and keeps its keys.
     await page.goto((await requestObjectAuthorization(request, jwksUriClient.clientId, 'RS256')).authorizationUrl);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
 
     // The client adds a key to its jwks_uri and signs with it from now on.
     const rotation = await request.post(`${clientBaseURL}/rotate-request-object-key`);
@@ -212,11 +212,11 @@ function unpublishedKeyRequestObjectUrl(issuer: string): string {
 /** Sign in and approve in the browser, and return the URL the OP redirected back to. */
 async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
   await page.goto(authorizationUrl);
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.waitForURL((url) => url.pathname === '/request-object-callback');
   return new URL(page.url());

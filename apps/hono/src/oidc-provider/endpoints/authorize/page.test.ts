@@ -53,7 +53,7 @@ describe('authorizePage', () => {
       const response = await app.request(requestTo(authorizePath(authorizationParams())));
 
       expect(response.status).toBe(302);
-      expect(response.headers.get('Location')).toBe('https://op.example.com/login');
+      expect(response.headers.get('Location')).toBe(`https://op.example.com/login?transaction_id=${(response.headers.get('Set-Cookie') ?? '').split(';')[0]?.split('=')[1]}`);
       expect(response.headers.getSetCookie()).toEqual([transactionCookieOf(db)]);
     });
 
@@ -65,7 +65,7 @@ describe('authorizePage', () => {
 
       const response = await app.request(new Request('https://attacker.example.net/authorize?' + query));
 
-      expect(response.headers.get('Location')).toBe('https://op.example.com/login');
+      expect(response.headers.get('Location')).toBe(`https://op.example.com/login?transaction_id=${(response.headers.get('Set-Cookie') ?? '').split(';')[0]?.split('=')[1]}`);
     });
 
     // OIDC Core 1.0 §3.1.2.1: the authorization endpoint MUST support POST.
@@ -81,7 +81,7 @@ describe('authorizePage', () => {
       );
 
       expect(response.status).toBe(302);
-      expect(response.headers.get('Location')).toBe('https://op.example.com/login');
+      expect(response.headers.get('Location')).toBe(`https://op.example.com/login?transaction_id=${(response.headers.get('Set-Cookie') ?? '').split(';')[0]?.split('=')[1]}`);
     });
 
     it('should redirect to the consent screen with the transaction cookie when the signed-in End-User has not consented', async () => {
@@ -92,7 +92,7 @@ describe('authorizePage', () => {
       const response = await app.request(requestTo(authorizePath(authorizationParams()), { headers: { Cookie: cookie } }));
 
       expect(response.status).toBe(302);
-      expect(response.headers.get('Location')).toBe('https://op.example.com/consent');
+      expect(response.headers.get('Location')).toBe(`https://op.example.com/consent?transaction_id=${(response.headers.get('Set-Cookie') ?? '').split(';')[0]?.split('=')[1]}`);
       expect(response.headers.getSetCookie()).toEqual([transactionCookieOf(db)]);
     });
   });

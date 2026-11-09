@@ -102,6 +102,7 @@ export async function reuseExistingSession(
   // 同意画面は、リダイレクトに付けるトランザクションの Cookie からトランザクションを見つける。
   return {
     kind: 'consent',
+    transactionId,
     cookies: [buildTransactionCookie(transactionId, transactionTtlSeconds)],
   };
 }

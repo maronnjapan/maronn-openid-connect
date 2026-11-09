@@ -24,5 +24,5 @@ export const meta = step({
  * @spec OIDC Core 1.0 §3.1.2.3
  */
 export function continueToLogin(transactionId: string, transactionTtlSeconds: number): AuthorizationOutcome {
-  return { kind: 'login', cookies: [buildTransactionCookie(transactionId, transactionTtlSeconds)] };
+  return { kind: 'login', transactionId, cookies: [buildTransactionCookie(transactionId, transactionTtlSeconds)] };
 }

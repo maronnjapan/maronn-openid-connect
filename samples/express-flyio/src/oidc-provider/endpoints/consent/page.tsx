@@ -27,7 +27,7 @@ export const consentPage = new WebRouter();
  * 同意画面の見た目を変えるときは、この関数だけを変えればよい（ビューを差し替える、フレームワークで描画した `Response` を返す、独自の UI へリダイレクトする）。
  *
  * `renderView()` は、ヘッダーで別の指定をしない限り `Cache-Control: no-store` を付ける。
- * 同意画面の URL はどのトランザクションでも同じなので、保存された画面を別のブラウザや後のフローで表示すると、別のトランザクションの `csrf_token` やクライアントが見えてしまうためである。
+ * Cached forms could disclose the transaction’s csrf_token or client to another browser or later flow.
  * 独自の `Response` を返すときも、このヘッダーを付ける。
  */
 export function renderConsentPage(c: any, params: ConsentPageParams): Response {
@@ -43,6 +43,7 @@ consentPage.get('/', async (c) => {
   const screen = await prepareConsent(c);
   if (screen.kind === 'error') return renderErrorPage(c, screen);
   return renderConsentPage(c, {
+    transactionId: screen.transactionId,
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
@@ -56,6 +57,7 @@ consentPage.get('/', async (c) => {
 consentPage.post('/', async (c) => {
   const body = await c.req.parseBody();
   const outcome = await submitConsent(c, {
+    transactionId: String(body['transaction_id'] ?? ''),
     csrfToken: String(body['csrf_token'] ?? ''),
     action: String(body['action'] ?? ''),
   });

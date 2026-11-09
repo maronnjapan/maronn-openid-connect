@@ -23,5 +23,5 @@ loginGooglePage.post('/', async (c) => {
     });
   }
   if (outcome.kind === 'error') return renderErrorPage(c, outcome);
-  return redirectWithCookies(consentScreenUrl(c), outcome.cookies);
+  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
 });

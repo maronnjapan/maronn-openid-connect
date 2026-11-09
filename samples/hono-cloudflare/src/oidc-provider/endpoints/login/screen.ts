@@ -9,11 +9,9 @@ import type { ViewResult } from '../../views.js';
 /** What the login form needs: prepared for GET /login and again after a failed attempt. */
 export interface LoginScreen {
   kind: 'screen';
-  /**
-   * Must be posted back as the csrf_token field. It is the only value the form
-   * carries about the transaction: the transaction itself travels in the
-   * transaction cookie, and POST /login accepts the token only for that one.
-   */
+  /** The cookie and URL ID, also required as the hidden transaction_id field. */
+  transactionId: string;
+  /** The stored CSRF token, required as the hidden csrf_token field. */
   csrfToken: string;
   /**
    * OIDC Core 1.0 §3.1.2.1 login_hint: untrusted external value the OP MAY use
@@ -43,10 +41,12 @@ export type LoginOutcome =
   /** Wrong credentials: show the form again with the attempts left. */
   | { kind: 'invalid_credentials'; screen: LoginScreen; remainingAttempts: number }
   /** Signed in: the OP session cookie(s) to set, then continue to the consent step. */
-  | { kind: 'authenticated'; cookies: string[] };
+  | { kind: 'authenticated'; transactionId: string; cookies: string[] };
 
 /** The fields of the login form. */
 export interface LoginSubmission {
+  transactionId: string;
+  /** The stored CSRF token, required as the hidden csrf_token field. */
   csrfToken: string;
   username: string;
   password: string;

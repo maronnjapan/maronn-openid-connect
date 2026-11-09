@@ -13,11 +13,9 @@ import type { AuthorizationResponse } from '../authorize/response-mode.js';
 /** What the consent form needs, prepared for GET /consent. */
 export interface ConsentScreen {
   kind: 'screen';
-  /**
-   * Must be posted back as the csrf_token field. It is the only value the form
-   * carries about the transaction: the transaction itself travels in the
-   * transaction cookie, and POST /consent accepts the token only for that one.
-   */
+  /** The cookie and URL ID, also required as the hidden transaction_id field. */
+  transactionId: string;
+  /** The stored CSRF token, required as the hidden csrf_token field. */
   csrfToken: string;
   /** Scopes this End-User is asked to grant (already narrowed by the scope policy). */
   scopes: string[];
@@ -49,6 +47,8 @@ export type ConsentOutcome =
 
 /** The fields of the consent form. */
 export interface ConsentSubmission {
+  transactionId: string;
+  /** The stored CSRF token, required as the hidden csrf_token field. */
   csrfToken: string;
   /** 'approve' or 'deny' — the submit button values of the consent view. */
   action: string;

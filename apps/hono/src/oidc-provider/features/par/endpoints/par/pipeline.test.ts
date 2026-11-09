@@ -57,7 +57,7 @@ describe('parApp', () => {
     expect(pushed.headers.get('Cache-Control')).toBe('no-cache, no-store');
     expect(body.expires_in).toBe(60);
     expect(first.status).toBe(302);
-    expect(first.headers.get('Location')).toBe('https://op.example.com/login');
+    expect(first.headers.get('Location')).toBe(`https://op.example.com/login?transaction_id=${(first.headers.get('Set-Cookie') ?? '').split(';')[0]?.split('=')[1]}`);
     expect(replay.status).toBe(400);
     expect(await replay.json()).toEqual({
       error: 'invalid_request_uri',

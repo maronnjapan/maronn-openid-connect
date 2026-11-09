@@ -7,6 +7,7 @@ describe('continueToLogin', () => {
   it('should continue on the login screen with the transaction cookie', () => {
     expect(continueToLogin('txn-1', 600)).toEqual({
       kind: 'login',
+      transactionId: 'txn-1',
       cookies: ['__Host-oidc_txn=txn-1; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600'],
     });
   });
@@ -14,6 +15,7 @@ describe('continueToLogin', () => {
   it('should give the cookie the lifetime of the transaction', () => {
     expect(continueToLogin('txn-2', 120)).toEqual({
       kind: 'login',
+      transactionId: 'txn-2',
       cookies: ['__Host-oidc_txn=txn-2; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=120'],
     });
   });

@@ -10,7 +10,7 @@ import { createEmptyDatabase } from '../../../db/memory/database.js';
 import { loadTransaction } from './load-transaction.js';
 
 function consentRequest(cookie?: string): Request {
-  return requestTo('/consent', cookie === undefined ? {} : { headers: { Cookie: cookie } });
+  return requestTo('/consent?transaction_id=txn-1', cookie === undefined ? {} : { headers: { Cookie: cookie } });
 }
 
 describe('loadTransaction', () => {

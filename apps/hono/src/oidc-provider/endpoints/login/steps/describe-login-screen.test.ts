@@ -11,7 +11,7 @@ describe('describeLoginScreen', () => {
 
     const screen = await describeLoginScreen(c, TRANSACTION_ID, sampleTransaction({ loginHint: 'alice' }));
 
-    expect(screen).toEqual({ kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: 'alice', loginMethods: [] });
+    expect(screen).toEqual({ kind: 'screen', transactionId: 'txn-1', csrfToken: CSRF_TOKEN, loginHint: 'alice', loginMethods: [] });
   });
 
   it('should offer no other login method while none is configured', async () => {
@@ -19,7 +19,7 @@ describe('describeLoginScreen', () => {
 
     const screen = await describeLoginScreen(c, TRANSACTION_ID, sampleTransaction());
 
-    expect(screen).toEqual({ kind: 'screen', csrfToken: CSRF_TOKEN, loginHint: undefined, loginMethods: [] });
+    expect(screen).toEqual({ kind: 'screen', transactionId: 'txn-1', csrfToken: CSRF_TOKEN, loginHint: undefined, loginMethods: [] });
   });
 
   describe('Login methods of the features', () => {

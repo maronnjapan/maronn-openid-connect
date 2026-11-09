@@ -38,6 +38,7 @@ export async function describeConsentScreen(
 
   return {
     kind: 'screen',
+    transactionId,
     csrfToken: transaction.csrfToken,
     scopes: displayedScopes,
     clientId: transaction.clientId,

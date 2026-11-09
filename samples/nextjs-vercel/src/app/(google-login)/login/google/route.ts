@@ -17,7 +17,7 @@
  */
 import { notFound } from 'next/navigation';
 import { NextResponse } from 'next/server';
-import { AuthTransactionError, getAuthTransaction } from '@maronn-openid-connect/core';
+import { AuthTransactionError, buildTransactionPath, getAuthTransaction } from '@maronn-openid-connect/core';
 import {
   getDefaultGoogleIdTokenVerifier,
   GoogleLoginError,
@@ -103,5 +103,5 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   await startSession(transactionId, transaction, subject);
-  return NextResponse.redirect(new URL('/consent', config.issuer), 302);
+  return NextResponse.redirect(new URL(buildTransactionPath('/consent', transactionId), config.issuer), 302);
 }

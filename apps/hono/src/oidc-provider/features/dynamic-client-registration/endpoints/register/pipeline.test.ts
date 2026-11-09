@@ -80,7 +80,7 @@ describe('registerApp', () => {
       id_token_signed_response_alg: 'RS256',
     });
     expect(authorize.status).toBe(302);
-    expect(authorize.headers.get('Location')).toBe(`${TEST_ISSUER}/login`);
+    expect(authorize.headers.get('Location')).toBe(`${TEST_ISSUER}/login?transaction_id=${authorize.headers.getSetCookie()[0]?.split(';')[0]?.split('=')[1]}`);
   });
 
   // OIDC Dynamic Client Registration 1.0 §2: the response types the provider answers (implicit-flow / hybrid-flow) are registrable.

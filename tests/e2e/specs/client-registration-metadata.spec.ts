@@ -154,14 +154,13 @@ function scopedClientAuthorizeUrl(issuer: string, scope: string): string {
   );
 }
 
-// The OP hands the browser the transaction id in a cookie, so /login and
-// /consent carry no query (specs/transaction-cookie.spec.ts).
+// The transaction ID in the URL must match the cookie and hidden form field.
 async function login(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

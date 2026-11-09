@@ -27,8 +27,8 @@ export async function handOffToConsent(
   subject: string,
   sessionId: string,
   authTime: number,
-): Promise<{ kind: 'authenticated'; cookies: string[] }> {
+): Promise<{ kind: 'authenticated'; transactionId: string; cookies: string[] }> {
   const authSessionStore = c.get('authSessionStore');
   await authSessionStore.set(transactionId, { subject, authTime, sessionId });
-  return { kind: 'authenticated', cookies: [buildSessionCookie(sessionId)] };
+  return { kind: 'authenticated', transactionId, cookies: [buildSessionCookie(sessionId)] };
 }

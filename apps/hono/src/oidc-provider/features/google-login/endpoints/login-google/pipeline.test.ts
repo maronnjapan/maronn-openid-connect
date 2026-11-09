@@ -69,6 +69,7 @@ describe('completeGoogleLogin', () => {
     const [subject] = [...db.users.keys()];
     expect(outcome).toEqual({
       kind: 'authenticated',
+      transactionId: 'txn-1',
       cookies: [`session_id=${sessionId}; HttpOnly; Secure; SameSite=Lax; Path=/`],
     });
     expect(session).toEqual({ subject, authTime: NOW });

@@ -1,4 +1,4 @@
-import { getAuthTransaction, type AuthTransaction } from '@maronn-openid-connect/core';
+import { getAuthTransaction, getTransactionIdFromUrl, validateTransactionId, type AuthTransaction } from '@maronn-openid-connect/core';
 import { parseTransactionId } from '../../../cookies.js';
 import { type LoginError, transactionErrorOutcome } from '../screen.js';
 import { step } from '../../step.js';
@@ -16,7 +16,7 @@ export const meta = step({
 });
 
 /**
- * Cookie が指すトランザクションを読み込んで返す。
+ * Return the cookie transaction only when the URL and any submitted IDs match.
  *
  * トランザクションの ID は、`/authorize` が設定したトランザクションの Cookie（cookies.ts の `buildTransactionCookie()`）から読み、トランザクションはストアから読み込む（`loadTransactionById()`）。
  * Cookie がないとき、トランザクションが見つからないとき（すでに終わったものを含む）、期限切れのときは、代わりに表示するエラー（ステータスコード 400）を返す。
@@ -26,6 +26,7 @@ export const meta = step({
  */
 export async function loadTransaction(
   c: any,
+  submittedTransactionIds: readonly unknown[] = [],
 ): Promise<{ transactionId: string; transaction: AuthTransaction } | LoginError> {
   const transactionId = parseTransactionId(c.req.header('Cookie') ?? null);
   if (!transactionId) {
@@ -34,6 +35,11 @@ export async function loadTransaction(
       error: 'No authorization request is in progress in this browser. Start again from the application.',
       statusCode: 400,
     };
+  }
+  try {
+    validateTransactionId(transactionId, [getTransactionIdFromUrl(c.req.url), ...submittedTransactionIds]);
+  } catch (error) {
+    return transactionErrorOutcome(error);
   }
   const loaded = await loadTransactionById(c, transactionId);
   if ('kind' in loaded) return loaded;

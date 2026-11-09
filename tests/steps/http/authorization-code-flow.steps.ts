@@ -41,7 +41,7 @@ When('the client {string} sends an authorization request with scope {string}', a
 When('the user logs in on the login page', async ({ page, flow }) => {
   const user = flow.user;
   if (user === undefined) throw new Error('The scenario names no user: add "Given the user ... can log in with the password ..."');
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill(user.username);
   await page.getByLabel('Password:').fill(user.password);
   await page.getByRole('button', { name: 'Login' }).click();
@@ -50,7 +50,7 @@ When('the user logs in on the login page', async ({ page, flow }) => {
 // RFC 6749 §4.1.2: the OP redirects to the redirect URI with the code and the state.
 When('the user approves on the consent page', async ({ page, flow }) => {
   const authorization = requiredAuthorization(flow);
-  await expect(page).toHaveURL(/\/consent$/);
+  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   const redirect = new URL(authorization.client.redirectUri);
   await page.waitForURL((url) => url.origin === redirect.origin && url.pathname === redirect.pathname);

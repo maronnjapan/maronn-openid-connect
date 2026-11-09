@@ -3,6 +3,7 @@ import type { FlowEndpoint, MapData, MapFeature } from '../types';
 import { endpointMark, type ChangeIndex } from '../lib/changes';
 import { commandLine } from '../lib/model';
 import { Badge } from './ChangeParts';
+import { FeatureBadge } from './FeatureBadge';
 
 export interface SidebarProps {
   data: MapData;
@@ -47,6 +48,7 @@ export function Sidebar({ data, changes, framework, enabled, endpoints, selected
         <button type="button" aria-current={endpoint.id === selected ? 'page' : undefined} onClick={() => onEndpoint(endpoint.id)}>
           <span className="endpoint-label">
             {endpoint.label}
+            {' '}<FeatureBadge features={data.features} feature={endpoint.feature} />
             {mark === undefined ? null : (
               <>
                 {' '}

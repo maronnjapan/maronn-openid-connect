@@ -37,6 +37,7 @@ export interface FeatureTest {
 
 /** What the tags of a case say. */
 export interface FeatureTags {
+  features?: string[];
   endpoints: string[];
   functions: string[];
   scenarios: string[];
@@ -64,7 +65,8 @@ export function readFeatureTags(tags: readonly string[]): FeatureTags {
     const tag = raw.replace(/^@/, '');
     const colon = tag.indexOf(':');
     const [name, value] = colon === -1 ? [tag, ''] : [tag.slice(0, colon), tag.slice(colon + 1)];
-    if (name === 'endpoint') read.endpoints.push(value);
+    if (name === 'feature') read.features = [...(read.features ?? []), ...value.split(',')];
+    else if (name === 'endpoint') read.endpoints.push(value);
     else if (name === 'function') read.functions.push(value);
     else if (name === 'scenario') read.scenarios.push(value);
     else if (name === 'spec') read.spec.push(specOfTag(value));

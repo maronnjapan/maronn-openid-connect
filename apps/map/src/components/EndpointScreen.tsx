@@ -6,6 +6,7 @@ import { endpointSources } from '../lib/source';
 import { entryOf, type TraceState } from '../lib/trace';
 import { Badge } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
+import { FeatureBadge } from './FeatureBadge';
 import { ScreenHeader } from './ScreenHeader';
 import { StepPanel } from './StepPanel';
 import { Trace } from './Trace';
@@ -48,6 +49,7 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
             <code className="route">
               {endpoint.methods.join(' | ')} {endpoint.path}
             </code>
+            <FeatureBadge features={data.features} feature={endpoint.feature} />
             {mark !== undefined ? <Badge mark={mark} /> : null}
             {endpoint.source !== undefined ? (
               <button type="button" className="code-button" aria-label="エンドポイント全体のコードを見る" onClick={() => setCode(endpoint.source as string)}>

@@ -51,6 +51,15 @@ function changesOf(changedLines: number[]): MapChanges {
 }
 
 describe('checkMap', () => {
+  it('should reject feature labels with an unknown flag or a range outside the source', async () => {
+    const { data, frame } = mapOf([]);
+    data.sources['core:a.ts'] = { path: 'packages/core/src/a.ts', url: 'a.json', features: [{ feature: 'unknown', lines: [1, 9] }] };
+    expect((await checkMap(data, async () => frame, async () => 'function f() {}')).failures).toEqual([
+      'core:a.ts: source range names unknown feature unknown',
+      'core:a.ts: feature unknown has invalid source lines',
+    ]);
+  });
+
   it('should count two choices told apart by a number only as one name repeated', async () => {
     const { data, frame } = mapOf(['例外が起きたとき → return null', '例外が起きたとき → return null (2)']);
     const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined);

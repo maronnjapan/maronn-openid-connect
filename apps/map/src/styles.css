@@ -126,6 +126,7 @@ h1, h2, h3, h4 { margin: 0; }
 .back { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 13px; }
 .chip { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .chip.mono { white-space: normal; overflow-wrap: anywhere; }
+.feature-badge { display: inline-block; padding: 0 6px; border: 1px solid var(--muted); border-radius: 4px; color: var(--fg); background: var(--surface-2); font-family: var(--font-ui); font-size: 11px; line-height: 1.6; white-space: nowrap; vertical-align: middle; }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle; }
 .facts-row { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--muted); }
 
@@ -519,6 +520,9 @@ h1, h2, h3, h4 { margin: 0; }
 .code-drawer .source-code { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 12px 16px 24px 0; background: var(--source-background, var(--bg)); font-size: 12.5px; line-height: 1.6; tab-size: 2; }
 .source-line { display: grid; grid-template-columns: 4.5em max-content; min-width: 100%; width: max-content; white-space: pre; }
 .source-line-number { position: sticky; left: 0; padding-right: 12px; margin-right: 12px; border-right: 1px solid var(--line); background: var(--source-background, var(--bg)); color: var(--muted); text-align: right; user-select: none; }
+.source-features { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.source-feature-line .source-line-number { border-right: 3px solid var(--muted); padding-right: 10px; }
+.source-feature-label { margin-left: 16px; user-select: none; }
 
 /* ---- narrow screens: the outline and its toolbar, with navigation in the menu */
 .mobile-menu-toggle { position: fixed; z-index: 10; top: max(8px, env(safe-area-inset-top, 0px)); left: max(8px, env(safe-area-inset-left, 0px)); width: 44px; height: 44px; }
@@ -555,6 +559,7 @@ h1, h2, h3, h4 { margin: 0; }
   /* The bar of the outline leaves room for the floating ☰ (44px at 8px from the corner) and names the root; the hint has no room. */
   .outline-tools { min-height: max(64px, calc(env(safe-area-inset-top, 0px) + 56px)); padding: 8px 12px 8px max(64px, calc(env(safe-area-inset-left, 0px) + 60px)); gap: 8px; }
   .outline-title { display: block; flex: 1 1 auto; }
+  .outline-root-name { display: block; overflow: hidden; text-overflow: ellipsis; }
   .outline-mode button { padding: 4px 8px; min-height: 36px; }
   .pane-toggle { padding: 6px 8px; min-height: 36px; font-size: 12px; }
   .trace { padding: 8px 0 48px; }
@@ -564,7 +569,7 @@ h1, h2, h3, h4 { margin: 0; }
   .trace-line { gap: 2px 6px; }
   .trace-row:not(.branch) > .trace-line > .row-words { min-width: 40%; flex-shrink: 1000; }
   .below-words, .trace-row > .trace-line > .row-change, .trace-row > .trace-line > .sides, .trace-row > .trace-line > .line-action { display: none; }
-  .trace .trace-row > .trace-line > :is(.badge, .below, .tag, .chip, .row-failure) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trace .trace-row > .trace-line > :is(.badge, .below, .tag, .chip, .feature-badge, .row-failure) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-sides { display: block; }
   .row-actions { display: flex; }
   .twisty { width: 32px; height: 32px; font-size: 14px; }

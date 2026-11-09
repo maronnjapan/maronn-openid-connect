@@ -26,6 +26,7 @@ const redirectUri = `${clientBaseURL}/implicit-callback`;
  * A sample OP generated with `--disable implicit-flow` does not advertise the
  * response types, and every test here skips itself.
  */
+// @feature implicit-flow
 test.describe('Implicit Flow', () => {
   test('should return the access token and the ID Token in the fragment after consent', async ({
     page,

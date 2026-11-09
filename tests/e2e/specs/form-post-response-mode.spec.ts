@@ -20,6 +20,7 @@ const redirectUri = `${clientBaseURL}/callback`;
  * A sample OP generated with `--disable form-post-response-mode` does not
  * advertise form_post, and every test here skips itself.
  */
+// @feature form-post-response-mode
 test.describe('OAuth 2.0 Form Post Response Mode', () => {
   test('should post the authorization code to the redirect URI after consent', async ({ page, request, baseURL }) => {
     const issuer = requireBaseUrl(baseURL);

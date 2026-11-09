@@ -36,6 +36,7 @@ test.describe('Authorization endpoint browser branches', () => {
     await expect(page.getByTestId('authorization-issuer')).toHaveText(issuer);
   });
 
+  // @feature refresh-token
   test('should issue and rotate a refresh token for an offline_access grant', async ({
     page,
     request,
@@ -97,6 +98,7 @@ test.describe('Authorization endpoint browser branches', () => {
   // （"The Authorization Server MAY grant Refresh Tokens in other contexts"）。この OP は
   // その other contexts を online refresh token として実装し、ログインセッションへ束縛する。
   // ここでは実ブラウザで「セッションが終わると online refresh token が死ぬ」ことを確かめる。
+  // @feature refresh-token
   test('should stop an online refresh token once re-authentication ends the login session', async ({
     page,
     request,
@@ -147,6 +149,7 @@ test.describe('Authorization endpoint browser branches', () => {
 
   // 対になる確認: offline_access を付与した Refresh Token はセッションから独立しているので、
   // 同じ再認証を挟んでも使い続けられる。これが online と offline を分ける唯一の違い。
+  // @feature refresh-token
   test('should keep an offline_access refresh token usable after re-authentication', async ({
     page,
     request,

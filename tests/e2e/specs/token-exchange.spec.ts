@@ -19,6 +19,7 @@ const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
  * every test here skips when discovery does not advertise the URN. That keeps
  * the shared spec suite green across all sample OPs.
  */
+// @feature token-exchange
 test.describe('Token Exchange (RFC 8693)', () => {
   test('should exchange a browser-obtained access token for a narrowed one', async ({
     page,

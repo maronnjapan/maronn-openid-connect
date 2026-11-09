@@ -11,6 +11,7 @@ const resourceServerURL =
 const clientId = 'e2e-client';
 
 test.describe('Authorization Code Flow', () => {
+  // @feature refresh-token
   test('should complete Authorization Code Flow with separate E2E client and resource server', async ({
     page,
     request,

@@ -31,6 +31,7 @@ const redirectUri = `${clientBaseURL}/request-object-callback`;
  * at once. The destination checks and the refetch interval are covered by the
  * unit tests of core.
  */
+// @feature request-object
 test.describe('client jwks_uri (RFC 7591 §2)', () => {
   test.beforeEach(async ({ request, baseURL }) => {
     const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));

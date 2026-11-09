@@ -28,6 +28,7 @@ const redirectUri = `${clientBaseURL}/hybrid-callback`;
  * A sample OP generated with `--disable hybrid-flow` does not advertise the
  * response types, and every test here skips itself.
  */
+// @feature hybrid-flow
 test.describe('Hybrid Flow', () => {
   test('should return the code with the access token and the ID Token in the fragment after consent, then exchange the code', async ({
     page,

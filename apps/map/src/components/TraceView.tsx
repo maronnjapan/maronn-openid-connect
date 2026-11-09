@@ -21,6 +21,7 @@ import {
 } from '../lib/trace';
 import { firstSentence, nodeWords, runWords, sideLabel, sideWords } from '../lib/words';
 import { Badge, DiffView, Inline } from './ChangeParts';
+import { FeatureBadge } from './FeatureBadge';
 
 /** The part of the diff of a changed frame that a call of a member leads to (see memberChanges): the frame, its name with its root, and its hunks there. */
 export interface MemberDiff {
@@ -258,6 +259,7 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
               </span>
             ) : null}
           </button>
+          <FeatureBadge features={data.features} feature={node.feature ?? node.step?.feature ?? (callee === undefined ? undefined : entryOf(data, callee)?.feature)} implementation={node.feature === undefined && node.step?.feature === undefined} />
           {exitTags(row.step?.exits ?? []).map((tag) => (
             <span key={tag.tone} className={`tag tag-${tag.tone}${tag.on ? '' : ' tag-off'}`} title={tag.tone === 'error' ? 'このステップの中で失敗して終わる' : 'このステップの中で終わる'}>
               {tag.text}
@@ -429,7 +431,8 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
     <div className="trace-outline">
       <div className="outline-tools">
         <strong className="outline-title" title={title}>
-          {title}
+          <span className="outline-root-name">{title}</span>
+          <FeatureBadge features={data.features} feature={root?.feature} implementation />
         </strong>
         <span className="seg outline-mode" role="group" aria-label="行の表示">
           {(['words', 'code'] as const).map((mode) => (

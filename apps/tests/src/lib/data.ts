@@ -25,6 +25,7 @@ import type { Source } from './route';
 
 export interface Db {
   index: TestsIndex;
+  features: NonNullable<TestsOutline['features']>;
   endpoints: OutlineEndpoint[];
   functions: Record<string, OutlineFunction>;
   byId: Map<string, TestEntry>;
@@ -68,6 +69,7 @@ function byLine(a: TestEntry, b: TestEntry): number {
  */
 export function buildDb(index: TestsIndex, outline?: TestsOutline, diff?: TestDiff | Error): Db {
   const tests = index.tests ?? [];
+  const features = outline?.features ?? [];
   const byId = new Map<string, TestEntry>();
   const byFile = new Map<string, TestEntry[]>();
   const haystack = new Map<string, string>();
@@ -76,7 +78,8 @@ export function buildDb(index: TestsIndex, outline?: TestsOutline, diff?: TestDi
     const list = byFile.get(test.file);
     if (list === undefined) byFile.set(test.file, [test]);
     else list.push(test);
-    haystack.set(test.id, [test.title, test.ja ?? '', test.file, ...(test.path ?? [])].join('\n').toLowerCase());
+    const featureWords = (test.features ?? []).flatMap((id) => [id, features.find((feature) => feature.id === id)?.flag ?? '']);
+    haystack.set(test.id, [test.title, test.ja ?? '', test.file, ...(test.path ?? []), ...featureWords].join('\n').toLowerCase());
   }
   for (const list of byFile.values()) list.sort(byLine);
   // An outline of another version may lack a part of an endpoint: the page reads it as empty.
@@ -88,6 +91,7 @@ export function buildDb(index: TestsIndex, outline?: TestsOutline, diff?: TestDi
   }));
   const functions = outline?.functions ?? {};
   return {
+    features,
     index: { ...index, tests, counts: index.counts ?? countsOf(tests), endpoints: index.endpoints ?? {}, sources: index.sources ?? {}, aspectLabels: index.aspectLabels ?? {} },
     endpoints,
     functions,

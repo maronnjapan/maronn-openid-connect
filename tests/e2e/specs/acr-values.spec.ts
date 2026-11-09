@@ -58,6 +58,7 @@ test.describe('acr_values', () => {
 
   // OIDC Core 1.0 §12.1: a refreshed ID Token keeps the acr / amr of the first
   // authentication, and the refreshed access token keeps the same acr.
+  // @feature refresh-token
   test('should keep the acr of the first authentication when the tokens are refreshed', async ({
     page,
     request,

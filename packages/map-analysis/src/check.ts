@@ -114,6 +114,17 @@ export async function checkMap(data: MapData, readFrame: (url: string) => Promis
   }
   const entries = [...Object.values(data.functions), ...Object.values(data.bodies)];
   const texts = new Map<string, string | undefined>();
+  const features = new Set(data.features.map((feature) => feature.id));
+  for (const [id, source] of Object.entries(data.sources)) {
+    if (source.features === undefined) continue;
+    const text = await readSource(id);
+    texts.set(id, text);
+    const last = text === undefined ? undefined : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+    for (const range of source.features) {
+      if (!features.has(range.feature)) failures.push(`${id}: source range names unknown feature ${range.feature}`);
+      if (range.lines.length !== 2 || !range.lines.every((line) => Number.isSafeInteger(line) && line >= 1) || range.lines[0] > range.lines[1] || (last !== undefined && range.lines[1] > last)) failures.push(`${id}: feature ${range.feature} has invalid source lines`);
+    }
+  }
   const changed = new Map((data.changes?.frames ?? []).map((entry) => [entry.id, entry]));
   for (const entry of entries) {
     if (entry.frame === '') continue;

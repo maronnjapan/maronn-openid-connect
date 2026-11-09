@@ -20,6 +20,7 @@ import { markOf, mergeByPlace, prCounts, type PrMark, type RemovedTest } from '.
 import { withoutPanel, type KindFilter, type OutcomeFilter, type Source } from '../lib/route';
 import { cardIn, needsCard, removedTarget, targetOf, withoutImplied, type Target, type TargetContext } from '../lib/targets';
 import { useApp, useCards } from './app-context';
+import { TestFeatures } from './FeatureBadge';
 import { ChangedToggle, PrCountsText, PrPill, prTitle } from './PrMarks';
 import { TargetLine } from './Target';
 import { OutcomeBadge, Segmented, StatusIcon } from './ui';
@@ -88,6 +89,7 @@ export function RowItem({ row, said, current, hideFile, quiet }: { row: Row; sai
           {state !== undefined && quiet !== true && <PrPill state={state} title={prTitle(state, change, lang)} />}
           {row.removed === true ? <s className="row-gone">{title}</s> : title}
         </span>
+        <TestFeatures ids={row.entry?.features} />
         {before !== undefined && (
           <span className="row-before">
             <span className="row-before-label">旧名</span>

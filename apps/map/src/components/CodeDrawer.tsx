@@ -1,11 +1,12 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react';
 import type { DiffHunk, MapData, SourceDocument } from '../types';
 import { allHunks, type ChangeIndex } from '../lib/changes';
-import { sourceLines, type SourceTarget } from '../lib/source';
+import { featureSourceLines, type SourceTarget } from '../lib/source';
 import { entryOf } from '../lib/trace';
 import { DiffView } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
 import { fetchFrame } from './useFrames';
+import { FeatureBadge } from './FeatureBadge';
 
 type LoadedSource = { url: string; document: SourceDocument } | { url: string; error: string };
 
@@ -65,7 +66,8 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   const current = loaded?.url === url ? loaded : null;
   const document = current !== null && 'document' in current ? current.document : undefined;
   const code = document?.code;
-  const lines = code === undefined ? [] : sourceLines(code, wholeFile ? undefined : target?.start, wholeFile ? undefined : target?.end);
+  const lines = code === undefined ? [] : featureSourceLines(code, document?.features ?? source?.features, wholeFile ? undefined : target?.start, wholeFile ? undefined : target?.end);
+  const features = [...new Set(lines.flatMap((line) => line.features))];
   const showDiff = mode === 'diff' && hunks !== undefined && hunks.length > 0;
   return (
     <DetailDrawer title="コード" className="code-drawer" closeLabel="コードを閉じる" onClose={onClose}>
@@ -110,6 +112,12 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
           ) : null}
         </div>
         <p className="note">リポジトリのソースです。機能や選んだ道筋にかかわらず、全機能を含むコードを表示します。</p>
+        {!showDiff && features.length > 0 ? (
+          <div className="source-features">
+            <span className="note">左線と機能名で、その機能の実装の範囲を示します。</span>
+            {features.map((feature) => <FeatureBadge key={feature} features={data.features} feature={feature} />)}
+          </div>
+        ) : null}
       </header>
       {showDiff ? (
         <div className="drawer-diff">
@@ -141,7 +149,7 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
         <pre key={`${selected}:${wholeFile}`} className="source-code" style={{ color: document?.foreground, '--source-background': document?.background } as CSSProperties} tabIndex={0} aria-label={`${target?.label} のコード`}>
           <code>
             {lines.map((line) => (
-              <span key={line.number} className="source-line">
+              <span key={line.number} className={`source-line${line.features.length > 0 ? ' source-feature-line' : ''}`} title={line.features.length === 0 ? undefined : `${line.features.join('、')} の実装`}>
                 <span className="source-line-number" aria-hidden="true">
                   {line.number}
                 </span>
@@ -151,6 +159,7 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
                       {token.content}
                     </span>
                   )) ?? line.text}
+                  {line.starts.map((feature) => <span key={feature} className="source-feature-label"><FeatureBadge features={data.features} feature={feature} implementation /></span>)}
                   {'\n'}
                 </span>
               </span>

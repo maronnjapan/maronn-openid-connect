@@ -7,8 +7,9 @@
  *
  * The tests viewer (apps/tests) imports these types as
  * `@maronn-openid-connect/test-catalog/model`, so this module has no code and
- * imports nothing.
+ * has only type imports.
  */
+import type { FeatureRange, MapFeature } from '@maronn-openid-connect/map-analysis';
 
 /**
  * What kind of test a case is, by where it is and what it does:
@@ -156,6 +157,8 @@ export interface TestCase {
   /** The `describe` blocks it is in, or the feature (and the outline) of a scenario. */
   path: string[];
   subjects: Subject[];
+  /** Features this case directly tests: its file owner, explicit annotations and direct subjects; never transitive reach. */
+  features?: string[];
   /**
    * The requests it sends, in the order of the code: every request of an API
    * test (to an endpoint, or not); the requests of an E2E test to the
@@ -298,6 +301,8 @@ export interface TestEntry {
   outcome: TestOutcome;
   aspects: string[];
   subjects: Subject[];
+  /** Features this case directly tests: its file owner, explicit annotations and direct subjects; never transitive reach. */
+  features?: string[];
   /**
    * Why the requests of an API test that reach no endpoint of the OP reach
    * none (RequestShape.route), each once: the lists tell a test of routes of
@@ -390,6 +395,8 @@ export interface TestsIndex {
 
 /** tests/sources/<hash>.json: the text of a file the viewer shows (TestsIndex.sources): a test file, or the file of a helper, a step definition, a function or an endpoint body. */
 export interface TestSource {
+  /** Feature-owned lines of the implementation, preserved from the map. */
+  features?: FeatureRange[];
   path: string;
   text: string;
 }
@@ -404,6 +411,7 @@ export interface FileTests {
 
 /** A step of an endpoint in the outline: its name, and the function it calls when it has one of its own (hono). */
 export interface OutlineStep {
+  feature?: string;
   id: string;
   /** Its name in Japanese (`クライアントを認証する`). */
   label: string;
@@ -427,6 +435,7 @@ export interface OutlineStep {
 
 /** An endpoint of a source in the outline, in the order of the map. */
 export interface OutlineEndpoint {
+  feature?: string;
   /** `<source>:<endpoint>`, the key of TestsIndex.endpoints. */
   key: string;
   source: 'hono' | 'nextjs';
@@ -447,6 +456,7 @@ export interface OutlineEndpoint {
 
 /** A function of the catalog the viewer names. */
 export interface OutlineFunction {
+  feature?: string;
   id: string;
   name: string;
   package: string;
@@ -465,6 +475,8 @@ export interface OutlineFunction {
  * functions they call, transitively.
  */
 export interface TestsOutline {
+  /** CLI flags and defaults of the features named by the outline and tests. */
+  features?: MapFeature[];
   version: 1;
   endpoints: OutlineEndpoint[];
   functions: Record<string, OutlineFunction>;

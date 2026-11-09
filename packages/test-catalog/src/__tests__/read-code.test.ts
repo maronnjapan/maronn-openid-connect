@@ -595,3 +595,26 @@ describe('readComments', () => {
     });
   });
 });
+
+describe('feature annotations', () => {
+  it('should inherit suite feature annotations without assigning them to a sibling suite', () => {
+    const fixture = compileTests({ 'flags.test.ts': [
+      '// @feature par',
+      "test.describe('PAR', () => {",
+      "  describe('nested', () => {",
+      '    // @feature refresh-token',
+      "    test('should check both', () => expect(true).toBe(true));",
+      '  });',
+      "  test('should check PAR', () => expect(true).toBe(true));",
+      '});',
+      "test.describe('shared', () => {",
+      "  test('should remain shared', () => expect(true).toBe(true));",
+      '});',
+    ].join('\n') });
+    try {
+      expect(fixture.read('flags.test.ts').map((test) => test.comments.features)).toEqual([['par', 'refresh-token'], ['par'], undefined]);
+    } finally {
+      fixture.dispose();
+    }
+  });
+});

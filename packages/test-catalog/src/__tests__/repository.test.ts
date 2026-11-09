@@ -189,6 +189,39 @@ describe('the catalog of the repository', () => {
     expect(tests.flatMap((test) => (test.source.form === 'feature' ? (test.helpers ?? []) : [])).every((helper) => isTestSupportPath(helper.file))).toBe(true);
   });
 
+  it('should attribute every dedicated feature E2E case, including discovery and shared-endpoint cases, without tagging neighboring common cases', () => {
+    const suites: Record<string, string> = {
+      'pushed-authorization-requests': 'par',
+      'token-exchange': 'token-exchange',
+      jarm: 'jarm',
+      'device-authorization-grant': 'device-authorization-grant',
+      'xaa-id-jag': 'id-jag',
+      ciba: 'ciba',
+      'jwt-introspection-response': 'jwt-introspection-response',
+      'rp-initiated-logout': 'rp-initiated-logout',
+      'dynamic-client-registration': 'dynamic-client-registration',
+      'form-post-response-mode': 'form-post-response-mode',
+      'implicit-flow': 'implicit-flow',
+      'hybrid-flow': 'hybrid-flow',
+      'client-jwks-uri': 'request-object',
+      'client-keys': 'request-object',
+    };
+    for (const [suite, feature] of Object.entries(suites)) {
+      const cases = tests.filter((test) => test.source.file === `tests/e2e/specs/${suite}.spec.ts`);
+      expect([suite, cases.length > 0, cases.every((test) => test.features?.includes(feature))]).toEqual([suite, true, true]);
+    }
+    const scope = tests.filter((test) => test.source.file === 'tests/e2e/specs/client-scope.spec.ts');
+    expect(scope.find((test) => test.title.includes('device authorization'))?.features).toContain('device-authorization-grant');
+    expect(scope.find((test) => test.title.includes('backchannel authentication'))?.features).toContain('ciba');
+    expect(scope.filter((test) => !/device authorization|backchannel authentication/.test(test.title)).every((test) => test.features === undefined)).toBe(true);
+    const dcr = tests.filter((test) => test.source.file === 'tests/e2e/specs/dynamic-client-registration.spec.ts');
+    expect(dcr.filter((test) => test.title.includes('implicit client')).every((test) => test.features?.includes('implicit-flow'))).toBe(true);
+    expect(dcr.find((test) => test.title.includes('defaults applied'))?.features ?? []).not.toContain('implicit-flow');
+    const branches = tests.filter((test) => test.source.file === 'tests/e2e/specs/authorization-branches.spec.ts');
+    expect(branches.filter((test) => test.title.includes('refresh token')).every((test) => test.features?.includes('refresh-token'))).toBe(true);
+    expect(branches.find((test) => test.title.includes('consent denial'))?.features ?? []).not.toContain('refresh-token');
+  });
+
   it('should read the E2E specs as E2E tests against both apps, and leave the tests of the tools off the map', () => {
     const e2e = tests.filter((test) => test.root === 'e2e');
     expect(e2e.length).toBeGreaterThan(0);

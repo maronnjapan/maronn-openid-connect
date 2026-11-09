@@ -97,6 +97,7 @@ export function entryOf(test: TestCase): TestEntry {
     outcome: test.outcome,
     aspects: test.aspects,
     subjects: test.subjects,
+    ...(test.features === undefined ? {} : { features: test.features }),
     ...(routes.length === 0 ? {} : { routes }),
     evidence: test.evidence,
     ...(test.targets === undefined ? {} : { targets: test.targets }),

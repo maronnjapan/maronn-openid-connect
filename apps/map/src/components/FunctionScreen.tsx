@@ -6,6 +6,7 @@ import { frameSources } from '../lib/source';
 import type { TraceState } from '../lib/trace';
 import { Badge, ChangeDetail } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
+import { FeatureBadge } from './FeatureBadge';
 import { Chips, Description } from './Parts';
 import { ScreenHeader } from './ScreenHeader';
 import { Trace } from './Trace';
@@ -150,6 +151,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
               </button>
             ) : null}
             <h2 className="mono">{card.name}()</h2>
+            <FeatureBadge features={data.features} feature={card.feature} implementation />
             {mark !== undefined ? <Badge mark={mark} /> : null}
             {card.source !== undefined ? (
               <button type="button" className="code-button" aria-label="関数のコードを見る" onClick={() => setCode(card.id)}>

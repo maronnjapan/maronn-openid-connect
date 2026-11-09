@@ -22,6 +22,7 @@ const redirectUri = `${clientBaseURL}/multiple-auth-methods-callback`;
  * register.
  */
 test.describe('several client authentication methods', () => {
+  // @feature refresh-token
   test('should accept client_secret_basic and client_secret_post from a client that registered both', async ({
     page,
     request,

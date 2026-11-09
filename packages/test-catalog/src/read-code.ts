@@ -120,6 +120,7 @@ export interface HelperDeclaration {
 }
 
 export interface TestComments {
+  features?: string[];
   spec: string[];
   ja?: string;
   id?: string;
@@ -270,11 +271,12 @@ export function readComments(comments: readonly string[], specReferencesOf: (tex
         read.ja = (ja[1] as string).trim();
         continue;
       }
-      const tag = /^@(test-id|aspect|subject)\s+(.+)$/.exec(trimmed);
+      const tag = /^@(test-id|aspect|subject|feature)\s+(.+)$/.exec(trimmed);
       if (tag) {
         const values = (tag[2] as string).split(/[\s,]+/).filter((value) => value !== '');
         if (tag[1] === 'test-id') read.id = values[0];
         else if (tag[1] === 'aspect') read.aspects.push(...values);
+        else if (tag[1] === 'feature') read.features = [...(read.features ?? []), ...values];
         else read.subjects.push(...values);
         continue;
       }
@@ -1131,22 +1133,22 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
   const helpersOf = helperReader(file, importNodes, imported, options.helperOf);
   const tests: CodeTest[] = [];
 
-  const visit = (statements: readonly Node[], path: string[], described: string[], skipped: boolean, pathIds: Array<string | undefined> = [], pathCode: Array<NamedCodeRef | undefined> = []) => {
+  const visit = (statements: readonly Node[], path: string[], described: string[], skipped: boolean, pathIds: Array<string | undefined> = [], pathCode: Array<NamedCodeRef | undefined> = [], inheritedFeatures: string[] = []) => {
     for (const statement of statements) {
       // Tests written in a loop or under a condition.
       if (is(statement, SyntaxKind.ForOfStatement) || is(statement, SyntaxKind.ForStatement) || is(statement, SyntaxKind.ForInStatement)) {
         const body = statement['statement'] as Node;
-        visit(is(body, SyntaxKind.Block) ? (body['statements'] as Node[]) : [body], path, described, skipped, pathIds, pathCode);
+        visit(is(body, SyntaxKind.Block) ? (body['statements'] as Node[]) : [body], path, described, skipped, pathIds, pathCode, inheritedFeatures);
         continue;
       }
       if (is(statement, SyntaxKind.IfStatement)) {
         for (const branch of [statement['thenStatement'], statement['elseStatement']] as Array<Node | undefined>) {
-          if (branch !== undefined) visit(is(branch, SyntaxKind.Block) ? (branch['statements'] as Node[]) : [branch], path, described, skipped, pathIds, pathCode);
+          if (branch !== undefined) visit(is(branch, SyntaxKind.Block) ? (branch['statements'] as Node[]) : [branch], path, described, skipped, pathIds, pathCode, inheritedFeatures);
         }
         continue;
       }
       if (is(statement, SyntaxKind.Block)) {
-        visit(statement['statements'] as Node[], path, described, skipped, pathIds, pathCode);
+        visit(statement['statements'] as Node[], path, described, skipped, pathIds, pathCode, inheritedFeatures);
         continue;
       }
       if (!is(statement, SyntaxKind.ExpressionStatement)) continue;
@@ -1156,7 +1158,7 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
         const callee = unwrap(call['expression'] as Node);
         if (is(callee, SyntaxKind.PropertyAccessExpression) && nameOf(callee['name']) === 'forEach') {
           const fn = callbackOf(call);
-          visit(statementsOf(fn), path, described, skipped, pathIds, pathCode);
+          visit(statementsOf(fn), path, described, skipped, pathIds, pathCode, inheritedFeatures);
           continue;
         }
       }
@@ -1167,14 +1169,16 @@ export function readCodeTests(file: SourceFile, options: CodeReadOptions): CodeT
       const args = (any(call)['arguments'] as Node[] | undefined) ?? [];
       const title = titleOf(file, args[0]);
       const fn = callbackOf(call);
+      const comments = readComments(leadingComments(file, statement), options.specReferencesOf);
+      const features = [...new Set([...inheritedFeatures, ...(comments.features ?? [])])];
+      if (features.length > 0) comments.features = features;
       if (kind.kind === 'describe') {
         const name = describedName(title);
         const target = imported.get(name);
         const code = name === '' ? undefined : options.describedCode?.(name, file, importNodes.get(name));
-        visit(statementsOf(fn), [...path, title], target === undefined ? described : [...described, target], skipped || kind.skipped, [...pathIds, target], [...pathCode, code]);
+        visit(statementsOf(fn), [...path, title], target === undefined ? described : [...described, target], skipped || kind.skipped, [...pathIds, target], [...pathCode, code], features);
         continue;
       }
-      const comments = readComments(leadingComments(file, statement), options.specReferencesOf);
       const expectations: Expectation[] = [];
       const assertions: Assertion[] = [];
       const urls: string[] = [];

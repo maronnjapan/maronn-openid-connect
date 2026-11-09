@@ -16,6 +16,7 @@ const postLogoutRedirectUri = `${clientBaseURL}/logged-out`;
  * verify the session is really gone by starting a fresh authorization and
  * expecting the login screen instead of SSO.
  */
+// @feature rp-initiated-logout
 test.describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
   test('should log out through the RP link and return with state, ending SSO', async ({
     page,

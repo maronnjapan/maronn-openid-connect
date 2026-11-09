@@ -23,6 +23,7 @@ import { markChecks, type PrChange } from '../lib/pr';
 import { formatHash, type Source } from '../lib/route';
 import { targetOf } from '../lib/targets';
 import { useApp, useCard } from './app-context';
+import { TestFeatures } from './FeatureBadge';
 import { PrChangeBlock, PrPill, prTitle, RemovedCheck } from './PrMarks';
 import { hasMainTarget, ROUTE_LABELS, ROUTE_NOTES, TargetLine } from './Target';
 import { TestCode, type CodeState, type CodeTab } from './TestCode';
@@ -174,6 +175,7 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
           ))}
           {entry.skipped === true && <Badge>スキップ</Badge>}
         </div>
+        <TestFeatures ids={entry.features} link />
         {/* The requests to other routes are in 「リクエスト」 below, each with why it reaches no endpoint. */}
         {target !== undefined && hasMainTarget(target) && <TargetLine target={target} className="detail-target" onPick={pick} outside={false} />}
         <ResultLine card={full} entry={entry} />

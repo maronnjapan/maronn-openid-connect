@@ -38,6 +38,7 @@ interface DeviceResult {
  * token endpoint in the background while Playwright drives the browser through
  * the verification UI — the real two-device shape of the flow.
  */
+// @feature device-authorization-grant
 test.describe('Device Authorization Grant (RFC 8628)', () => {
   test('should issue tokens after the user approves on a second device', async ({
     page,

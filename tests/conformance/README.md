@@ -616,5 +616,12 @@ runnerがOP Discovery待ちでタイムアウトする場合は、以下を確�
 - `tests/conformance/results/docker-compose.log`
 - Docker Composeサービスログ
 
+OPのコンテナがすぐに止まる（`dependency failed to start: container ...-op-1 exited (1)`）場合は、`run-op.sh` が失敗した実行の最後に出す op サービスのログの末尾を確認してください。
+`hono-cloudflare` と `nextjs-vercel` は、コンテナの中で `pnpm start` を使って起動します。
+ワークスペースは、ホストで依存を入れたものを別のパス（`/workspace`）に読み取り専用でマウントしています。
+pnpm 11 以降は、スクリプトの実行前に `node_modules` と lockfile が合っているかを確かめます。
+このワークスペースは合っていないと判定され、`ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` で止まります。
+そのため、`docker-compose.yml` は op サービスにだけ `pnpm_config_verify_deps_before_run: "false"` を渡しています。
+
 Suiteが失敗してもZIPがエクスポートされている場合は、まずZIPを確認してください。`0` 以外の終了は
 ローカルセットアップ失敗ではなく、実際のcertification failureを意味する場合があります。

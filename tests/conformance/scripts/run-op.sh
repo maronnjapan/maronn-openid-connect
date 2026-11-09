@@ -134,6 +134,13 @@ set -e
 
 docker compose -f "${COMPOSE_FILE}" logs --no-color > "${RESULTS_DIR}/docker-compose.log" 2>/dev/null || true
 
+if [[ "${status}" -ne 0 ]]; then
+  # The output above is the runner's only: an OP that did not come up says why
+  # in its own log (all of it is in docker-compose.log of the results).
+  echo "The last lines of the op service:" >&2
+  docker compose -f "${COMPOSE_FILE}" logs --no-color --tail 80 op >&2 || true
+fi
+
 if [[ "${CONFORMANCE_KEEP_SERVICES:-0}" != "1" ]]; then
   docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || true
 fi

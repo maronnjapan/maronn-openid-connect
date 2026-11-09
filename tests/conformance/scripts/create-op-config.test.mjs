@@ -448,6 +448,19 @@ describe('run-op.sh', () => {
       );
     });
   });
+
+  describe('failed runs', () => {
+    // The job log shows only the runner service: an OP that does not come up
+    // says why only in its own log.
+    it('should print the end of the log of the op service when the run fails', () => {
+      const runScript = readFileSync(join(scriptDir, 'run-op.sh'), 'utf8');
+
+      assert.match(
+        runScript,
+        /if \[\[ "\$\{status\}" -ne 0 \]\]; then\n(?:  #.*\n)*  echo "[^"\n]*" >&2\n  docker compose -f "\$\{COMPOSE_FILE\}" logs --no-color --tail 80 op >&2 \|\| true\nfi\n/,
+      );
+    });
+  });
 });
 
 describe('docker-compose.yml', () => {
@@ -474,6 +487,17 @@ describe('docker-compose.yml', () => {
       assert.match(compose, /\n      - \.\/\.generated\/certs\/conformance-nginx\.crt:\/etc\/ssl\/certs\/nginx-selfsigned\.crt:ro\n/);
       assert.match(compose, /\n      - \.\/\.generated\/certs\/conformance-nginx\.key:\/etc\/ssl\/private\/nginx-selfsigned\.key:ro\n/);
       assert.doesNotMatch(compose, /NODE_TLS_REJECT_UNAUTHORIZED/);
+    });
+
+    // hono-cloudflare and nextjs-vercel start with `pnpm start`. pnpm 11 and
+    // later check node_modules against the lockfile before running a script;
+    // the workspace was installed on the host at another path and is mounted
+    // read-only, so the check finds it out of sync and stops the OP, and it
+    // could not install there anyway.
+    it('should run the pnpm start commands without checking the dependencies of the mounted workspace', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(compose, /\n      pnpm_config_verify_deps_before_run: "false"\n/);
     });
   });
 });

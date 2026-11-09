@@ -88,6 +88,13 @@ services:
       # the workspace by default).
       OIDC_D1_PERSIST_PATH: /tmp/maronn-openid-connect-d1
       OIDC_SQLITE_PATH: /tmp/maronn-openid-connect.sqlite
+      # hono-cloudflare and nextjs-vercel start with `pnpm start`. pnpm 11 and
+      # later check node_modules against the lockfile before running a script
+      # (verify-deps-before-run). The workspace was installed on the host at
+      # another path and is mounted read-only, so the check finds it out of
+      # sync and stops the OP (ERR_PNPM_VERIFY_DEPS_BEFORE_RUN); it could not
+      # install there anyway.
+      pnpm_config_verify_deps_before_run: "false"
 
   op-tls:
     image: nginx:1.27-alpine

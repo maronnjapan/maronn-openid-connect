@@ -82,8 +82,7 @@ async function registerClient(request: APIRequestContext, issuer: string, metada
 
 function authorizeUrl(issuer: string, clientId: string): string {
   const codeVerifier = randomBytes(32).toString('base64url');
-  const url = new URL('/authorize', issuer);
-  url.search = new URLSearchParams({
+  const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: registeredRedirectUri,
     response_type: 'code',
@@ -92,8 +91,8 @@ function authorizeUrl(issuer: string, clientId: string): string {
     nonce: randomBytes(16).toString('base64url'),
     code_challenge: createHash('sha256').update(codeVerifier).digest('base64url'),
     code_challenge_method: 'S256',
-  }).toString();
-  return url.toString();
+  });
+  return `${issuer}/authorize?${params}`;
 }
 
 async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<Record<string, unknown>> {

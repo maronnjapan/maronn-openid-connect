@@ -171,9 +171,8 @@ async function requestUriAuthorization(
 
 /** The URL of an authorization request of clientId with the parameters OIDC Core 1.0 §6.2 keeps in the query. */
 function authorizeUrl(issuer: string, clientId: string, extra: Record<string, string>): string {
-  const url = new URL('/authorize', issuer);
-  url.search = new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'openid', ...extra }).toString();
-  return url.toString();
+  const params = new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'openid', ...extra });
+  return `${issuer}/authorize?${params}`;
 }
 
 /** The authorization request, answered without following a redirect and with JSON for an error. */

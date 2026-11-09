@@ -87,8 +87,7 @@ async function jwksKids(request: APIRequestContext, issuer: string): Promise<str
 /** Signs in, approves and redeems the code, and returns the ID Token the token endpoint issued. */
 async function issueIdToken(page: Page, request: APIRequestContext, issuer: string): Promise<string> {
   const codeVerifier = randomBytes(32).toString('base64url');
-  const authorizeUrl = new URL('/authorize', issuer);
-  authorizeUrl.search = new URLSearchParams({
+  const params = new URLSearchParams({
     client_id: client.clientId,
     redirect_uri: client.redirectUri,
     response_type: 'code',
@@ -99,9 +98,9 @@ async function issueIdToken(page: Page, request: APIRequestContext, issuer: stri
     code_challenge_method: 'S256',
     // A fresh login, whatever session an earlier spec left in the browser.
     prompt: 'login consent',
-  }).toString();
+  });
 
-  await page.goto(authorizeUrl.toString());
+  await page.goto(`${issuer}/authorize?${params}`);
   await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');

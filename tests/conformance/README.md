@@ -545,6 +545,16 @@ Dynamic OP の変更の後も、3つのプランは4つのサンプルのどれ�
 20の実行はどれも exit 0 だった。
 `hono-cloudflare` の Dynamic OP は、前と同じく 13 PASSED、3 SKIPPED（想定どおり）、823 SUCCESS / 0 FAILURE / 0 WARNING だった。
 
+### main を取り込んだ後の再実行（2026-11-09、CI）
+
+main（ログイン画面と同意画面のトランザクションを URL とフォームに束縛する変更、pnpm の固定の解除など）を取り込んだ後に、5つのプランを4つのサンプルのそれぞれで実行し直した。
+`469a3b0` では、`express-flyio` と `fastify-flyio` の10の実行はどれも exit 0 だった。
+`hono-cloudflare` と `nextjs-vercel` の10の実行は、どのプランでも Suite の前に OP のコンテナが止まった（[トラブルシューティング](#トラブルシューティング) の `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN`）。
+op サービスに `pnpm_config_verify_deps_before_run: "false"` を渡した `1f4e852` で、この10を実行し直した。
+この10の実行も、どれも exit 0 だった（`469a3b0` から `1f4e852` までの変更は、op サービスの環境変数と、失敗した実行の最後に出すログだけである）。
+`hono-cloudflare` の Dynamic OP は、取り込む前と同じく 13 PASSED、3 SKIPPED（想定どおり）、823 SUCCESS / 0 FAILURE / 0 WARNING だった。
+`express-flyio` の Dynamic OP は、13 PASSED、3 SKIPPED（想定どおり）、821 SUCCESS / 0 FAILURE / 0 WARNING だった。
+
 ## 実行時間
 
 - `op` サービスは Discovery に応答するまで healthy にならず、`op-tls` と `runner` は healthy になってから起動します。OP が起動しない場合は、約3分で `docker compose up` が失敗します。

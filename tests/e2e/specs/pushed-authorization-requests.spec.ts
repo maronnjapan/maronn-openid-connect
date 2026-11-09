@@ -15,6 +15,7 @@ const REQUEST_URI_PREFIX = 'urn:ietf:params:oauth:request_uri:';
  * test here skips when discovery does not advertise it. That keeps the shared
  * spec suite green across all sample OPs.
  */
+// @feature par
 test.describe('Pushed Authorization Requests (RFC 9126)', () => {
   test('should complete the full flow with a pushed request_uri', async ({
     page,

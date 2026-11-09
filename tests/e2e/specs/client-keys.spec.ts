@@ -37,6 +37,7 @@ const UNVERIFIABLE_REQUEST_OBJECT = {
  * public keys in the sample OP's database while the OP runs, and the very next
  * request uses them, without a restart.
  */
+// @feature request-object
 test.describe('client keys', () => {
   test.beforeEach(async ({ baseURL }) => {
     await openOpDatabase(requireBaseUrl(baseURL)).reset();

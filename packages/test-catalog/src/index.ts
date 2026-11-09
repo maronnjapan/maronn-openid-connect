@@ -19,3 +19,5 @@ export { readRun, type JoinedRun } from './run.js';
 export { checkTranslations, japaneseKeyword, Translations, Vocabulary } from './vocabulary.js';
 export { expectationPhrases, sayExpectation } from './words.js';
 export type * from './model.js';
+
+export { attachTestFeatures } from './features.js';

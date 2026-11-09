@@ -8,8 +8,9 @@
  */
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { codeWindow, inRange, type CodeMode } from '../lib/lines';
+import { featureCondition, featureLabel, featuresAt, startsFeature } from '../lib/features';
 import { highlight, languageOf, type Token } from '../lib/tokenize';
-import { useSource } from './app-context';
+import { useApp, useSource } from './app-context';
 import { Segmented } from './ui';
 
 /** A test's lines among its describe, or a range of code shown alone. */
@@ -41,6 +42,7 @@ function linesOf(path: string, text: string): Token[][] {
 
 export function CodeView({ path, lines, mark, fill, scope = 'test', caption }: { path: string; lines?: [number, number]; mark?: [number, number]; fill?: boolean; scope?: CodeScope; caption?: ReactNode }) {
   const source = useSource(path);
+  const { db } = useApp();
   const [mode, setMode] = useState<CodeMode>('range');
   const body = useRef<HTMLDivElement>(null);
   const tokens = useMemo(() => (source === undefined || source instanceof Error ? undefined : linesOf(path, source.text)), [path, source]);
@@ -90,8 +92,9 @@ export function CodeView({ path, lines, mark, fill, scope = 'test', caption }: {
           <pre>
             {tokens.slice(span.start - 1, span.end).map((line, offset) => {
               const number = span.start + offset;
+              const ranges = featuresAt(source?.features, number);
               return (
-                <div key={number} className={inRange(number, span.mark) ? 'line line-on' : 'line'}>
+                <div key={number} className={`line${inRange(number, span.mark) ? ' line-on' : ''}${ranges.length > 0 ? ' line-feature' : ''}`} title={ranges.map((range) => `${range.feature} の実装。${featureCondition(db.features.find((feature) => feature.id === range.feature), range.feature)}`).join(' · ') || undefined}>
                   <span className="line-no" aria-hidden="true">
                     {number}
                   </span>
@@ -106,6 +109,9 @@ export function CodeView({ path, lines, mark, fill, scope = 'test', caption }: {
                       ),
                     )}
                   </span>
+                  {ranges.filter((range) => startsFeature(range, number, span.start)).map((range) => (
+                    <span key={range.feature} className="line-feature-label">{range.feature} の実装（{featureLabel(db.features.find((feature) => feature.id === range.feature), range.feature)}） · {range.lines[0]}–{range.lines[1]} 行</span>
+                  ))}
                 </div>
               );
             })}

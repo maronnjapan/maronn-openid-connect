@@ -51,6 +51,7 @@ test.describe('Registered client scope (RFC 7591 §2)', () => {
     expect(requireHeader(response.headers(), 'location')).toBe(`${issuer}/login?transaction_id=${transactionId}`);
   });
 
+  // @feature device-authorization-grant
   test('should refuse a device authorization request for an unregistered scope', async ({
     request,
     baseURL,
@@ -73,6 +74,7 @@ test.describe('Registered client scope (RFC 7591 §2)', () => {
     });
   });
 
+  // @feature ciba
   test('should refuse a backchannel authentication request for an unregistered scope', async ({
     request,
     baseURL,

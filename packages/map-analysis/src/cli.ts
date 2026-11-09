@@ -45,6 +45,8 @@ export interface Cli {
   joinLinesFlat(lines: readonly string[]): string;
   /** The specification references a text names, each once, normalized as the catalog writes them (`RFC 6749 §5.2`). */
   specReferencesOf(text: string): string[];
+  /** The same owner-block boundaries the generator removes when a feature is off. */
+  parseOwnerBlocks(text: string): Array<{ feature: string | undefined; startLine: number; endLine: number }>;
   /** Read the catalog of other roots (the files of a revision): analyzeFunctions of the CLI. */
   analyzeFunctions(roots: Array<{ name: string; specifier?: string; files: ReadonlyMap<string, string> }>): { catalog: { functions: Record<string, CatalogCard> } };
 }
@@ -62,6 +64,7 @@ export async function loadCli(cliDist: string): Promise<Cli> {
   const { PACKAGE_ROOT, functionProject, readExtractionDefinition } = await load('extract/templates.js');
   const { analyzeFunctions, specReferencesOf } = await load('extract/functions.js');
   const { joinLines, joinLinesFlat } = await load('extract/prose.js');
+  const { parseOwnerBlocks } = await load('extract/source.js');
   const { FEATURE_CONFIG_KEYS, FEATURE_REGISTRY, featureKeyOf } = await load('registry.js');
   const { getAvailableFrameworks } = await load('generator.js');
   const features = Object.fromEntries((FEATURE_CONFIG_KEYS as string[]).map((key) => [key, true]));
@@ -89,6 +92,7 @@ export async function loadCli(cliDist: string): Promise<Cli> {
     joinLines,
     joinLinesFlat,
     specReferencesOf,
+    parseOwnerBlocks,
     analyzeFunctions,
   };
 }

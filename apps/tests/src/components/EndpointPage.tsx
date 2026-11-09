@@ -22,6 +22,7 @@ import { MAIN_KINDS, type View } from '../lib/route';
 import { stepHasCode } from '../lib/targets';
 import { NARROW_QUERY, useApp, useTitle } from './app-context';
 import { CodeButton, SOURCE_NAMES } from './CodeRefs';
+import { FeatureBadge } from './FeatureBadge';
 import { kindParts } from './Home';
 import { PrChangesButton, PrDot } from './PrMarks';
 import { TestList } from './TestList';
@@ -59,7 +60,7 @@ function Step({ db, endpoint, step, index, selected, onPick, codes }: { db: Db; 
   const content = (
     <>
       <span className="step-no num">{index + 1}</span>
-      <span className="step-label">{step.label}</span>
+      <span className="step-label">{step.label}<FeatureBadge id={step.feature ?? endpoint.feature} /></span>
       {/* In the build of a pull request a column for the dot on every step, so the pills line up. */}
       {changes !== undefined && (
         <span className="step-pr">
@@ -194,6 +195,7 @@ export function EndpointPage() {
       </nav>
       <header className="endpoint-head">
         <h1>{endpoint.label}</h1>
+        <FeatureBadge id={endpoint.feature} link />
         <p className="endpoint-path">
           <span className="method">{endpoint.methods.join(' · ')}</span> {endpoint.path}
           {endpoint.code !== undefined && (

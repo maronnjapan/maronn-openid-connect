@@ -31,6 +31,7 @@ const registeredRedirectUri = `${clientBaseURL}/logged-out`;
  * this whole file stays skipped. That keeps the shared spec suite green
  * across all sample OPs.
  */
+// @feature dynamic-client-registration
 test.describe('Dynamic Client Registration (RFC 7591)', () => {
   test('should advertise registration_endpoint only through discovery and serve it', async ({
     request,
@@ -162,6 +163,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
   // advertises are registrable, and the implicit grant pairs with them. The
   // loopback http redirect target of this suite is what a native client may
   // register (a web client using the implicit grant is held to https).
+  // @feature implicit-flow
   test('should register an implicit client and return its ID Token in the fragment (OIDC Core 1.0 §3.2)', async ({
     page,
     request,
@@ -202,6 +204,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
   // and the OP MUST verify that every registered redirect_uri conforms to the
   // constraints of that type — for a web client using the implicit grant,
   // https only and never localhost — so the omitted type is checked too.
+  // @feature implicit-flow
   test('should default application_type to web and hold an implicit client to https redirect_uris (OIDC Registration 1.0 §2)', async ({
     request,
     baseURL,

@@ -231,19 +231,20 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
         if (step.functionId !== undefined) {
           named.add(step.functionId);
           const code = codeOfFrame(data, step.functionId);
-          return { id: step.id, label: step.label, function: step.functionId, ...(code === undefined ? {} : { code }) };
+          return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), function: step.functionId, ...(code === undefined ? {} : { code }) };
         }
         const candidates = [...new Set(step.calls ?? [])];
         const calls = candidates.filter((id) => units[id] !== undefined);
         const codeCalls = candidates.filter((id) => data.functions[id] !== undefined || data.bodies[id] !== undefined);
         for (const id of [...calls, ...codeCalls]) named.add(id);
         const code = blocks.get(`${source}:${endpoint.id}:${step.id}`);
-        return { id: step.id, label: step.label, ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
+        return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
       });
       const code = codeOfFrame(data, root);
       endpoints.push({
         key,
         source,
+        ...(endpoint.feature === undefined ? {} : { feature: featureId(data, endpoint.feature) }),
         id: endpoint.id,
         label: endpoint.label,
         ...(endpoint.summary === undefined ? {} : { summary: endpoint.summary }),
@@ -276,10 +277,16 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
           : undefined;
     if (entry !== undefined) {
       const calls = [...new Set((fn ?? body)?.calls ?? [])].filter((callee) => data.functions[callee] !== undefined || data.bodies[callee] !== undefined);
-      functions[id] = { ...entry, ...(calls.length === 0 ? {} : { calls }) };
+      const feature = (fn ?? body)?.feature;
+      functions[id] = { ...entry, ...(feature === undefined ? {} : { feature: featureId(data, feature) }), ...(calls.length === 0 ? {} : { calls }) };
     }
   }
-  return { version: 1, endpoints, functions };
+  return { version: 1, features: data.features, endpoints, functions };
+}
+
+/** Resolve a feature key of endpoint metadata to its CLI marker id. */
+function featureId(data: MapData, key: string): string {
+  return data.features?.find((feature) => feature.id === key || feature.id.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase()) === key)?.id ?? key;
 }
 
 /**
@@ -395,6 +402,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   const writtenSources = new Set<string>();
   const sources: TestsIndex['sources'] = {};
   if (out !== undefined) {
+    const sourceByPath = new Map(Object.values(data.sources).map((source) => [source.path, source]));
     for (const path of shownFiles(files, tests, outline)) {
       let text: string;
       try {
@@ -402,7 +410,9 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
       } catch {
         continue;
       }
-      sources[path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), path, JSON.stringify({ path, text }), writtenSources)}`;
+      const implementation = sourceByPath.get(path);
+      const features = implementation?.features;
+      sources[path] = `./data/tests/sources/${writeHashed(join(out, 'tests', 'sources'), path, JSON.stringify({ path, text, ...(features === undefined || features.length === 0 ? {} : { features }) }), writtenSources)}`;
     }
     removeStale(join(out, 'tests', 'sources'), writtenSources);
   }

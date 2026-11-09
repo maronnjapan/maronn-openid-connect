@@ -29,6 +29,7 @@ const ID_JAG_GRANT_PROFILE = 'urn:ietf:params:oauth:grant-profile:id-jag';
  * advertises the profile — every test here skips itself otherwise, so the
  * shared spec suite stays green across all sample OPs.
  */
+// @feature id-jag
 test.describe('Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)', () => {
   test('should walk the full XAA chain: SSO, ID-JAG issuance, redemption, API access', async ({
     page,
@@ -120,6 +121,7 @@ test.describe('Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-au
   // draft §4.3.2 / §4.4.3: when the ID Token has expired, the refresh token
   // from the same SSO stands in as the subject and yields a fresh ID-JAG
   // without a new sign-on round trip.
+  // @feature refresh-token
   test('should issue and redeem an ID-JAG from a refresh token subject', async ({
     page,
     request,

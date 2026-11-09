@@ -45,6 +45,7 @@ import {
   type Repository,
   type SourceFile,
 } from '@maronn-openid-connect/map-analysis';
+import { attachTestFeatures } from './features.js';
 import { aspectsOf, type AspectTable } from './aspects.js';
 import { isTestSupportPath, type TestFile } from './discover.js';
 import { fileTestId, hashedTestId } from './id.js';
@@ -463,6 +464,7 @@ function codeCard(file: TestFile, test: CodeTest, kind: TestKind, isFunction: (i
     ...(test.comments.ja === undefined ? {} : { ja: { title: test.comments.ja } }),
     path: test.path,
     subjects,
+    ...(test.comments.features === undefined ? {} : { features: test.comments.features }),
     ...(requests.length === 0 ? {} : { requests }),
     ...(routeCode === undefined ? {} : { routeCode }),
     outcome: outcomeOf(test.expectations.some(expectsFailure), test.expectations.length > 0),
@@ -557,6 +559,7 @@ function featureCard(file: TestFile, test: FeatureTest, input: CatalogInput, end
     ...(test.ja === undefined ? {} : { ja: { title: test.ja } }),
     path: test.path,
     subjects,
+    ...(tags.features === undefined ? {} : { features: tags.features }),
     ...(requests.length === 0 ? {} : { requests }),
     outcome: outcomeOf(outcomes.includes('failure'), outcomes.length > 0),
     aspects: aspectsOf(input.aspects, { declared: tags.aspects, names: [...test.path, test.title], errors, statuses, headers }),
@@ -711,6 +714,8 @@ export function readCatalog(input: CatalogInput): CatalogResult {
     }
     for (const test of read) tests.push(featureCard(file, test, input, endpoints, isFunction, catalogNamed, untranslated, definitions));
   }
+
+  attachTestFeatures(tests, input.data);
 
   // Two tests with one id: tell them apart by their files (design §1), and say so.
   const seen = new Map<string, TestCase[]>();

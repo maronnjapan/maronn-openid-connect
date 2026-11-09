@@ -28,7 +28,12 @@ export function filterTests(entries: readonly TestEntry[], filter: ListFilter): 
  * every word of a query, ignoring case; an empty query matches nothing.
  */
 export function searchTests(db: Db, query: string): TestEntry[] {
-  const words = query.toLowerCase().split(/\s+/).filter((word) => word !== '');
+  const normalized = query.trim().toLowerCase().replace(/\s+/g, ' ');
+  // A named feature or flag is an ownership query: `par` must not match
+  // unrelated `parse` functions that happen to belong to another feature.
+  const feature = db.features.find((candidate) => candidate.id === normalized || candidate.flag.toLowerCase() === normalized);
+  if (feature !== undefined) return db.index.tests.filter((entry) => entry.features?.includes(feature.id));
+  const words = normalized.split(/\s+/).filter((word) => word !== '');
   if (words.length === 0) return [];
   const found: TestEntry[] = [];
   for (const entry of db.index.tests) {

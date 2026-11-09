@@ -4,7 +4,7 @@
  * reader can follow the code without leaving the trace. Nothing here touches
  * the DOM.
  */
-import type { FlowEndpoint, FunctionEntry, MapData } from '../types';
+import type { FeatureRange, FlowEndpoint, FunctionEntry, MapData } from '../types';
 import { entryOf } from './trace';
 
 /** A whole file or the inclusive lines of a frame, selectable in the drawer. */
@@ -63,4 +63,15 @@ export function sourceLines(code: string, start = 1, end?: number): Array<{ numb
   const lines = code.split(/\r?\n/);
   if (lines[lines.length - 1] === '') lines.pop();
   return lines.slice(start - 1, end).map((text, index) => ({ number: start + index, text }));
+}
+
+/** Keep feature ranges at their original line numbers, naming each visible range at its first shown line. */
+export function featureSourceLines(code: string, ranges: readonly FeatureRange[] = [], start = 1, end?: number): Array<{ number: number; text: string; features: string[]; starts: string[] }> {
+  let previous = new Set<string>();
+  return sourceLines(code, start, end).map((line) => {
+    const features = [...new Set(ranges.filter((range) => range.lines[0] <= line.number && line.number <= range.lines[1]).map((range) => range.feature))];
+    const starts = features.filter((feature) => !previous.has(feature));
+    previous = new Set(features);
+    return { ...line, features, starts };
+  });
 }

@@ -385,3 +385,20 @@ describe('stepBlocks', () => {
     expect(next?.steps.map((step) => step.code?.lines)).toEqual([[100, 104], [108, 112], [152, 160], undefined]);
   });
 });
+
+describe('feature outline', () => {
+  it('should retain feature flags and normalize the feature keys of endpoints, steps and functions', () => {
+    const data = structuredClone(DATA);
+    data.features = [{ id: 'refresh-token', tier: 'stable', summary: '', enabled: true, flag: '--disable refresh-token', endpoints: [], packages: [] }];
+    const endpoint = data.flows.hono?.endpoints[1];
+    if (endpoint === undefined) throw new Error('missing endpoint');
+    endpoint.feature = 'refreshToken';
+    (endpoint.steps[0] as NonNullable<typeof endpoint.steps[0]>).feature = 'refreshToken';
+    (data.functions[AUTH] as NonNullable<typeof data.functions[string]>).feature = 'refresh-token';
+    const outline = outlineOf(data, joinTests([], data, ASPECTS, false), [AUTH]);
+    expect(outline.features).toEqual(data.features);
+    expect(outline.endpoints[1]?.feature).toBe('refresh-token');
+    expect(outline.endpoints[1]?.steps[0]?.feature).toBe('refresh-token');
+    expect(outline.functions[AUTH]?.feature).toBe('refresh-token');
+  });
+});

@@ -18,6 +18,7 @@ const clientId = 'e2e-client';
  * tests/e2e/apps/client.mjs and throws on any violation — so a rendered result
  * page is itself evidence that verification passed.
  */
+// @feature jarm
 test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
   test('should return the authorization response as a verifiable signed JWT', async ({
     page,

@@ -262,6 +262,8 @@ export interface FrameFile {
 /** A function of the catalog (packages/cli extract/functions.ts), with what the analysis found in its tree. */
 export interface FunctionEntry {
   id: string;
+  /** The feature that owns this implementation; never inherited from callers. */
+  feature?: string;
   name: string;
   package: string;
   module: string;
@@ -293,6 +295,8 @@ export interface FunctionEntry {
 /** An endpoint body that is not a function of the catalog: the handler of a Hono pipeline (`tokenApp.post('/', async (c) => { ... })`). */
 export interface BodyEntry {
   id: string;
+  /** The feature that owns this endpoint implementation. */
+  feature?: string;
   /** The endpoint, by id. */
   endpoint: string;
   /** `POST /token`. */
@@ -340,9 +344,17 @@ export interface MemberDoc {
   calls?: string[];
 }
 
+/** An inclusive source range owned by a feature, using its CLI id. */
+export interface FeatureRange {
+  feature: string;
+  lines: [number, number];
+}
+
 /** A source file with Shiki tokens and the colors of its light and dark themes. */
 export interface SourceDocument {
   code: string;
+  /** Feature-owned files or generator owner blocks; absent in older data. */
+  features?: FeatureRange[];
   foreground: string;
   background: string;
   tokens: Array<Array<{ content: string; color: string }>>;
@@ -375,7 +387,7 @@ export interface MapData {
   /** Registrations and initialization outside ordinary call paths, including modules with no catalog function. */
   wiring?: WiringEntry[];
   /** Source files fetched only when the code drawer opens; shared across functions and frameworks. */
-  sources: Record<string, { path: string; url: string }>;
+  sources: Record<string, { path: string; url: string; features?: FeatureRange[] }>;
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
 }

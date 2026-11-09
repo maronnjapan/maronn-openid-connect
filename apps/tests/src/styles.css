@@ -1655,6 +1655,50 @@ button.row:hover,
   box-shadow: inset 3px 0 0 var(--code-on-edge);
 }
 
+/* Ownership is a labelled violet rail; the blue selected-test range stays visible. */
+.line-feature .line-no {
+  box-shadow: inset 3px 0 0 var(--tok-keyword);
+}
+
+.line-feature-label {
+  flex: none;
+  align-self: flex-start;
+  margin: 0 0 0 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--tok-keyword);
+  background: var(--surface-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.feature-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--tok-keyword);
+  background: var(--surface-2);
+  font: 11px/1.6 var(--mono);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.test-features {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.step-label > .feature-badge {
+  display: table;
+  margin-top: 4px;
+}
+
 .code-loading {
   padding: 16px;
 }

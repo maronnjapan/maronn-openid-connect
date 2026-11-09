@@ -39,6 +39,7 @@ interface CibaResult {
  * own request out of the pending list even when earlier tests left records
  * behind (the OP process persists across tests).
  */
+// @feature ciba
 test.describe('CIBA (CIBA Core 1.0, poll mode)', () => {
   test('should issue tokens after the user approves on their own browser', async ({
     page,

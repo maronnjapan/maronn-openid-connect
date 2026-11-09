@@ -11,6 +11,7 @@ export { checkMap, uncoveredLines, type CheckResult, type MapMetrics } from './c
 export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeHunks } from './diff.js';
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';
 export { escapingFailures } from './failures.js';
+export { featureOfPath, sourceFeatureRanges } from './features.js';
 export { CallGraph, catcherIn, reachOf, rootOf, type EndpointRoot, type ReachOptions, type ReachTarget } from './impact.js';
 export { attachNotes, draftHeading, draftSections, draftTestLines, draftTestSections, isNote, NOTES_DIRECTORY, parseNote, referencesOf, resolveReference, withoutComments, type DraftTests } from './notes.js';
 export { readRepository, type Repository } from './repository.js';

@@ -27,6 +27,7 @@ const INTROSPECTION_JWT_MEDIA_TYPE = 'application/token-introspection+jwt';
  * jwks_uri, verify the JWS, check typ / iss / aud, then read
  * token_introspection) is performed inside this spec, over real HTTP.
  */
+// @feature jwt-introspection-response
 test.describe('JWT introspection response (RFC 9701)', () => {
   test('should answer the issuing client with a verifiable signed introspection JWT', async ({
     page,

@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } f
 import { join, posix } from 'node:path';
 import type { BodyEntry, Failure, FlowEndpoint, FrameFile, FunctionEntry, MapChanges, MapData, MemberDoc, OpFlow } from './model.js';
 import { escapingFailures } from './failures.js';
+import { featureOfPath, sourceFeatureRanges } from './features.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
 import { readRepository, type Repository } from './repository.js';
 import { failureSelections, frameSelections } from './selections.js';
@@ -203,6 +204,9 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     const failed = failures.get(card.id) ?? [];
     if (failed.length > 0) entry.failures = failed;
     if (frame !== undefined) entry.source = { file: sourceOf(card.package, card.module), start: frame.start, end: frame.end };
+    const path = entry.source === undefined ? undefined : sourceFiles.get(entry.source.file)?.path;
+    const feature = path === undefined ? undefined : featureOfPath(path, cli.features);
+    if (feature !== undefined) entry.feature = feature;
     functions[card.id] = entry;
   }
   const bodies: Record<string, BodyEntry> = {};
@@ -228,6 +232,8 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     if (failed.length > 0) entry.failures = failed;
     if (frame.synthetic === true) entry.synthetic = true;
     else entry.source = { file: sourceOf(frame.root, frame.module), start: frame.start, end: frame.end };
+    const feature = endpoint?.feature === undefined ? undefined : (cli.featureIds[endpoint.feature] ?? endpoint.feature);
+    if (feature !== undefined) entry.feature = feature;
     bodies[frame.id] = entry;
   }
   for (const entry of [...Object.values(functions), ...Object.values(bodies)]) {
@@ -278,9 +284,21 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   }
   const highlighter = await createSourceHighlighter();
   const sources: MapData['sources'] = {};
+  // Endpoint metadata also owns route files outside feature directories.
+  const endpointOwners = new Map<string, string>();
+  for (const source of repository.endpoints) {
+    for (const endpoint of source.endpoints) {
+      if (endpoint.feature === undefined) continue;
+      const id = head.endpointRoots.get(`${source.source}:${endpoint.id}`);
+      const frame = id === undefined ? undefined : head.frames.get(id);
+      if (frame !== undefined) endpointOwners.set(`${frame.root}:${frame.module}`, cli.featureIds[endpoint.feature] ?? endpoint.feature);
+    }
+  }
   for (const [id, source] of [...sourceFiles].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const name = writeHashed(join(options.out, 'sources'), id, JSON.stringify(highlightSource(highlighter, source)), written.sources);
-    sources[id] = { path: source.path, url: `./data/sources/${name}` };
+    const features = sourceFeatureRanges(source.path, source.code, cli.features, cli.parseOwnerBlocks, endpointOwners.get(id) ?? featureOfPath(source.path, cli.features));
+    const ownership = features.length === 0 ? {} : { features };
+    const name = writeHashed(join(options.out, 'sources'), id, JSON.stringify({ ...highlightSource(highlighter, source), ...ownership }), written.sources);
+    sources[id] = { path: source.path, url: `./data/sources/${name}`, ...ownership };
   }
   highlighter.dispose();
   removeStale(join(options.out, 'functions'), written.functions);

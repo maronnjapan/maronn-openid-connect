@@ -76,6 +76,11 @@ describe('readFeatureTags and specOfTag', () => {
     });
   });
 
+  it('should read explicit feature tags separately from test aspects', () => {
+    expect(readFeatureTags(['@feature:par', '@auth']).features).toEqual(['par']);
+    expect(readFeatureTags(['@feature:par', '@auth']).aspects).toEqual(['auth']);
+  });
+
   it('should write a section of a tag the way the catalog writes it', () => {
     expect([specOfTag('RFC6749-5.2'), specOfTag('OIDC-Core-11'), specOfTag('OAuth2.1-2.3')]).toEqual(['RFC 6749 §5.2', 'OIDC Core 1.0 §11', 'OAuth 2.1 §2.3']);
   });

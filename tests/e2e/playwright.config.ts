@@ -206,6 +206,25 @@ const oidcClientsJson = JSON.stringify([
     requestObjectSigningAlg: 'ES256',
   },
   {
+    // OIDC Core 1.0 §9: a client that authenticates with private_key_jwt and
+    // the keys the E2E RP signs its client assertions with (apps/client.mjs,
+    // /jwks.json), with the grant types of the device authorization and CIBA
+    // endpoints. The private-key-jwt spec authenticates it at every endpoint
+    // that authenticates clients besides the token endpoint. Nothing serves
+    // the redirect URI.
+    clientId: 'e2e-private-key-jwt',
+    redirectUris: [`${clientBaseURL}/logged-out`],
+    clientType: 'confidential',
+    grantTypes: [
+      'authorization_code',
+      'urn:ietf:params:oauth:grant-type:device_code',
+      'urn:openid:params:grant-type:ciba',
+    ],
+    tokenEndpointAuthMethods: ['private_key_jwt'],
+    responseTypes: ['code'],
+    jwksUri: `${clientBaseURL}/jwks.json`,
+  },
+  {
     // A jwks_uri the E2E RP answers with 404, so the OP cannot get the keys.
     clientId: 'e2e-client-jwks-uri-broken',
     clientSecret: 'e2e-client-jwks-uri-broken-secret',

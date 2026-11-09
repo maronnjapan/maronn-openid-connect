@@ -155,6 +155,121 @@ test.describe('private_key_jwt (OIDC Core 1.0 §9)', () => {
   });
 });
 
+// Registered in playwright.config.ts with the jwks_uri of the E2E RP.
+const keyClientId = 'e2e-private-key-jwt';
+
+/**
+ * The endpoints that authenticate clients besides the token endpoint (OAuth
+ * 2.1 §2.3 / OIDC Core 1.0 §9): each accepts a client assertion whose aud is
+ * its own URL and refuses one made for the token endpoint with 401
+ * invalid_client. A test skips when the OP was generated without the feature
+ * of its endpoint.
+ */
+test.describe('private_key_jwt at the endpoints besides the token endpoint (OIDC Core 1.0 §9)', () => {
+  // RFC 7009 §2.2: the server answers 200 for a token it does not know.
+  test('should authenticate a client assertion at the revocation endpoint', async ({ request, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await advertisedEndpoint(request, issuer, 'revocation_endpoint');
+    test.skip(endpoint === undefined, 'This OP was generated without revocation');
+    expect(endpoint).toBe(`${issuer}/revoke`);
+    const form = { token: base64Url(randomBytes(16)), client_id: keyClientId };
+
+    const accepted = await request.post(`${issuer}/revoke`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/revoke`)) } });
+    const refused = await request.post(`${issuer}/revoke`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/token`)) } });
+
+    expect(accepted.status()).toBe(200);
+    expect(refused.status()).toBe(401);
+    expect(((await refused.json()) as Record<string, unknown>)['error']).toBe('invalid_client');
+  });
+
+  // RFC 7662 §2.2: a token the server does not know is inactive.
+  test('should authenticate a client assertion at the introspection endpoint', async ({ request, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await advertisedEndpoint(request, issuer, 'introspection_endpoint');
+    test.skip(endpoint === undefined, 'This OP was generated without introspection');
+    expect(endpoint).toBe(`${issuer}/introspect`);
+    const form = { token: base64Url(randomBytes(16)), client_id: keyClientId };
+
+    const accepted = await request.post(`${issuer}/introspect`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/introspect`)) } });
+    const refused = await request.post(`${issuer}/introspect`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/token`)) } });
+
+    expect(accepted.status()).toBe(200);
+    expect(await accepted.json()).toEqual({ active: false });
+    expect(refused.status()).toBe(401);
+    expect(((await refused.json()) as Record<string, unknown>)['error']).toBe('invalid_client');
+  });
+
+  // RFC 9126 §2.1: the pushing client authenticates as at the token endpoint.
+  test('should authenticate a client assertion at the pushed authorization request endpoint', async ({ request, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await advertisedEndpoint(request, issuer, 'pushed_authorization_request_endpoint');
+    test.skip(endpoint === undefined, 'This OP was generated without par');
+    expect(endpoint).toBe(`${issuer}/par`);
+    const form = {
+      client_id: keyClientId,
+      response_type: 'code',
+      redirect_uri: registeredRedirectUri,
+      scope: 'openid',
+      code_challenge: createHash('sha256').update(base64Url(randomBytes(32))).digest('base64url'),
+      code_challenge_method: 'S256',
+    };
+
+    const accepted = await request.post(`${issuer}/par`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/par`)) } });
+    const refused = await request.post(`${issuer}/par`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/token`)) } });
+
+    expect(accepted.status()).toBe(201);
+    expect(((await accepted.json()) as Record<string, unknown>)['request_uri']).toMatch(/^urn:ietf:params:oauth:request_uri:/);
+    expect(refused.status()).toBe(401);
+    expect(((await refused.json()) as Record<string, unknown>)['error']).toBe('invalid_client');
+  });
+
+  // RFC 8628 §3.1: the client authentication of RFC 6749 §3.2.1 applies.
+  test('should authenticate a client assertion at the device authorization endpoint', async ({ request, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await advertisedEndpoint(request, issuer, 'device_authorization_endpoint');
+    test.skip(endpoint === undefined, 'This OP was generated without device-authorization-grant');
+    expect(endpoint).toBe(`${issuer}/device_authorization`);
+    const form = { client_id: keyClientId, scope: 'openid' };
+
+    const accepted = await request.post(`${issuer}/device_authorization`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/device_authorization`)) } });
+    const refused = await request.post(`${issuer}/device_authorization`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/token`)) } });
+
+    expect(accepted.status()).toBe(200);
+    expect(typeof ((await accepted.json()) as Record<string, unknown>)['device_code']).toBe('string');
+    expect(refused.status()).toBe(401);
+    expect(((await refused.json()) as Record<string, unknown>)['error']).toBe('invalid_client');
+  });
+
+  // CIBA Core 1.0 §7.1: the client authenticates with its registered method.
+  test('should authenticate a client assertion at the backchannel authentication endpoint', async ({ request, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await advertisedEndpoint(request, issuer, 'backchannel_authentication_endpoint');
+    test.skip(endpoint === undefined, 'This OP was generated without ciba');
+    expect(endpoint).toBe(`${issuer}/backchannel_authentication`);
+    const form = { client_id: keyClientId, scope: 'openid', login_hint: 'testuser' };
+
+    const accepted = await request.post(`${issuer}/backchannel_authentication`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/backchannel_authentication`)) } });
+    const refused = await request.post(`${issuer}/backchannel_authentication`, { form: { ...form, ...(await keyClientAssertion(request, `${issuer}/token`)) } });
+
+    expect(accepted.status()).toBe(200);
+    expect(typeof ((await accepted.json()) as Record<string, unknown>)['auth_req_id']).toBe('string');
+    expect(refused.status()).toBe(401);
+    expect(((await refused.json()) as Record<string, unknown>)['error']).toBe('invalid_client');
+  });
+});
+
+/** The URL of an endpoint the OP advertises in its discovery document, or undefined. */
+async function advertisedEndpoint(request: APIRequestContext, issuer: string, member: string): Promise<string | undefined> {
+  const value = (await discoveryMetadata(request, issuer))[member];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** The client authentication parameters of a client assertion of e2e-private-key-jwt for aud. */
+async function keyClientAssertion(request: APIRequestContext, aud: string): Promise<Record<string, string>> {
+  const { assertion } = await clientAssertion(request, keyClientId, { aud });
+  return assertionParams(assertion);
+}
+
 /** Registers a private_key_jwt client with the given keys (jwks or jwks_uri) and returns its client_id. */
 async function registerPrivateKeyJwtClient(
   request: APIRequestContext,
@@ -235,8 +350,7 @@ async function authorizeInBrowser(
   clientId: string,
 ): Promise<{ code: string; codeVerifier: string }> {
   const codeVerifier = base64Url(randomBytes(32));
-  const authorizeUrl = new URL('/authorize', issuer);
-  authorizeUrl.search = new URLSearchParams({
+  const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: registeredRedirectUri,
     response_type: 'code',
@@ -245,9 +359,9 @@ async function authorizeInBrowser(
     nonce: base64Url(randomBytes(16)),
     code_challenge: base64Url(createHash('sha256').update(codeVerifier).digest()),
     code_challenge_method: 'S256',
-  }).toString();
+  });
 
-  await page.goto(authorizeUrl.toString());
+  await page.goto(`${issuer}/authorize?${params}`);
   await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');

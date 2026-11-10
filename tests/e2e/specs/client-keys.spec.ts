@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -72,7 +72,15 @@ test.describe('client keys', () => {
     // redirect_uri, state and code_challenge come from the Request Object
     // alone, so a code issued to that redirect_uri and redeemed with the
     // matching code_verifier shows the OP applied its claims.
-    const callback = await completeAuthorization(page, url);
+    await page.goto(url);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url2) => url2.pathname === '/client-keys-callback');
+    const callback = new URL(page.url());
     expect(callback.searchParams.get('state')).toBe(state);
     const redeemed = await redeemCode(
       request,
@@ -190,19 +198,6 @@ async function signedRequestObjectUrl(
   return { url: url.toString(), state, codeVerifier };
 }
 
-/** Sign in and approve in the browser, and return the URL the OP redirected back to. */
-async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
-  await page.goto(authorizationUrl);
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await page.waitForURL((url) => url.pathname === '/client-keys-callback');
-  return new URL(page.url());
-}
-
 async function redeemCode(request: APIRequestContext, issuer: string, code: string, codeVerifier: string) {
   return request.post(`${issuer}/token`, {
     form: {
@@ -237,12 +232,12 @@ function openOpDatabase(issuer: string): OpDatabase {
   }
   // apps/nextjs runs on --db kv over node:sqlite, as the Next.js sample does.
   const sampleDir = opPackage === '@maronn-openid-connect/app-nextjs'
-    ? resolve(dirname(fileURLToPath(import.meta.url)), '../../../apps/nextjs')
-    : resolve(
-        dirname(fileURLToPath(import.meta.url)),
-        '../../../samples',
-        opPackage.replace('@maronn-openid-connect/sample-', ''),
-      );
+? resolve(dirname(fileURLToPath(import.meta.url)), '../../../apps/nextjs')
+: resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../samples',
+    opPackage.replace('@maronn-openid-connect/sample-', ''),
+  );
   // --db kv (apps/nextjs and the Next.js sample): one key-value table; --db
   // sql (the others): the tables of schema.sql, in node:sqlite or in the local
   // D1 of wrangler dev.
@@ -258,14 +253,14 @@ function openOpDatabase(issuer: string): OpDatabase {
 /** The operator routes of apps/hono: the same changes over HTTP. */
 function operatorRoutes(issuer: string): OpDatabase {
   const send = async (method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<void> => {
-    const response = await fetch(`${issuer}/operator/clients/${encodeURIComponent(clientId)}/keys${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${operatorToken}`,
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+  const response = await fetch(`${issuer}/operator/clients/${encodeURIComponent(clientId)}/keys${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${operatorToken}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
     if (response.status !== 204) {
       throw new Error(`operator route ${method} ${path} answered ${response.status}`);
     }

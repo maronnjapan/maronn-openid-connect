@@ -1,5 +1,4 @@
 import { expect, test } from '../fixtures';
-import type { Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -27,7 +26,11 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     test.skip(!(await supportsFormPost(request, issuer)), 'This sample OP was generated without form-post-response-mode');
 
     await page.goto(`${clientBaseURL}/start-form-post`);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
 
     // §2: the browser lands on the redirect URI itself, and nothing rides in its query.
@@ -49,7 +52,11 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     test.skip(!(await supportsFormPost(request, issuer)), 'This sample OP was generated without form-post-response-mode');
 
     await page.goto(`${clientBaseURL}/start-form-post`);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Deny' }).click();
 
     await expect(page.getByTestId('authorization-error')).toHaveText('access_denied');
@@ -65,7 +72,11 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     test.skip(!(await supportsFormPost(request, issuer)), 'This sample OP was generated without form-post-response-mode');
 
     await page.goto(`${clientBaseURL}/start-form-post`);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page.getByTestId('token-type')).toHaveText('Bearer');
 
@@ -116,7 +127,11 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     test.skip(!(await supportsFormPost(request, issuer)), 'This sample OP was generated without form-post-response-mode');
 
     await page.goto(`${clientBaseURL}/start`);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
 
     await expect(page.getByTestId('token-type')).toHaveText('Bearer');
@@ -124,14 +139,6 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     await expect(page.getByTestId('callback-method')).toHaveText('GET');
   });
 });
-
-async function login(page: Page, issuer: string): Promise<void> {
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
-}
 
 async function supportedResponseModes(
   request: { get(url: string): Promise<{ json(): Promise<unknown> }> },

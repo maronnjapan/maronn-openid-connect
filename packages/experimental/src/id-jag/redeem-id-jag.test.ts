@@ -96,21 +96,6 @@ function redemptionContext(
   };
 }
 
-async function expectAssertionRejection(
-  assertion: string,
-  description: string,
-): Promise<void> {
-  await expect(
-    verifyIdJagAssertion({
-      assertion,
-      issuer: ISSUER,
-      clientId: CLIENT_ID,
-      identityProviders,
-      now: NOW,
-    }),
-  ).rejects.toThrow(new IdJagError('invalid_grant', description));
-}
-
 describe('id-jag redemption constants', () => {
   // RFC 7523 §2.1
   it('should expose the jwt-bearer grant type URN', () => {
@@ -297,50 +282,80 @@ describe('verifyIdJagAssertion', () => {
 
   describe('structural rejection', () => {
     it('should reject a value that is not a compact JWS', async () => {
-      await expectAssertionRejection(
-        'not-a-jwt',
-        'The provided assertion is not a valid JWS compact serialization',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: 'not-a-jwt',
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The provided assertion is not a valid JWS compact serialization'));
     });
 
     it('should reject a JWS whose segments are not base64url JSON', async () => {
-      await expectAssertionRejection(
-        '!!!.???.___',
-        'The provided assertion is not a valid JWS compact serialization',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: '!!!.???.___',
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The provided assertion is not a valid JWS compact serialization'));
     });
 
     // draft §4.4.1 / RFC 8725 §3.11: typ の検証で token confusion を拒否する
     it('should reject a JWT typ other than oauth-id-jag+jwt', async () => {
       const assertion = await mintIdJag({ header: { typ: 'JWT' } });
-      await expectAssertionRejection(assertion, `The assertion typ must be ${ID_JAG_JWT_TYP}`);
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', `The assertion typ must be ${ID_JAG_JWT_TYP}`));
     });
 
     it('should reject a missing typ header', async () => {
       const assertion = await mintIdJag({ header: { typ: undefined } });
-      await expectAssertionRejection(assertion, `The assertion typ must be ${ID_JAG_JWT_TYP}`);
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', `The assertion typ must be ${ID_JAG_JWT_TYP}`));
     });
 
     it('should reject alg none', async () => {
       const assertion = await mintIdJag({ header: { alg: 'none' } });
-      await expectAssertionRejection(assertion, 'The assertion alg is missing or "none"');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion alg is missing or "none"'));
     });
 
     // RFC 8725 §3.1: 外部鍵取得ヘッダは SSRF と鍵差し替えの経路になるため拒否する
     it('should reject a jku header', async () => {
       const assertion = await mintIdJag({ header: { jku: 'https://evil.example.com/jwks' } });
-      await expectAssertionRejection(
-        assertion,
-        'The assertion JOSE header contains unsupported field: jku',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion JOSE header contains unsupported field: jku'));
     });
 
     it('should reject an embedded jwk header', async () => {
       const assertion = await mintIdJag({ header: { jwk: { kty: 'RSA' } } });
-      await expectAssertionRejection(
-        assertion,
-        'The assertion JOSE header contains unsupported field: jwk',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion JOSE header contains unsupported field: jwk'));
     });
   });
 
@@ -348,26 +363,47 @@ describe('verifyIdJagAssertion', () => {
     // オラクル排除: iss 非信頼と署名不正は同一文言
     it('should reject an untrusted issuer with the fixed description', async () => {
       const assertion = await mintIdJag({ claims: { iss: 'https://unknown-idp.example.org' } });
-      await expectAssertionRejection(assertion, ASSERTION_UNTRUSTED_DESCRIPTION);
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', ASSERTION_UNTRUSTED_DESCRIPTION));
     });
 
     it('should reject a tampered signature with the same fixed description', async () => {
       const assertion = tamperSignature(await mintIdJag());
-      await expectAssertionRejection(assertion, ASSERTION_UNTRUSTED_DESCRIPTION);
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', ASSERTION_UNTRUSTED_DESCRIPTION));
     });
 
     it('should reject a signature by an untrusted key with the same fixed description', async () => {
       const assertion = await mintIdJag({ key: otherKey, header: { kid: 'untrusted-key' } });
-      await expectAssertionRejection(assertion, ASSERTION_UNTRUSTED_DESCRIPTION);
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', ASSERTION_UNTRUSTED_DESCRIPTION));
     });
 
     // draft §9.3: 自分が発行した ID-JAG は同一ドメイン内で引き換えない
     it('should reject an assertion issued by this authorization server itself', async () => {
       const assertion = await mintIdJag({ claims: { iss: ISSUER } });
-      await expectAssertionRejection(
-        assertion,
-        'An assertion issued by this authorization server cannot be redeemed here',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'An assertion issued by this authorization server cannot be redeemed here'));
     });
 
     it('should reject the self-issued assertion even when the own issuer is trust-listed', async () => {
@@ -393,10 +429,13 @@ describe('verifyIdJagAssertion', () => {
     // draft §4.4.1: aud 不一致は audience injection として拒否
     it('should reject an aud claim for another authorization server', async () => {
       const assertion = await mintIdJag({ claims: { aud: 'https://other-as.example.org' } });
-      await expectAssertionRejection(
-        assertion,
-        'The assertion audience does not match this authorization server',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion audience does not match this authorization server'));
     });
 
     // draft §4.4.1: 配列 aud は要素数 1 のみ
@@ -404,73 +443,136 @@ describe('verifyIdJagAssertion', () => {
       const assertion = await mintIdJag({
         claims: { aud: [ISSUER, 'https://other-as.example.org'] },
       });
-      await expectAssertionRejection(
-        assertion,
-        'The assertion audience does not match this authorization server',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion audience does not match this authorization server'));
     });
 
     it('should reject an expired assertion', async () => {
       const assertion = await mintIdJag({ claims: { exp: NOW_SECONDS - 120 } });
-      await expectAssertionRejection(assertion, 'The assertion has expired');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion has expired'));
     });
 
     it('should reject a missing exp claim', async () => {
       const assertion = await mintIdJag({ claims: { exp: undefined } });
-      await expectAssertionRejection(assertion, 'The assertion is missing an exp claim');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion is missing an exp claim'));
     });
 
     it('should reject an iat claim in the future', async () => {
       const assertion = await mintIdJag({ claims: { iat: NOW_SECONDS + 120 } });
-      await expectAssertionRejection(assertion, 'The assertion iat is in the future');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion iat is in the future'));
     });
 
     it('should reject a missing iat claim', async () => {
       const assertion = await mintIdJag({ claims: { iat: undefined } });
-      await expectAssertionRejection(assertion, 'The assertion is missing an iat claim');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion is missing an iat claim'));
     });
 
     it('should reject an nbf claim that has not arrived yet', async () => {
       const assertion = await mintIdJag({ claims: { nbf: NOW_SECONDS + 120 } });
-      await expectAssertionRejection(assertion, 'The assertion is not yet valid');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion is not yet valid'));
     });
 
     // draft §3.1: jti は REQUIRED
     it('should reject a missing jti claim', async () => {
       const assertion = await mintIdJag({ claims: { jti: undefined } });
-      await expectAssertionRejection(assertion, 'The assertion is missing a jti claim');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion is missing a jti claim'));
     });
 
     it('should reject a missing sub claim', async () => {
       const assertion = await mintIdJag({ claims: { sub: undefined } });
-      await expectAssertionRejection(assertion, 'The assertion is missing a sub claim');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion is missing a sub claim'));
     });
 
     it('should reject a missing client_id claim', async () => {
       const assertion = await mintIdJag({ claims: { client_id: undefined } });
-      await expectAssertionRejection(assertion, 'The assertion is missing a client_id claim');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion is missing a client_id claim'));
     });
 
     // draft §4.4.1: client_id はリクエストを認証したクライアントと一致しなければならない
     it('should reject a client_id claim bound to another client', async () => {
       const assertion = await mintIdJag({ claims: { client_id: 'another-client' } });
-      await expectAssertionRejection(
-        assertion,
-        'The assertion client_id does not match the authenticated client',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion client_id does not match the authenticated client'));
     });
 
     it('should reject a non-string scope claim', async () => {
       const assertion = await mintIdJag({ claims: { scope: ['openid'] } });
-      await expectAssertionRejection(assertion, 'The assertion scope claim must be a string');
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion scope claim must be a string'));
     });
 
     it('should reject a resource claim that is neither a string nor a string array', async () => {
       const assertion = await mintIdJag({ claims: { resource: 42 } });
-      await expectAssertionRejection(
-        assertion,
-        'The assertion resource claim must be a string or an array of strings',
-      );
+      await expect(verifyIdJagAssertion({
+        assertion: assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion resource claim must be a string or an array of strings'));
     });
   });
 });
@@ -619,17 +721,35 @@ describe('verifyIdJagAssertion with an act claim', () => {
 
   it('should reject a non-object act claim', async () => {
     const assertion = await mintIdJag({ claims: { act: 'actor-1' } });
-    await expectAssertionRejection(assertion, 'The assertion act claim is malformed');
+    await expect(verifyIdJagAssertion({
+      assertion: assertion,
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      identityProviders,
+      now: NOW,
+    })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion act claim is malformed'));
   });
 
   it('should reject an act claim without a sub', async () => {
     const assertion = await mintIdJag({ claims: { act: { role: 'admin' } } });
-    await expectAssertionRejection(assertion, 'The assertion act claim is malformed');
+    await expect(verifyIdJagAssertion({
+      assertion: assertion,
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      identityProviders,
+      now: NOW,
+    })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion act claim is malformed'));
   });
 
   it('should reject an act claim with a malformed nested chain', async () => {
     const assertion = await mintIdJag({ claims: { act: { sub: 'actor-1', act: { sub: 42 } } } });
-    await expectAssertionRejection(assertion, 'The assertion act claim is malformed');
+    await expect(verifyIdJagAssertion({
+      assertion: assertion,
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      identityProviders,
+      now: NOW,
+    })).rejects.toThrow(new IdJagError('invalid_grant', 'The assertion act claim is malformed'));
   });
 });
 

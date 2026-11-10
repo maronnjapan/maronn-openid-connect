@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures';
-import type { Page } from '@playwright/test';
+
 import { createHash, randomBytes } from 'node:crypto';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
@@ -29,7 +29,31 @@ test.describe('several client authentication methods', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const { code, codeVerifier } = await authorize(page, issuer);
+    const codeVerifier2 = randomBytes(32).toString('base64url');
+    const state = randomBytes(16).toString('base64url');
+    const authorizationUrl = new URL('/authorize', issuer);
+    authorizationUrl.search = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: 'openid',
+      state,
+      nonce: randomBytes(16).toString('base64url'),
+      code_challenge: createHash('sha256').update(codeVerifier2).digest('base64url'),
+      code_challenge_method: 'S256',
+    }).toString();
+
+    await page.goto(authorizationUrl.toString());
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url) => url.pathname === '/multiple-auth-methods-callback');
+    const callback = new URL(page.url());
+    expect(callback.searchParams.get('state')).toBe(state);
+    const { code, codeVerifier } = { code: requireString(callback.searchParams.get('code'), 'code'), codeVerifier: codeVerifier2 };
 
     // client_secret_basic: the secret in the Authorization header.
     const redeemed = await request.post(`${issuer}/token`, {
@@ -88,35 +112,6 @@ test.describe('several client authentication methods', () => {
 /** RFC 6749 §2.3.1: client_secret_basic. */
 function basicAuthorization(id: string, secret: string): string {
   return `Basic ${Buffer.from(`${encodeURIComponent(id)}:${encodeURIComponent(secret)}`).toString('base64')}`;
-}
-
-/** Run the authorization code flow in the browser and read the code from the redirect. */
-async function authorize(page: Page, issuer: string): Promise<{ code: string; codeVerifier: string }> {
-  const codeVerifier = randomBytes(32).toString('base64url');
-  const state = randomBytes(16).toString('base64url');
-  const authorizationUrl = new URL('/authorize', issuer);
-  authorizationUrl.search = new URLSearchParams({
-    response_type: 'code',
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    scope: 'openid',
-    state,
-    nonce: randomBytes(16).toString('base64url'),
-    code_challenge: createHash('sha256').update(codeVerifier).digest('base64url'),
-    code_challenge_method: 'S256',
-  }).toString();
-
-  await page.goto(authorizationUrl.toString());
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await page.waitForURL((url) => url.pathname === '/multiple-auth-methods-callback');
-  const callback = new URL(page.url());
-  expect(callback.searchParams.get('state')).toBe(state);
-  return { code: requireString(callback.searchParams.get('code'), 'code'), codeVerifier };
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

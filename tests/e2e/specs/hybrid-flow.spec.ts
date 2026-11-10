@@ -40,7 +40,11 @@ test.describe('Hybrid Flow', () => {
     const { url, state, nonce, codeVerifier } = authorizationRequest(issuer, 'code id_token token');
 
     await page.goto(url);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
     const callback = await landOnRedirectUri(page);
 
@@ -85,7 +89,11 @@ test.describe('Hybrid Flow', () => {
     const { url, state, nonce, codeVerifier } = authorizationRequest(issuer, 'code id_token');
 
     await page.goto(url);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
     const response = fragmentOf(await landOnRedirectUri(page));
 
@@ -119,7 +127,11 @@ test.describe('Hybrid Flow', () => {
     const { url, state, codeVerifier } = authorizationRequest(issuer, 'code token', { nonce: '' });
 
     await page.goto(url);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
     const response = fragmentOf(await landOnRedirectUri(page));
 
@@ -145,7 +157,11 @@ test.describe('Hybrid Flow', () => {
     const { url, codeVerifier } = authorizationRequest(issuer, 'code token');
 
     await page.goto(url);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
     const response = fragmentOf(await landOnRedirectUri(page));
     const code = requireString(response['code'], 'code');
@@ -169,7 +185,11 @@ test.describe('Hybrid Flow', () => {
     test.skip(!(await supportsHybridFlow(request, issuer)), 'This sample OP was generated without hybrid-flow');
     const first = authorizationRequest(issuer, 'code id_token token');
     await page.goto(first.url);
-    await login(page, issuer);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
     await page.getByRole('button', { name: 'Approve' }).click();
     await landOnRedirectUri(page);
 
@@ -196,7 +216,11 @@ test.describe('Hybrid Flow', () => {
     const withoutNonce = authorizationRequest(issuer, 'code id_token', { nonce: '' });
     const inQuery = authorizationRequest(issuer, 'code id_token token', { response_mode: 'query' });
 
-    expect(await errorRedirectOf(request, withoutNonce.url)).toEqual({
+    const url2: string = withoutNonce.url;
+    const answer = await request.get(url2, { maxRedirects: 0 });
+    expect(answer.status()).toBe(302);
+    const location = new URL(requireString(answer.headers()['location'], 'Location'));
+    expect(({ target: location.origin + location.pathname + location.search, response: fragmentOf(location) })).toEqual({
       target: redirectUri,
       response: {
         error: 'invalid_request',
@@ -205,7 +229,11 @@ test.describe('Hybrid Flow', () => {
         iss: issuer,
       },
     });
-    expect(await errorRedirectOf(request, inQuery.url)).toEqual({
+    const url3: string = inQuery.url;
+    const answer2 = await request.get(url3, { maxRedirects: 0 });
+    expect(answer2.status()).toBe(302);
+    const location2 = new URL(requireString(answer2.headers()['location'], 'Location'));
+    expect(({ target: location2.origin + location2.pathname + location2.search, response: fragmentOf(location2) })).toEqual({
       target: redirectUri,
       response: {
         error: 'invalid_request',
@@ -229,7 +257,10 @@ test.describe('Hybrid Flow', () => {
       `${issuer}/authorize?response_type=${encodeURIComponent('code id_token')}&client_id=e2e-client` +
       `&redirect_uri=${encodeURIComponent(codeClientRedirectUri)}&scope=openid&state=${state}&nonce=${randomValue()}`;
 
-    expect(await errorRedirectOf(request, url)).toEqual({
+    const answer = await request.get(url, { maxRedirects: 0 });
+    expect(answer.status()).toBe(302);
+    const location = new URL(requireString(answer.headers()['location'], 'Location'));
+    expect(({ target: location.origin + location.pathname + location.search, response: fragmentOf(location) })).toEqual({
       target: codeClientRedirectUri,
       response: {
         error: 'unauthorized_client',
@@ -306,14 +337,6 @@ function authorizationRequest(
   return { url: `${issuer}/authorize?${params.toString()}`, state, nonce, codeVerifier };
 }
 
-async function login(page: Page, issuer: string): Promise<void> {
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
-}
-
 /** Wait for the browser to land on the redirect URI and return the URL it landed on. */
 async function landOnRedirectUri(page: Page): Promise<URL> {
   await page.waitForURL((url) => url.href.startsWith(redirectUri));
@@ -348,17 +371,6 @@ async function exchangeCode(
 async function userInfoStatus(request: APIRequestContext, issuer: string, accessToken: string): Promise<number> {
   const response = await request.get(`${issuer}/userinfo`, { headers: { Authorization: `Bearer ${accessToken}` } });
   return response.status();
-}
-
-/** The redirect the authorization endpoint answers with, without following it. */
-async function errorRedirectOf(
-  request: APIRequestContext,
-  url: string,
-): Promise<{ target: string; response: Record<string, string> }> {
-  const answer = await request.get(url, { maxRedirects: 0 });
-  expect(answer.status()).toBe(302);
-  const location = new URL(requireString(answer.headers()['location'], 'Location'));
-  return { target: location.origin + location.pathname + location.search, response: fragmentOf(location) };
 }
 
 async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<ProviderMetadata> {

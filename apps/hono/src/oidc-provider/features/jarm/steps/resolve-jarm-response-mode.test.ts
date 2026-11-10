@@ -56,7 +56,9 @@ describe('resolveJarmResponseContext', () => {
       const c = await contextWithKeys();
 
       const mode = resolveJarmResponseContext(c, paramsWith('query.jwt'), client, REDIRECT_URI, 'state-1', TEST_ISSUER);
-      const location = new URL(locationOf(await mode!.respond(REDIRECT_URI, { code: 'code-1' })));
+      const redirectResponse = await mode!.respond(REDIRECT_URI, { code: 'code-1' });
+      expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+      const location = new URL(locationOf(redirectResponse));
 
       expect(mode?.name).toBe('query.jwt');
       expect(decodeJwt(location.searchParams.get('response') ?? '').payload).toEqual({

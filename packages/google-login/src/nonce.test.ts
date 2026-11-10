@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { GoogleLoginErrorCode } from './errors.js';
+import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
 import { consumeGoogleLoginNonce, issueGoogleLoginNonce } from './nonce.js';
-import { captureRejection, createInMemoryNonceStore, expectGoogleLoginError } from './test-helpers.js';
+import { captureRejection, createInMemoryNonceStore } from './test-helpers.js';
 
 const now = new Date(1_700_000_000_000);
 
@@ -89,7 +89,8 @@ describe('consumeGoogleLoginNonce', () => {
   it('should reject an unknown nonce', async () => {
     const error = await captureRejection(consumeGoogleLoginNonce('unknown', createInMemoryNonceStore(), now));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.LoginNonceNotFound, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.LoginNonceNotFound, httpStatusCode: 400 });
   });
 
   it('should reject a second use of the same nonce', async () => {
@@ -104,7 +105,8 @@ describe('consumeGoogleLoginNonce', () => {
 
     const error = await captureRejection(consumeGoogleLoginNonce(nonce, store, now));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.LoginNonceNotFound, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.LoginNonceNotFound, httpStatusCode: 400 });
   });
 
   it('should reject and delete an expired record', async () => {
@@ -120,7 +122,8 @@ describe('consumeGoogleLoginNonce', () => {
       consumeGoogleLoginNonce(nonce, store, new Date(now.getTime() + 1_000)),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.LoginNonceExpired, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.LoginNonceExpired, httpStatusCode: 400 });
     expect(store.records.size).toBe(0);
   });
 

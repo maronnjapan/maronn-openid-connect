@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { GoogleLoginErrorCode } from './errors.js';
+import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
 import {
   GOOGLE_CREDENTIAL_PARAM,
   GOOGLE_CSRF_TOKEN_COOKIE,
@@ -11,7 +11,7 @@ import {
   readGoogleLoginParam,
   validateGoogleCsrfToken,
 } from './redirect-credential.js';
-import { captureThrow, expectGoogleLoginError } from './test-helpers.js';
+import { captureThrow } from './test-helpers.js';
 
 describe('parameter names', () => {
   // GIS の redirect mode が login_uri へ POST するフィールド名と Cookie 名
@@ -70,13 +70,15 @@ describe('parseGoogleRedirectCredential', () => {
   it('should reject a body without credential', () => {
     const error = captureThrow(() => parseGoogleRedirectCredential({ g_csrf_token: 'csrf' }));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MissingCredential, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.MissingCredential, httpStatusCode: 400 });
   });
 
   it('should reject an empty credential', () => {
     const error = captureThrow(() => parseGoogleRedirectCredential({ credential: '' }));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MissingCredential, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.MissingCredential, httpStatusCode: 400 });
   });
 });
 
@@ -125,33 +127,38 @@ describe('validateGoogleCsrfToken', () => {
   it('should reject a missing cookie before looking at the body', () => {
     const error = captureThrow(() => validateGoogleCsrfToken(undefined, undefined));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInCookie, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMissingInCookie, httpStatusCode: 400 });
     expect((error as Error).message).toBe('No CSRF token in Cookie.');
   });
 
   it('should reject a missing body token', () => {
     const error = captureThrow(() => validateGoogleCsrfToken(undefined, 'abc123'));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInBody, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMissingInBody, httpStatusCode: 400 });
     expect((error as Error).message).toBe('No CSRF token in post body.');
   });
 
   it('should reject an empty body token', () => {
     const error = captureThrow(() => validateGoogleCsrfToken('', 'abc123'));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInBody, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMissingInBody, httpStatusCode: 400 });
   });
 
   it('should reject tokens that differ', () => {
     const error = captureThrow(() => validateGoogleCsrfToken('abc123', 'abc124'));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMismatch, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMismatch, httpStatusCode: 400 });
     expect((error as Error).message).toBe('Failed to verify double submit cookie.');
   });
 
   it('should reject tokens of different length', () => {
     const error = captureThrow(() => validateGoogleCsrfToken('abc123', 'abc1234'));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMismatch, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMismatch, httpStatusCode: 400 });
   });
 });

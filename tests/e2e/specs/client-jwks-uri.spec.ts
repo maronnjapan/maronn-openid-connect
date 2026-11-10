@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 import { generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
@@ -33,14 +33,19 @@ const redirectUri = `${clientBaseURL}/request-object-callback`;
  */
 // @feature request-object
 test.describe('client jwks_uri (RFC 7591 §2)', () => {
-  test.beforeEach(async ({ request, baseURL }) => {
-    const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
-    test.skip(metadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
-  });
 
   // D-20: the algs core verifies (RFC 7518 §3.3 / §3.4).
   test('should advertise the Request Object signing algs core verifies', async ({ request, baseURL }) => {
-    const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
+
+    const issuer: string = requireBaseUrl(baseURL);
+    const response = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response.status()).toBe(200);
+    const metadata = (await response.json()) as Record<string, unknown>;
 
     expect(metadata['request_object_signing_alg_values_supported']).toEqual([
       'RS256',
@@ -58,13 +63,34 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
     request,
     baseURL,
   }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
+
     const issuer = requireBaseUrl(baseURL);
-    const authorization = await requestObjectAuthorization(request, jwksUriClient.clientId, 'RS256');
+    const clientId2: string = jwksUriClient.clientId;
+    const alg: 'RS256' | 'ES256' = 'RS256';
+    const url = new URL('/request-object', clientBaseURL);
+    url.search = new URLSearchParams({ client_id: clientId2, alg }).toString();
+    const response = await request.get(url.toString());
+    expect(response.status()).toBe(200);
+    const authorization = (await response.json()) as RequestObjectAuthorization;
 
     // redirect_uri, state and code_challenge come from the Request Object
     // alone, so a code issued to that redirect_uri and redeemed with the
     // matching code_verifier shows the OP verified it and applied its claims.
-    const callback = await completeAuthorization(page, authorization.authorizationUrl);
+    const authorizationUrl2: string = authorization.authorizationUrl;
+    await page.goto(authorizationUrl2);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url2) => url2.pathname === '/request-object-callback');
+    const callback = new URL(page.url());
     expect(callback.searchParams.get('state')).toBe(authorization.state);
     const redeemed = await redeemCode(
       request,
@@ -82,19 +108,46 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
     request,
     baseURL,
   }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
+
     const issuer = requireBaseUrl(baseURL);
     // The OP fetches the jwks_uri and keeps its keys.
-    await page.goto((await requestObjectAuthorization(request, jwksUriClient.clientId, 'RS256')).authorizationUrl);
+    const clientId2: string = jwksUriClient.clientId;
+    const alg: 'RS256' | 'ES256' = 'RS256';
+    const url = new URL('/request-object', clientBaseURL);
+    url.search = new URLSearchParams({ client_id: clientId2, alg }).toString();
+    const response = await request.get(url.toString());
+    expect(response.status()).toBe(200);
+    await page.goto(((await response.json()) as RequestObjectAuthorization).authorizationUrl);
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
 
     // The client adds a key to its jwks_uri and signs with it from now on.
     const rotation = await request.post(`${clientBaseURL}/rotate-request-object-key`);
     expect(rotation.status()).toBe(200);
     const { kid } = (await rotation.json()) as { kid: string };
-    const authorization = await requestObjectAuthorization(request, jwksUriClient.clientId, 'RS256');
+    const clientId3: string = jwksUriClient.clientId;
+    const alg2: 'RS256' | 'ES256' = 'RS256';
+    const url2 = new URL('/request-object', clientBaseURL);
+    url2.search = new URLSearchParams({ client_id: clientId3, alg: alg2 }).toString();
+    const response2 = await request.get(url2.toString());
+    expect(response2.status()).toBe(200);
+    const authorization = (await response2.json()) as RequestObjectAuthorization;
     expect(authorization.kid).toBe(kid);
 
-    const callback = await completeAuthorization(page, authorization.authorizationUrl);
+    const authorizationUrl2: string = authorization.authorizationUrl;
+    await page.goto(authorizationUrl2);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url3) => url3.pathname === '/request-object-callback');
+    const callback = new URL(page.url());
     expect(callback.searchParams.get('state')).toBe(authorization.state);
   });
 
@@ -104,10 +157,31 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
     request,
     baseURL,
   }) => {
-    const issuer = requireBaseUrl(baseURL);
-    const es256 = await requestObjectAuthorization(request, es256Client.clientId, 'ES256');
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
 
-    const callback = await completeAuthorization(page, es256.authorizationUrl);
+    const issuer = requireBaseUrl(baseURL);
+    const clientId2: string = es256Client.clientId;
+    const alg: 'RS256' | 'ES256' = 'ES256';
+    const url = new URL('/request-object', clientBaseURL);
+    url.search = new URLSearchParams({ client_id: clientId2, alg }).toString();
+    const response = await request.get(url.toString());
+    expect(response.status()).toBe(200);
+    const es256 = (await response.json()) as RequestObjectAuthorization;
+
+    const authorizationUrl2: string = es256.authorizationUrl;
+    await page.goto(authorizationUrl2);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url3) => url3.pathname === '/request-object-callback');
+    const callback = new URL(page.url());
     expect(callback.searchParams.get('state')).toBe(es256.state);
     const redeemed = await redeemCode(
       request,
@@ -118,7 +192,13 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
     );
     expect(redeemed.status()).toBe(200);
 
-    const refused = await authorize(request, (await requestObjectAuthorization(request, es256Client.clientId, 'RS256')).authorizationUrl);
+    const clientId3: string = es256Client.clientId;
+    const alg2: 'RS256' | 'ES256' = 'RS256';
+    const url2 = new URL('/request-object', clientBaseURL);
+    url2.search = new URLSearchParams({ client_id: clientId3, alg: alg2 }).toString();
+    const response2 = await request.get(url2.toString());
+    expect(response2.status()).toBe(200);
+    const refused = await authorize(request, ((await response2.json()) as RequestObjectAuthorization).authorizationUrl);
     expect(refused.status()).toBe(400);
     expect(await refused.json()).toEqual({
       error: 'invalid_request_object',
@@ -128,6 +208,12 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
 
   // UC-18
   test('should refuse a Request Object signed with a key the jwks_uri does not publish', async ({ request, baseURL }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
+
     const issuer = requireBaseUrl(baseURL);
 
     const refused = await authorize(request, unpublishedKeyRequestObjectUrl(issuer));
@@ -140,10 +226,21 @@ test.describe('client jwks_uri (RFC 7591 §2)', () => {
   });
 
   // UC-16 / D-14: the reason (the 404) stays in the log of the OP.
-  test('should refuse the Request Object of a client whose jwks_uri cannot be retrieved, without the reason', async ({
+  test('should refuse the Request Object of a client whose jwks_uri cannot be retrieved, without the reason', async ({baseURL,
     request,
   }) => {
-    const refused = await authorize(request, (await requestObjectAuthorization(request, brokenClientId, 'RS256')).authorizationUrl);
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_parameter_supported'] !== true, 'This OP was generated without request-object');
+
+    const alg: 'RS256' | 'ES256' = 'RS256';
+    const url = new URL('/request-object', clientBaseURL);
+    url.search = new URLSearchParams({ client_id: brokenClientId, alg }).toString();
+    const response = await request.get(url.toString());
+    expect(response.status()).toBe(200);
+    const refused = await authorize(request, ((await response.json()) as RequestObjectAuthorization).authorizationUrl);
 
     expect(refused.status()).toBe(400);
     expect(await refused.json()).toEqual({
@@ -158,19 +255,6 @@ interface RequestObjectAuthorization {
   state: string;
   codeVerifier: string;
   kid: string;
-}
-
-/** An authorization URL carrying a Request Object the E2E RP signed with the current key of alg. */
-async function requestObjectAuthorization(
-  request: APIRequestContext,
-  clientId: string,
-  alg: 'RS256' | 'ES256',
-): Promise<RequestObjectAuthorization> {
-  const url = new URL('/request-object', clientBaseURL);
-  url.search = new URLSearchParams({ client_id: clientId, alg }).toString();
-  const response = await request.get(url.toString());
-  expect(response.status()).toBe(200);
-  return (await response.json()) as RequestObjectAuthorization;
 }
 
 /** The authorization request, answered without following a redirect and with JSON for an error. */
@@ -210,19 +294,6 @@ function unpublishedKeyRequestObjectUrl(issuer: string): string {
   return url.toString();
 }
 
-/** Sign in and approve in the browser, and return the URL the OP redirected back to. */
-async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
-  await page.goto(authorizationUrl);
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await page.waitForURL((url) => url.pathname === '/request-object-callback');
-  return new URL(page.url());
-}
-
 async function redeemCode(
   request: APIRequestContext,
   issuer: string,
@@ -240,12 +311,6 @@ async function redeemCode(
       client_secret: client.clientSecret,
     },
   });
-}
-
-async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<Record<string, unknown>> {
-  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-  expect(response.status()).toBe(200);
-  return (await response.json()) as Record<string, unknown>;
 }
 
 function base64UrlJson(value: unknown): string {

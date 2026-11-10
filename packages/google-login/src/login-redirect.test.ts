@@ -9,7 +9,6 @@ import {
   createFakeVerifier,
   createGoogleIdTokenPayload,
   createInMemoryNonceStore,
-  expectGoogleLoginError,
   TEST_CLIENT_ID,
   type FakeVerifier,
   type InMemoryNonceStore,
@@ -92,7 +91,8 @@ describe('handleGoogleLoginRedirect', () => {
 
     const error = await captureRejection(handleGoogleLoginRedirect(context));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.LoginNonceNotFound, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.LoginNonceNotFound, httpStatusCode: 400 });
     expect(nonceStore.records.size).toBe(0);
   });
 
@@ -108,7 +108,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInCookie, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMissingInCookie, httpStatusCode: 400 });
     expect(verifier.calls).toEqual([]);
     expect(nonceStore.records.size).toBe(1);
   });
@@ -124,7 +125,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMismatch, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.CsrfTokenMismatch, httpStatusCode: 400 });
     expect(verifier.calls).toEqual([]);
   });
 
@@ -139,7 +141,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MissingCredential, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.MissingCredential, httpStatusCode: 400 });
   });
 
   // 検証を通らないトークンでは nonce を消費しない（ログイン試行の妨害を防ぐ）
@@ -154,7 +157,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect(nonceStore.records.size).toBe(1);
   });
 
@@ -176,7 +180,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.SigningKeyUnavailable, 503);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.SigningKeyUnavailable, httpStatusCode: 503 });
     expect(nonceStore.records.size).toBe(1);
   });
 
@@ -193,7 +198,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidNonce, httpStatusCode: 400 });
   });
 
   it('should reject a credential whose nonce was not issued by this provider', async () => {
@@ -209,7 +215,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.LoginNonceNotFound, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.LoginNonceNotFound, httpStatusCode: 400 });
     expect(nonceStore.records.size).toBe(1);
   });
 
@@ -232,7 +239,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.LoginNonceExpired, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.LoginNonceExpired, httpStatusCode: 400 });
   });
 
   it('should enforce the hosted domain restriction', async () => {
@@ -249,7 +257,8 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidHostedDomain, httpStatusCode: 403 });
     expect(nonceStore.records.size).toBe(1);
   });
 
@@ -267,6 +276,7 @@ describe('handleGoogleLoginRedirect', () => {
       }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.EmailNotVerified, httpStatusCode: 403 });
   });
 });

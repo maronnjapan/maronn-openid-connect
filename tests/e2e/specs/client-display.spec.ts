@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, test } from '../fixtures';
-import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -18,25 +17,29 @@ const registeredRedirectUri = `${clientBaseURL}/logged-out`;
  * page, so the spec reads the attributes of the page.
  */
 test.describe('client display metadata (OIDC Dynamic Client Registration 1.0 §2)', () => {
-  test.beforeEach(async ({ request, baseURL }) => {
-    const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
-    test.skip(typeof metadata['registration_endpoint'] !== 'string', 'This OP was generated without dynamic-client-registration');
-  });
-
   test('should show the name, logo and policy links of a registered client on the login and consent pages', async ({
     page,
     request,
     baseURL,
   }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(typeof discoveryMetadata['registration_endpoint'] !== 'string', 'This OP was generated without dynamic-client-registration');
+
     const issuer = requireBaseUrl(baseURL);
-    const clientId = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       token_endpoint_auth_method: 'client_secret_post',
       client_name: 'E2E Display Client',
       logo_uri: 'https://rp.example.com/logo.png',
       policy_uri: 'https://rp.example.com/privacy',
       tos_uri: 'https://rp.example.com/terms',
-    });
+    };
+    const response = await request.post(`${issuer}/register`, { headers: { 'Content-Type': 'application/json' }, data: metadata });
+    expect(response.status()).toBe(201);
+    const clientId = requireString(((await response.json()) as Record<string, unknown>)['client_id'], 'client_id');
 
     await page.goto(authorizeUrl(issuer, clientId));
     await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
@@ -58,13 +61,22 @@ test.describe('client display metadata (OIDC Dynamic Client Registration 1.0 §2
 
   // Only https URLs are put into the page.
   test('should not show an http logo_uri', async ({ page, request, baseURL }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(typeof discoveryMetadata['registration_endpoint'] !== 'string', 'This OP was generated without dynamic-client-registration');
+
     const issuer = requireBaseUrl(baseURL);
-    const clientId = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       token_endpoint_auth_method: 'client_secret_post',
       client_name: 'E2E Insecure Logo Client',
       logo_uri: 'http://rp.example.com/logo.png',
-    });
+    };
+    const response = await request.post(`${issuer}/register`, { headers: { 'Content-Type': 'application/json' }, data: metadata });
+    expect(response.status()).toBe(201);
+    const clientId = requireString(((await response.json()) as Record<string, unknown>)['client_id'], 'client_id');
 
     await page.goto(authorizeUrl(issuer, clientId));
     await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
@@ -73,12 +85,6 @@ test.describe('client display metadata (OIDC Dynamic Client Registration 1.0 §2
     await expect(page.locator('img')).toHaveCount(0);
   });
 });
-
-async function registerClient(request: APIRequestContext, issuer: string, metadata: Record<string, unknown>): Promise<string> {
-  const response = await request.post(`${issuer}/register`, { headers: { 'Content-Type': 'application/json' }, data: metadata });
-  expect(response.status()).toBe(201);
-  return requireString(((await response.json()) as Record<string, unknown>)['client_id'], 'client_id');
-}
 
 function authorizeUrl(issuer: string, clientId: string): string {
   const codeVerifier = randomBytes(32).toString('base64url');
@@ -93,12 +99,6 @@ function authorizeUrl(issuer: string, clientId: string): string {
     code_challenge_method: 'S256',
   });
   return `${issuer}/authorize?${params}`;
-}
-
-async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<Record<string, unknown>> {
-  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-  expect(response.status()).toBe(200);
-  return (await response.json()) as Record<string, unknown>;
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

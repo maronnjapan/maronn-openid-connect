@@ -48,7 +48,6 @@ async function approve(transaction: AuthTransaction, client: Partial<ClientRegis
 
 /** The parameters in the fragment of the redirect the outcome answers with. */
 function fragmentOf(outcome: unknown): { target: string; params: Record<string, string> } {
-  expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
   const url = new URL((outcome as { response: { location: string } }).response.location);
   return { target: url.origin + url.pathname + url.search, params: Object.fromEntries(new URLSearchParams(url.hash.slice(1))) };
 }
@@ -81,6 +80,7 @@ describe('issueHybridConsentResponse', () => {
     it('should redirect with the code, the tokens, the state and iss in the fragment and clear the transaction cookie', async () => {
       const { db, outcome } = await approve(hybridTransaction());
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       const { target, params } = fragmentOf(outcome);
       expect(target).toBe(REDIRECT_URI);
       expect(params).toEqual({
@@ -100,6 +100,7 @@ describe('issueHybridConsentResponse', () => {
     it('should issue an ID Token for alice with the nonce of the request and c_hash for response_type=code id_token', async () => {
       const { outcome } = await approve(hybridTransaction({ responseType: 'code id_token' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       const { params } = fragmentOf(outcome);
       expect(Object.keys(params)).toEqual(['code', 'id_token', 'state', 'iss']);
       expect(decodeJwt(params['id_token'] ?? '').payload).toMatchObject({
@@ -138,6 +139,7 @@ describe('issueHybridConsentResponse', () => {
     it('should answer in the fragment when the transaction stores no response mode', async () => {
       const { outcome } = await approve(hybridTransaction({ responseType: 'code id_token', responseMode: undefined }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(Object.keys(fragmentOf(outcome).params)).toEqual(['code', 'id_token', 'state', 'iss']);
     });
   });
@@ -185,6 +187,7 @@ describe('issueHybridConsentResponse', () => {
     it('should issue the code and the tokens for the scopes the End-User may be granted', async () => {
       const { db, outcome } = await approve(hybridTransaction({ scope: 'openid reports.read' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentOf(outcome).params['scope']).toBe('openid');
       expect([...db.codes.values()].map((record) => record.scope)).toEqual([['openid']]);
       expect([...db.accessTokens.values()].map((record) => record.scope)).toEqual([['openid']]);
@@ -196,6 +199,7 @@ describe('issueHybridConsentResponse', () => {
     it('should answer server_error in the fragment, recording no consent and no code, when no ID Token signing key has the registered alg', async () => {
       const { db, outcome, stores } = await approve(hybridTransaction(), { idTokenSignedResponseAlg: 'ES256' });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentOf(outcome).params).toEqual({
         error: 'server_error',
         error_description: 'No ID Token signing key registered for alg ES256',

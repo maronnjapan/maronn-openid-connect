@@ -79,9 +79,8 @@ function hybridParams(overrides: Record<string, string> = {}): Record<string, st
   return authorizationParams({ response_type: 'code id_token token', ...overrides });
 }
 
-/** Assert that the outcome redirects to the client and return the target and the parameters of its fragment. */
+/** The redirect target and fragment parameters of an authorization response. */
 function fragmentRedirectOf(outcome: unknown): { target: string; params: Record<string, string> } {
-  expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
   const url = new URL((outcome as { response: { location: string } }).response.location);
   return { target: url.origin + url.pathname + url.search, params: Object.fromEntries(new URLSearchParams(url.hash.slice(1))) };
 }
@@ -132,6 +131,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, authorizationParams(), { cookie });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: { code: [...db.codes.keys()][0], state: STATE, iss: TEST_ISSUER },
@@ -160,6 +160,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, authorizationParams({ prompt: 'none' }), { cookie });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: { code: [...db.codes.keys()][0], state: STATE, iss: TEST_ISSUER },
@@ -171,6 +172,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, authorizationParams({ prompt: 'none' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: {
@@ -189,6 +191,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, authorizationParams({ prompt: 'none', response_mode: 'query.jwt' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       const { target, params } = authorizationRedirectOf(outcome);
       expect(target).toBe(REDIRECT_URI);
       expect(Object.keys(params)).toEqual(['response']);
@@ -264,6 +267,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, implicitParams(), { cookie });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       const { target, params } = fragmentRedirectOf(outcome);
       expect(target).toBe(REDIRECT_URI);
       expect(params).toEqual({
@@ -286,6 +290,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, implicitParams({ response_type: 'id_token', prompt: 'none' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: {
@@ -333,7 +338,9 @@ describe('processAuthorizationRequest', () => {
       const { db } = await providerWithImplicitClient();
       const { nonce: _nonce, ...params } = implicitParams();
 
-      expect(fragmentRedirectOf(await authorize(db, params)).params).toEqual({
+      const redirectOutcome = await authorize(db, params);
+      expect(redirectOutcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
+      expect(fragmentRedirectOf(redirectOutcome).params).toEqual({
         error: 'invalid_request',
         error_description: 'Missing required parameter: nonce',
         state: STATE,
@@ -348,6 +355,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, implicitParams({ response_mode: 'query' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'invalid_request',
         error_description: 'response_mode=query must not be used with the Implicit Flow',
@@ -362,6 +370,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, implicitParams({ response_mode: 'query.jwt' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'invalid_request',
         error_description: 'Unsupported response_mode: query.jwt',
@@ -376,6 +385,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, implicitParams({ response_type: 'id_token' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'unauthorized_client',
         error_description: 'Client is not authorized to use response_type: id_token',
@@ -390,6 +400,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, implicitParams({ response_type: 'token' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'unsupported_response_type',
         error_description: 'Unsupported response_type: token',
@@ -410,6 +421,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, hybridParams(), { cookie });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       const { target, params } = fragmentRedirectOf(outcome);
       expect(target).toBe(REDIRECT_URI);
       expect(params).toEqual({
@@ -434,6 +446,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, hybridParams({ response_type: 'code id_token', prompt: 'none' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: {
@@ -468,7 +481,9 @@ describe('processAuthorizationRequest', () => {
       const { db } = await providerWithHybridClient();
       const { nonce: _nonce, ...withoutNonce } = hybridParams();
 
-      expect(fragmentRedirectOf(await authorize(db, withoutNonce)).params).toEqual({
+      const redirectOutcome = await authorize(db, withoutNonce);
+      expect(redirectOutcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
+      expect(fragmentRedirectOf(redirectOutcome).params).toEqual({
         error: 'invalid_request',
         error_description: 'Missing required parameter: nonce',
         state: STATE,
@@ -484,6 +499,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, hybridParams({ response_mode: 'query' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'invalid_request',
         error_description: 'response_mode=query must not be used with the Hybrid Flow',
@@ -499,6 +515,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, params);
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'invalid_request',
         error_description: 'Missing required parameter: code_challenge',
@@ -514,6 +531,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, hybridParams({ response_type: 'code id_token' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'unauthorized_client',
         error_description: 'Client is not authorized to use response_type: code id_token',
@@ -532,6 +550,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, authorizationParams({ response_mode: 'fragment' }), { cookie });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(fragmentRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: { code: [...db.codes.keys()][0], state: STATE, iss: TEST_ISSUER },
@@ -583,6 +602,7 @@ describe('processAuthorizationRequest', () => {
 
       const outcome = await authorize(db, params);
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: {

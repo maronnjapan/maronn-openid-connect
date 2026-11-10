@@ -135,7 +135,6 @@ describe('issueHybridResponse', () => {
 
   /** The redirect target and the parameters in the fragment of a 302. */
   function fragmentOf(response: Response | undefined): { target: string; params: Record<string, string> } {
-    expect(response?.status).toBe(302);
     const location = new URL(response?.headers.get('Location') ?? '');
     return {
       target: location.origin + location.pathname,
@@ -148,6 +147,7 @@ describe('issueHybridResponse', () => {
   it('should redirect with the code, the tokens, the state and iss in the fragment and finish the transaction', async () => {
     const { response } = await respond('hybrid-txn-1', 'code id_token token');
 
+    expect(response?.status).toBe(302);
     const { target, params } = fragmentOf(response);
     expect(target).toBe(REDIRECT_URI);
     expect(params).toEqual({
@@ -178,6 +178,7 @@ describe('issueHybridResponse', () => {
 
     const { response } = await respond('hybrid-txn-2', 'code id_token token');
 
+    expect(response?.status).toBe(302);
     const { params } = fragmentOf(response);
     const code = await stores.authCodeStore.get(params['code'] ?? '');
     const accessToken = await stores.accessTokenStore.get(params['access_token'] ?? '');
@@ -200,12 +201,14 @@ describe('issueHybridResponse', () => {
   it('should answer in the fragment when no response mode was set', async () => {
     const { response } = await respond('hybrid-txn-3', 'code id_token', undefined);
 
+    expect(response?.status).toBe(302);
     expect(Object.keys(fragmentOf(response).params)).toEqual(['code', 'id_token', 'state', 'iss']);
   });
 
   it('should redirect with the code and the access token without an ID Token for code token', async () => {
     const { response } = await respond('hybrid-txn-4', 'code token');
 
+    expect(response?.status).toBe(302);
     expect(Object.keys(fragmentOf(response).params)).toEqual([
       'code',
       'access_token',

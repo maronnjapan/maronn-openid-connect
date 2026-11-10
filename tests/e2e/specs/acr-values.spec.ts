@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -28,7 +28,16 @@ test.describe('acr_values', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    await authorize(page, 'urn:example:loa:3 urn:example:loa:2');
+    const acrValues: string | undefined = 'urn:example:loa:3 urn:example:loa:2';
+    const query = acrValues === undefined ? '' : `?acr_values=${encodeURIComponent(acrValues)}`;
+    await page.goto(`${clientBaseURL}/start${query}`);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
 
     const idToken = parseJwtPayload(await requiredText(page, 'token-id-token'));
     expect(idToken).toMatchObject({
@@ -47,7 +56,16 @@ test.describe('acr_values', () => {
       acr: 'urn:example:loa:3',
     });
 
-    const introspection = await introspect(request, issuer, accessToken);
+    const response = await request.post(`${issuer}/introspect`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${resourceServerClientId}:${resourceServerClientSecret}`,
+        ).toString('base64')}`,
+      },
+      form: { token: accessToken, token_type_hint: 'access_token' },
+    });
+    expect(response.status()).toBe(200);
+    const introspection = (await response.json()) as Record<string, unknown>;
     expect(introspection).toMatchObject({
       active: true,
       sub: 'testuser',
@@ -65,7 +83,16 @@ test.describe('acr_values', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    await authorize(page, 'urn:example:loa:2');
+    const acrValues: string | undefined = 'urn:example:loa:2';
+    const query = acrValues === undefined ? '' : `?acr_values=${encodeURIComponent(acrValues)}`;
+    await page.goto(`${clientBaseURL}/start${query}`);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const refreshToken = await requiredText(page, 'token-refresh-token');
 
     const refreshResponse = await request.post(`${issuer}/token`, {
@@ -89,7 +116,16 @@ test.describe('acr_values', () => {
       sub: 'testuser',
       acr: 'urn:example:loa:2',
     });
-    expect(await introspect(request, issuer, refreshedAccessToken)).toMatchObject({
+    const response = await request.post(`${issuer}/introspect`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${resourceServerClientId}:${resourceServerClientSecret}`,
+        ).toString('base64')}`,
+      },
+      form: { token: refreshedAccessToken, token_type_hint: 'access_token' },
+    });
+    expect(response.status()).toBe(200);
+    expect(((await response.json()) as Record<string, unknown>)).toMatchObject({
       active: true,
       acr: 'urn:example:loa:2',
     });
@@ -101,7 +137,15 @@ test.describe('acr_values', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    await authorize(page, undefined);
+    const query = '';
+    await page.goto(`${clientBaseURL}/start${query}`);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
 
     const idToken = parseJwtPayload(await requiredText(page, 'token-id-token'));
     expect(idToken.sub).toBe('testuser');
@@ -113,7 +157,16 @@ test.describe('acr_values', () => {
     expect(accessTokenClaims.sub).toBe('testuser');
     expect(accessTokenClaims.acr).toBeUndefined();
 
-    const introspection = await introspect(request, issuer, accessToken);
+    const response = await request.post(`${issuer}/introspect`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${resourceServerClientId}:${resourceServerClientSecret}`,
+        ).toString('base64')}`,
+      },
+      form: { token: accessToken, token_type_hint: 'access_token' },
+    });
+    expect(response.status()).toBe(200);
+    const introspection = (await response.json()) as Record<string, unknown>;
     expect(introspection.active).toBe(true);
     expect(introspection.acr).toBeUndefined();
   });
@@ -137,37 +190,6 @@ test.describe('acr_values', () => {
     expect(new URL(page.url()).searchParams.get('code')).toBe(null);
   });
 });
-
-/** Run the code flow through the E2E client, with acr_values when given. */
-async function authorize(page: Page, acrValues: string | undefined): Promise<void> {
-  const query = acrValues === undefined ? '' : `?acr_values=${encodeURIComponent(acrValues)}`;
-  await page.goto(`${clientBaseURL}/start${query}`);
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
-}
-
-/** RFC 7662 §2.1: introspect as the resource server (client_secret_basic). */
-async function introspect(
-  request: APIRequestContext,
-  issuer: string,
-  token: string,
-): Promise<Record<string, unknown>> {
-  const response = await request.post(`${issuer}/introspect`, {
-    headers: {
-      Authorization: `Basic ${Buffer.from(
-        `${resourceServerClientId}:${resourceServerClientSecret}`,
-      ).toString('base64')}`,
-    },
-    form: { token, token_type_hint: 'access_token' },
-  });
-  expect(response.status()).toBe(200);
-  return (await response.json()) as Record<string, unknown>;
-}
 
 async function requiredText(page: Page, testId: string): Promise<string> {
   const value = await page.getByTestId(testId).textContent();

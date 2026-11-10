@@ -1,5 +1,4 @@
 import { expect, test } from '../fixtures';
-import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -57,7 +56,11 @@ test.describe('Registered client scope (RFC 7591 §2)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await discoveredEndpoint(request, issuer, 'device_authorization_endpoint');
+    const name: 'device_authorization_endpoint' | 'backchannel_authentication_endpoint' = 'device_authorization_endpoint';
+    const response2 = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response2.status()).toBe(200);
+    const metadata = await response2.json() as Record<string, string | undefined>;
+    const endpoint = await (metadata[name]);
     test.skip(
       endpoint === undefined,
       'This sample OP was generated without --enable device-authorization-grant',
@@ -80,7 +83,11 @@ test.describe('Registered client scope (RFC 7591 §2)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await discoveredEndpoint(request, issuer, 'backchannel_authentication_endpoint');
+    const name: 'device_authorization_endpoint' | 'backchannel_authentication_endpoint' = 'backchannel_authentication_endpoint';
+    const response2 = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response2.status()).toBe(200);
+    const metadata = await response2.json() as Record<string, string | undefined>;
+    const endpoint = await (metadata[name]);
     test.skip(endpoint === undefined, 'This sample OP was generated without --enable ciba');
 
     const response = await request.post(requireEndpoint(endpoint), {
@@ -112,17 +119,6 @@ function authorizeUrl(issuer: string, scope: string): string {
   url.searchParams.set('code_challenge', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
   url.searchParams.set('code_challenge_method', 'S256');
   return url.toString();
-}
-
-async function discoveredEndpoint(
-  request: APIRequestContext,
-  issuer: string,
-  name: 'device_authorization_endpoint' | 'backchannel_authentication_endpoint',
-): Promise<string | undefined> {
-  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-  expect(response.status()).toBe(200);
-  const metadata = await response.json() as Record<string, string | undefined>;
-  return metadata[name];
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

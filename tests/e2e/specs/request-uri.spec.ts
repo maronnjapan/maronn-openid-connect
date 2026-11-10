@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -33,27 +33,52 @@ const redirectUri = `${clientBaseURL}/request-object-callback`;
  * tests of core.
  */
 test.describe('request_uri (OIDC Core 1.0 §6.2)', () => {
-  test.beforeEach(async ({ request, baseURL }) => {
-    const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
-    test.skip(metadata['request_uri_parameter_supported'] !== true, 'This OP does not fetch request_uri');
-  });
 
   // OIDC Discovery 1.0 §3.
   test('should advertise request_uri_parameter_supported without requiring registration', async ({ request, baseURL }) => {
-    const metadata = await discoveryMetadata(request, requireBaseUrl(baseURL));
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_uri_parameter_supported'] !== true, 'This OP does not fetch request_uri');
+
+    const issuer: string = requireBaseUrl(baseURL);
+    const response = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response.status()).toBe(200);
+    const metadata = (await response.json()) as Record<string, unknown>;
 
     expect(metadata['request_uri_parameter_supported']).toBe(true);
     expect(metadata['require_request_uri_registration']).toBe(false);
   });
 
   test('should complete the flow with a signed Request Object fetched from the request_uri', async ({ page, request, baseURL }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_uri_parameter_supported'] !== true, 'This OP does not fetch request_uri');
+
     const issuer = requireBaseUrl(baseURL);
-    const authorization = await requestUriAuthorization(request, { client_id: jwksUriClient.clientId, alg: 'RS256' });
+    const params: Record<string, string> = { client_id: jwksUriClient.clientId, alg: 'RS256' };
+    const url = new URL('/request-uri', clientBaseURL);
+    url.search = new URLSearchParams(params).toString();
+    const response = await request.get(url.toString());
+    expect(response.status()).toBe(200);
+    const authorization = (await response.json()) as RequestUriAuthorization;
 
     // redirect_uri, state and code_challenge are in the Request Object only,
     // so a code issued to that redirect_uri and redeemed with the matching
     // code_verifier shows the OP fetched and verified it.
-    const callback = await completeAuthorization(page, authorization.authorizationUrl);
+    const authorizationUrl2: string = authorization.authorizationUrl;
+    await page.goto(authorizationUrl2);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url2) => url2.pathname === '/request-object-callback');
+    const callback = new URL(page.url());
     expect(callback.searchParams.get('state')).toBe(authorization.state);
     const redeemed = await request.post(`${issuer}/token`, {
       form: {
@@ -69,6 +94,12 @@ test.describe('request_uri (OIDC Core 1.0 §6.2)', () => {
   });
 
   test('should answer invalid_request_uri without redirecting when the request_uri answers 404', async ({ request, baseURL }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_uri_parameter_supported'] !== true, 'This OP does not fetch request_uri');
+
     const issuer = requireBaseUrl(baseURL);
     const url = authorizeUrl(issuer, jwksUriClient.clientId, { request_uri: `${clientBaseURL}/request-objects/never-written` });
 
@@ -82,8 +113,19 @@ test.describe('request_uri (OIDC Core 1.0 §6.2)', () => {
   });
 
   // OIDC Core 1.0 §6.2 / RFC 9101 §5: request and request_uri are not combined.
-  test('should answer invalid_request when request and request_uri are both sent', async ({ request }) => {
-    const authorization = await requestUriAuthorization(request, { client_id: jwksUriClient.clientId, alg: 'RS256' });
+  test('should answer invalid_request when request and request_uri are both sent', async ({baseURL,  request }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_uri_parameter_supported'] !== true, 'This OP does not fetch request_uri');
+
+    const params: Record<string, string> = { client_id: jwksUriClient.clientId, alg: 'RS256' };
+    const url2 = new URL('/request-uri', clientBaseURL);
+    url2.search = new URLSearchParams(params).toString();
+    const response2 = await request.get(url2.toString());
+    expect(response2.status()).toBe(200);
+    const authorization = (await response2.json()) as RequestUriAuthorization;
     const url = new URL(authorization.authorizationUrl);
     url.searchParams.set('request', 'eyJhbGciOiJub25lIn0.e30.');
 
@@ -98,6 +140,12 @@ test.describe('request_uri (OIDC Core 1.0 §6.2)', () => {
 
   // RFC 9101 §5.2: a request_uri SHOULD NOT exceed 512 ASCII characters.
   test('should answer invalid_request_uri for a request_uri longer than 512 characters', async ({ request, baseURL }) => {
+    const discoveryIssuer: string = requireBaseUrl(baseURL);
+    const discoveryResponse = await request.get(`${discoveryIssuer}/.well-known/openid-configuration`);
+    expect(discoveryResponse.status()).toBe(200);
+    const discoveryMetadata = (await discoveryResponse.json()) as Record<string, unknown>;
+    test.skip(discoveryMetadata['request_uri_parameter_supported'] !== true, 'This OP does not fetch request_uri');
+
     const issuer = requireBaseUrl(baseURL);
     const url = authorizeUrl(issuer, jwksUriClient.clientId, {
       request_uri: `${clientBaseURL}/request-objects/${'a'.repeat(512)}`,
@@ -117,13 +165,18 @@ test.describe('request_uri (OIDC Core 1.0 §6.2)', () => {
     });
 
     test('should accept the unsigned Request Object of a registered request_uri and go on to the login page', async ({ request }) => {
-      const authorization = await requestUriAuthorization(request, {
+      const params: Record<string, string> = {
         client_id: registeredClientId,
         alg: 'none',
         id: 'registered',
         fragment: 'none',
         issuer: registrationIssuer,
-      });
+      };
+      const url = new URL('/request-uri', clientBaseURL);
+      url.search = new URLSearchParams(params).toString();
+      const response2 = await request.get(url.toString());
+      expect(response2.status()).toBe(200);
+      const authorization = (await response2.json()) as RequestUriAuthorization;
 
       const response = await authorize(request, authorization.authorizationUrl);
 
@@ -133,11 +186,16 @@ test.describe('request_uri (OIDC Core 1.0 §6.2)', () => {
     });
 
     test('should answer invalid_request_uri for a request_uri the client did not register', async ({ request }) => {
-      const authorization = await requestUriAuthorization(request, {
+      const params: Record<string, string> = {
         client_id: registeredClientId,
         alg: 'none',
         issuer: registrationIssuer,
-      });
+      };
+      const url = new URL('/request-uri', clientBaseURL);
+      url.search = new URLSearchParams(params).toString();
+      const response2 = await request.get(url.toString());
+      expect(response2.status()).toBe(200);
+      const authorization = (await response2.json()) as RequestUriAuthorization;
 
       const response = await authorize(request, authorization.authorizationUrl);
 
@@ -157,18 +215,6 @@ interface RequestUriAuthorization {
   codeVerifier: string;
 }
 
-/** An authorization URL whose request_uri points at a Request Object the E2E RP has just written. */
-async function requestUriAuthorization(
-  request: APIRequestContext,
-  params: Record<string, string>,
-): Promise<RequestUriAuthorization> {
-  const url = new URL('/request-uri', clientBaseURL);
-  url.search = new URLSearchParams(params).toString();
-  const response = await request.get(url.toString());
-  expect(response.status()).toBe(200);
-  return (await response.json()) as RequestUriAuthorization;
-}
-
 /** The URL of an authorization request of clientId with the parameters OIDC Core 1.0 §6.2 keeps in the query. */
 function authorizeUrl(issuer: string, clientId: string, extra: Record<string, string>): string {
   const params = new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'openid', ...extra });
@@ -178,25 +224,6 @@ function authorizeUrl(issuer: string, clientId: string, extra: Record<string, st
 /** The authorization request, answered without following a redirect and with JSON for an error. */
 function authorize(request: APIRequestContext, authorizationUrl: string) {
   return request.get(authorizationUrl, { maxRedirects: 0, headers: { Accept: 'application/json' } });
-}
-
-/** Sign in and approve in the browser, and return the URL the OP redirected back to. */
-async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
-  await page.goto(authorizationUrl);
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await page.waitForURL((url) => url.pathname === '/request-object-callback');
-  return new URL(page.url());
-}
-
-async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<Record<string, unknown>> {
-  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-  expect(response.status()).toBe(200);
-  return (await response.json()) as Record<string, unknown>;
 }
 
 /** The metadata of the OP at issuer, or undefined when nothing answers there. */

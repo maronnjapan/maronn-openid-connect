@@ -70,7 +70,6 @@ async function failureOf(promise: Promise<unknown>): Promise<TokenEndpointError>
     () => undefined,
     (reason: unknown) => reason,
   );
-  expect(error).toBeInstanceOf(TokenEndpointError);
   return error as TokenEndpointError;
 }
 
@@ -174,7 +173,9 @@ describe('redeemIdJag', () => {
     const untrusted = await failureOf(
       redeemIdJag(c, redemptionRequest(await idJag(partnerKey, { iss: 'https://idp.stranger.example' })), client),
     );
+    expect(untrusted).toBeInstanceOf(TokenEndpointError);
     const badSignature = await failureOf(redeemIdJag(c, redemptionRequest(await idJag(strangerKey)), client));
+    expect(badSignature).toBeInstanceOf(TokenEndpointError);
 
     const expected = { status: 400, body: { error: 'invalid_grant', error_description: ASSERTION_UNTRUSTED_DESCRIPTION } };
     expect([untrusted.response, badSignature.response]).toEqual([expected, expected]);
@@ -185,6 +186,7 @@ describe('redeemIdJag', () => {
     const assertion = await idJag(await rs256Key('partner-idp-key'));
 
     const error = await failureOf(redeemIdJag(c, redemptionRequest(assertion), client));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response.body).toEqual({ error: 'invalid_grant', error_description: ASSERTION_UNTRUSTED_DESCRIPTION });
   });
@@ -196,6 +198,7 @@ describe('redeemIdJag', () => {
     const error = await failureOf(
       redeemIdJag(c, redemptionRequest(assertion), { ...client, grantTypes: ['authorization_code'] }),
     );
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 400,

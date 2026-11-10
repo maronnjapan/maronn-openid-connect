@@ -14,11 +14,10 @@ import {
 } from './store.js';
 import { makeRecord } from './test-helpers.js';
 
-async function expectVerificationError(action: () => Promise<unknown>): Promise<CibaVerificationError> {
+async function captureVerificationError(action: () => Promise<unknown>): Promise<CibaVerificationError> {
   try {
     await action();
   } catch (error) {
-    expect(error).toBeInstanceOf(CibaVerificationError);
     return error as CibaVerificationError;
   }
   throw new Error('expected a CibaVerificationError');
@@ -77,14 +76,14 @@ describe('validateCibaLoginSubmission', () => {
   it('should reject an unknown transaction id with 403', async () => {
     const { store, record, bindingSecret } = await setup();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: 'unknown',
         csrfToken: record.csrfToken,
         bindingSecret,
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -95,14 +94,14 @@ describe('validateCibaLoginSubmission', () => {
     record.expiresAt = new Date(Date.now() - 1_000);
     await store.update(record);
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: record.id,
         csrfToken: record.csrfToken,
         bindingSecret,
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -110,14 +109,14 @@ describe('validateCibaLoginSubmission', () => {
   it('should reject a missing binding secret with 403', async () => {
     const { store, record } = await setup();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: record.id,
         csrfToken: record.csrfToken,
         bindingSecret: null,
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -125,14 +124,14 @@ describe('validateCibaLoginSubmission', () => {
   it('should reject a wrong binding secret with 403', async () => {
     const { store, record } = await setup();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: record.id,
         csrfToken: record.csrfToken,
         bindingSecret: 'forged-secret',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -140,14 +139,14 @@ describe('validateCibaLoginSubmission', () => {
   it('should reject a wrong csrf token with 403', async () => {
     const { store, record, bindingSecret } = await setup();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: record.id,
         csrfToken: 'forged',
         bindingSecret,
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -155,30 +154,30 @@ describe('validateCibaLoginSubmission', () => {
   it('should use the same message for every failure reason', async () => {
     const { store, record, bindingSecret } = await setup();
 
-    const unknown = await expectVerificationError(() =>
+    const unknown = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: 'unknown',
         csrfToken: record.csrfToken,
         bindingSecret,
         store,
-      }),
-    );
-    const forgedBinding = await expectVerificationError(() =>
+      }));
+    expect(unknown).toBeInstanceOf(CibaVerificationError);
+    const forgedBinding = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: record.id,
         csrfToken: record.csrfToken,
         bindingSecret: 'forged',
         store,
-      }),
-    );
-    const forgedCsrf = await expectVerificationError(() =>
+      }));
+    expect(forgedBinding).toBeInstanceOf(CibaVerificationError);
+    const forgedCsrf = await captureVerificationError(() =>
       validateCibaLoginSubmission({
         transactionId: record.id,
         csrfToken: 'forged',
         bindingSecret,
         store,
-      }),
-    );
+      }));
+    expect(forgedCsrf).toBeInstanceOf(CibaVerificationError);
 
     expect(unknown.message).toBe(forgedBinding.message);
     expect(forgedBinding.message).toBe(forgedCsrf.message);
@@ -284,7 +283,7 @@ describe('approveCibaRequest', () => {
   it('should reject an unknown auth_req_id with 403', async () => {
     const { store, csrfToken } = await setupPending();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'unknown',
         subject: 'testuser',
@@ -292,8 +291,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -301,7 +300,7 @@ describe('approveCibaRequest', () => {
   it('should reject a session subject that does not own the record', async () => {
     const { store, csrfToken } = await setupPending();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'mine',
         subject: 'otheruser',
@@ -309,8 +308,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
     expect((await store.findByAuthReqId('mine'))?.status).toBe('pending');
@@ -319,7 +318,7 @@ describe('approveCibaRequest', () => {
   it('should reject a wrong csrf token with 403', async () => {
     const { store } = await setupPending();
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'mine',
         subject: 'testuser',
@@ -327,8 +326,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -337,7 +336,7 @@ describe('approveCibaRequest', () => {
     const store = createInMemoryCibaAuthenticationRequestStore();
     await store.save(makeRecord({ authReqId: 'mine', expiresAt: future() }));
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'mine',
         subject: 'testuser',
@@ -345,8 +344,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -359,7 +358,7 @@ describe('approveCibaRequest', () => {
       expiresAt: new Date(Date.now() - 1_000),
     }));
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'mine',
         subject: 'testuser',
@@ -367,8 +366,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -382,7 +381,7 @@ describe('approveCibaRequest', () => {
       expiresAt: future(),
     }));
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'mine',
         subject: 'testuser',
@@ -390,8 +389,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
   });
@@ -399,7 +398,7 @@ describe('approveCibaRequest', () => {
   it('should use one message for unknown, mismatched and decided records', async () => {
     const { store, csrfToken } = await setupPending();
 
-    const unknown = await expectVerificationError(() =>
+    const unknown = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'unknown',
         subject: 'testuser',
@@ -407,9 +406,9 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
-    const wrongSubject = await expectVerificationError(() =>
+      }));
+    expect(unknown).toBeInstanceOf(CibaVerificationError);
+    const wrongSubject = await captureVerificationError(() =>
       approveCibaRequest({
         authReqId: 'mine',
         subject: 'otheruser',
@@ -417,8 +416,8 @@ describe('approveCibaRequest', () => {
         authTime: 1,
         grantId: 'g',
         store,
-      }),
-    );
+      }));
+    expect(wrongSubject).toBeInstanceOf(CibaVerificationError);
 
     expect(unknown.message).toBe(wrongSubject.message);
   });
@@ -448,14 +447,14 @@ describe('denyCibaRequest', () => {
     await store.save(makeRecord({ authReqId: 'mine', expiresAt: future() }));
     const [listed] = await listPendingCibaRequests({ subject: 'testuser', store });
 
-    const error = await expectVerificationError(() =>
+    const error = await captureVerificationError(() =>
       denyCibaRequest({
         authReqId: 'mine',
         subject: 'otheruser',
         csrfToken: listed?.csrfToken ?? '',
         store,
-      }),
-    );
+      }));
+    expect(error).toBeInstanceOf(CibaVerificationError);
 
     expect(error.statusCode).toBe(403);
     expect((await store.findByAuthReqId('mine'))?.status).toBe('pending');

@@ -12,7 +12,7 @@ import {
   type SigningKey,
   type ValidatedAuthorizationRequest,
 } from '@maronn-openid-connect/core';
-import { expect, vi } from 'vitest';
+import { vi } from 'vitest';
 import type { ClientRegistration } from '../oidc-provider/config.js';
 import { registerClient } from '../oidc-provider/db/memory/clients.js';
 import type { MemoryDatabase } from '../oidc-provider/db/memory/database.js';
@@ -140,17 +140,14 @@ export function redirectOf(location: string): { target: string; params: Record<s
 }
 
 /**
- * Assert that the outcome is an authorization response for the client and
- * return its redirect target and query parameters.
+ * The redirect target and query parameters of an authorization response.
  */
 export function authorizationRedirectOf(outcome: unknown): { target: string; params: Record<string, string> } {
-  expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
   return redirectOf((outcome as { response: { location: string } }).response.location);
 }
 
-/** Assert that the authorization response is a redirect and return its location. */
+/** The location of a redirect authorization response. */
 export function locationOf(response: AuthorizationResponse): string {
-  expect(response).toMatchObject({ method: 'redirect', location: expect.any(String) });
   return (response as { location: string }).location;
 }
 

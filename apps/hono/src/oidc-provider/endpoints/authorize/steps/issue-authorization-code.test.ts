@@ -55,6 +55,7 @@ describe('issueAuthorizationCodeResponse', () => {
     it('should redirect to the redirect_uri with the stored code, the state and iss', async () => {
       const { db, outcome } = await issue();
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       const { target, params } = authorizationRedirectOf(outcome);
 
       expect(target).toBe(REDIRECT_URI);
@@ -175,6 +176,7 @@ describe('issueAuthorizationCodeResponse', () => {
         options: { consentResolver: { hasConsent: async () => true } },
       });
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome).params).toEqual({
         code: [...db.codes.keys()][0],
         state: STATE,

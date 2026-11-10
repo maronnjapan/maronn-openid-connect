@@ -71,6 +71,31 @@ export const feature = { inline() { hook(); }, named: hook, hook };
     expect(entries.filter((entry) => entry.target === 'lib:a.ts#hook')).toHaveLength(2);
   });
 
+  // An optional function value typed with a type query, such as the
+  // outboundFetch the Next.js provider passes on: `typeof fetch | undefined`.
+  it('should inventory a hook whose declared type is a type query of a function, optional or not', () => {
+    const entries = scan({ 'a.ts': `
+declare function send(input: string): Promise<string>;
+declare function use(options: { send?: typeof send }): void;
+export const optional: typeof send | undefined = undefined;
+export const required: typeof send = send;
+export function setup() { use(optional === undefined ? {} : { send: optional }); use({ send: required }); }
+` });
+    expect(entries.filter((entry) => entry.kind === 'callback').map((entry) => entry.code)).toEqual(
+      expect.arrayContaining(['send: optional', 'send: required']),
+    );
+  });
+
+  it('should not inventory a value whose type query names a value that is not a function', () => {
+    const entries = scan({ 'a.ts': `
+declare const limit: number;
+declare function use(options: { limit?: typeof limit }): void;
+export const current: typeof limit | undefined = undefined;
+export function setup() { use({ limit: current }); }
+` });
+    expect(entries.filter((entry) => entry.code === 'limit: current')).toEqual([]);
+  });
+
   it('should keep dynamic request-context writes and middleware separate from typed Map writes', () => {
     const entries = scan({ 'a.ts': `
 declare const router: { use(path: string, handler: () => void): void };

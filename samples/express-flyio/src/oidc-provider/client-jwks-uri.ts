@@ -40,7 +40,7 @@ export const clientJwksUriCache: ClientJwksUriCache = (registry.__oidcClientJwks
  */
 export function getClientKeyResolver(c: any): ClientKeyResolver {
   const base: ClientKeyResolver = c.get('clientKeyResolver');
-  return withRegisteredClientJwksUri(c, base, { fetch: c.get('clientJwksFetch') });
+  return withRegisteredClientJwksUri(c, base, { fetch: c.get('outboundFetch') });
 }
 
 /**
@@ -56,7 +56,7 @@ export function getClientKeyResolver(c: any): ClientKeyResolver {
  * 使えない `jwks_uri`（宛先の方針で拒否した、応答しない、JWK Set 以外を返した）は、ホストと理由を `console.warn` に書き、エラーをそのまま呼び出し側へ投げる。
  * リクエストオブジェクトは、理由を含まない固定の `error_description` で拒否される。
  *
- * `options.fetch` は `globalThis.fetch` の代わりに使う fetch（`OidcProviderOptions.clientJwksFetch`）、`options.cache` はプロセスのキャッシュの代わりに使うキャッシュ（テスト用）である。
+ * `options.fetch` は `globalThis.fetch` の代わりに使う fetch（`OidcProviderOptions.outboundFetch`）、`options.cache` はプロセスのキャッシュの代わりに使うキャッシュ（テスト用）である。
  *
  * @spec RFC 7591 §2
  * @spec OIDC Core 1.0 §10.1.1

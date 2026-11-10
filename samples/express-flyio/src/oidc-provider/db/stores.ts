@@ -50,6 +50,7 @@ import type {
   RefreshTokenStorage,
   TransactionStorage,
   UpstreamLoginStorage,
+  ClientAssertionJtiStorage,
   UserStorage,
 } from '../store.js';
 import type { SqlDatabase } from './database.js';
@@ -64,7 +65,7 @@ const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 /**
  * SQL のテーブルに読み書きする OP のストアを返す。
  *
- * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログインのストアである。
+ * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログイン、使用済みのクライアントアサーションの `jti` のストアである。
  * テーブルは `schema.sql` で定義したもので、SQL 文はすべて `db` で実行する。
  * 認可コードとトークンは、値そのものではなく SHA-256 のハッシュ（`hashKey()`）で保存し、そのハッシュで探す。
  *
@@ -629,6 +630,24 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     },
   };
 
+  // 使用済みの `jti` は、`client_id` と `jti` の組のキーのハッシュで `client_assertion_jtis` の行に覚える（RFC 7523 §3）。
+  // 期限切れの同じキーの行を消してから、`ON CONFLICT DO NOTHING` で入れ、行を足せたときだけ初めての `jti` とする。
+  // 一つの文で入れるので、同じキーの二つのリクエストのうち、行を足せるのは一方だけである。
+  const clientAssertionJtiStore: ClientAssertionJtiStorage = {
+    async consume(key, expiresAt) {
+      const id = await hashKey(key);
+      await db.run({
+        sql: 'DELETE FROM client_assertion_jtis WHERE id = ? AND expired_at <= ?',
+        params: [id, nowSeconds()],
+      });
+      const { changes } = await db.run({
+        sql: 'INSERT INTO client_assertion_jtis (id, expired_at) VALUES (?, ?) ON CONFLICT (id) DO NOTHING',
+        params: [id, expiresAt],
+      });
+      return changes > 0;
+    },
+  };
+
   return {
     transactionStore,
     authCodeStore,
@@ -639,6 +658,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
     consentStore,
     userStore,
     upstreamLoginStore,
+    clientAssertionJtiStore,
   };
 }
 

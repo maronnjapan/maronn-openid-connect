@@ -8,8 +8,8 @@ GENERATED_DIR="${CONFORMANCE_DIR}/.generated"
 RESULTS_DIR="${CONFORMANCE_DIR}/results"
 COMPOSE_FILE="${CONFORMANCE_DIR}/docker-compose.yml"
 
-# The certification plan of the run: basic (the default), implicit or hybrid
-# (create-op-config.mjs).
+# The certification plan of the run: basic (the default), implicit, hybrid,
+# dynamic or config (create-op-config.mjs).
 PLAN="${1:-${CONFORMANCE_PLAN:-basic}}"
 SAMPLE_APP="${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}"
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER:-https://op-tls:3443}"
@@ -32,8 +32,17 @@ case "${PLAN}" in
     # as the Basic OP plan does (README).
     DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1
     ;;
+  dynamic)
+    # The Dynamic OP plan registers its clients (private_key_jwt) and runs
+    # the code flow of each without PKCE (README).
+    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1
+    ;;
+  config)
+    # The Config OP plan reads the discovery document only.
+    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0
+    ;;
   *)
-    echo "Unsupported CONFORMANCE_PLAN \"${PLAN}\". Expected one of: basic, implicit, hybrid" >&2
+    echo "Unsupported CONFORMANCE_PLAN \"${PLAN}\". Expected one of: basic, implicit, hybrid, dynamic, config" >&2
     exit 1
     ;;
 esac
@@ -111,6 +120,10 @@ export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="${OIDC_ALLOW_NON_PKCE_AUTHOR
 # accepts unsigned Request Objects. Enable that compatibility for the conformance OP so
 # both modules run (and pass) instead of being skipped.
 export OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT="${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-1}"
+# OIDC Core 1.0 §10.1.1: the token of POST /operator/signing-keys/rotate of the
+# sample, with which a person rotates the OP's signing key before starting
+# oidcc-server-rotate-keys (manual-review-screenshots.md). Local to this run.
+export OIDC_SIGNING_KEY_ROTATION_TOKEN="${OIDC_SIGNING_KEY_ROTATION_TOKEN:-conformance-rotation-token}"
 export OIDC_CLIENTS_JSON
 OIDC_CLIENTS_JSON="$(tr -d '\n' < "${GENERATED_DIR}/oidc-clients.json")"
 
@@ -120,6 +133,13 @@ status=$?
 set -e
 
 docker compose -f "${COMPOSE_FILE}" logs --no-color > "${RESULTS_DIR}/docker-compose.log" 2>/dev/null || true
+
+if [[ "${status}" -ne 0 ]]; then
+  # The output above is the runner's only: an OP that did not come up says why
+  # in its own log (all of it is in docker-compose.log of the results).
+  echo "The last lines of the op service:" >&2
+  docker compose -f "${COMPOSE_FILE}" logs --no-color --tail 80 op >&2 || true
+fi
 
 if [[ "${CONFORMANCE_KEEP_SERVICES:-0}" != "1" ]]; then
   docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || true

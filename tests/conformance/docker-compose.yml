@@ -25,6 +25,14 @@ services:
     image: registry.gitlab.com/openid/conformance-suite/nginx:${CONFORMANCE_SUITE_IMAGE_TAG:-latest}
     ports:
       - "${CONFORMANCE_SUITE_PORT:-8443}:8443"
+    # The image's own certificate is self-signed for CN=localhost, which does
+    # not name conformance-nginx. This one is issued for conformance-nginx by
+    # the CA of the run (scripts/ensure-op-tls-cert.sh), which the op service
+    # trusts, so the OP fetches the jwks_uri, request_uri and
+    # sector_identifier_uri the suite serves over verified TLS.
+    volumes:
+      - ./.generated/certs/conformance-nginx.crt:/etc/ssl/certs/nginx-selfsigned.crt:ro
+      - ./.generated/certs/conformance-nginx.key:/etc/ssl/private/nginx-selfsigned.key:ro
     depends_on:
       - conformance-server
     networks:
@@ -66,12 +74,27 @@ services:
       OIDC_CLIENTS_JSON: ${OIDC_CLIENTS_JSON:?OIDC_CLIENTS_JSON must be generated before running compose}
       OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW: ${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}
       OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT: ${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-0}
+      # OIDC Core 1.0 §10.1.1: POST /operator/signing-keys/rotate of the sample
+      # (oidcc-server-rotate-keys of the Dynamic OP plan).
+      OIDC_SIGNING_KEY_ROTATION_TOKEN: ${OIDC_SIGNING_KEY_ROTATION_TOKEN:-}
+      # The CA of the run (scripts/ensure-op-tls-cert.sh), which issued the
+      # certificate of conformance-nginx: Node.js trusts it for the fetches of
+      # the OP, and wrangler dev passes it to workerd (Miniflare reads the same
+      # variable). TLS verification stays on.
+      NODE_EXTRA_CA_CERTS: /workspace/tests/conformance/.generated/certs/ca.crt
       # The workspace is read-only, so the OP keeps its data under /tmp:
       # D1 of wrangler dev (hono-cloudflare), and the node:sqlite database of
       # express-flyio, fastify-flyio and nextjs-vercel (.data/oidc.sqlite of
       # the workspace by default).
       OIDC_D1_PERSIST_PATH: /tmp/maronn-openid-connect-d1
       OIDC_SQLITE_PATH: /tmp/maronn-openid-connect.sqlite
+      # hono-cloudflare and nextjs-vercel start with `pnpm start`. pnpm 11 and
+      # later check node_modules against the lockfile before running a script
+      # (verify-deps-before-run). The workspace was installed on the host at
+      # another path and is mounted read-only, so the check finds it out of
+      # sync and stops the OP (ERR_PNPM_VERIFY_DEPS_BEFORE_RUN); it could not
+      # install there anyway.
+      pnpm_config_verify_deps_before_run: "false"
 
   op-tls:
     image: nginx:1.27-alpine

@@ -29,13 +29,13 @@ import {
   buildAccessTokenAudience,
   extractClientCredentials,
   validateClientAuthMethod,
-  verifyClientSecret,
   TokenError,
   TokenErrorCode,
   type AuthorizationCodeData,
   type TokenRequestParams,
   type ValidatedTokenRequest,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../_oidc-provider/client-auth';
 import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';
 import { dispatchDeviceCode } from '../_oidc-provider/features/device-authorization-grant/grant';
 import { dispatchIdJagIssuance, dispatchIdJagRedemption } from '../_oidc-provider/features/id-jag/grant';
@@ -137,8 +137,9 @@ async function token(request: Request): Promise<Response> {
   try {
     // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     // クライアントを認証する（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
-    // 対応する認証方式は `client_secret_basic` と `client_secret_post` で、`none` で登録したパブリッククライアントは `client_id` だけで識別する。
-    // 以下の処理はそれぞれ core の独立した関数なので、`verifyClientSecret()` を独自の検証（`private_key_jwt` など）に差し替えても、ほかの処理は変えずに済む。
+    // 対応する認証方式は `client_secret_basic`、`client_secret_post`、`private_key_jwt` で、`none` で登録したパブリッククライアントは `client_id` だけで識別する。
+    // `private_key_jwt` のクライアントアサーションは、`aud` にトークンエンドポイントの URL か issuer を求め、`jti` を消費して再利用を拒否する（`verifyPresentedClientCredential()`、client-auth.ts）。
+    // 以下の処理はそれぞれ core の独立した関数なので、認証情報の確認を独自の検証に差し替えても、ほかの処理は変えずに済む。
 
     // 提示された認証情報と、実際に使われた認証方式を読み取る。
     const presentedCredentials = extractClientCredentials({
@@ -156,8 +157,8 @@ async function token(request: Request): Promise<Response> {
     // 認証方式のダウングレードや、パブリッククライアントとの取り違えを防ぐ。
     validateClientAuthMethod(tokenClient, presentedCredentials);
 
-    // `client_secret` を定数時間で比較する（OAuth 2.1 §7.4.1）。
-    await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
+    // `client_secret` を定数時間で比較するか、`private_key_jwt` のクライアントアサーションを検証する（OAuth 2.1 §7.4.1、OIDC Core 1.0 §9）。
+    await verifyPresentedClientCredential(tokenClient, presentedCredentials, '/token');
 
     const authenticatedClientId = presentedCredentials.clientId;
 

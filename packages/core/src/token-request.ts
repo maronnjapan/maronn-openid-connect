@@ -67,15 +67,25 @@ export interface TokenClientInfo {
    * - `client_secret_basic` と `client_secret_post` のように、1 つのクライアントに複数の方式を
    *   許すときは並べる。シークレットはどの方式でも同じ `clientSecret`（`clientSecretHash`）と照合する
    * - 空の一覧はどの方式も許さない
+   * - `private_key_jwt` のクライアントは、`private_key_jwt` の用途に登録した公開鍵（`ClientKeyResolver`）で
+   *   クライアントアサーションの署名を検証する（OIDC Core 1.0 §9）。シークレットは使わない
    */
   tokenEndpointAuthMethods?: readonly ClientAuthMethod[];
+  /**
+   * `private_key_jwt` のクライアントアサーションを署名するアルゴリズム
+   * （OIDC Dynamic Client Registration 1.0 §2 の `token_endpoint_auth_signing_alg`）。
+   * 登録すると、ほかの alg で署名したアサーションを `invalid_client` で拒否する。
+   * 省略すると、OP が受け付ける alg（`token_endpoint_auth_signing_alg_values_supported`）のどれでもよい。
+   */
+  tokenEndpointAuthSigningAlg?: string;
 }
 
 /**
  * クライアントに登録できるクライアント認証方式（RFC 7591 §2 の `token_endpoint_auth_method`）。
  * `none` はクライアント認証をしない public client を表す。
+ * `private_key_jwt` は、クライアントの秘密鍵で署名した JWT で認証する方式である（OIDC Core 1.0 §9 / RFC 7523 §2.2）。
  */
-export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'none';
+export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt' | 'none';
 
 /**
  * クライアント情報を解決するインターフェース

@@ -12,7 +12,6 @@ import {
   extractClientCredentials,
   resolveAuthenticatedTokenClient,
   validateClientAuthMethod,
-  verifyClientSecret,
   requireRevocationToken,
   requireRevocationClient,
   resolveRevocationTarget,
@@ -22,6 +21,7 @@ import {
   RevocationError,
   TokenError,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../_oidc-provider/client-auth';
 import { clientResolver, stores } from '../../_oidc-provider/provider';
 import { createRevocationResolvers } from '../../_oidc-provider/features/revocation/resolvers';
 import {
@@ -89,7 +89,7 @@ async function revoke(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(revokingClient, presentedCredentials);
-    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+    await verifyPresentedClientCredential(revokingClient, presentedCredentials, '/revoke');
     const authenticatedClientId = presentedCredentials.clientId;
 
     // トークンの失効：以下の呼び出しはそれぞれ core の独立した関数で、RFC 7009 §2 の順に呼ぶ。

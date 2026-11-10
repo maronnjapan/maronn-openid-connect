@@ -20,6 +20,18 @@ describe('createProviderConfig', () => {
     });
   });
 
+  // OIDC Core 1.0 §9: private_key_jwt assertions signed with the asymmetric algs core verifies.
+  it('should accept the asymmetric algs core verifies for private_key_jwt', () => {
+    expect(createProviderConfig().tokenEndpointAuthSigningAlgValuesSupported).toEqual([
+      'RS256',
+      'RS384',
+      'RS512',
+      'ES256',
+      'ES384',
+      'ES512',
+    ]);
+  });
+
   // UC-6: the settings are flat, so overriding one keeps the defaults of the others.
   it('should keep the other jwks_uri defaults when one of them is overridden', () => {
     const config = createProviderConfig({ clientJwksUriCacheMaxTtlSeconds: 3600, clientJwksUriTimeoutMs: 1000 });

@@ -90,11 +90,13 @@ describe('buildDiscoveryMetadata', () => {
       expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'fragment', 'query.jwt', 'jwt']);
     });
 
-    // OIDC Core 1.0 §6.1: the request-object feature replaces request_parameter_supported: false.
+    // OIDC Core 1.0 §6.1 / §6.2: the request-object feature replaces
+    // request_parameter_supported: false and request_uri_parameter_supported: false.
     it('should let a feature replace a member that is not an array', async () => {
       expect(await metadataFor()).toMatchObject({
         request_parameter_supported: true,
-        request_uri_parameter_supported: false,
+        request_uri_parameter_supported: true,
+        require_request_uri_registration: false,
         request_object_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       });
     });
@@ -106,7 +108,9 @@ describe('buildDiscoveryMetadata', () => {
         authorization_response_iss_parameter_supported: true,
         claims_parameter_supported: true,
         claim_types_supported: ['normal'],
-        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
+        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
+        // OIDC Discovery 1.0 §3 / RFC 8414 §2: the algs of private_key_jwt (OIDC Core 1.0 §9), without none.
+        token_endpoint_auth_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
       });
     });
 

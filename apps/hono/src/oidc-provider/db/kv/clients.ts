@@ -9,11 +9,14 @@
  * - client_type public: no client authentication
  *   (tokenEndpointAuthMethods ['none']).
  * - client_auths: the methods the client may authenticate with
- *   (tokenEndpointAuthMethods: client_secret_basic, client_secret_post or
- *   both), and the clientSecretHash the presented secret is checked against
- *   whichever of them the request uses. A client has one client_secret
- *   (RFC 7591 §2), so entries with different secrets are a configuration
- *   error. A confidential client without entries keeps the default
+ *   (tokenEndpointAuthMethods: client_secret_basic, client_secret_post,
+ *   private_key_jwt, or several of them), and the clientSecretHash the
+ *   presented secret is checked against whichever secret method the request
+ *   uses. A client has one client_secret (RFC 7591 §2), so secret-method
+ *   entries with different secrets are a configuration error. A
+ *   private_key_jwt entry has no secret: the client assertion (OIDC Core 1.0
+ *   §9) is verified with the keys of the private_key_jwt purpose, or the keys
+ *   of the jwks_uri. A confidential client without entries keeps the default
  *   client_secret_basic with no secret, so it cannot authenticate.
  * - redirect_uris, grant_types and scopes: redirectUris, grantTypes and scope.
  *   A request for a scope outside scope is rejected with invalid_scope
@@ -22,21 +25,28 @@
  * - response_types: responseTypes, the response types the client may use at
  *   the authorization endpoint (id_token and id_token token for the Implicit
  *   Flow). A client without them may use code only.
- * - jwks_uri: jwksUri, the jwks_uri the OP fetches the client's keys from
- *   (RFC 7591 §2). A client with one gets the keys of its jwks_uri, not those
- *   of keys.clientJwks(), for the purposes of clientJwksUriPurposes.
- * - request_object_signing_alg: requestObjectSigningAlg, the alg every Request
- *   Object of the client must be signed with (OIDC Dynamic Client Registration
- *   1.0 §2).
+ * - request_uris: requestUris, the request_uri values the client uses (OIDC
+ *   Core 1.0 §6.2).
+ * - The single-valued metadata, each left out of the RegisteredClient when
+ *   null (OIDC Dynamic Client Registration 1.0 §2): jwks_uri is jwksUri, the
+ *   jwks_uri the OP fetches the client's keys from (RFC 7591 §2); a client
+ *   with one gets the keys of its jwks_uri, not those of keys.clientJwks(),
+ *   for the purposes of clientJwksUriPurposes. request_object_signing_alg is
+ *   requestObjectSigningAlg, the alg every Request Object of the client must
+ *   be signed with, and token_endpoint_auth_signing_alg is
+ *   tokenEndpointAuthSigningAlg, the alg every private_key_jwt client
+ *   assertion must be signed with. name, logo_uri, policy_uri, tos_uri and
+ *   client_uri are clientName, logoUri, policyUri, tosUri and clientUri, what
+ *   the login and consent screens show.
  * - Metadata without a field (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
  * The client's public keys (keys.clientJwks(), one record per purpose) are not
  * part of the RegisteredClient. A process that needs them asks the
  * ClientKeyResolver for the keys of its own purpose (ClientKeyResolver in
- * core): the OP verifies signed Request Objects with those of request_object,
- * and a process a project adds reads its own purpose (private_key_jwt or dpop,
- * for one).
+ * core): the OP verifies signed Request Objects with those of request_object
+ * and client assertions with those of private_key_jwt, and a process a
+ * project adds reads its own purpose (dpop, for one).
  *
  * findClient() and findClientKeys() read the store on every call, so a change
  * made while the OP runs takes effect from the next request. That is how a
@@ -69,12 +79,12 @@ import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord }
  *
  * レコードの値は、次のように `RegisteredClient` に移す。
  * - `client_type` が `public` なら、`tokenEndpointAuthMethods` を `['none']` にする（クライアント認証をしない）。
- * - コンフィデンシャルクライアントなら、`client_auths` の各エントリーの方式を `tokenEndpointAuthMethods` に、エントリーのシークレットを `clientSecretHash` にする。
+ * - コンフィデンシャルクライアントなら、`client_auths` の各エントリーの方式（`client_secret_basic`、`client_secret_post`、`private_key_jwt`）を登録した順に `tokenEndpointAuthMethods` に、シークレットの方式のエントリーのシークレットを `clientSecretHash` にする。
  * - `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
- * - `grant_types`、`scopes`、`response_types` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes` にし、空なら設定せずに既定の扱いに任せる。
- * - `jwks_uri` と `request_object_signing_alg` は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
+ * - `grant_types`、`scopes`、`response_types`、`request_uris` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes`、`requestUris` にし、空なら設定せずに既定の扱いに任せる。
+ * - `jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` は、`null` でなければそれぞれ `jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri` にする。
  *
- * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違うエントリーを `client_auths` に持つクライアントを読んだとき
+ * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの方式のエントリーどうしでシークレットが違うクライアントを読んだとき
  */
 export function createClientResolver(db: KvDatabase): ClientResolver & TokenClientResolver {
   return {
@@ -88,24 +98,37 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       };
       if (client.grant_types.length > 0) registered.grantTypes = client.grant_types;
       if (client.scopes.length > 0) registered.scope = client.scopes;
-      if ((client.response_types ?? []).length > 0) registered.responseTypes = client.response_types;
-      if (typeof client.jwks_uri === 'string') registered.jwksUri = client.jwks_uri;
-      if (typeof client.request_object_signing_alg === 'string') {
+      if (client.response_types.length > 0) registered.responseTypes = client.response_types;
+      if (client.jwks_uri !== null) registered.jwksUri = client.jwks_uri;
+      if (client.request_object_signing_alg !== null) {
         registered.requestObjectSigningAlg = client.request_object_signing_alg;
       }
+      if (client.token_endpoint_auth_signing_alg !== null) {
+        registered.tokenEndpointAuthSigningAlg = client.token_endpoint_auth_signing_alg;
+      }
+      if (client.request_uris.length > 0) registered.requestUris = client.request_uris;
+      if (client.name !== null) registered.clientName = client.name;
+      if (client.logo_uri !== null) registered.logoUri = client.logo_uri;
+      if (client.policy_uri !== null) registered.policyUri = client.policy_uri;
+      if (client.tos_uri !== null) registered.tosUri = client.tos_uri;
+      if (client.client_uri !== null) registered.clientUri = client.client_uri;
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
-      } else if (client.client_auths[0]) {
-        // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
-        // そのため、最初のエントリーとシークレットが違うエントリーがあれば、設定の誤りとして投げる。
-        const secret = client.client_auths[0].secret;
-        if (client.client_auths.some((auth) => auth.secret !== secret)) {
-          throw new Error('Client ' + clientId + ' has client_auths entries with different secrets');
-        }
+      } else if (client.client_auths.length > 0) {
         registered.tokenEndpointAuthMethods = client.client_auths.map((auth) => auth.client_auth_type);
-        registered.clientSecretHash = secret;
+        // `private_key_jwt` のエントリーはシークレットを持たない（OIDC Core 1.0 §9）ので、シークレットの方式のエントリーだけを調べる。
+        const secretAuths = client.client_auths.filter((auth) => 'secret' in auth);
+        if (secretAuths[0]) {
+          // クライアントの `client_secret` は、どのシークレットの方式で提示されても一つである（RFC 7591 §2）。
+          // そのため、最初のエントリーとシークレットが違うエントリーがあれば、設定の誤りとして投げる。
+          const secret = secretAuths[0].secret;
+          if (secretAuths.some((auth) => auth.secret !== secret)) {
+            throw new Error('Client ' + clientId + ' has client_auths entries with different secrets');
+          }
+          registered.clientSecretHash = secret;
+        }
       }
-      // `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
+      // どの方式もないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
       return registered;
     },
   };
@@ -136,8 +159,11 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  *
  * クライアントのレコード（`keys.client()`）を書き、同じ `client_id` で登録済みのレコードを置き換える。
  * `clientSecretHash` が渡されればそのまま、`clientSecret` が渡されればハッシュ（`hashClientSecret()`）にして保存する。
- * `tokenEndpointAuthMethods` の方式（`client_secret_basic` と `client_secret_post`）は、それぞれ同じシークレットを持つ `client_auths` のエントリーになる。
- * パブリッククライアントと、シークレットのないクライアントには、エントリーを作らない。
+ * `tokenEndpointAuthMethods` のシークレットの方式（`client_secret_basic` と `client_secret_post`）は、それぞれ同じシークレットを持つ `client_auths` のエントリーになる。
+ * シークレットのないクライアントには、シークレットの方式のエントリーを作らない。
+ * `private_key_jwt` は、シークレットを持たない `client_auths` のエントリーになる（OIDC Core 1.0 §9）。
+ * エントリーは `tokenEndpointAuthMethods` の順に並ぶ。
+ * パブリッククライアントには、`client_auths` のエントリーを作らない。
  * `clientType` がなければ、`tokenEndpointAuthMethods` が `none` のクライアントをパブリッククライアントとして保存する。
  *
  * クライアント全体を一つのレコードとして一度の `set` で書くので、OP の複数のインスタンスが起動時に同時にクライアントを登録してもよい。
@@ -148,8 +174,8 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * 鍵を取り除くには、ストアのレコードから消し、ここに渡すクライアントからも外す。
  * 外さなければ、次の登録で鍵が戻る。
  *
- * `jwksUri` と `requestObjectSigningAlg` は、クライアントのレコードの `jwks_uri` と `request_object_signing_alg` に書く。
- * そのため、これらを持たない登録は、登録済みの値を取り除く。
+ * `requestUris` は `request_uris` に書き、渡されなければ空の配列にする。
+ * `clientName`、`jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`logoUri`、`policyUri`、`tosUri`、`clientUri` は、クライアントのレコードのそれぞれ `name`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` に書き、渡されなければ `null` にする。
  * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
  *
  * セットアップ用のスクリプトや起動時の処理から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
@@ -170,10 +196,7 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * });
  * ```
  */
-export async function registerClient(
-  db: KvDatabase,
-  client: ClientRegistration & { name?: string },
-): Promise<void> {
+export async function registerClient(db: KvDatabase, client: ClientRegistration): Promise<void> {
   assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   const secretHash =
@@ -182,24 +205,34 @@ export async function registerClient(
   const methods =
     clientType === 'confidential'
       ? selectRegisteredClientAuthMethods(client).filter(
-        (method): method is ClientAuthRecord['client_auth_type'] =>
-          method === 'client_secret_basic' || method === 'client_secret_post',
+        (method): method is ClientAuthRecord['client_auth_type'] => method !== 'none',
       )
       : [];
+  // シークレットの方式のエントリーはシークレットを持ち、`private_key_jwt` のエントリーはシークレットを持たない（OIDC Core 1.0 §9）。
+  const clientAuths = methods.flatMap((method): ClientAuthRecord[] =>
+    method === 'private_key_jwt'
+      ? [{ client_auth_type: method }]
+      : secretHash === undefined
+        ? []
+        : [{ client_auth_type: method, secret: secretHash }],
+  );
   const record: ClientRecord = {
-    name: client.name ?? null,
+    name: client.clientName ?? null,
     client_type: clientType,
     is_deleted: false,
-    client_auths:
-      secretHash === undefined ? [] : methods.map((method) => ({ client_auth_type: method, secret: secretHash })),
+    client_auths: clientAuths,
     redirect_uris: [...client.redirectUris],
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],
     response_types: [...(client.responseTypes ?? [])],
-    ...(client.jwksUri === undefined ? {} : { jwks_uri: client.jwksUri }),
-    ...(client.requestObjectSigningAlg === undefined
-      ? {}
-      : { request_object_signing_alg: client.requestObjectSigningAlg }),
+    jwks_uri: client.jwksUri ?? null,
+    request_object_signing_alg: client.requestObjectSigningAlg ?? null,
+    token_endpoint_auth_signing_alg: client.tokenEndpointAuthSigningAlg ?? null,
+    request_uris: [...(client.requestUris ?? [])],
+    logo_uri: client.logoUri ?? null,
+    policy_uri: client.policyUri ?? null,
+    tos_uri: client.tosUri ?? null,
+    client_uri: client.clientUri ?? null,
   };
   await writeRecord(db, keys.client(client.clientId), record);
 

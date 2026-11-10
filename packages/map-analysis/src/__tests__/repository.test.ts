@@ -151,19 +151,28 @@ describe('the trees of the repository', () => {
     expect(failures.get('endpoint:token') ?? []).toEqual([]);
   });
 
+  // The keys of a registered client are read by the Request Object of
+  // /authorize (OIDC Core 1.0 §6.3.2, request-object) and by the client
+  // assertion of every endpoint that authenticates clients (private_key_jwt,
+  // OIDC Core 1.0 §9), PAR included: its step calls the shared check itself.
   it('should connect registered-client key selection and its deferred key loader to each source endpoint', () => {
     const trees = new Map([...repository.head.trees].map(([id, built]) => [id, built.tree]));
     const roots: EndpointRoot[] = repository.endpoints.flatMap((source) => source.endpoints.map((endpoint) => ({ source: source.source, frameworks: source.frameworks, endpoint, root: repository.head.endpointRoots.get(`${source.source}:${endpoint.id}`) ?? '' })));
     const graph = new CallGraph(trees, roots);
+    const keyReaders = ['authorize', 'backchannel-authentication', 'device-authorization', 'introspection', 'par', 'revocation', 'token'];
     for (const [source, module] of [['hono', 'oidc-provider'], ['nextjs', 'app/_oidc-provider']]) {
       for (const name of ['withRegisteredClientJwksUri', 'hostOf', 'clientJwksUriLoadOptionsOf']) {
         const ways = reachOf(graph, { frame: `${source}:${module}/client-jwks-uri.ts#${name}`, node: '' });
-        expect(ways.map((way) => `${way.source}:${way.endpoint}`), `${source}:${name}`).toEqual([`${source}:authorize`]);
+        expect([...new Set(ways.map((way) => `${way.source}:${way.endpoint}`))].sort(), `${source}:${name}`).toEqual(keyReaders.map((endpoint) => `${source}:${endpoint}`));
       }
     }
     const cache = reachOf(graph, { member: 'core:client-jwks-uri.ts#ClientJwksUriCache.load' });
-    expect([...new Set(cache.map((way) => `${way.source}:${way.endpoint}`))].sort()).toEqual(['hono:authorize', 'nextjs:authorize']);
-    expect(cache.every((way) => way.features.includes('request-object'))).toBe(true);
+    expect([...new Set(cache.map((way) => `${way.source}:${way.endpoint}`))].sort()).toEqual(
+      ['hono', 'nextjs'].flatMap((source) => keyReaders.map((endpoint) => `${source}:${endpoint}`)),
+    );
+    // A Request Object needs request-object; a client assertion of the token endpoint needs no feature.
+    expect(cache.filter((way) => way.endpoint === 'authorize').every((way) => way.features.includes('request-object'))).toBe(true);
+    expect(cache.filter((way) => way.endpoint === 'token').some((way) => way.features.length === 0)).toBe(true);
   });
 });
 

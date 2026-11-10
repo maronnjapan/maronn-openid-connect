@@ -1,5 +1,7 @@
 import { buildTransactionPath } from '@maronn-openid-connect/core';
-import { stores } from '../_oidc-provider/provider';
+import { resolveClientDisplay } from '../_oidc-provider/client-display';
+import { ClientSummary, clientDisplayName } from '../_oidc-provider/client-summary';
+import { clientResolver, config, stores } from '../_oidc-provider/provider';
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';
 import { requireTransaction } from '../_oidc-provider/transaction';
 
@@ -15,6 +17,10 @@ export const dynamic = 'force-dynamic';
  * Render the consent form only when the URL transaction ID matches the cookie.
  * Preserve transaction_id in the action URL and hidden field, and csrf_token in
  * its hidden field: the submit handler requires all references to match.
+ *
+ * It shows the client asking for the authorization by its client_name, logo
+ * and policy links (OIDC Dynamic Client Registration 1.0 §2,
+ * client-summary.tsx), or its client_id when it registered no name.
  */
 export default async function ConsentPage({ searchParams }: { searchParams: Promise<{ transaction_id?: string | string[] }> }) {
   const { transaction_id } = await searchParams;
@@ -29,14 +35,16 @@ export default async function ConsentPage({ searchParams }: { searchParams: Prom
   const scopes = consentSession
     ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
     : requestedScopes;
+  // The client as the page shows it (OIDC Dynamic Client Registration 1.0 §2).
+  const client = await resolveClientDisplay(clientResolver, config, transaction.clientId);
 
   return (
     <main>
       <h1>Authorize Application</h1>
-      <p>
-        Client <strong>{transaction.clientId}</strong> is requesting access to the
-        following scopes:
-      </p>
+      <ClientSummary client={client}>
+        Client <strong>{clientDisplayName(client)}</strong> is requesting access to the following
+        scopes:
+      </ClientSummary>
       <ul>
         {scopes.map((scope) => (
           <li key={scope}>{scope}</li>

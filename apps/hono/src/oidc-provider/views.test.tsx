@@ -69,7 +69,12 @@ describe('defaultViews', () => {
     // OIDC Core 1.0 §3.1.2.1: login_hint is unauthenticated input that pre-fills the form.
     it('should escape login_hint in the username field', async () => {
       const html = await renderView(
-        defaultViews.loginPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', loginHint: '"><script>alert(1)</script>' }),
+        defaultViews.loginPage({
+          transactionId: 'txn-1',
+          csrfToken: 'csrf-1',
+          loginHint: '"><script>alert(1)</script>',
+          client: { clientId: 'client-1' },
+        }),
       ).text();
 
       expect(html).toContain('value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"');
@@ -78,11 +83,26 @@ describe('defaultViews', () => {
 
     it('should embed the csrf_token and show the failure with the attempts left', async () => {
       const html = await renderView(
-        defaultViews.loginPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', error: 'Invalid credentials', remainingAttempts: 3 }),
+        defaultViews.loginPage({
+          transactionId: 'txn-1',
+          csrfToken: 'csrf-1',
+          error: 'Invalid credentials',
+          remainingAttempts: 3,
+          client: { clientId: 'client-1' },
+        }),
       ).text();
 
       expect(html).toContain('<input type="hidden" name="csrf_token" value="csrf-1"/>');
       expect(html).toContain('<p style="color: red;">Invalid credentials. Attempts remaining: 3</p>');
+    });
+
+    // OIDC Dynamic Client Registration 1.0 §2: a client without client_name is shown by its client_id.
+    it('should name the client the End-User signs in to by its client_id when it has no name', async () => {
+      const html = await renderView(
+        defaultViews.loginPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', client: { clientId: 'client-1' } }),
+      ).text();
+
+      expect(html).toContain('<section class="client"><p>Sign in to continue to <strong>client-1</strong>.</p></section>');
     });
   });
 
@@ -90,7 +110,12 @@ describe('defaultViews', () => {
     // OIDC Core 1.0 §3.1.2.4: the decision values the consent step accepts are approve and deny.
     it('should list the scopes and offer the approve and deny decisions', async () => {
       const html = await renderView(
-        defaultViews.consentPage({ transactionId: 'txn-1', csrfToken: 'csrf-1', clientId: 'client-1', scopes: ['openid', 'email'] }),
+        defaultViews.consentPage({
+          transactionId: 'txn-1',
+          csrfToken: 'csrf-1',
+          scopes: ['openid', 'email'],
+          client: { clientId: 'client-1' },
+        }),
       ).text();
 
       expect(html).toContain('<strong>client-1</strong>');

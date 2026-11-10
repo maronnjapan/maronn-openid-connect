@@ -54,6 +54,23 @@ export interface DynamicallyRegisteredClient {
    * このクライアントの Request Object は、この alg で署名されていなければ拒否される。
    */
   requestObjectSigningAlg?: string;
+  /**
+   * 登録した token_endpoint_auth_signing_alg（OIDC Dynamic Client Registration 1.0 §2）。
+   * このクライアントの private_key_jwt のアサーションは、この alg で署名されていなければ拒否される。
+   */
+  tokenEndpointAuthSigningAlg?: string;
+  /** 登録した request_uris（OIDC Dynamic Client Registration 1.0 §2）。 */
+  requestUris?: string[];
+  /** 登録した client_name（画面に表示するクライアントの名前）。 */
+  clientName?: string;
+  /** 登録した client_uri（クライアントのホームページ）。 */
+  clientUri?: string;
+  /** 登録した logo_uri（画面に表示するロゴ）。 */
+  logoUri?: string;
+  /** 登録した policy_uri（プライバシーポリシー）。 */
+  policyUri?: string;
+  /** 登録した tos_uri（利用規約）。 */
+  tosUri?: string;
   clientIdIssuedAt: number;
   metadata: Record<string, unknown>;
 }
@@ -135,6 +152,15 @@ export function buildRegisteredClient(
     ...(metadata.requestObjectSigningAlg === undefined
       ? {}
       : { requestObjectSigningAlg: metadata.requestObjectSigningAlg }),
+    ...(metadata.tokenEndpointAuthSigningAlg === undefined
+      ? {}
+      : { tokenEndpointAuthSigningAlg: metadata.tokenEndpointAuthSigningAlg }),
+    ...(metadata.requestUris === undefined ? {} : { requestUris: [...metadata.requestUris] }),
+    ...(metadata.clientName === undefined ? {} : { clientName: metadata.clientName }),
+    ...(metadata.clientUri === undefined ? {} : { clientUri: metadata.clientUri }),
+    ...(metadata.logoUri === undefined ? {} : { logoUri: metadata.logoUri }),
+    ...(metadata.policyUri === undefined ? {} : { policyUri: metadata.policyUri }),
+    ...(metadata.tosUri === undefined ? {} : { tosUri: metadata.tosUri }),
     clientIdIssuedAt: Math.floor(now() / 1000),
     metadata: { ...metadata.metadata },
   };

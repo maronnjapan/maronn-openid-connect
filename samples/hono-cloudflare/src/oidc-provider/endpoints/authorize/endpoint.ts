@@ -29,6 +29,7 @@ export const endpoint = defineEndpoint({
     'parse-request',
     'resolve-pushed-request',
     'resolve-client',
+    'fetch-request-uri',
     'resolve-request-object',
     'resolve-redirect-uri',
     'resolve-jarm-response-mode',

@@ -33,7 +33,12 @@ function consentPost(action: string): Request {
 
 describe('renderConsentPage', () => {
   it('should render the default consent view', async () => {
-    const response = renderConsentPage(contextOf(), { transactionId: 'txn-1', csrfToken: 'csrf-1', clientId: 'client-1', scopes: ['openid'] });
+    const response = renderConsentPage(contextOf(), {
+      transactionId: 'txn-1',
+      csrfToken: 'csrf-1',
+      scopes: ['openid'],
+      client: { clientId: 'client-1' },
+    });
 
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('<ul><li>openid</li></ul>');
@@ -43,7 +48,7 @@ describe('renderConsentPage', () => {
     const views = createViews({
       consentPage: (params: ConsentPageParams) => (
         <form>
-          {params.clientId}:{params.scopes.join(',')}
+          {params.client.clientId}:{params.scopes.join(',')}
         </form>
       ),
     });
@@ -51,8 +56,8 @@ describe('renderConsentPage', () => {
     const response = renderConsentPage(contextOf(undefined, { views }), {
       transactionId: 'txn-1',
       csrfToken: 'csrf-1',
-      clientId: 'client-1',
       scopes: ['openid', 'email'],
+      client: { clientId: 'client-1' },
     });
 
     expect(await response.text()).toBe('<form>client-1:openid,email</form>');

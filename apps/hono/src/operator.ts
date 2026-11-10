@@ -3,7 +3,9 @@
  * app runs, the way an operator changes the client_jwks rows of a provider
  * generated with --db sql. The provider reads the keys on every request, so
  * the next request uses them (tests/e2e/specs/client-keys.spec.ts relies on
- * that).
+ * that). POST /operator/signing-keys/rotate rotates the OP's own signing key
+ * (OIDC Core 1.0 §10.1.1): a new key signs from the next request on, and the
+ * old ones stay in the JWKS (tests/e2e/specs/signing-key-rotation.spec.ts).
  *
  * They exist only when APP_OPERATOR_TOKEN is set, and answer only a request
  * that presents it as a Bearer token. Never set it in production.
@@ -53,7 +55,12 @@ export function clearClientKeys(db: Database, clientId: string): boolean {
   return true;
 }
 
-export function createOperatorApp(db: Database, token: string): Hono {
+/** Build the operator routes, which answer only a request that presents the operator token. */
+export function createOperatorApp(
+  db: Database,
+  token: string,
+  rotateSigningKey: () => Promise<{ kid: string; kids: string[] }>,
+): Hono {
   const operator = new Hono();
   operator.use('*', async (c, next) => {
     if (!presentsOperatorToken(c.req.header('Authorization'), token)) {
@@ -74,5 +81,8 @@ export function createOperatorApp(db: Database, token: string): Hono {
     const found = clearClientKeys(db, c.req.param('clientId'));
     return found ? c.body(null, 204) : c.json({ error: 'not_found' }, 404);
   });
+  // OIDC Core 1.0 §10.1.1: rotate the OP's signing key while the app runs. The
+  // new key signs from the next request on, and the old one stays in the JWKS.
+  operator.post('/signing-keys/rotate', async (c) => c.json(await rotateSigningKey()));
   return operator;
 }

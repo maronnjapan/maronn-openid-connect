@@ -1,7 +1,9 @@
+import type { Jwk } from '@maronn-openid-connect/core';
 import { ParError } from '@maronn-openid-connect/experimental/par';
 import { describe, expect, it } from 'vitest';
-import { providerContext } from '../../../../../../test-support/context.js';
-import { basicAuthorization } from '../../../../../../test-support/feature-endpoints.js';
+import { TEST_ISSUER, providerContext } from '../../../../../../test-support/context.js';
+import { basicAuthorization, signRs256Jwt } from '../../../../../../test-support/feature-endpoints.js';
+import { rs256Key } from '../../../../../../test-support/keys.js';
 import { registerClient } from '../../../../../db/memory/clients.js';
 import { authenticatePushingClient } from './authenticate-client.js';
 
@@ -18,7 +20,22 @@ async function contextWithClients() {
     redirectUris: ['https://rp.example.com/callback'],
     tokenEndpointAuthMethods: ['none'],
   });
-  return context;
+  const key = await rs256Key('par-pkjwt-key');
+  await registerClient(context.db, {
+    clientId: 'pkjwt-client',
+    redirectUris: ['https://rp.example.com/callback'],
+    tokenEndpointAuthMethods: ['private_key_jwt'],
+    keys: { private_key_jwt: { keys: [{ ...(key.publicJwk as Jwk), kid: key.keyId }] } },
+  });
+  return { ...context, key };
+}
+
+const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+
+/** The claims of a client assertion of pkjwt-client (OIDC Core 1.0 §9). */
+function assertionClaims(jti: string, aud: string): Record<string, unknown> {
+  const now = Math.floor(Date.now() / 1000);
+  return { iss: 'pkjwt-client', sub: 'pkjwt-client', aud, exp: now + 60, iat: now, jti };
 }
 
 describe('authenticatePushingClient', () => {
@@ -73,6 +90,47 @@ describe('authenticatePushingClient', () => {
         statusCode: 401,
         wwwAuthenticate: 'Basic realm="Client Authentication"',
       });
+    });
+  });
+
+  describe('private_key_jwt', () => {
+    // OIDC Core 1.0 §9 / RFC 7523 §3: aud may be the PAR endpoint URL.
+    it('should authenticate a client assertion for the PAR endpoint and leave it out of the pushed parameters', async () => {
+      const { c, key } = await contextWithClients();
+      const assertion = await signRs256Jwt(assertionClaims('par-jti-1', `${TEST_ISSUER}/par`), key);
+
+      const result = await authenticatePushingClient(
+        c,
+        { client_id: 'pkjwt-client', client_assertion_type: JWT_BEARER, client_assertion: assertion, scope: 'openid' },
+        '',
+      );
+
+      expect(result).toEqual({ clientId: 'pkjwt-client', pushedParams: { client_id: 'pkjwt-client', scope: 'openid' } });
+    });
+
+    it('should reject a client assertion signed with another key with a 401 invalid_client', async () => {
+      const { c } = await contextWithClients();
+      // Another key pair under the kid of the registered key.
+      const attacker = { ...(await rs256Key('par-attacker-key')), keyId: 'par-pkjwt-key' };
+      const forged = await signRs256Jwt(assertionClaims('par-jti-2', `${TEST_ISSUER}/par`), attacker);
+
+      const authenticating = authenticatePushingClient(
+        c,
+        { client_id: 'pkjwt-client', client_assertion_type: JWT_BEARER, client_assertion: forged },
+        '',
+      );
+
+      await expect(authenticating).rejects.toBeInstanceOf(ParError);
+      await expect(authenticating).rejects.toMatchObject({ code: 'invalid_client', statusCode: 401 });
+    });
+
+    it('should reject a client assertion for the token endpoint', async () => {
+      const { c, key } = await contextWithClients();
+      const assertion = await signRs256Jwt(assertionClaims('par-jti-3', `${TEST_ISSUER}/token`), key);
+
+      await expect(
+        authenticatePushingClient(c, { client_id: 'pkjwt-client', client_assertion_type: JWT_BEARER, client_assertion: assertion }, ''),
+      ).rejects.toMatchObject({ code: 'invalid_client' });
     });
   });
 

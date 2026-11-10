@@ -2,8 +2,8 @@ import {
   extractClientCredentials,
   resolveAuthenticatedTokenClient,
   validateClientAuthMethod,
-  verifyClientSecret,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../../../../client-auth.js';
 import { step } from '../../../../../endpoints/step.js';
 
 export const meta = step({
@@ -23,6 +23,7 @@ export const meta = step({
  * クライアントを認証し、その `client_id` を返す。
  *
  * 認証の手順はトークンエンドポイントと同じである（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
+ * `private_key_jwt` のクライアントアサーションの `aud` には、このエンドポイントの URL か issuer を求める。
  * `token_endpoint_auth_method` を `none` で登録したパブリッククライアントは、`client_id` だけで通る（RFC 7009 §2.1）。
  * 認証に失敗すると、中で呼ぶ core の関数が `TokenError`（`invalid_client` など）を投げる。
  *
@@ -45,6 +46,6 @@ export async function authenticateRevocationClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(revokingClient, presentedCredentials);
-  await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+  await verifyPresentedClientCredential(c, revokingClient, presentedCredentials, '/revoke');
   return presentedCredentials.clientId;
 }

@@ -38,7 +38,9 @@ describe('resolveJarmResponseContext', () => {
       const keys = providerSigningKeys(await es256Key(), signingKey);
 
       const mode = resolveJarmResponseContext(paramsWith('query.jwt'), client, REDIRECT_URI, 'state-1', ISSUER, keys);
-      const location = new URL(locationOf(await mode?.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' })));
+      const redirectResponse = await mode?.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' });
+      expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+      const location = new URL(locationOf(redirectResponse));
       const jwt = location.searchParams.get('response') ?? '';
 
       expect(mode?.name).toBe('query.jwt');

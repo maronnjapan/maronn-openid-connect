@@ -73,7 +73,6 @@ async function approve(
 
 /** The redirect target and the parameters in the fragment of a 302. */
 function fragmentOf(response: Response | undefined): { target: string; params: Record<string, string> } {
-  expect(response?.status).toBe(302);
   const location = new URL(response?.headers.get('Location') ?? '');
   return {
     target: location.origin + location.pathname,
@@ -87,6 +86,7 @@ describe('issueHybridConsentResponse', () => {
   it('should redirect with the code, the tokens, the state and iss in the fragment and clear the transaction cookie', async () => {
     const { response } = await approve({ transactionId: 'hybrid-consent-txn-1', subject: 'hybrid-consent-user-1', responseType: 'code id_token token' });
 
+    expect(response?.status).toBe(302);
     const { target, params } = fragmentOf(response);
     expect(target).toBe(REDIRECT_URI);
     expect(params).toEqual({
@@ -113,6 +113,7 @@ describe('issueHybridConsentResponse', () => {
   it('should record the consent, store the code, finish the transaction and discard the login hand-off', async () => {
     const { response } = await approve({ transactionId: 'hybrid-consent-txn-2', subject: 'hybrid-consent-user-2', responseType: 'code id_token' });
 
+    expect(response?.status).toBe(302);
     const { params } = fragmentOf(response);
     expect(Object.keys(params)).toEqual(['code', 'id_token', 'state', 'iss']);
     expect(await stores.authCodeStore.get(params['code'] ?? '')).toMatchObject({
@@ -164,6 +165,7 @@ describe('issueHybridConsentResponse', () => {
 
     const { response } = await approve({ transactionId: 'hybrid-consent-txn-4', subject: 'hybrid-consent-user-4', responseType: 'code id_token' });
 
+    expect(response?.status).toBe(302);
     expect(fragmentOf(response).params).toEqual({
       error: 'server_error',
       error_description: 'No ID Token signing key registered for alg ES256',

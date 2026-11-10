@@ -19,7 +19,6 @@ async function failureOf(promise: Promise<unknown>): Promise<RegistrationEndpoin
     () => undefined,
     (reason: unknown) => reason,
   );
-  expect(error).toBeInstanceOf(RegistrationEndpointError);
   return error as RegistrationEndpointError;
 }
 
@@ -40,9 +39,11 @@ describe('verifyRegistrationAccess', () => {
     const verifyInitialAccessToken = () => true;
 
     const missing = await failureOf(verifyRegistrationAccess(await registrationContext({}, { verifyInitialAccessToken })));
+    expect(missing).toBeInstanceOf(RegistrationEndpointError);
     const otherScheme = await failureOf(
       verifyRegistrationAccess(await registrationContext({ Authorization: 'Basic dXNlcjpwYXNz' }, { verifyInitialAccessToken })),
     );
+    expect(otherScheme).toBeInstanceOf(RegistrationEndpointError);
 
     expect(missing.response).toEqual(BARE_CHALLENGE);
     expect(otherScheme.response).toEqual(BARE_CHALLENGE);
@@ -71,6 +72,7 @@ describe('verifyRegistrationAccess', () => {
     const c = await registrationContext({ Authorization: 'Bearer wrong-token' }, { verifyInitialAccessToken: async () => false });
 
     const error = await failureOf(verifyRegistrationAccess(c));
+    expect(error).toBeInstanceOf(RegistrationEndpointError);
 
     expect(error.response).toEqual(INVALID_TOKEN);
   });
@@ -79,7 +81,8 @@ describe('verifyRegistrationAccess', () => {
     let calls = 0;
     const c = await registrationContext({}, { verifyInitialAccessToken: () => (calls += 1) > 0 });
 
-    await failureOf(verifyRegistrationAccess(c));
+    const error = await failureOf(verifyRegistrationAccess(c));
+    expect(error).toBeInstanceOf(RegistrationEndpointError);
 
     expect(calls).toBe(0);
   });

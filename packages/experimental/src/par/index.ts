@@ -11,11 +11,12 @@
 export {
   ParError,
   assertParExpiresInSeconds,
-  authenticateParClient,
   buildPushedAuthorizationResponse,
   createPushedAuthorizationRecord,
   handlePushedAuthorizationRequest,
   rejectForbiddenParParams,
+  resolveParClient,
+  toParError,
   validatePushedAuthorizationParams,
   type ParErrorCode,
   type PushedAuthorizationRequestContext,

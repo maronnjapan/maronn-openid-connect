@@ -48,13 +48,13 @@ Cache-Control: no-store
 ## 対応仕様
 
 - [RFC 7591: OAuth 2.0 Dynamic Client Registration Protocol](https://datatracker.ietf.org/doc/html/rfc7591)（§2 のメタデータ、§2.1 の grant と response の対応、§2.3 / §3.1.1 の software statement、§3.2.2 のエラーコード 4 種）
-- [OpenID Connect Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html)（`redirect_uris` を必須にする制約、`application_type` ごとの `redirect_uris` の制約、`default_max_age`、`*_signed_response_alg`、`request_object_signing_alg`）
+- [OpenID Connect Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html)（`redirect_uris` を必須にする制約、`application_type` ごとの `redirect_uris` の制約、`default_max_age`、`*_signed_response_alg`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`request_uris`）
 
 次はスコープ外です。
 
 - RFC 7592（登録後の参照・更新・削除）。`registration_access_token` と `registration_client_uri` は、両方返すか両方返さないかの MUST に従い、どちらも返しません
 - initial access token と software statement の発行と検証。どちらも、設定に渡した関数が判定します。関数を渡さない既定ではオープン登録で、`software_statement` は無視します（RFC 7591 §3.1.1）
-- `jwks_uri` 以外の、URL を参照しに行くメタデータの解釈（`sector_identifier_uri`、`request_uris` など。未知フィールドとして無視します）
+- `jwks_uri` と `request_uris` 以外の、URL を参照しに行くメタデータの解釈（`sector_identifier_uri` など。未知フィールドとして無視します）
 - 登録時の `jwks_uri` の取得。`jwks_uri` は宛先を検査して登録するだけで、鍵が必要になったとき（署名付き Request Object の検証など）に初めて取得します
 
 ## ユースケース
@@ -88,7 +88,7 @@ pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental
 |---|---|---|
 | `maxRegisteredClients` | `100` | 動的登録クライアントの総数上限。超過時は `429` |
 | `maxRegistrationBodyBytes` | `16384` | リクエストボディの上限（UTF-8 バイト長） |
-| `tokenEndpointAuthMethods` | `client_secret_basic` / `client_secret_post` / `none` | 登録できる `token_endpoint_auth_method`。トークンエンドポイントに `private_key_jwt` などの認証を足したら、ここにも足します |
+| `tokenEndpointAuthMethods` | `client_secret_basic` / `client_secret_post` / `private_key_jwt` / `none` | 登録できる `token_endpoint_auth_method`。トークンエンドポイントにほかの認証を足したら、ここにも足します |
 | `grantTypes` | `authorization_code` / `refresh_token` / `implicit` | 登録できる `grant_type`。OP が答える grant（`authorization_code`、生成した機能の grant、implicit-flow があるときの `implicit`）に絞られます。Token Exchange や CIBA の URN を足すと、動的登録クライアントにもその grant を許します |
 | `jwksPurposes` | `request_object` / `private_key_jwt` / `dpop` | 登録された `jwks` の鍵を `ClientKeyResolver` のどの用途に置くか |
 | `acceptJwksUri` | `true` | `jwks_uri` を登録するか。`false` にすると `jwks_uri` を理解しないメタデータとして無視し、オープン登録の受け口が、外部の URL を OP に取得させる経路にならなくなります。experimental の `validateClientMetadata()` の `acceptJwksUri` オプションも既定は `true` です |
@@ -109,8 +109,6 @@ applyOidc(app, {
     maxRegisteredClients: 10,
     // 既定の authorization_code / refresh_token / implicit に加わる
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
-    // トークンエンドポイントに private_key_jwt の検証を足したうえで
-    tokenEndpointAuthMethods: ['private_key_jwt'],
     // 登録に initial access token を要求し、可否は自分の関数で決める
     verifyInitialAccessToken: async (token) => await registrationTickets.isValid(token),
     // software statement を要求し、自分の関数で検証して主張を返す
@@ -222,12 +220,13 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 | フィールド | 扱い |
 |---|---|
 | `redirect_uris` | 必須（OIDC Dynamic Client Registration 1.0 §2）。静的クライアントと同一の規則で検査します（フラグメント禁止、`javascript:` などの危険スキーム拒否、非ループバックの平文 `http://` 拒否） |
-| `token_endpoint_auth_method` | 既定 `client_secret_basic`。`tokenEndpointAuthMethods` の値のみ。`none` は public client、`client_secret_*` 以外の方式は `client_secret` を持たない confidential client になります |
+| `token_endpoint_auth_method` | 既定 `client_secret_basic`。`tokenEndpointAuthMethods` の値のみ。`none` は public client、`client_secret_*` 以外の方式は `client_secret` を持たない confidential client になります。`private_key_jwt` は `jwks` か `jwks_uri` を要し、どちらも無い登録は `invalid_client_metadata`（`private_key_jwt requires jwks or jwks_uri`）です。登録した鍵は `private_key_jwt` の用途にも置かれ、トークンエンドポイントなどがクライアントアサーションの検証に使います（[CLI の private_key_jwt](../../guides/cli/#private_key_jwt) を参照） |
+| `token_endpoint_auth_signing_alg` | discovery の `token_endpoint_auth_signing_alg_values_supported` の値のみ（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512。`none` は受け付けません）。登録したクライアントのクライアントアサーションは、この alg で署名されたものだけを受け付けます。`jwks` も登録するときは、この alg で使える鍵が `jwks` に要ります。experimental の `validateClientMetadata()` は、`tokenEndpointAuthSigningAlgValuesSupported` オプションを省略しても、core の `SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS`（同じ 6 つ）に照らして検証し、無視はしません。この一覧は `token_endpoint_auth_method` によらず使うので、`client_secret_jwt` を許す OP は HS256 などの HMAC の alg もオプションに渡します。渡さなければ、HMAC の alg の登録は `invalid_client_metadata` になります |
 | `grant_types` | 既定 `["authorization_code"]`。`grantTypes` のうち OP が答える値のみ |
 | `response_types` | 既定 `["code"]`。discovery の `response_types_supported` の値のみ。`code` を含む値は `authorization_code`、`token` / `id_token` を含む値は `implicit` の grant を要し、逆も同じです（RFC 7591 §2.1）。値の順序は正規化して返します |
 | `scope` | RFC 6749 §3.3 の構文で検査し、重複を除いて登録します。登録したクライアントの許可 scope 一覧になり、一覧外の要求は `/authorize` が `invalid_scope` で拒否します。`--scope` を宣言した OP では標準スコープと宣言したスコープだけ登録できます |
 | `client_name` | 128 文字以内の表示名。制御文字と見えない文字は拒否します |
-| `client_uri` / `logo_uri` / `tos_uri` / `policy_uri` | 絶対 URL（http / https）。取得しに行かず、保持して返すだけです |
+| `client_uri` / `logo_uri` / `tos_uri` / `policy_uri` | 絶対 URL（http / https）。取得しに行かず、保持して返します。ログイン画面と同意画面は、`client_name` とともにこれらを表示します（https の URL だけ。[CLI のクライアントの表示](../../guides/cli/#クライアントの表示) を参照） |
 | `contacts` | 1 〜 32 件の文字列の配列 |
 | `software_id` / `software_version` | 128 / 64 文字以内の文字列 |
 | `application_type` | `web` か `native`、既定 `web`。`native` は `redirect_uris` をカスタムスキームとループバックの http に限り、`web` で `implicit` を使う登録は https かつ `localhost` 以外に限ります（OIDC Registration 1.0 §2）。省略時も `web` として検査し、`application_type: "web"` を登録して返します |
@@ -236,6 +235,7 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 | `jwks` | RSA（RS256 / RS384 / RS512）か EC（P-256 / P-384 / P-521）の署名用公開鍵、1 〜 16 件。秘密鍵パラメータを含む鍵は拒否します。`alg` と `use` が無い鍵には既定を補います。`jwks_uri` との併記は拒否します |
 | `jwks_uri` | `acceptJwksUri` が `true`（既定）のとき登録します。https の絶対 URL で、フラグメントと userinfo を含まず、`localhost` やループバック・私設・リンクローカルの IP リテラルを指さないものに限ります（生成 OP の `allowInsecureClientJwksUri` が `true` なら http とそれらの宛先も許します）。登録時には取得せず、鍵が必要になったときに生成 OP が取得します（[CLI の jwks_uri](../../guides/cli/#jwks_uri) を参照）。`jwks` との併記は、`acceptJwksUri` によらず拒否します |
 | `request_object_signing_alg` | discovery の `request_object_signing_alg_values_supported` の値のみ（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512。`allowUnsignedRequestObject` の OP では `none` も）。登録したクライアントの Request Object は、この alg で署名されたものだけを受け付けます（OIDC Core 1.0 §6.3.2）。`jwks` も登録するときは、この alg で使える鍵が `jwks` に要ります。request-object 機能を外した OP では、理解しないメタデータとして無視します |
+| `request_uris` | discovery が `request_uri_parameter_supported: true` を広告する OP（request-object 機能。既定）でだけ登録します。1 〜 32 件の https の絶対 URL（生成 OP の `allowInsecureRequestUri` が `true` なら http も）で、フラグメントを含んでよい。登録時には取得しません。`requireRequestUriRegistration` の OP は、ここに登録した値と完全一致する `request_uri` だけを取得します（[CLI の request_uri](../../guides/cli/#request_uri) を参照） |
 | `software_statement` | 次節 |
 
 `grant_types` に Token Exchange や CIBA などの URN を登録できるのは、`grantTypes` に足した場合だけです。
@@ -291,7 +291,7 @@ statement の中のクレームに、RFC 7591 が定める必須項目は `iss` 
 - `client_id` は `dcr-` プレフィックス付きの乱数で、リクエストから指定できません。人間が命名する静的クライアントと名前空間が分かれ、上書きは構造的に起きません
 - `client_secret` は 256 ビットの乱数で、201 応答に一度だけ現れます。応答には `Cache-Control: no-store` が付き、ログには出力されません。ストアにはハッシュだけを保存します
 - initial access token と software statement の検証は、渡した関数の責務です。生成コードが応答に反映するのは、Bearer トークンの有無と関数の返り値だけです。関数を書くときは、トークンの比較を定数時間で行い、statement の署名を `iss` で選んだ鍵と許したアルゴリズムだけで検証し、`alg: none` を受理しないでください
-- 登録処理そのものは外部へリクエストを発行しません。`jwks_uri` は宛先を検査して保存するだけで、取得は登録したクライアントの Request Object を検証するときに、生成 OP が初めて行います。取得は https の公開ホストに限り、リダイレクトに従わず、タイムアウトと本文の上限を持ち、同じ `jwks_uri` の取り直しは間隔を空けます。ただし DNS 名の解決先までは検査しないので、オープン登録で `jwks_uri` を受け付けるなら、egress プロキシを通る fetch（`clientJwksFetch`）を渡すか、`acceptJwksUri: false` にするか、initial access token と組み合わせてください。`logo_uri` などの表示用 URL は構文だけを検査し、取得しません
+- 登録処理そのものは外部へリクエストを発行しません。`jwks_uri` と `request_uris` は宛先を検査して保存するだけで、取得は登録したクライアントの Request Object やクライアントアサーションを検証するときに、生成 OP が初めて行います。取得は https の公開ホストに限り、リダイレクトに従わず、タイムアウトと本文の上限を持ち、同じ `jwks_uri` の取り直しは間隔を空けます。ただし DNS 名の解決先までは検査しないので、オープン登録で `jwks_uri` を受け付けるなら、egress プロキシを通る fetch（`outboundFetch`）を渡すか、`acceptJwksUri: false` にするか、initial access token と組み合わせてください。`logo_uri` などの表示用 URL は構文だけを検査し、取得しません
 - `grantTypes` に experimental grant の URN を足すのは、未認証の登録者にその grant を開くことだと意識してください。CIBA のように利用者へ働きかける grant は、initial access token と組み合わせるか、静的登録に留めるのが安全です
 
 ## 既知の制約
@@ -299,7 +299,7 @@ statement の中のクレームに、RFC 7591 が定める必須項目は `iss` 
 - 動的登録クライアントは in-memory ストアにだけ入り、**プロセス再起動で消えます**。`--db` で生成しても同じで、クライアント表に入る静的クライアントと違い永続化されません（PAR や Device の experimental ストアと同じ割り切りです）
 - RFC 7592 を実装しないため、登録の参照・更新・削除はできません。失効の手段は再起動だけです
 - initial access token と software statement の検証は生成コードに含まれません。関数を渡さない既定ではオープン登録で、`software_statement` は無視します
-- `sector_identifier_uri`、`request_uris`、暗号化系のメタデータは理解せず、無視します
+- `sector_identifier_uri`、`subject_type`、暗号化系のメタデータは理解せず、無視します（discovery の `subject_types_supported` は `public` だけです）
 - `jwks_uri` は登録時に取得しないので、壊れた `jwks_uri` でも登録は成功し、最初の Request Object で初めて失敗します。`request_object_signing_alg` と `jwks_uri` を両方登録したときも、その alg で使える鍵があるかは登録時には確かめません
 
 ## core の静的登録との違い

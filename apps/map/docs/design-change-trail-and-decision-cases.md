@@ -74,6 +74,7 @@ README は「`/token` なら `authorization_code` と `refresh_token`」をケ�
 - 関数の JSDoc の一行目に振る舞いを一文で書く。`.github/scripts/lint-function-docs.mjs` の検査を続ける。地図はこれを、アウトラインの行と図の箱の言葉、要約に使う
 - 変更メモ（`apps/map/changes/*.md`）を PR に添える。存在と関数への対応づけは機械で確かめる。何を求め、何を地図が計算するかは「変更メモと影響範囲」の節で述べる
 - エンドポイントに届く実装の変更で、その関数に関連するテストを足しも変えもしないときは、変更メモのその関数の節に `テストを変えない理由:` の行を書く。地図のビルドの検査（`MapChanges.untested`、`packages/test-catalog` の diff.ts）が確かめる。テストを変えないという判断を毎回人にさせるためで、理由と関連するテストの決め方は [design-test-catalog.md](design-test-catalog.md) の「関連するテストに変更が無い実装の変更」にある
+- テストの `expect` は `it` のコールバック本体に置く。Playwright の `test` と `playwright-bdd` の登録済み step には同じ規則を適用する。共通 helper・support module・suite・ライフサイクル hook に検証を置くと、そのテストが何を保証するかが本体から読めず、カタログにも期待値が載らない。helper は値を返し、呼び出し元で検証する。`expect.any` 等も含め、`.github/scripts/lint-expect-scope.mjs` が全ソースの AST を検査する（`pnpm run lint`）
 
 **あれば良くなるもの**（無くても欠けない）。
 

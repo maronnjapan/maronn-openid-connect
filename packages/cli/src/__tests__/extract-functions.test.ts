@@ -334,7 +334,7 @@ describe('readFunctionCatalog (the repository)', () => {
       'core:client-auth.ts#extractClientCredentials',
       'core:token-request.ts#resolveAuthenticatedTokenClient',
       'core:client-auth.ts#validateClientAuthMethod',
-      'core:client-auth.ts#verifyClientSecret',
+      'hono:oidc-provider/client-auth.ts#verifyPresentedClientCredential',
     ]);
   });
 

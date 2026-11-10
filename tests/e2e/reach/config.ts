@@ -19,7 +19,7 @@ import { reachEnabled, reportsDirectory } from '@maronn-openid-connect/test-reac
 
 /** An OP instance of the run whose reach the fixture takes. */
 export interface ReachOp {
-  /** main, xaa or dcr. */
+  /** main, xaa, dcr or rotation. */
   role: string;
   /** Its issuer, the origin its requests go to. */
   issuer: string;

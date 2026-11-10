@@ -22,6 +22,10 @@ const requestObjectKeys = {
   rsa: [await generateRequestObjectKey('RS256')],
   ec: await generateRequestObjectKey('ES256'),
 };
+// OIDC Core 1.0 §6.2: the Request Objects the RP passes by reference, by the
+// id of their path (/request-objects/<id>). /request-uri writes one and
+// returns the authorization URL whose request_uri points at it.
+const requestObjectsByReference = new Map();
 
 const server = createServer(async (req, res) => {
   try {
@@ -111,6 +115,34 @@ const server = createServer(async (req, res) => {
     // URL that carries it. The spec drives the browser and redeems the code.
     if (req.method === 'GET' && url.pathname === '/request-object') {
       sendJson(res, 200, await buildRequestObjectAuthorization(url));
+      return;
+    }
+    // OIDC Core 1.0 §6.2: a Request Object passed by reference, served as
+    // application/jwt (RFC 9101 §5.2). An id the RP never wrote answers 404.
+    if (req.method === 'GET' && url.pathname.startsWith('/request-objects/')) {
+      const requestObject = requestObjectsByReference.get(url.pathname.slice('/request-objects/'.length));
+      if (requestObject === undefined) {
+        sendJson(res, 404, { error: 'not_found' });
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/jwt', 'Cache-Control': 'no-store' });
+      res.end(requestObject);
+      return;
+    }
+    // OIDC Core 1.0 §6.2: an authorization URL whose request_uri points at a
+    // Request Object of client_id the RP has just written (signed with the alg
+    // asked for, or unsigned for alg=none), with what the spec needs to finish
+    // the flow. id names the object (a fresh one by default), issuer the OP.
+    if (req.method === 'GET' && url.pathname === '/request-uri') {
+      sendJson(res, 200, await buildRequestUriAuthorization(url));
+      return;
+    }
+    // OIDC Core 1.0 §9 / RFC 7523 §3: a private_key_jwt client assertion of the
+    // client named by client_id, signed with the RP's current key of the alg
+    // asked for (or the key of kid), for the aud asked for (the token endpoint
+    // by default). alg=none returns an unsigned JWT, which the OP must refuse.
+    if (req.method === 'GET' && url.pathname === '/client-assertion') {
+      sendJson(res, 200, await buildClientAssertion(url));
       return;
     }
     // OIDC Core 1.0 §10.1.1: the RP adds a new signing key to its jwks_uri and
@@ -247,6 +279,104 @@ async function buildRequestObjectAuthorization(requestUrl) {
     codeVerifier,
     kid: key.publicJwk.kid,
   };
+}
+
+/**
+ * OIDC Core 1.0 §6.2: writes a Request Object of client_id under the id asked
+ * for (a fresh one by default) and returns the authorization URL carrying its
+ * request_uri, whose fragment is the SHA-256 of the object (OIDC Dynamic
+ * Client Registration 1.0 §2; fragment=none leaves it out). The query keeps response_type, client_id and
+ * scope, as §6.2 requires. alg=none leaves the object unsigned (the OP accepts
+ * it only with OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT=1).
+ */
+async function buildRequestUriAuthorization(requestUrl) {
+  const requestClientId = requireSearchParam(requestUrl, 'client_id');
+  const alg = requestUrl.searchParams.get('alg') ?? 'RS256';
+  const id = requestUrl.searchParams.get('id') ?? randomString(12);
+  const opIssuer = requestUrl.searchParams.get('issuer') ?? issuer;
+  const callback = new URL('/request-object-callback', clientBaseUrl).toString();
+  const state = randomString(16);
+  const codeVerifier = randomString(32);
+  const now = Math.floor(Date.now() / 1000);
+  const claims = {
+    iss: requestClientId,
+    aud: opIssuer,
+    iat: now,
+    exp: now + 300,
+    response_type: 'code',
+    client_id: requestClientId,
+    redirect_uri: callback,
+    scope: 'openid',
+    state,
+    nonce: randomString(16),
+    code_challenge: pkceChallenge(codeVerifier),
+    code_challenge_method: 'S256',
+  };
+  let requestObject;
+  if (alg === 'none') {
+    requestObject = `${base64UrlJson({ alg: 'none' })}.${base64UrlJson(claims)}.`;
+  } else {
+    const key = alg === 'ES256' ? requestObjectKeys.ec : requestObjectKeys.rsa.at(-1);
+    const signingInput = `${base64UrlJson({ alg, typ: 'oauth-authz-req+jwt', kid: key.publicJwk.kid })}.${base64UrlJson(claims)}`;
+    const signature = await crypto.subtle.sign(
+      alg === 'ES256' ? { name: 'ECDSA', hash: 'SHA-256' } : 'RSASSA-PKCS1-v1_5',
+      key.privateKey,
+      new TextEncoder().encode(signingInput),
+    );
+    requestObject = `${signingInput}.${Buffer.from(signature).toString('base64url')}`;
+  }
+  requestObjectsByReference.set(id, requestObject);
+  // fragment=none leaves the fragment out, for a request_uri registered without one.
+  const location = new URL(`/request-objects/${id}`, clientBaseUrl).toString();
+  const requestUri = requestUrl.searchParams.get('fragment') === 'none'
+    ? location
+    : `${location}#${createHash('sha256').update(requestObject).digest('base64url')}`;
+  const authorizationUrl = new URL('/authorize', opIssuer);
+  authorizationUrl.search = new URLSearchParams({
+    response_type: 'code',
+    client_id: requestClientId,
+    scope: 'openid',
+    request_uri: requestUri,
+  }).toString();
+  return { authorizationUrl: authorizationUrl.toString(), requestUri, redirectUri: callback, state, codeVerifier };
+}
+
+/**
+ * OIDC Core 1.0 §9 / RFC 7523 §3: a client assertion of client_id, with iss and
+ * sub the client_id, aud the token endpoint of the OP (or the aud parameter),
+ * a jti of its own and an exp a minute ahead. It is signed with the newest RSA
+ * key for RS256 (or the key of the kid parameter), the EC key for ES256, and
+ * left unsigned for alg=none.
+ */
+async function buildClientAssertion(requestUrl) {
+  const assertionClientId = requireSearchParam(requestUrl, 'client_id');
+  const alg = requestUrl.searchParams.get('alg') ?? 'RS256';
+  const kid = requestUrl.searchParams.get('kid');
+  const now = Math.floor(Date.now() / 1000);
+  const claims = {
+    iss: assertionClientId,
+    sub: assertionClientId,
+    aud: requestUrl.searchParams.get('aud') ?? new URL('/token', issuer).toString(),
+    iat: now,
+    exp: now + 60,
+    jti: randomString(16),
+  };
+  if (alg === 'none') {
+    return { assertion: `${base64UrlJson({ alg: 'none' })}.${base64UrlJson(claims)}.`, kid: null };
+  }
+  const key = alg === 'ES256'
+    ? requestObjectKeys.ec
+    : (kid === null ? requestObjectKeys.rsa.at(-1) : requestObjectKeys.rsa.find((candidate) => candidate.publicJwk.kid === kid));
+  if (key === undefined) {
+    throw new Error(`No RSA key with kid ${kid}`);
+  }
+  const signingInput = `${base64UrlJson({ alg, kid: key.publicJwk.kid })}.${base64UrlJson(claims)}`;
+  const signature = await crypto.subtle.sign(
+    alg === 'ES256' ? { name: 'ECDSA', hash: 'SHA-256' } : 'RSASSA-PKCS1-v1_5',
+    key.privateKey,
+    new TextEncoder().encode(signingInput),
+  );
+  return { assertion: `${signingInput}.${Buffer.from(signature).toString('base64url')}`, kid: key.publicJwk.kid };
 }
 
 function base64UrlJson(value) {

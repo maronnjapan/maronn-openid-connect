@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { Page } from '@playwright/test';
+
 import { expect, test } from '../fixtures';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
@@ -55,7 +55,11 @@ test.describe('Client registration metadata', () => {
           code_challenge_method: 'S256',
         }).toString(),
     );
-    await login(page);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
     await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(redirectUri)}\\?`));
     const callback = new URL(page.url());
@@ -152,15 +156,6 @@ function scopedClientAuthorizeUrl(issuer: string, scope: string): string {
       code_challenge_method: 'S256',
     }).toString()
   );
-}
-
-// The transaction ID in the URL must match the cookie and hidden form field.
-async function login(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

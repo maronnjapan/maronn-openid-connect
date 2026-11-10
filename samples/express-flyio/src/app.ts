@@ -4,7 +4,6 @@ import {
   selectPreferredAcr,
   type AcrResolver,
   type SigningKey,
-  type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import type { ClientRegistration } from './oidc-provider/config.js';
@@ -65,6 +64,30 @@ const clientJwksUri = {
   ...(clientJwksUriRefetchIntervalSeconds === undefined ? {} : { clientJwksUriRefetchIntervalSeconds }),
 };
 
+// OIDC Core 1.0 §6.2 request_uri: the generated OP fetches the Request Object
+// a client passes by reference, from https URLs of public hosts by default.
+// OIDC_ALLOW_INSECURE_REQUEST_URI=1 also lets http and loopback or private
+// addresses through, for development (tests/e2e serves its Request Objects
+// over http on 127.0.0.1), and OIDC_REQUIRE_REQUEST_URI_REGISTRATION=1 fetches
+// only the request_uris a client registered (require_request_uri_registration).
+const requestUri = {
+  allowInsecureRequestUri: process.env.OIDC_ALLOW_INSECURE_REQUEST_URI === '1',
+  requireRequestUriRegistration: process.env.OIDC_REQUIRE_REQUEST_URI_REGISTRATION === '1',
+};
+
+// OIDC Core 1.0 §10.1.1: the signing key is generated at startup, and
+// POST /operator/signing-keys/rotate (below) rotates it while the sample runs:
+// a new key with a kid of its own signs from the next request on, and the old
+// ones stay in the JWKS. The route answers only a request that presents
+// OIDC_SIGNING_KEY_ROTATION_TOKEN as a Bearer token, and exists only when it
+// is set (the conformance run and tests/e2e set it; never set it in production).
+const signingKeys: Array<Promise<SigningKey>> = [generateSigningKey('e2e-rs256-key')];
+const signingKeyProvider = createCachedSigningKeyProvider(
+  { getSigningKeys: () => Promise.all(signingKeys) },
+  60_000,
+);
+const signingKeyRotationToken = process.env.OIDC_SIGNING_KEY_ROTATION_TOKEN;
+
 
 // EXTENSION (google-login): "Sign in with Google" is enabled only when
 // GOOGLE_CLIENT_ID is set. The login page then renders the Google button next to
@@ -97,6 +120,15 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+if (signingKeyRotationToken) {
+  app.post('/operator/signing-keys/rotate', async (req, res) => {
+    if (req.get('authorization') !== `Bearer ${signingKeyRotationToken}`) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    res.json(await rotateSigningKey());
+  });
+}
 
 // EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
 // sample with a small inventory cap, so the 429 path can be exercised over
@@ -122,9 +154,10 @@ applyOidc(app, {
     allowNonPkceAuthorizationCodeFlow,
     allowUnsignedRequestObject,
     ...clientJwksUri,
+    ...requestUri,
     googleLogin,
   },
-  signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
+  signingKeyProvider,
   // The generated app keeps its data in the SQL tables of db/ (--db), on the
   // node:sqlite database of db/instance.ts, and reads the clients from the same
   // tables. registerClient() above put OIDC_CLIENTS_JSON there, the keys of
@@ -134,16 +167,19 @@ applyOidc(app, {
   corsOrigins: issuer,
 });
 
-function createEphemeralRs256KeyProvider(): SigningKeyProvider {
-  const keyPromise = generateSigningKey();
-  return {
-    async getSigningKeys(): Promise<SigningKey[]> {
-      return [await keyPromise];
-    },
-  };
+/**
+ * Generates a new RS256 key, puts it first (new tokens are signed with it),
+ * keeps the earlier ones after it, and drops the cached keys so the next
+ * request signs with it and publishes it. Answers the kids in JWKS order.
+ */
+async function rotateSigningKey(): Promise<{ kid: string; kids: string[] }> {
+  const key = await generateSigningKey(`e2e-rs256-key-rotated-${signingKeys.length}`);
+  signingKeys.unshift(Promise.resolve(key));
+  signingKeyProvider.invalidate();
+  return { kid: key.keyId, kids: (await Promise.all(signingKeys)).map((current) => current.keyId) };
 }
 
-async function generateSigningKey(): Promise<SigningKey> {
+async function generateSigningKey(keyId: string): Promise<SigningKey> {
   const keyPair = await crypto.subtle.generateKey(
     {
       name: 'RSASSA-PKCS1-v1_5',
@@ -161,11 +197,11 @@ async function generateSigningKey(): Promise<SigningKey> {
   };
   publicJwk.alg = 'RS256';
   publicJwk.use = 'sig';
-  publicJwk.kid = 'e2e-rs256-key';
+  publicJwk.kid = keyId;
   return {
     privateKey: keyPair.privateKey,
     publicJwk,
-    keyId: 'e2e-rs256-key',
+    keyId,
   };
 }
 

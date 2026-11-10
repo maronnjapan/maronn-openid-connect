@@ -18,6 +18,7 @@ export const endpoint = defineEndpoint({
     { id: 'parse-request', consumes: [], produces: ['params', 'responseMode', 'issuer'] },
     { id: 'resolve-pushed-request', feature: 'par', consumes: ['params'], produces: ['params'] },
     { id: 'resolve-client', consumes: ['params'], produces: ['client'] },
+    { id: 'fetch-request-uri', feature: 'request-object', consumes: ['params', 'client'], produces: ['params'] },
     { id: 'resolve-request-object', feature: 'request-object', consumes: ['params', 'client'], produces: ['effectiveParams', 'requestObjectClaims'] },
     { id: 'resolve-redirect-uri', consumes: ['effectiveParams', 'params', 'client'], produces: ['requestParams', 'redirectUri', 'state'] },
     { id: 'resolve-jarm-response-mode', feature: 'jarm', consumes: ['requestParams', 'client', 'redirectUri', 'state', 'issuer', 'keys'], produces: ['responseMode'] },

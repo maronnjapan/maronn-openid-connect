@@ -94,9 +94,10 @@ export interface AuthorizationRequestParams {
    */
   request?: string;
   /**
-   * OIDC Core 1.0 §6.2: Request Object passed by reference. Unsupported here
-   * (`request_uri_parameter_supported` is false), so a present `request_uri` is
-   * rejected with `request_uri_not_supported` (§6.3).
+   * OIDC Core 1.0 §6.2: Request Object passed by reference. resolveRequestUriParams()
+   * fetches it and replaces it with `request` (request-uri.ts). An OP that does not
+   * fetch it rejects it with `request_uri_not_supported` (§6.3,
+   * rejectUnsupportedRequestParams()).
    */
   request_uri?: string;
   /**
@@ -1028,7 +1029,7 @@ export async function resolveRequestObjectParams(
  *
  * 次のパラメータがあると、それぞれのエラーコードの `AuthorizationError` を投げる:
  * - `request`: `options.requestParameterSupported` が false の構成でだけ `request_not_supported`（OIDC Core 1.0 §6.1、§6.3）。既定では対応しているものとして扱い、拒否しない。
- * - `request_uri`: 対応していないので `request_uri_not_supported`（OIDC Core 1.0 §6.2、§6.3）。
+ * - `request_uri`: ここに残っているのは取得していない `request_uri` なので `request_uri_not_supported`（OIDC Core 1.0 §6.2、§6.3）。取得する OP は先に `resolveRequestUriParams()` で `request` に置き換え、`request` との併用もそこで `invalid_request` にする（RFC 9101 §5）。
  * - `registration`: 対応していないので `registration_not_supported`（OIDC Core 1.0 §3.1.2.1、§7.2.1、§3.1.2.6）。
  *
  * どれもリダイレクト先が決まったあとのエラーなので、リダイレクトで返す。

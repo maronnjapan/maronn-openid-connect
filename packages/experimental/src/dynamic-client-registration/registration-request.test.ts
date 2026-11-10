@@ -156,6 +156,7 @@ describe('validateClientMetadata', () => {
         responseTypes: ['code'],
         applicationType: 'web',
         idTokenSignedResponseAlg: 'RS256',
+        clientName: 'My Test App',
         metadata: {
           redirect_uris: ['https://app.example.com/cb', 'http://127.0.0.1:8080/cb'],
           token_endpoint_auth_method: 'client_secret_post',
@@ -289,7 +290,7 @@ describe('validateClientMetadata', () => {
 
     it('should accept a method the tokenEndpointAuthMethods option adds', () => {
       const validated = validateClientMetadata(
-        { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt' },
+        { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] } },
         { tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'] },
       );
       expect(validated.tokenEndpointAuthMethod).toBe('private_key_jwt');
@@ -1175,5 +1176,149 @@ describe('isClientRegistrationError', () => {
     ['a string', 'ClientRegistrationError'],
   ])('should reject %s', (_label, value) => {
     expect(isClientRegistrationError(value)).toBe(false);
+  });
+});
+
+// OIDC Core 1.0 §9 / OIDC Dynamic Client Registration 1.0 §2: private_key_jwt clients.
+describe('validateClientMetadata private_key_jwt', () => {
+  const JWKS = { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] };
+  const OPTIONS = {
+    tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+    tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'ES256'],
+  };
+
+  it('should reject a private_key_jwt registration without jwks or jwks_uri', () => {
+    expect(() => validateClientMetadata({ ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt' }, OPTIONS)).toThrowError(
+      new ClientRegistrationError('invalid_client_metadata', 'private_key_jwt requires jwks or jwks_uri'),
+    );
+  });
+
+  it('should accept a private_key_jwt registration with a jwks_uri', () => {
+    const validated = validateClientMetadata(
+      { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks_uri: 'https://rp.example.com/jwks.json' },
+      OPTIONS,
+    );
+
+    expect(validated.jwksUri).toBe('https://rp.example.com/jwks.json');
+  });
+
+  it('should register token_endpoint_auth_signing_alg and echo it', () => {
+    const validated = validateClientMetadata(
+      { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'RS256' },
+      OPTIONS,
+    );
+
+    expect(validated.tokenEndpointAuthSigningAlg).toBe('RS256');
+    expect(validated.metadata['token_endpoint_auth_signing_alg']).toBe('RS256');
+  });
+
+  it('should reject token_endpoint_auth_signing_alg none even when the option lists it', () => {
+    expect(() =>
+      validateClientMetadata(
+        { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'none' },
+        { ...OPTIONS, tokenEndpointAuthSigningAlgValuesSupported: ['RS256', 'none'] },
+      ),
+    ).toThrowError(new ClientRegistrationError('invalid_client_metadata', 'token_endpoint_auth_signing_alg must be one of RS256'));
+  });
+
+  it('should reject a token_endpoint_auth_signing_alg no key of jwks can be used with', () => {
+    expect(() =>
+      validateClientMetadata(
+        { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'ES256' },
+        OPTIONS,
+      ),
+    ).toThrowError(
+      new ClientRegistrationError(
+        'invalid_client_metadata',
+        'jwks must contain a key that can be used with the token_endpoint_auth_signing_alg',
+      ),
+    );
+  });
+
+  it('should register token_endpoint_auth_signing_alg RS256 without the option', () => {
+    const validated = validateClientMetadata(
+      { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'RS256' },
+      { tokenEndpointAuthMethods: ['private_key_jwt'] },
+    );
+
+    expect(validated.tokenEndpointAuthSigningAlg).toBe('RS256');
+    expect(validated.metadata['token_endpoint_auth_signing_alg']).toBe('RS256');
+  });
+
+  it('should reject token_endpoint_auth_signing_alg outside the client assertion algs of core without the option', () => {
+    expect(() =>
+      validateClientMetadata(
+        { ...MINIMAL, token_endpoint_auth_method: 'private_key_jwt', jwks: JWKS, token_endpoint_auth_signing_alg: 'HS256' },
+        { tokenEndpointAuthMethods: ['private_key_jwt'] },
+      ),
+    ).toThrowError(
+      new ClientRegistrationError(
+        'invalid_client_metadata',
+        'token_endpoint_auth_signing_alg must be one of RS256, RS384, RS512, ES256, ES384, ES512',
+      ),
+    );
+  });
+});
+
+// OIDC Dynamic Client Registration 1.0 §2 / OIDC Core 1.0 §6.2: request_uris.
+describe('validateClientMetadata request_uris', () => {
+  it('should register https request_uris with a fragment', () => {
+    const validated = validateClientMetadata(
+      { ...MINIMAL, request_uris: ['https://rp.example.com/ro/1#hash'] },
+      { acceptRequestUris: true },
+    );
+
+    expect(validated.requestUris).toEqual(['https://rp.example.com/ro/1#hash']);
+    expect(validated.metadata['request_uris']).toEqual(['https://rp.example.com/ro/1#hash']);
+  });
+
+  it('should ignore request_uris on a provider that does not accept them', () => {
+    const validated = validateClientMetadata({ ...MINIMAL, request_uris: ['https://rp.example.com/ro/1'] });
+
+    expect(validated.requestUris).toBeUndefined();
+    expect(validated.metadata['request_uris']).toBeUndefined();
+  });
+
+  it('should reject an http request_uri', () => {
+    expect(() =>
+      validateClientMetadata({ ...MINIMAL, request_uris: ['http://rp.example.com/ro/1'] }, { acceptRequestUris: true }),
+    ).toThrowError(new ClientRegistrationError('invalid_client_metadata', 'request_uris must be an array of 1 to 32 absolute https URLs'));
+  });
+
+  it('should accept an http request_uri when insecure request_uris are allowed', () => {
+    const validated = validateClientMetadata(
+      { ...MINIMAL, request_uris: ['http://localhost:3001/ro/1'] },
+      { acceptRequestUris: true, allowInsecureRequestUris: true },
+    );
+
+    expect(validated.requestUris).toEqual(['http://localhost:3001/ro/1']);
+  });
+
+  it('should reject request_uris that is not an array', () => {
+    expect(() =>
+      validateClientMetadata({ ...MINIMAL, request_uris: 'https://rp.example.com/ro/1' }, { acceptRequestUris: true }),
+    ).toThrowError(new ClientRegistrationError('invalid_client_metadata', 'request_uris must be an array of 1 to 32 absolute https URLs'));
+  });
+});
+
+// OIDC Dynamic Client Registration 1.0 §2: the metadata the login and consent screens show.
+describe('validateClientMetadata display metadata', () => {
+  it('should keep client_name, client_uri, logo_uri, policy_uri and tos_uri under their names', () => {
+    const validated = validateClientMetadata({
+      ...MINIMAL,
+      client_name: 'Example RP',
+      client_uri: 'https://rp.example.com/',
+      logo_uri: 'https://rp.example.com/logo.png',
+      policy_uri: 'https://rp.example.com/privacy',
+      tos_uri: 'https://rp.example.com/terms',
+    });
+
+    expect(validated).toMatchObject({
+      clientName: 'Example RP',
+      clientUri: 'https://rp.example.com/',
+      logoUri: 'https://rp.example.com/logo.png',
+      policyUri: 'https://rp.example.com/privacy',
+      tosUri: 'https://rp.example.com/terms',
+    });
   });
 });

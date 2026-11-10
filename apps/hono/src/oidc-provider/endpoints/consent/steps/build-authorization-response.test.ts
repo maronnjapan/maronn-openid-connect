@@ -84,7 +84,9 @@ describe('buildConsentRedirect', () => {
       const outcome = await buildConsentRedirect(c, transaction, REDIRECT_URI, { code: 'code-1', state: 'state-1' }, ISSUER);
 
       expect(outcome).toMatchObject({ kind: 'authorization_response', cookies: [CLEARED_TRANSACTION_COOKIE] });
-      const location = new URL(locationOf((outcome as { response: AuthorizationResponse }).response));
+      const redirectResponse = (outcome as { response: AuthorizationResponse }).response;
+      expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+      const location = new URL(locationOf(redirectResponse));
       const responseJwt = location.searchParams.get('response') ?? '';
       expect(location.origin + location.pathname).toBe(REDIRECT_URI);
       expect([...location.searchParams.keys()]).toEqual(['response']);

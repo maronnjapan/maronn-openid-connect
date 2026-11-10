@@ -4,7 +4,7 @@ export interface ReachOptions {
   port?: number;
   /** The OP the run tests: hono or nextjs (MARONN_REACH_TARGET). */
   target?: string;
-  /** Which of the E2E OP instances this one is: main, xaa or dcr (MARONN_REACH_ROLE). */
+  /** Which of the E2E OP instances this one is: main, xaa, dcr or rotation (MARONN_REACH_ROLE). */
   role?: string;
   /** Append a line a response of the OP's HTTP server to this file, or to MARONN_REACH_ACCESS_LOG with true. */
   accessLog?: boolean | string;

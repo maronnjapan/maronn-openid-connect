@@ -59,6 +59,7 @@ import {
   type RefreshTokenStorage,
   type TransactionStorage,
   type UpstreamLoginStorage,
+  type ClientAssertionJtiStorage,
   type UserStorage,
 } from '../../store';
 import { readRecord, writeRecord, type KvDatabase } from './database';
@@ -96,7 +97,7 @@ const MARKER = 'true';
 /**
  * KV ストアに読み書きする OP のストアを返す。
  *
- * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログインのストアである。
+ * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログイン、使用済みのクライアントアサーションの `jti` のストアである。
  * 一つのレコードを一つのキーに保存し、有効期限のあるデータのキーには、その有効期限までの有効期間を付ける。
  * 認可コードとトークンは、値そのものではなく SHA-256 のハッシュ（`hashKey()`）をキーにして保存する。
  *
@@ -679,6 +680,14 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     },
   };
 
+  // 使用済みの `jti` は、`client_id` と `jti` の組のキーのハッシュで `client_assertion_jti` のキーに覚え、アサーションが期限切れになるまでの有効期間を付ける（RFC 7523 §3）。
+  // `setIfAbsent` で書くので、同じキーの二つのリクエストのうち、書けるのは一方だけである。
+  const clientAssertionJtiStore: ClientAssertionJtiStorage = {
+    async consume(key, expiresAt) {
+      return db.setIfAbsent(keys.clientAssertionJti(await hashKey(key)), MARKER, ttlUntil(expiresAt));
+    },
+  };
+
   return {
     transactionStore,
     authCodeStore,
@@ -689,6 +698,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     consentStore,
     userStore,
     upstreamLoginStore,
+    clientAssertionJtiStore,
   };
 }
 

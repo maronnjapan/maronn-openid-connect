@@ -1,18 +1,21 @@
 import { describe, it, expect } from 'vitest';
+import { TokenError, TokenErrorCode, verifyClientSecret } from '@maronn-openid-connect/core';
 import type {
   ClientInfo,
   ClientResolver,
+  PresentedClientCredentials,
   TokenClientInfo,
   TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import {
   ParError,
   assertParExpiresInSeconds,
-  authenticateParClient,
   buildPushedAuthorizationResponse,
   createPushedAuthorizationRecord,
   handlePushedAuthorizationRequest,
   rejectForbiddenParParams,
+  resolveParClient,
+  toParError,
   validatePushedAuthorizationParams,
 } from './par-request.js';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
@@ -46,7 +49,14 @@ const PUBLIC_CLIENT: TestClient = {
   tokenEndpointAuthMethods: ['none'],
 };
 
-const TEST_CLIENTS: readonly TestClient[] = [BASIC_CLIENT, POST_CLIENT, PUBLIC_CLIENT];
+const PRIVATE_KEY_JWT_CLIENT: TestClient = {
+  clientId: 'jwt-app',
+  redirectUris: ['https://client.example/cb'],
+  clientType: 'confidential',
+  tokenEndpointAuthMethods: ['private_key_jwt'],
+};
+
+const TEST_CLIENTS: readonly TestClient[] = [BASIC_CLIENT, POST_CLIENT, PUBLIC_CLIENT, PRIVATE_KEY_JWT_CLIENT];
 
 function createClientResolver(): ClientResolver & TokenClientResolver {
   return {
@@ -89,6 +99,20 @@ function validParams(overrides: Record<string, string> = {}): Record<string, str
 /** `client_secret_basic` 用の Authorization ヘッダ（RFC 6749 §2.3.1）。 */
 function basicHeader(clientId: string, clientSecret: string): string {
   return 'Basic ' + btoa(`${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`);
+}
+
+/** `private_key_jwt` のクライアント（jwt-app）が送るパラメータ一式（OIDC Core 1.0 §9）。 */
+function privateKeyJwtParams(): Record<string, string> {
+  return validParams({
+    client_id: 'jwt-app',
+    client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    client_assertion: 'header.payload.signature',
+  });
+}
+
+/** シークレットだけを照合する OP の検証（core の verifyClientSecret）。 */
+function verifySecretOnly(client: TokenClientInfo, presented: PresentedClientCredentials): Promise<void> {
+  return verifyClientSecret(client, presented.clientSecret);
 }
 
 describe('rejectForbiddenParParams', () => {
@@ -139,70 +163,107 @@ describe('assertParExpiresInSeconds', () => {
   });
 });
 
-describe('authenticateParClient', () => {
-  it('should return the authenticated client id for client_secret_basic with client_id in the body', async () => {
+describe('resolveParClient', () => {
+  // OIDC Core 1.0 §9: the caller verifies the client assertion it gets back.
+  it('should return the client and the client assertion of a private_key_jwt client', async () => {
+    const { client, presented } = await resolveParClient({
+      params: validParams({
+        client_id: 'jwt-app',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: 'header.payload.signature',
+      }),
+      authorizationHeader: '',
+      clientResolver: createClientResolver(),
+    });
+
+    expect(client.clientId).toBe('jwt-app');
+    expect(presented).toEqual({ clientId: 'jwt-app', clientAssertion: 'header.payload.signature', method: 'private_key_jwt' });
+  });
+
+  it('should reject a client_secret_post request of a private_key_jwt client with a ParError', async () => {
+    await expect(
+      resolveParClient({
+        params: validParams({ client_id: 'jwt-app', client_secret: 'secret' }),
+        authorizationHeader: '',
+        clientResolver: createClientResolver(),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_client' });
+  });
+
+  it('should leave the credential unchecked so the caller verifies it', async () => {
+    const { presented } = await resolveParClient({
+      params: validParams(),
+      authorizationHeader: basicHeader('web-app', 'wrong-secret'),
+      clientResolver: createClientResolver(),
+    });
+
+    expect(presented).toEqual({ clientId: 'web-app', clientSecret: 'wrong-secret', method: 'client_secret_basic' });
+  });
+
+  it('should return the Basic credentials for client_secret_basic with client_id in the body', async () => {
     // RFC 9126 §2.1: client_id is a required authorization request parameter, so it is
     // present in the body even when the client authenticates with HTTP Basic.
-    const clientId = await authenticateParClient({
+    const { presented } = await resolveParClient({
       params: validParams(),
       authorizationHeader: basicHeader('web-app', 'secret'),
       clientResolver: createClientResolver(),
     });
 
-    expect(clientId).toBe('web-app');
+    expect(presented).toEqual({ clientId: 'web-app', clientSecret: 'secret', method: 'client_secret_basic' });
   });
 
-  it('should return the authenticated client id for client_secret_post', async () => {
-    const clientId = await authenticateParClient({
-      params: validParams({ client_id: 'post-app', client_secret: 'secret' }),
+  it('should return the body credentials for client_secret_post', async () => {
+    const { presented } = await resolveParClient({
+      params: validParams({ client_id: 'post-app', client_secret: 'post-secret' }),
       authorizationHeader: '',
       clientResolver: createClientResolver(),
     });
 
-    expect(clientId).toBe('post-app');
+    expect(presented).toEqual({ clientId: 'post-app', clientSecret: 'post-secret', method: 'client_secret_post' });
   });
 
-  it('should return the client id for a public client presenting only client_id', async () => {
-    const clientId = await authenticateParClient({
+  it('should return the method none for a public client presenting only client_id', async () => {
+    const { client, presented } = await resolveParClient({
       params: validParams({ client_id: 'spa-app', redirect_uri: 'https://spa.example/cb' }),
       authorizationHeader: '',
       clientResolver: createClientResolver(),
     });
 
-    expect(clientId).toBe('spa-app');
+    expect(client.clientId).toBe('spa-app');
+    expect(presented).toEqual({ clientId: 'spa-app', method: 'none' });
   });
 
-  it('should authenticate with Basic when the body carries an empty client_secret', async () => {
+  it('should resolve the client with Basic when the body carries an empty client_secret', async () => {
     // RFC 6749 §3.2: "Parameters sent without a value MUST be treated as if they
     // were omitted from the request." — the token endpoint normalizes an empty
     // client_secret to "not presented", and RFC 9126 §2.1 requires the PAR
     // endpoint to authenticate the client the same way.
-    const clientId = await authenticateParClient({
+    const { presented } = await resolveParClient({
       params: validParams({ client_secret: '' }),
-      authorizationHeader: basicHeader('web-app', 'secret'),
+      authorizationHeader: basicHeader('web-app', 'header-secret'),
       clientResolver: createClientResolver(),
     });
 
-    expect(clientId).toBe('web-app');
+    expect(presented).toEqual({ clientId: 'web-app', clientSecret: 'header-secret', method: 'client_secret_basic' });
   });
 
-  it('should authenticate via body credentials when a non-Basic Authorization header is present', async () => {
+  it('should use the body credentials when a non-Basic Authorization header is present', async () => {
     // The token endpoint keys header authentication on the Basic scheme and
     // ignores other schemes (e.g. a Bearer header injected by a gateway), so
     // the PAR endpoint must do the same (RFC 9126 §2.1).
-    const clientId = await authenticateParClient({
-      params: validParams({ client_id: 'post-app', client_secret: 'secret' }),
+    const { presented } = await resolveParClient({
+      params: validParams({ client_id: 'post-app', client_secret: 'body-secret' }),
       authorizationHeader: 'Bearer gateway-injected-token',
       clientResolver: createClientResolver(),
     });
 
-    expect(clientId).toBe('post-app');
+    expect(presented).toEqual({ clientId: 'post-app', clientSecret: 'body-secret', method: 'client_secret_post' });
   });
 
   it('should reject a body client_secret combined with a Basic Authorization header', async () => {
     // OAuth 2.1 §2.3: a client MUST NOT use more than one authentication method.
     await expect(
-      authenticateParClient({
+      resolveParClient({
         params: validParams({ client_secret: 'secret' }),
         authorizationHeader: basicHeader('web-app', 'secret'),
         clientResolver: createClientResolver(),
@@ -214,7 +275,7 @@ describe('authenticateParClient', () => {
 
   it('should reject a body client_id that differs from the Basic-authenticated client', async () => {
     await expect(
-      authenticateParClient({
+      resolveParClient({
         params: validParams({ client_id: 'spa-app' }),
         authorizationHeader: basicHeader('web-app', 'secret'),
         clientResolver: createClientResolver(),
@@ -224,24 +285,29 @@ describe('authenticateParClient', () => {
     );
   });
 
-  it('should reject a wrong client_secret with invalid_client', async () => {
-    await expect(
-      authenticateParClient({
-        params: validParams(),
-        authorizationHeader: basicHeader('web-app', 'wrong-secret'),
-        clientResolver: createClientResolver(),
-      }),
-    ).rejects.toThrowError(new ParError('invalid_client', 'Client authentication failed'));
-  });
-
   it('should reject an unknown client with invalid_client', async () => {
     await expect(
-      authenticateParClient({
+      resolveParClient({
         params: validParams({ client_id: 'unknown' }),
         authorizationHeader: '',
         clientResolver: createClientResolver(),
       }),
     ).rejects.toThrowError(new ParError('invalid_client', 'Client authentication failed'));
+  });
+});
+
+describe('toParError', () => {
+  it('should turn a TokenError of the client authentication into a ParError of the same code', () => {
+    const error = toParError(new TokenError(TokenErrorCode.InvalidClient, 'client_assertion signature verification failed'));
+
+    expect(error).toBeInstanceOf(ParError);
+    expect(error).toMatchObject({ code: 'invalid_client', errorDescription: 'client_assertion signature verification failed' });
+  });
+
+  it('should leave an error other than the OAuth errors as it is', () => {
+    const failure = new Error('database is down');
+
+    expect(toParError(failure)).toBe(failure);
   });
 });
 
@@ -504,6 +570,7 @@ describe('handlePushedAuthorizationRequest', () => {
       params: validParams(),
       authorizationHeader: basicHeader('web-app', 'secret'),
       clientResolver: createClientResolver(),
+      verifyClientCredential: verifySecretOnly,
       store,
       validationOptions: {},
       now: new Date('2026-07-29T00:00:00.000Z'),
@@ -530,6 +597,7 @@ describe('handlePushedAuthorizationRequest', () => {
       params: validParams({ client_id: 'spa-app', redirect_uri: 'https://spa.example/cb' }),
       authorizationHeader: '',
       clientResolver: createClientResolver(),
+      verifyClientCredential: verifySecretOnly,
       store,
       validationOptions: {},
       now: new Date('2026-07-29T00:00:00.000Z'),
@@ -547,6 +615,7 @@ describe('handlePushedAuthorizationRequest', () => {
         params: validParams(),
         authorizationHeader: basicHeader('web-app', 'wrong-secret'),
         clientResolver: createClientResolver(),
+        verifyClientCredential: verifySecretOnly,
         store,
         validationOptions: {},
       }),
@@ -562,6 +631,7 @@ describe('handlePushedAuthorizationRequest', () => {
         params: validParams({ redirect_uri: 'https://attacker.example/cb' }),
         authorizationHeader: basicHeader('web-app', 'secret'),
         clientResolver: createClientResolver(),
+        verifyClientCredential: verifySecretOnly,
         store,
         validationOptions: {},
       }),
@@ -577,6 +647,7 @@ describe('handlePushedAuthorizationRequest', () => {
         params: validParams({ request_uri: `${PAR_REQUEST_URI_PREFIX}x` }),
         authorizationHeader: basicHeader('web-app', 'secret'),
         clientResolver: createClientResolver(),
+        verifyClientCredential: verifySecretOnly,
         store,
         validationOptions: {},
       }),
@@ -599,9 +670,84 @@ describe('handlePushedAuthorizationRequest', () => {
         params,
         authorizationHeader: '',
         clientResolver: createClientResolver(),
+        verifyClientCredential: verifySecretOnly,
         store,
         validationOptions: {},
       }),
     ).rejects.toMatchObject({ code: 'invalid_request', statusCode: 400 });
+  });
+
+  // OIDC Core 1.0 §9: the caller's verification checks the client assertion.
+  it('should hand the client assertion of a private_key_jwt client to the credential verification', async () => {
+    const store = new RecordingStore();
+    const received: Array<[string, PresentedClientCredentials]> = [];
+
+    await handlePushedAuthorizationRequest({
+      params: privateKeyJwtParams(),
+      authorizationHeader: '',
+      clientResolver: createClientResolver(),
+      verifyClientCredential: async (client, presented) => {
+        received.push([client.clientId, presented]);
+      },
+      store,
+      validationOptions: {},
+    });
+
+    expect(received).toEqual([
+      ['jwt-app', { clientId: 'jwt-app', clientAssertion: 'header.payload.signature', method: 'private_key_jwt' }],
+    ]);
+  });
+
+  it('should store the request of a private_key_jwt client without the client assertion', async () => {
+    const store = new RecordingStore();
+
+    await handlePushedAuthorizationRequest({
+      params: privateKeyJwtParams(),
+      authorizationHeader: '',
+      clientResolver: createClientResolver(),
+      verifyClientCredential: async () => {},
+      store,
+      validationOptions: {},
+    });
+
+    expect(store.saved[0]?.params).toEqual(validParams({ client_id: 'jwt-app' }));
+  });
+
+  it('should turn a TokenError of the credential verification into a 401 invalid_client', async () => {
+    const store = new RecordingStore();
+
+    const error = await handlePushedAuthorizationRequest({
+      params: privateKeyJwtParams(),
+      authorizationHeader: '',
+      clientResolver: createClientResolver(),
+      verifyClientCredential: async () => {
+        throw new TokenError(TokenErrorCode.InvalidClient, 'client_assertion has expired');
+      },
+      store,
+      validationOptions: {},
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(ParError);
+    expect(error).toMatchObject({ code: 'invalid_client', errorDescription: 'client_assertion has expired', statusCode: 401 });
+    expect(store.saved).toEqual([]);
+  });
+
+  it('should rethrow an error other than the OAuth errors from the credential verification', async () => {
+    const store = new RecordingStore();
+    const failure = new Error('client JWKS could not be fetched');
+
+    await expect(
+      handlePushedAuthorizationRequest({
+        params: privateKeyJwtParams(),
+        authorizationHeader: '',
+        clientResolver: createClientResolver(),
+        verifyClientCredential: async () => {
+          throw failure;
+        },
+        store,
+        validationOptions: {},
+      }),
+    ).rejects.toBe(failure);
+    expect(store.saved).toEqual([]);
   });
 });

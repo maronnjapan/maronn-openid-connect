@@ -41,6 +41,8 @@ function loginPageParams(screen: LoginScreen): LoginPageParams {
     csrfToken: screen.csrfToken,
     // ビューがログインフォームにあらかじめ入れる `login_hint` を渡す（OIDC Core 1.0 §3.1.2.1 では RECOMMENDED）。
     loginHint: screen.loginHint,
+    // 認可を求めるクライアントの名前、ロゴ、ポリシーと利用規約のリンクを渡す（OIDC Dynamic Client Registration 1.0 §2）。
+    client: screen.client,
     // 機能が加える、ほかのログイン方法（Google でのログインなど）の表示を渡す。
     loginMethods: screen.loginMethods,
   };

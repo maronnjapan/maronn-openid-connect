@@ -104,6 +104,44 @@ export function validateHttpUrl(value: unknown, name: string): string {
   return value;
 }
 
+const REQUEST_URIS_MAX_ENTRIES = 32;
+const REQUEST_URIS_DESCRIPTION = 'request_uris must be an array of 1 to 32 absolute https URLs';
+const INSECURE_REQUEST_URIS_DESCRIPTION = 'request_uris must be an array of 1 to 32 absolute http or https URLs';
+
+/**
+ * `request_uris`（クライアントが `request_uri` に使う URL の一覧）を検証し、同じ値の新しい配列を返す。
+ *
+ * 各要素は空白と制御文字を含まない絶対 URL で、スキームは `https` でなければならない（`allowInsecure` のときは `http` も通す）。
+ * URL はフラグメントを含んでよい（OIDC Dynamic Client Registration 1.0 §2。フラグメントは中身のハッシュなどを表し、取得のときに除く）。
+ * 配列でないとき、空のとき、32 個を超えるとき、要素のどれかが 2048 文字を超えるか上の条件に合わないときは、`invalid_client_metadata` を投げる。
+ * 登録の時点では取得しない。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec OIDC Core 1.0 §6.2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 上のどれかに当たるとき。
+ */
+export function validateRequestUris(value: unknown, allowInsecure: boolean): string[] {
+  const description = allowInsecure ? INSECURE_REQUEST_URIS_DESCRIPTION : REQUEST_URIS_DESCRIPTION;
+  if (!Array.isArray(value) || value.length === 0 || value.length > REQUEST_URIS_MAX_ENTRIES) {
+    throw invalidMetadata(description);
+  }
+  for (const uri of value) {
+    if (typeof uri !== 'string' || uri.length === 0 || uri.length > URL_MAX_LENGTH || INVISIBLE_CHARACTERS.test(uri) || /\s/.test(uri)) {
+      throw invalidMetadata(description);
+    }
+    let url: URL;
+    try {
+      url = new URL(uri);
+    } catch {
+      throw invalidMetadata(description);
+    }
+    if (url.protocol !== 'https:' && !(allowInsecure && url.protocol === 'http:')) {
+      throw invalidMetadata(description);
+    }
+  }
+  return [...(value as string[])];
+}
+
 const CONTACTS_MAX_ENTRIES = 32;
 const CONTACT_MAX_LENGTH = 256;
 

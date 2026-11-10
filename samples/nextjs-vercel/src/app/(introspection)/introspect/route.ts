@@ -10,7 +10,6 @@ import {
   extractClientCredentials,
   resolveAuthenticatedTokenClient,
   validateClientAuthMethod,
-  verifyClientSecret,
   requireIntrospectionToken,
   requireIntrospectionClient,
   requireConfidentialIntrospectionCaller,
@@ -22,6 +21,7 @@ import {
   TokenError,
   type IntrospectionResponse,
 } from '@maronn-openid-connect/core';
+import { verifyPresentedClientCredential } from '../../_oidc-provider/client-auth';
 import { clientResolver, loadSigningKeys, stores } from '../../_oidc-provider/provider';
 import { createIntrospectionResolvers } from '../../_oidc-provider/features/introspection/resolvers';
 import {
@@ -99,7 +99,7 @@ async function introspect(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(introspectingClient, presentedCredentials);
-    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+    await verifyPresentedClientCredential(introspectingClient, presentedCredentials, '/introspect');
     // 呼び出し元がコンフィデンシャルクライアントであることを確かめ、パブリッククライアントなら `invalid_client` にする（RFC 7662 §2.1、RFC 9701 §5）。
     // `token_endpoint_auth_method` を `none` で登録したクライアントは、公開されている `client_id` を示すだけで上の手順を通るので、それを認証済みとして扱うと、誰でもトークンを探れてしまう。
     // 失効エンドポイントには、あえてこの確認を置いていない。

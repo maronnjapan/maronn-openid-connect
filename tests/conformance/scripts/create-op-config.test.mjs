@@ -7,6 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BASIC_OP_TEST_PLAN,
+  CONFIG_OP_TEST_PLAN,
+  DYNAMIC_OP_TEST_PLAN,
   HYBRID_OP_TEST_PLAN,
   IMPLICIT_OP_TEST_PLAN,
   opTestPlan,
@@ -309,7 +311,7 @@ describe('createOpConformanceArtifacts', () => {
       assert.throws(
         () => createOpConformanceArtifacts({ plan: 'fapi' }),
         {
-          message: 'Unsupported CONFORMANCE_PLAN "fapi". Expected one of: basic, implicit, hybrid',
+          message: 'Unsupported CONFORMANCE_PLAN "fapi". Expected one of: basic, implicit, hybrid, dynamic, config',
         },
       );
     });
@@ -394,10 +396,31 @@ describe('writeOpConformanceArtifacts', () => {
         assert.deepEqual(JSON.parse(await readFile(written.paths.configPath, 'utf8')), written.config);
         assert.deepEqual(JSON.parse(await readFile(join(outDir, 'oidc-clients.json'), 'utf8')), written.clients);
         assert.equal(await readFile(join(outDir, 'test-plan.txt'), 'utf8'), `${IMPLICIT_OP_TEST_PLAN}\n`);
+        assert.deepEqual(JSON.parse(await readFile(join(outDir, 'expected-skips.json'), 'utf8')), []);
       } finally {
         await rm(outDir, { recursive: true, force: true });
       }
     });
+
+    it('should write the skips the run expects for run-test-plan.py', async () => {
+      const outDir = await mkdtemp(join(tmpdir(), 'maronn-conformance-'));
+      try {
+        const written = await writeOpConformanceArtifacts({ plan: 'dynamic', outDir });
+
+        assert.equal(written.paths.expectedSkipsPath, join(outDir, 'expected-skips.json'));
+        assert.deepEqual(JSON.parse(await readFile(written.paths.expectedSkipsPath, 'utf8')), written.expectedSkips);
+      } finally {
+        await rm(outDir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+describe('run-suite-runner.sh', () => {
+  it('should hand the expected skips of the run to run-test-plan.py', () => {
+    const runnerScript = readFileSync(join(scriptDir, 'run-suite-runner.sh'), 'utf8');
+
+    assert.match(runnerScript, /--expected-skips-file "\$\{EXPECTED_SKIPS_PATH\}"/);
   });
 });
 
@@ -413,6 +436,8 @@ describe('run-op.sh', () => {
       assert.match(runScript, /\n  basic\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
       assert.match(runScript, /\n  implicit\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0\n/);
       assert.match(runScript, /\n  hybrid\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
+      assert.match(runScript, /\n  dynamic\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
+      assert.match(runScript, /\n  config\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0\n/);
       assert.match(
         runScript,
         /export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="\$\{OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-\$\{DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW\}\}"/,
@@ -420,6 +445,19 @@ describe('run-op.sh', () => {
       assert.match(
         compose,
         /OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW: \${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}/,
+      );
+    });
+  });
+
+  describe('failed runs', () => {
+    // The job log shows only the runner service: an OP that does not come up
+    // says why only in its own log.
+    it('should print the end of the log of the op service when the run fails', () => {
+      const runScript = readFileSync(join(scriptDir, 'run-op.sh'), 'utf8');
+
+      assert.match(
+        runScript,
+        /if \[\[ "\$\{status\}" -ne 0 \]\]; then\n(?:  #.*\n)*  echo "[^"\n]*" >&2\n  docker compose -f "\$\{COMPOSE_FILE\}" logs --no-color --tail 80 op >&2 \|\| true\nfi\n/,
       );
     });
   });
@@ -437,6 +475,29 @@ describe('docker-compose.yml', () => {
       assert.match(compose, /\n      - \.\.\/\.\.:\/workspace:ro\n/);
       assert.match(compose, /\n      OIDC_D1_PERSIST_PATH: \/tmp\/maronn-openid-connect-d1\n/);
       assert.match(compose, /\n      OIDC_SQLITE_PATH: \/tmp\/maronn-openid-connect\.sqlite\n/);
+    });
+
+    // The OP fetches the jwks_uri, request_uri and sector_identifier_uri the
+    // suite serves (Dynamic OP plan) over verified TLS: it trusts the CA of the
+    // run, which issued the certificate of conformance-nginx.
+    it('should trust the CA of the run and give the suite proxy a certificate of that CA', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(compose, /\n      NODE_EXTRA_CA_CERTS: \/workspace\/tests\/conformance\/\.generated\/certs\/ca\.crt\n/);
+      assert.match(compose, /\n      - \.\/\.generated\/certs\/conformance-nginx\.crt:\/etc\/ssl\/certs\/nginx-selfsigned\.crt:ro\n/);
+      assert.match(compose, /\n      - \.\/\.generated\/certs\/conformance-nginx\.key:\/etc\/ssl\/private\/nginx-selfsigned\.key:ro\n/);
+      assert.doesNotMatch(compose, /NODE_TLS_REJECT_UNAUTHORIZED/);
+    });
+
+    // hono-cloudflare and nextjs-vercel start with `pnpm start`. pnpm 11 and
+    // later check node_modules against the lockfile before running a script;
+    // the workspace was installed on the host at another path and is mounted
+    // read-only, so the check finds it out of sync and stops the OP, and it
+    // could not install there anyway.
+    it('should run the pnpm start commands without checking the dependencies of the mounted workspace', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(compose, /\n      pnpm_config_verify_deps_before_run: "false"\n/);
     });
   });
 });
@@ -588,6 +649,100 @@ describe('opTestPlan', () => {
       const artifacts = createOpConformanceArtifacts({ plan: 'hybrid', skipManualReview: true });
 
       assert.equal(artifacts.testPlan, opTestPlan({ plan: 'hybrid', skipManualReview: true }));
+    });
+  });
+
+  describe('Dynamic OP plan', () => {
+    // The plan fixes server_metadata=discovery, client_registration=dynamic_client,
+    // client_auth_type=private_key_jwt and response_mode=default itself, and
+    // the suite refuses a plan that sets them again; response_type is the
+    // tester's choice.
+    it('should run every module of the plan when the manual review ones are kept', () => {
+      assert.equal(DYNAMIC_OP_TEST_PLAN, 'oidcc-dynamic-certification-test-plan[response_type=code]');
+      assert.equal(opTestPlan({ plan: 'dynamic' }), DYNAMIC_OP_TEST_PLAN);
+    });
+
+    // Six modules wait for a screenshot and oidcc-server-rotate-keys for a
+    // person to rotate the keys and press Start.
+    it('should select the sixteen automated modules when the manual review ones are skipped', () => {
+      assert.equal(
+        opTestPlan({ plan: 'dynamic', skipManualReview: true }),
+        `${DYNAMIC_OP_TEST_PLAN}:` +
+          'oidcc-idtoken-rs256,oidcc-idtoken-unsigned,oidcc-userinfo-rs256,oidcc-redirect-uri-query-OK,' +
+          'oidcc-redirect-uri-regfrag,oidcc-discovery-endpoint-verification,oidcc-server,' +
+          'oidcc-registration-jwks-uri,oidcc-registration-sector-uri,oidcc-registration-sector-bad,' +
+          'oidcc-refresh-token-rp-key-rotation,oidcc-request-uri-unsigned,oidcc-request-uri-signed-rs256,' +
+          'oidcc-ensure-request-object-with-redirect-uri,oidcc-refresh-token,' +
+          'oidcc-ensure-client-assertion-with-iss-aud-succeeds',
+      );
+    });
+
+    // RFC 7591: the suite registers its clients, so the OP has none of its own.
+    it('should register no static client and name the clients the suite registers', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'dynamic' });
+
+      assert.deepEqual(artifacts.clients, []);
+      assert.deepEqual(artifacts.config.client, { client_name: 'maronn-dynamic-op-client' });
+      assert.deepEqual(artifacts.config.client2, { client_name: 'maronn-dynamic-op-client-2' });
+      assert.equal(artifacts.config.alias, 'maronn-dynamic-op');
+      assert.deepEqual(artifacts.config.browser, createOpConformanceArtifacts().config.browser);
+    });
+
+    // oidcc-discovery-endpoint-verification warns about metadata outside
+    // RFC 8414 and OpenID Connect Discovery 1.0 unless the configuration names
+    // it. hono-cloudflare is generated with id-jag, whose two fields come from
+    // draft-ietf-oauth-identity-assertion-authz-grant §7.
+    it('should let the suite accept the id-jag metadata of hono-cloudflare', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'dynamic', sampleApp: 'hono-cloudflare' });
+
+      assert.deepEqual(artifacts.config.server, {
+        discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration',
+        allow_unexpected_metadata_fields: [
+          'identity_chaining_requested_token_types_supported',
+          'authorization_grant_profiles_supported',
+        ],
+      });
+    });
+
+    // The certification allows the three to be skipped: the OP issues no
+    // unsigned ID Token (alg=none) and no pairwise subject. run-test-plan.py
+    // fails a run with a skip it was not told to expect.
+    it('should expect the suite to skip the modules of alg=none ID Tokens and of pairwise subjects', () => {
+      assert.deepEqual(createOpConformanceArtifacts({ plan: 'dynamic' }).expectedSkips, [
+        { 'test-name': 'oidcc-idtoken-unsigned', variant: '*', 'configuration-filename': '*dynamic-op-config.json' },
+        { 'test-name': 'oidcc-registration-sector-uri', variant: '*', 'configuration-filename': '*dynamic-op-config.json' },
+        { 'test-name': 'oidcc-registration-sector-bad', variant: '*', 'configuration-filename': '*dynamic-op-config.json' },
+      ]);
+    });
+
+    it('should name no extension metadata for a sample generated without id-jag', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'dynamic', sampleApp: 'express-flyio' });
+
+      assert.deepEqual(artifacts.config.server, { discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration' });
+    });
+  });
+
+  describe('Config OP plan', () => {
+    it('should run the discovery module of the plan', () => {
+      assert.equal(CONFIG_OP_TEST_PLAN, 'oidcc-config-certification-test-plan');
+      assert.equal(opTestPlan({ plan: 'config', skipManualReview: true }), `${CONFIG_OP_TEST_PLAN}:oidcc-discovery-endpoint-verification`);
+    });
+
+    it('should register no static client', () => {
+      assert.deepEqual(createOpConformanceArtifacts({ plan: 'config' }).clients, []);
+    });
+
+    it('should expect no skipped module', () => {
+      assert.deepEqual(createOpConformanceArtifacts({ plan: 'config' }).expectedSkips, []);
+    });
+
+    it('should let the suite accept the id-jag metadata of hono-cloudflare', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'config', sampleApp: 'hono-cloudflare' });
+
+      assert.deepEqual(artifacts.config.server.allow_unexpected_metadata_fields, [
+        'identity_chaining_requested_token_types_supported',
+        'authorization_grant_profiles_supported',
+      ]);
     });
   });
 });

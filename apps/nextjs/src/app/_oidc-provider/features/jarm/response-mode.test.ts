@@ -34,7 +34,9 @@ describe('jarmResponseMode', () => {
   it('should add the response parameter as the only parameter of the redirect URI', async () => {
     const mode = jarmResponseMode({ issuer: ISSUER, clientId: 'client-1', signingKey: await rs256Key() });
 
-    const location = new URL(locationOf(await mode.respond(`${REDIRECT_URI}?tenant=a`, { code: 'code-1', state: 'state-1' })));
+    const redirectResponse = await mode.respond(`${REDIRECT_URI}?tenant=a`, { code: 'code-1', state: 'state-1' });
+    expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+    const location = new URL(locationOf(redirectResponse));
 
     expect(`${location.origin}${location.pathname}`).toBe(REDIRECT_URI);
     expect([...location.searchParams.keys()]).toEqual(['tenant', 'response']);
@@ -46,7 +48,9 @@ describe('jarmResponseMode', () => {
     const signingKey = await rs256Key();
     const mode = jarmResponseMode({ issuer: ISSUER, clientId: 'client-1', signingKey });
 
-    const jwt = responseOf(locationOf(await mode.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' })));
+    const redirectResponse = await mode.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' });
+    expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+    const jwt = responseOf(locationOf(redirectResponse));
 
     expect(decodeJwt(jwt)).toEqual({
       header: { alg: 'RS256', kid: 'test-rs256-key' },
@@ -59,7 +63,9 @@ describe('jarmResponseMode', () => {
   it('should leave out a parameter whose value is undefined', async () => {
     const mode = jarmResponseMode({ issuer: ISSUER, clientId: 'client-1', signingKey: await rs256Key() });
 
-    const jwt = responseOf(locationOf(await mode.respond(REDIRECT_URI, { error: 'access_denied', state: undefined })));
+    const redirectResponse = await mode.respond(REDIRECT_URI, { error: 'access_denied', state: undefined });
+    expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+    const jwt = responseOf(locationOf(redirectResponse));
 
     expect(decodeJwt(jwt).payload).toEqual({ error: 'access_denied', iss: ISSUER, aud: 'client-1', exp: NOW_SECONDS + 60 });
   });
@@ -98,7 +104,9 @@ describe('jarmResponseModeHandler', () => {
       issuer: 'https://issuer.example.com',
       loadSigningKeys,
     });
-    const jwt = responseOf(locationOf(await mode.respond(REDIRECT_URI, { code: 'code-1' })));
+    const redirectResponse = await mode.respond(REDIRECT_URI, { code: 'code-1' });
+    expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+    const jwt = responseOf(locationOf(redirectResponse));
 
     expect(mode.name).toBe('query.jwt');
     expect(loadSigningKeys).toHaveBeenCalledTimes(1);

@@ -1,7 +1,7 @@
 import { OAuth2Client } from 'google-auth-library';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { GoogleLoginErrorCode } from './errors.js';
+import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
 import {
   createGoogleIdTokenVerifier,
   getDefaultGoogleIdTokenVerifier,
@@ -16,7 +16,6 @@ import {
   captureThrow,
   createFakeVerifier,
   createGoogleIdTokenPayload,
-  expectGoogleLoginError,
   generateGoogleTestKey,
   nowSeconds,
   signGoogleIdToken,
@@ -113,7 +112,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
     const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('Wrong recipient');
   });
 
@@ -122,7 +122,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
     const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('Invalid issuer');
   });
 
@@ -140,7 +141,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
     const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('Token used too late');
   });
 
@@ -152,7 +154,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
     const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('Token used too early');
   });
 
@@ -161,7 +164,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
     const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('Invalid token signature');
   });
 
@@ -170,14 +174,16 @@ describe('createGoogleIdTokenVerifier', () => {
 
     const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('No pem found for envelope');
   });
 
   it('should reject a token that is not a JWS', async () => {
     const error = await captureRejection(verifier.verify('not-a-jwt', TEST_CLIENT_ID));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
     expect((error as Error).message).toContain('Wrong number of segments');
   });
 
@@ -188,7 +194,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
       const error = await captureRejection(local.verify('', TEST_CLIENT_ID));
 
-      expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+      expect(error).toBeInstanceOf(GoogleLoginError);
+      expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidIdToken, httpStatusCode: 401 });
       expect(server.hits).toEqual([]);
     } finally {
       await server.close();
@@ -219,7 +226,8 @@ describe('createGoogleIdTokenVerifier', () => {
 
       const error = await captureRejection(local.verify(idToken, TEST_CLIENT_ID));
 
-      expectGoogleLoginError(error, GoogleLoginErrorCode.SigningKeyUnavailable, 503);
+      expect(error).toBeInstanceOf(GoogleLoginError);
+      expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.SigningKeyUnavailable, httpStatusCode: 503 });
       expect((error as Error).message).toContain('Failed to retrieve verification certificates');
       expect((error as Error).cause).toBeInstanceOf(Error);
     } finally {
@@ -254,7 +262,8 @@ describe('validateGoogleHostedDomain', () => {
       validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: 'evil.example' }), 'example.com'),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidHostedDomain, httpStatusCode: 403 });
   });
 
   it('should reject a token without hd when a domain is required', () => {
@@ -262,7 +271,8 @@ describe('validateGoogleHostedDomain', () => {
       validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: undefined }), 'example.com'),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidHostedDomain, httpStatusCode: 403 });
   });
 
   it('should throw a TypeError when the hosted domain list is empty', () => {
@@ -278,7 +288,8 @@ describe('validateGoogleEmailVerified', () => {
   it('should reject email_verified false', () => {
     const error = captureThrow(() => validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: false })));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.EmailNotVerified, httpStatusCode: 403 });
   });
 
   it('should reject a token without email_verified', () => {
@@ -286,13 +297,15 @@ describe('validateGoogleEmailVerified', () => {
       validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: undefined })),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.EmailNotVerified, httpStatusCode: 403 });
   });
 
   it('should reject the string "true"', () => {
     const error = captureThrow(() => validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: 'true' })));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.EmailNotVerified, httpStatusCode: 403 });
   });
 });
 
@@ -308,13 +321,15 @@ describe('validateGoogleIdTokenNonce', () => {
   it('should reject a nonce that differs from the expected value', () => {
     const error = captureThrow(() => validateGoogleIdTokenNonce(createGoogleIdTokenPayload({ nonce: 'n-2' }), 'n-1'));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidNonce, httpStatusCode: 400 });
   });
 
   it('should reject a token without nonce when a value is expected', () => {
     const error = captureThrow(() => validateGoogleIdTokenNonce(createGoogleIdTokenPayload({ nonce: undefined }), 'n-1'));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidNonce, httpStatusCode: 400 });
   });
 });
 
@@ -359,7 +374,8 @@ describe('verifyGoogleIdToken', () => {
       verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, hostedDomain: 'example.com' }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidHostedDomain, httpStatusCode: 403 });
   });
 
   it('should not require a verified email by default', async () => {
@@ -375,7 +391,8 @@ describe('verifyGoogleIdToken', () => {
       verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, requireVerifiedEmail: true }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.EmailNotVerified, httpStatusCode: 403 });
   });
 
   it('should apply the expected nonce', async () => {
@@ -385,6 +402,7 @@ describe('verifyGoogleIdToken', () => {
       verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, expectedNonce: 'n-1' }),
     );
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.InvalidNonce, httpStatusCode: 400 });
   });
 });

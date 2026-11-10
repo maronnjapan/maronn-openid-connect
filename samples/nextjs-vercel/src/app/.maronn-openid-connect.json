@@ -18,7 +18,7 @@
     "ciba": true,
     "jwtIntrospectionResponse": false,
     "rpInitiatedLogout": false,
-    "dynamicClientRegistration": false,
+    "dynamicClientRegistration": true,
     "googleLogin": true
   },
   "scopes": [],

@@ -29,6 +29,7 @@ core までの型の経路、feature のオン・オフ、owner block の削除�
 
 - コードの形、地図の解析、規則・検査の追加の順に別コミットにする。振る舞いを検証するテストは対応する変更と一緒に置く。
 - 関数は `function` 宣言、JSDoc の 1 行目は振る舞いを一文、pipeline の step は marker 行。feature の識別子は owner block 内に置き、base/feature/DB の import 境界を守る。
+- テストの `expect` は必ず `it` のコールバック本体に書く。共通 helper、test-support、`describe`、`beforeEach` / `beforeAll` / `afterEach` / `afterAll` では呼ばない。helper は準備・操作・値の返却に限り、型・エラー・status・redirect 等の検証を呼び出し元へ移す。`expect.any` 等の非対称 matcher も本体内で作る。Playwright の `test` と `playwright-bdd` の登録済み `Given` / `When` / `Then` は、その runner のテスト本体として同じ規則を適用する。`.github/scripts/lint-expect-scope.mjs`（`pnpm run lint`）で helper を含めて全件確認する。
 - 題材だけで終わらず、棚卸しで見つけた同じ切れ目を持つ箇所も同じ方針に揃える。追えないものは理由付きの診断に残す。
 - Hono を変えたら Next.js にも対応させる。`samples/` は手で直さず、CLI をビルドして `pnpm --filter "./samples/*" run generate` で再生成する。sample 固有の DB instance 等の境界を保つ。
 - `apps/map/changes/` に関数別の意図と背景を書く。何を変えたか・どこへ届くかは地図に計算させる。必要なら `MAP_BASE=<PR の base> pnpm --filter @maronn-openid-connect/map changes:draft` を使う。

@@ -60,6 +60,7 @@ describe('validateRegistrationMetadata', () => {
 
     expect(client).toEqual({
       clientId: expect.stringMatching(CLIENT_ID),
+      clientName: 'Example App',
       clientType: 'public',
       redirectUris: ['http://127.0.0.1:8080/callback'],
       grantTypes: ['refresh_token', 'authorization_code'],
@@ -111,12 +112,47 @@ describe('validateRegistrationMetadata', () => {
     );
   });
 
+  // OIDC Core 1.0 §9: a private_key_jwt client registers its keys.
+  it('should build a confidential client without a secret for private_key_jwt', async () => {
+    const { c } = await providerContext();
+
+    const client = validateRegistrationMetadata(c, {
+      redirect_uris: REDIRECT_URIS,
+      token_endpoint_auth_method: 'private_key_jwt',
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      token_endpoint_auth_signing_alg: 'RS256',
+    });
+
+    expect(client.tokenEndpointAuthMethods).toEqual(['private_key_jwt']);
+    expect(client.tokenEndpointAuthSigningAlg).toBe('RS256');
+    expect(client.clientType).toBe('confidential');
+    expect(Object.hasOwn(client, 'clientSecret')).toBe(false);
+  });
+
+  it('should reject a private_key_jwt registration without keys', async () => {
+    const { c } = await providerContext();
+
+    expect(() =>
+      validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, token_endpoint_auth_method: 'private_key_jwt' }),
+    ).toThrow(
+      expect.objectContaining({
+        name: 'ClientRegistrationError',
+        error: 'invalid_client_metadata',
+        errorDescription: 'private_key_jwt requires jwks or jwks_uri',
+      }),
+    );
+  });
+
   it('should bound the auth methods to those of the registration settings', async () => {
     const { c } = await providerContext({
       options: { dynamicClientRegistration: { tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'] } },
     });
 
-    const client = validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, token_endpoint_auth_method: 'private_key_jwt' });
+    const client = validateRegistrationMetadata(c, {
+      redirect_uris: REDIRECT_URIS,
+      token_endpoint_auth_method: 'private_key_jwt',
+      jwks_uri: 'https://rp.example.com/jwks.json',
+    });
 
     expect(client.tokenEndpointAuthMethods).toEqual(['private_key_jwt']);
     expect(client.clientType).toBe('confidential');

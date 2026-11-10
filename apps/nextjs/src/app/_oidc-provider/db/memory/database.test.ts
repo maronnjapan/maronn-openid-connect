@@ -24,6 +24,7 @@ describe('createEmptyDatabase', () => {
       users: 0,
       federatedIdentities: 0,
       upstreamLogins: 0,
+      clientAssertionJtis: 0,
       clients: 0,
     });
   });

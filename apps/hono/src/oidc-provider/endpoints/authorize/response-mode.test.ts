@@ -15,7 +15,9 @@ describe('restoreResponseMode', () => {
     const { c } = await providerContext();
 
     const responseMode = restoreResponseMode(c, { ...transactionOf(), responseMode: 'query.jwt' });
-    const location = locationOf(await responseMode!.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' }));
+    const redirectResponse = await responseMode!.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' });
+    expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+    const location = locationOf(redirectResponse);
     const { target, params } = redirectOf(location);
 
     expect(responseMode!.name).toBe('query.jwt');

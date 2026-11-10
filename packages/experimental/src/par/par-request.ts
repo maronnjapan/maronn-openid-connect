@@ -27,9 +27,10 @@ import {
   validatePromptParameter,
   validateRegisteredRedirectUris,
   validateResponseType,
-  verifyClientSecret,
   type AuthorizationRequestParams,
   type ClientResolver,
+  type PresentedClientCredentials,
+  type TokenClientInfo,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
@@ -105,10 +106,19 @@ export interface PushedAuthorizationValidationOptions {
 export interface PushedAuthorizationRequestContext {
   /** フォームボディのパラメータ（application/x-www-form-urlencoded） */
   params: Record<string, string>;
-  /** Authorization ヘッダの値（client_secret_basic 用）。無ければ空文字 */
-  authorizationHeader?: string;
+  /** Authorization ヘッダの値。無ければ空文字 */
+  authorizationHeader: string;
   /** クライアント解決。認可リクエスト検証とクライアント認証の両方に使う */
   clientResolver: ClientResolver & TokenClientResolver;
+  /**
+   * {@link resolveParClient} が返したクライアントと、提示された認証情報（`presented`）を検証する。
+   *
+   * `none` を含むすべての方式で呼ぶ（パブリッククライアントには、core の `verifyClientSecret` が何も確かめずに返る）。
+   * シークレットだけを受け付ける OP は `(client, presented) => verifyClientSecret(client, presented.clientSecret)` を渡す。
+   * `private_key_jwt` も受け付ける OP は、クライアントアサーションの検証（core の `decodeClientAssertion` から `consumeClientAssertionJti` まで）を渡す。
+   * 投げた core の `TokenError` は {@link toParError} で `ParError` になり（`invalid_client` なら 401）、それ以外の例外はそのまま投げる。
+   */
+  verifyClientCredential: (client: TokenClientInfo, presented: PresentedClientCredentials) => Promise<void>;
   store: PushedAuthorizationRequestStore;
   /** {@link validatePushedAuthorizationParams} へ渡すオプション */
   validationOptions: PushedAuthorizationValidationOptions;
@@ -173,58 +183,46 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
 }
 
 /**
- * クライアントを認証し、そのクライアント ID を返す。
+ * PAR のリクエストを送ったクライアントと、提示された認証情報を返す。
  *
  * 認証の規則はトークンエンドポイントと同じである（RFC 9126 §2.1）。
- * ボディからは `client_id` と `client_secret` だけを使い、認証情報の取り出し、複数の認証方式の判定、検証は、core の {@link extractClientCredentials} から始まる関数にすべて任せる。
+ * ボディからは `client_id`、`client_secret`、`client_assertion_type`、`client_assertion` だけを使い、認証情報の取り出し、クライアントの取得、認証方式の照合を、core の {@link extractClientCredentials}、{@link resolveAuthenticatedTokenClient}、{@link validateClientAuthMethod} の順に任せる。
+ * 認証情報そのもの（シークレット、`private_key_jwt` のクライアントアサーション）は確かめないので、呼び出し側が返った `presented` を検証する（OIDC Core 1.0 §9）。
  * そのため、次の規則もトークンエンドポイントと同じになる:
  * - `Authorization` ヘッダーは `Basic` スキームだけを認証に使う。
  *   ほかのスキームのヘッダー（ゲートウェイが付ける `Bearer` など）は無視し、ボディの認証情報で認証する。
  * - 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
- * - `Basic` ヘッダーと、ボディの空でない `client_secret` を両方送ると、複数の認証方式を使ったとして `invalid_request` にする（OAuth 2.1 §2.3）。
+ * - `Basic` ヘッダーと、ボディの空でない `client_secret` やクライアントアサーションを一緒に送ると、複数の認証方式を使ったとして `invalid_request` にする（OAuth 2.1 §2.3）。
  * - ボディの `client_id`（RFC 9126 §2.1 で認可リクエストのパラメータとして必須）を `Basic` ヘッダーと一緒に送ったときは、core が `Basic` ヘッダーのクライアント ID と一致することを確かめる。
  *   `request_uri` は、PAR のリクエストを送ったクライアントに結び付くためである（RFC 9126 §2.2）。
  *
- * @returns 認証したクライアントの ID
- * @throws {ParError} `invalid_client`: 認証に失敗したとき（クライアント ID がない、クライアントが登録されていない、シークレットが一致しないなど）
+ * `authorizationHeader` には `Authorization` ヘッダーの値を渡し、ヘッダーが無ければ空文字を渡す。
+ * core が投げた `TokenError` は {@link toParError} で `ParError` に変換して投げ、それ以外の例外はそのまま投げる。
+ *
+ * @throws {ParError} `invalid_client`: クライアント ID がないとき、クライアントが登録されていないとき、登録していない方式で認証したとき
  * @throws {ParError} `invalid_request`: 複数の認証方式を使ったとき、ボディの `client_id` が `Basic` ヘッダーと食い違うとき
  * @spec RFC 9126 §2.1
+ * @spec OIDC Core 1.0 §9
  */
-export async function authenticateParClient(context: {
+export async function resolveParClient(context: {
   params: Record<string, string>;
-  authorizationHeader?: string;
-  clientResolver: TokenClientResolver;
-}): Promise<string> {
-  const { params, clientResolver } = context;
-  return runClientAuthentication({
-    params: { client_id: params['client_id'], client_secret: params['client_secret'] },
-    authorizationHeader: context.authorizationHeader ?? '',
-    clientResolver,
-  });
-}
-
-/**
- * core の関数でクライアントを認証し、ID を返す。
- *
- * core の関数を、認証情報の取り出し、クライアントの取得、認証方式の照合、シークレットの照合の順に呼び、提示されたクライアント ID を返す。
- * core が投げた `TokenError` は `ParError` に変換して投げ、それ以外の例外はそのまま投げる。
- *
- * @throws {ParError} クライアント認証に失敗したとき
- */
-async function runClientAuthentication(context: {
-  params: Record<string, string | undefined>;
   authorizationHeader: string;
   clientResolver: TokenClientResolver;
-}): Promise<string> {
+}): Promise<{ client: TokenClientInfo; presented: PresentedClientCredentials }> {
+  const { params } = context;
   try {
     const presented = extractClientCredentials({
-      params: context.params,
+      params: {
+        client_id: params['client_id'],
+        client_secret: params['client_secret'],
+        client_assertion_type: params['client_assertion_type'],
+        client_assertion: params['client_assertion'],
+      },
       authorizationHeader: context.authorizationHeader,
     });
     const client = await resolveAuthenticatedTokenClient(presented.clientId, context.clientResolver);
     validateClientAuthMethod(client, presented);
-    await verifyClientSecret(client, presented.clientSecret);
-    return presented.clientId;
+    return { client, presented };
   } catch (error) {
     throw toParError(error);
   }
@@ -346,26 +344,40 @@ export function buildPushedAuthorizationResponse(
 /**
  * PAR のリクエストを処理し、レスポンスのボディを返す。
  *
- * 禁止されたパラメータの拒否、クライアント認証、パラメータの検証、レコードの保存、レスポンスの組み立てを、この順に行う。
- * それぞれ、このファイルのほかの関数を呼ぶだけである。
+ * 次の処理を、この順に行う。
+ * 1. 禁止されたパラメータを拒否する（{@link rejectForbiddenParParams}）。
+ * 2. クライアントと、提示された認証情報を決める（{@link resolveParClient}）。
+ * 3. 提示された認証情報を、呼び出し側が渡した `verifyClientCredential` で検証する。投げた `TokenError` は {@link toParError} で `ParError` にする。
+ * 4. パラメータを検証する（{@link validatePushedAuthorizationParams}）。
+ * 5. レコードを保存する（{@link createPushedAuthorizationRecord}）。クライアント認証のパラメータは保存しない。
+ * 6. レスポンスを組み立てる（{@link buildPushedAuthorizationResponse}）。
+ *
+ * `verifyClientCredential` が OAuth のエラー（`TokenError`、`AuthorizationError`）以外の例外を投げたときは、その例外をそのまま投げ、レコードは保存しない。
  *
  * 生成されたコードは、通常この関数を使わずに、それぞれの関数を順に呼ぶ。
  * 検証を差し替えたり取り除いたりできるようにするためである。
  *
- * @throws {ParError} どれかの処理が失敗したとき
+ * @throws {ParError} どれかの処理が失敗したとき（`verifyClientCredential` が `invalid_client` の `TokenError` を投げたときは、401 の `invalid_client`）
  * @throws {RangeError} `expiresInSeconds` が 5〜600 の整数でないとき
  * @spec RFC 9126 §2
+ * @spec OIDC Core 1.0 §9
  */
 export async function handlePushedAuthorizationRequest(
   context: PushedAuthorizationRequestContext,
 ): Promise<PushedAuthorizationResponse> {
   rejectForbiddenParParams(context.params);
 
-  const clientId = await authenticateParClient({
+  const { client, presented } = await resolveParClient({
     params: context.params,
     authorizationHeader: context.authorizationHeader,
     clientResolver: context.clientResolver,
   });
+  try {
+    await context.verifyClientCredential(client, presented);
+  } catch (error) {
+    throw toParError(error);
+  }
+  const clientId = presented.clientId;
 
   // `client_id` を、認証したクライアントの値に置き換えてから検証する。
   // ボディに `client_id` がないときも、検証で `client_id` を使えるようにするためである。
@@ -389,8 +401,12 @@ export async function handlePushedAuthorizationRequest(
  * `ParError` はそのまま返し、`TokenError` と `AuthorizationError` は、エラーコードを変換し、説明（`errorDescription`）を引き継いだ `ParError` にする。
  * それ以外の例外は、変換せずにそのまま返す。
  * 呼び出し側はそれをそのまま投げるので、例外は失われず、500 として扱われる。
+ * {@link resolveParClient} の後に行う認証情報の検証（シークレットの照合や `private_key_jwt` のクライアントアサーションの検証）のエラーも、これで PAR のエラーにする。
+ * その検証を呼ぶのは、生成コードの PAR のステップ（Hono などの `authenticate-client` ステップと Next.js の PAR のルート）と、{@link handlePushedAuthorizationRequest} が呼ぶ `verifyClientCredential` である。
+ *
+ * @spec RFC 9126 §2.3
  */
-function toParError(error: unknown): unknown {
+export function toParError(error: unknown): unknown {
   if (error instanceof ParError) return error;
   if (error instanceof TokenError) return new ParError(toParErrorCodeFromToken(error.error), error.errorDescription);
   if (error instanceof AuthorizationError) {

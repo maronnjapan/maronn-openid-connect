@@ -22,18 +22,13 @@ function makeInput(
   };
 }
 
-async function expectError(
+async function captureError(
   input: Parameters<typeof processBackchannelAuthenticationRequest>[0],
-  code: string,
 ): Promise<BackchannelAuthenticationError> {
   try {
     await processBackchannelAuthenticationRequest(input);
   } catch (error) {
-    expect(error).toBeInstanceOf(BackchannelAuthenticationError);
-    const typed = error as BackchannelAuthenticationError;
-    expect(typed.code).toBe(code);
-    expect(typed.statusCode).toBe(400);
-    return typed;
+    return error as BackchannelAuthenticationError;
   }
   throw new Error('expected processBackchannelAuthenticationRequest to throw');
 }
@@ -173,10 +168,10 @@ describe('processBackchannelAuthenticationRequest', () => {
     // CIBA Section 7.1 requires client authentication, which auth method 'none'
     // can never satisfy — a deliberate profile restriction on public clients.
     it('should reject a public client (auth method none) with unauthorized_client', async () => {
-      const error = await expectError(
-        makeInput({ client: makeClient({ tokenEndpointAuthMethods: ['none'], clientSecret: undefined }) }),
-        'unauthorized_client',
-      );
+      const error = await captureError(makeInput({ client: makeClient({ tokenEndpointAuthMethods: ['none'], clientSecret: undefined }) }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unauthorized_client');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Public clients are not allowed to use the CIBA grant type',
@@ -184,10 +179,10 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject a client that did not register the CIBA grant', async () => {
-      const error = await expectError(
-        makeInput({ client: makeClient({ grantTypes: ['authorization_code'] }) }),
-        'unauthorized_client',
-      );
+      const error = await captureError(makeInput({ client: makeClient({ grantTypes: ['authorization_code'] }) }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unauthorized_client');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The client is not authorized to use the CIBA grant',
@@ -195,19 +190,19 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should treat missing grantTypes as the authorization_code default and reject', async () => {
-      await expectError(
-        makeInput({ client: makeClient({ grantTypes: undefined }) }),
-        'unauthorized_client',
-      );
+      const error = await captureError(makeInput({ client: makeClient({ grantTypes: undefined }) }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unauthorized_client');
+      expect(error.statusCode).toBe(400);
     });
 
     // This OP only offers Poll delivery, so a client registered for ping or
     // push cannot be served (CIBA Section 4 advertises ['poll'] only).
     it('should reject a client registered for the ping delivery mode', async () => {
-      const error = await expectError(
-        makeInput({ client: makeClient({ backchannelTokenDeliveryMode: 'ping' }) }),
-        'unauthorized_client',
-      );
+      const error = await captureError(makeInput({ client: makeClient({ backchannelTokenDeliveryMode: 'ping' }) }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unauthorized_client');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'This provider only supports the poll token delivery mode',
@@ -215,10 +210,10 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject a client registered for the push delivery mode', async () => {
-      await expectError(
-        makeInput({ client: makeClient({ backchannelTokenDeliveryMode: 'push' }) }),
-        'unauthorized_client',
-      );
+      const error = await captureError(makeInput({ client: makeClient({ backchannelTokenDeliveryMode: 'push' }) }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unauthorized_client');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should accept a client explicitly registered for poll', async () => {
@@ -232,10 +227,10 @@ describe('processBackchannelAuthenticationRequest', () => {
 
   describe('Hint validation (CIBA Section 7.1 / 7.2)', () => {
     it('should reject a request with no hint', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'openid' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Exactly one of login_hint, id_token_hint or login_hint_token is required',
@@ -243,10 +238,10 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject a request with two hints', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'openid', login_hint: 'testuser', id_token_hint: 'x' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid', login_hint: 'testuser', id_token_hint: 'x' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Exactly one of login_hint, id_token_hint or login_hint_token is required',
@@ -256,10 +251,10 @@ describe('processBackchannelAuthenticationRequest', () => {
     // id_token_hint / login_hint_token are outside this feature's initial
     // scope; presenting one alone is a malformed request, not unknown_user_id.
     it('should reject id_token_hint alone as an unsupported hint type', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'openid', id_token_hint: 'x' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid', id_token_hint: 'x' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Only login_hint is supported by this provider',
@@ -267,10 +262,10 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject login_hint_token alone as an unsupported hint type', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'openid', login_hint_token: 'x' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid', login_hint_token: 'x' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Only login_hint is supported by this provider',
@@ -278,18 +273,18 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should treat an empty login_hint as absent', async () => {
-      await expectError(
-        makeInput({ params: { scope: 'openid', login_hint: '' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid', login_hint: '' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
     });
 
     // CIBA Section 7.1.1: signed authentication requests are not supported.
     it('should reject a request parameter (signed authentication request)', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'openid', login_hint: 'testuser', request: 'ey.x.y' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid', login_hint: 'testuser', request: 'ey.x.y' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Signed authentication requests are not supported',
@@ -299,19 +294,19 @@ describe('processBackchannelAuthenticationRequest', () => {
 
   describe('Scope validation', () => {
     it('should reject a missing scope', async () => {
-      const error = await expectError(
-        makeInput({ params: { login_hint: 'testuser' } }),
-        'invalid_request',
-      );
+      const error = await captureError(makeInput({ params: { login_hint: 'testuser' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe('Missing required parameter: scope');
     });
 
     it('should reject a scope without openid', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'profile', login_hint: 'testuser' } }),
-        'invalid_scope',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'profile', login_hint: 'testuser' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_scope');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe('The openid scope is required');
     });
@@ -386,16 +381,16 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject a binding message longer than the maximum', async () => {
-      const error = await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: {
             scope: 'openid',
             login_hint: 'testuser',
             binding_message: 'a'.repeat(BINDING_MESSAGE_MAX_LENGTH + 1),
           },
-        }),
-        'invalid_binding_message',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_binding_message');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'binding_message must be 1 to 100 characters without control characters',
@@ -403,32 +398,32 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject an empty binding message', async () => {
-      await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: { scope: 'openid', login_hint: 'testuser', binding_message: '' },
-        }),
-        'invalid_binding_message',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_binding_message');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should reject a binding message containing control characters', async () => {
-      await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: { scope: 'openid', login_hint: 'testuser', binding_message: 'ok\nline' },
-        }),
-        'invalid_binding_message',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_binding_message');
+      expect(error.statusCode).toBe(400);
     });
   });
 
   describe('requested_expiry validation', () => {
     it('should reject a non-integer requested_expiry', async () => {
-      const error = await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: { scope: 'openid', login_hint: 'testuser', requested_expiry: '12.5' },
-        }),
-        'invalid_request',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'requested_expiry must be a positive integer',
@@ -436,39 +431,39 @@ describe('processBackchannelAuthenticationRequest', () => {
     });
 
     it('should reject zero', async () => {
-      await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: { scope: 'openid', login_hint: 'testuser', requested_expiry: '0' },
-        }),
-        'invalid_request',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should reject a negative value', async () => {
-      await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: { scope: 'openid', login_hint: 'testuser', requested_expiry: '-5' },
-        }),
-        'invalid_request',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should reject a non-numeric value', async () => {
-      await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           params: { scope: 'openid', login_hint: 'testuser', requested_expiry: 'soon' },
-        }),
-        'invalid_request',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
     });
   });
 
   describe('User resolution (CIBA Section 13 unknown_user_id)', () => {
     it('should reject an unresolvable login_hint with unknown_user_id', async () => {
-      const error = await expectError(
-        makeInput({ params: { scope: 'openid', login_hint: 'nobody' } }),
-        'unknown_user_id',
-      );
+      const error = await captureError(makeInput({ params: { scope: 'openid', login_hint: 'nobody' } }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unknown_user_id');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The login_hint could not be matched to a user',
@@ -478,14 +473,14 @@ describe('processBackchannelAuthenticationRequest', () => {
     // The resolver failing and the user not existing must not be
     // distinguishable, so the same fixed wording is used for both.
     it('should answer a throwing resolver with the same fixed wording', async () => {
-      const error = await expectError(
-        makeInput({
+      const error = await captureError(makeInput({
           resolveUser: () => {
             throw new Error('backend down');
           },
-        }),
-        'unknown_user_id',
-      );
+        }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('unknown_user_id');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The login_hint could not be matched to a user',
@@ -511,7 +506,10 @@ describe('processBackchannelAuthenticationRequest', () => {
         }));
       }
 
-      const error = await expectError(makeInput({ store }), 'invalid_request');
+      const error = await captureError(makeInput({ store }));
+      expect(error).toBeInstanceOf(BackchannelAuthenticationError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Too many pending authentication requests for this user',

@@ -9,9 +9,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import type { OAuth2ClientOptions } from 'google-auth-library';
-import { expect } from 'vitest';
 
-import { GoogleLoginError, type GoogleLoginErrorCode } from './errors.js';
 import type { GoogleIdTokenPayload, GoogleIdTokenVerifier } from './id-token.js';
 import type { GoogleLoginNonceRecord, GoogleLoginNonceStore } from './nonce.js';
 
@@ -198,16 +196,4 @@ export function captureThrow(fn: () => unknown): unknown {
     return error;
   }
   return undefined;
-}
-
-export function expectGoogleLoginError(
-  error: unknown,
-  code: GoogleLoginErrorCode,
-  httpStatusCode: number,
-): void {
-  expect(error).toBeInstanceOf(GoogleLoginError);
-  const loginError = error as GoogleLoginError;
-  expect(loginError.name).toBe('GoogleLoginError');
-  expect(loginError.code).toBe(code);
-  expect(loginError.httpStatusCode).toBe(httpStatusCode);
 }

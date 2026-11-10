@@ -12,6 +12,13 @@ describe('requestObject', () => {
       expect(requestObject.config).toEqual({
         allowUnsignedRequestObject: false,
         requestObjectSigningAlgValuesSupported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
+        // OIDC Core 1.0 §6.2 / RFC 9101 §5.2 / §10.4.
+        requestUriParameterSupported: true,
+        requireRequestUriRegistration: false,
+        allowInsecureRequestUri: false,
+        requestUriTimeoutMs: 3000,
+        requestUriMaxBytes: 65536,
+        requestUriMaxLength: 512,
       });
       expect(createProviderConfig().allowUnsignedRequestObject).toBe(false);
     });
@@ -23,6 +30,8 @@ describe('requestObject', () => {
       expect(discoveryOf([requestObject], {}, TEST_ISSUER, createProviderConfig({ issuer: TEST_ISSUER }))).toEqual({
         request_parameter_supported: true,
         request_object_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'],
+        request_uri_parameter_supported: true,
+        require_request_uri_registration: false,
       });
     });
 
@@ -33,6 +42,8 @@ describe('requestObject', () => {
       expect(discoveryOf([requestObject], {}, TEST_ISSUER, config)).toEqual({
         request_parameter_supported: true,
         request_object_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'none'],
+        request_uri_parameter_supported: true,
+        require_request_uri_registration: false,
       });
     });
 
@@ -43,7 +54,19 @@ describe('requestObject', () => {
       expect(discoveryOf([requestObject], {}, TEST_ISSUER, config)).toEqual({
         request_parameter_supported: true,
         request_object_signing_alg_values_supported: ['RS256'],
+        request_uri_parameter_supported: true,
+        require_request_uri_registration: false,
       });
+    });
+  });
+
+  // OIDC Discovery 1.0 §3: request_uri_parameter_supported and require_request_uri_registration.
+  it('should advertise the request_uri settings', () => {
+    const config = createProviderConfig({ issuer: TEST_ISSUER, requestUriParameterSupported: false, requireRequestUriRegistration: true });
+
+    expect(discoveryOf([requestObject], {}, TEST_ISSUER, config)).toMatchObject({
+      request_uri_parameter_supported: false,
+      require_request_uri_registration: true,
     });
   });
 

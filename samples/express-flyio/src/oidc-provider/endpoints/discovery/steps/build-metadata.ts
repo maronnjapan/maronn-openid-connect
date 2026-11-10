@@ -96,11 +96,16 @@ export function buildDiscoveryMetadata(
     // 認可エンドポイントで扱うグラントタイプ（インプリシットフローとハイブリッドフローの `implicit`）は、その機能が feature.ts の `discovery` で加える。
     grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
     // `none` は、トークンエンドポイントがパブリッククライアント（`client_secret` を持たないクライアント）を受け付けることを示す（RFC 6749 §2.1、OAuth 2.1 §2.4）。
+    // `private_key_jwt` は、クライアントの秘密鍵で署名したクライアントアサーションによる認証である（OIDC Core 1.0 §9、client-auth.ts）。
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
+      'private_key_jwt',
       'none',
     ],
+    // `private_key_jwt` を公開するときに必要な項目である（OIDC Discovery 1.0 §3、RFC 8414 §2）。
+    // `none` は含めない。
+    tokenEndpointAuthSigningAlgValuesSupported: [...config.tokenEndpointAuthSigningAlgValuesSupported],
     // `userinfo_signed_response_alg` を使うクライアントがあるときに必要な項目である（OIDC Core 1.0 §5.3.2）。
     // 登録した UserInfo の鍵の集合から求めるので、ES256 などの鍵を設定すれば、そのアルゴリズムも公開される。
     userinfoSigningAlgValuesSupported: userinfoSigningAlgValues,

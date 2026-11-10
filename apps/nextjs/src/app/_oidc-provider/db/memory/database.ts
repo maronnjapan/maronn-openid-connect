@@ -36,6 +36,8 @@ export interface MemoryDatabase {
   federatedIdentities: Map<string, string>;
   /** By the nonce the OP sent upstream. */
   upstreamLogins: Map<string, UpstreamLogin>;
+  /** The expiry (Unix time in seconds) of each used private_key_jwt assertion, by the key of its client_id and jti. */
+  clientAssertionJtis: Map<string, number>;
   /** By client_id. clientSecret is never kept: registerClient() keeps clientSecretHash. */
   clients: Map<string, ClientRegistration>;
 }
@@ -64,6 +66,7 @@ export function createEmptyDatabase(): MemoryDatabase {
     users: new Map(),
     federatedIdentities: new Map(),
     upstreamLogins: new Map(),
+    clientAssertionJtis: new Map(),
     clients: new Map(),
   };
 }

@@ -39,6 +39,15 @@ const startDcrOp =
   opPackage === '@maronn-openid-connect/app-nextjs' ||
   opPackage === '@maronn-openid-connect/sample-hono-cloudflare' ||
   opPackage === '@maronn-openid-connect/sample-express-flyio';
+// OIDC Core 1.0 §10.1.1: an OP instance of its own for
+// specs/signing-key-rotation.spec.ts. A rotation puts a new key first in the
+// JWKS for the rest of the process, and the other specs expect the main
+// instance to sign with e2e-rs256-key, so the rotation never touches it.
+// apps/nextjs has no rotation route, so it runs no such instance and the spec
+// skips itself.
+const rotationOpPort = Number(process.env.E2E_ROTATION_OP_PORT ?? '3060');
+const rotationIssuer = process.env.E2E_ROTATION_ISSUER ?? `http://${host}:${rotationOpPort}`;
+const startRotationOp = opPackage !== '@maronn-openid-connect/app-nextjs';
 const oidcClientsJson = JSON.stringify([
   {
     clientId: 'e2e-client',
@@ -197,6 +206,25 @@ const oidcClientsJson = JSON.stringify([
     requestObjectSigningAlg: 'ES256',
   },
   {
+    // OIDC Core 1.0 §9: a client that authenticates with private_key_jwt and
+    // the keys the E2E RP signs its client assertions with (apps/client.mjs,
+    // /jwks.json), with the grant types of the device authorization and CIBA
+    // endpoints. The private-key-jwt spec authenticates it at every endpoint
+    // that authenticates clients besides the token endpoint. Nothing serves
+    // the redirect URI.
+    clientId: 'e2e-private-key-jwt',
+    redirectUris: [`${clientBaseURL}/logged-out`],
+    clientType: 'confidential',
+    grantTypes: [
+      'authorization_code',
+      'urn:ietf:params:oauth:grant-type:device_code',
+      'urn:openid:params:grant-type:ciba',
+    ],
+    tokenEndpointAuthMethods: ['private_key_jwt'],
+    responseTypes: ['code'],
+    jwksUri: `${clientBaseURL}/jwks.json`,
+  },
+  {
     // A jwks_uri the E2E RP answers with 404, so the OP cannot get the keys.
     clientId: 'e2e-client-jwks-uri-broken',
     clientSecret: 'e2e-client-jwks-uri-broken-secret',
@@ -251,6 +279,22 @@ const oidcClientsJson = JSON.stringify([
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethods: ['client_secret_basic'],
     responseTypes: ['code'],
+  },
+]);
+
+// OIDC Discovery 1.0 §3 require_request_uri_registration: the client of the
+// capped-registration OP instance (below), which registered the one
+// request_uri it uses (OIDC Dynamic Client Registration 1.0 §2 request_uris).
+const requestUriRegistrationClientsJson = JSON.stringify([
+  {
+    clientId: 'e2e-request-uri-registered',
+    clientSecret: 'e2e-request-uri-registered-secret',
+    redirectUris: [`${clientBaseURL}/request-object-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+    requestUris: [`${clientBaseURL}/request-objects/registered`],
   },
 ]);
 
@@ -315,6 +359,9 @@ export default defineConfig({
         // spec rotates a key and signs with it right away).
         OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI: '1',
         OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS: '0',
+        // OIDC Core 1.0 §6.2: the E2E RP serves its Request Objects passed by
+        // reference over http on 127.0.0.1 too (specs/request-uri.spec.ts).
+        OIDC_ALLOW_INSECURE_REQUEST_URI: '1',
         CLIENT_ID: 'e2e-client',
         CLIENT_SECRET: 'e2e-client-secret',
         CLIENT_REDIRECT_URI: `${clientBaseURL}/callback`,
@@ -407,6 +454,15 @@ export default defineConfig({
               ISSUER: dcrIssuer,
               OIDC_SIGNING_KEY_ID: 'e2e-dcr-rs256-key',
               OIDC_DCR_MAX_CLIENTS: '3',
+              // OIDC Discovery 1.0 §3 require_request_uri_registration: this
+              // instance fetches only the request_uris a client registered, so
+              // specs/request-uri.spec.ts registers one statically here (the
+              // registration cap counts dynamic clients only). Its Request
+              // Object is unsigned, as the conformance OP accepts them.
+              OIDC_CLIENTS_JSON: requestUriRegistrationClientsJson,
+              OIDC_REQUIRE_REQUEST_URI_REGISTRATION: '1',
+              OIDC_ALLOW_INSECURE_REQUEST_URI: '1',
+              OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT: '1',
               OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
                 ? `${process.env.OIDC_D1_PERSIST_PATH}-dcr`
                 : '.wrangler/state-dcr',
@@ -418,6 +474,40 @@ export default defineConfig({
                 ? `${process.env.OIDC_SQLITE_PATH}-dcr`
                 : '.data/oidc-e2e-dcr.sqlite',
               ...reachEnv('dcr', dcrIssuer),
+            },
+          },
+        ]
+      : []),
+    // OIDC Core 1.0 §10.1.1: the key-rotation OP instance (rotationOpPort
+    // above). The samples rotate their signing key through
+    // POST /operator/signing-keys/rotate with OIDC_SIGNING_KEY_ROTATION_TOKEN,
+    // apps/hono through its operator routes with APP_OPERATOR_TOKEN.
+    ...(startRotationOp
+      ? [
+          {
+            command: `pnpm --filter ${opPackage} start`,
+            url: `${rotationIssuer}/.well-known/openid-configuration`,
+            reuseExistingServer: !process.env.CI,
+            timeout: 30_000,
+            env: {
+              HOST: host,
+              PORT: String(rotationOpPort),
+              ISSUER: rotationIssuer,
+              OIDC_SIGNING_KEY_ID: 'e2e-rotation-rs256-key',
+              OIDC_CLIENTS_JSON: oidcClientsJson,
+              OIDC_SIGNING_KEY_ROTATION_TOKEN: 'e2e-operator-token',
+              ...(opPackage === '@maronn-openid-connect/app-hono'
+                ? { APP_OPERATOR_TOKEN: 'e2e-operator-token' }
+                : {}),
+              OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
+                ? `${process.env.OIDC_D1_PERSIST_PATH}-rotation`
+                : '.wrangler/state-rotation',
+              // A path of its own, as the other instances have: two OP
+              // processes writing one SQLite file fail each other's writes.
+              OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
+                ? `${process.env.OIDC_SQLITE_PATH}-rotation`
+                : '.data/oidc-e2e-rotation.sqlite',
+              ...reachEnv('rotation', rotationIssuer),
             },
           },
         ]

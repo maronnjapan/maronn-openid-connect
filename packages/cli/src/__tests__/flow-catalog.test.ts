@@ -214,6 +214,7 @@ describe('buildOpFlow', () => {
       expect(authorize?.steps.map((s) => s.id)).toEqual([
         'parse-request',
         'resolve-client',
+        'fetch-request-uri',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-form-post-response-mode',
@@ -235,10 +236,11 @@ describe('buildOpFlow', () => {
     it('should add the PAR and JARM steps when those features are enabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, par: true, jarm: true } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');
-      expect(authorize?.steps.map((s) => s.id).slice(0, 9)).toEqual([
+      expect(authorize?.steps.map((s) => s.id).slice(0, 10)).toEqual([
         'parse-request',
         'resolve-pushed-request',
         'resolve-client',
+        'fetch-request-uri',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-jarm-response-mode',
@@ -251,13 +253,27 @@ describe('buildOpFlow', () => {
     it('should leave out the form_post step when form-post-response-mode is disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, formPostResponseMode: false } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');
-      expect(authorize?.steps.map((s) => s.id).slice(0, 6)).toEqual([
+      expect(authorize?.steps.map((s) => s.id).slice(0, 7)).toEqual([
         'parse-request',
         'resolve-client',
+        'fetch-request-uri',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-fragment-response-mode',
         'validate-request',
+      ]);
+    });
+
+    // OIDC Core 1.0 §6.1 / §6.2: the request and request_uri steps leave with
+    // their feature, and the base rejects both parameters.
+    it('should leave out the request_uri and Request Object steps when request-object is disabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, requestObject: false } });
+      const authorize = flow.endpoints.find((e) => e.id === 'authorize');
+      expect(authorize?.steps.map((s) => s.id).slice(0, 4)).toEqual([
+        'parse-request',
+        'resolve-client',
+        'resolve-redirect-uri',
+        'resolve-form-post-response-mode',
       ]);
     });
 
@@ -267,9 +283,10 @@ describe('buildOpFlow', () => {
     it('should leave out the Implicit Flow and Hybrid Flow steps of /authorize and /consent when both are disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, implicitFlow: false, hybridFlow: false } });
       const stepsOf = (id: string) => flow.endpoints.find((e) => e.id === id)?.steps.map((s) => s.id);
-      expect(stepsOf('authorize')?.slice(0, 7)).toEqual([
+      expect(stepsOf('authorize')?.slice(0, 8)).toEqual([
         'parse-request',
         'resolve-client',
+        'fetch-request-uri',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-form-post-response-mode',
@@ -295,9 +312,10 @@ describe('buildOpFlow', () => {
     it('should leave out the Hybrid Flow steps of /authorize and /consent when hybrid-flow is disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, hybridFlow: false } });
       const stepsOf = (id: string) => flow.endpoints.find((e) => e.id === id)?.steps.map((s) => s.id);
-      expect(stepsOf('authorize')?.slice(0, 9)).toEqual([
+      expect(stepsOf('authorize')?.slice(0, 10)).toEqual([
         'parse-request',
         'resolve-client',
+        'fetch-request-uri',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-form-post-response-mode',

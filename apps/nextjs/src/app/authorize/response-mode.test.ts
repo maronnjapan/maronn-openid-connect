@@ -56,7 +56,9 @@ describe('restoreResponseMode', () => {
     const loadSigningKeys = vi.fn(async () => providerSigningKeys(signingKey));
 
     const mode = await restoreResponseMode(transaction('query.jwt'), { issuer: ISSUER, loadSigningKeys });
-    const location = new URL(locationOf(await mode?.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' })));
+    const redirectResponse = await mode?.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' });
+    expect(redirectResponse).toMatchObject({ method: 'redirect', location: expect.any(String) });
+    const location = new URL(locationOf(redirectResponse));
     const jwt = location.searchParams.get('response') ?? '';
 
     expect(mode?.name).toBe('query.jwt');
@@ -116,6 +118,7 @@ describe('authorizationResponseOf', () => {
       ISSUER,
     );
 
+    expect(response).toMatchObject({ method: 'redirect', location: expect.any(String) });
     expect(locationOf(response)).toBe(
       'https://rp.example.com/callback?tenant=a&error=access_denied' +
         '&error_description=The+user+denied+the+request&iss=https%3A%2F%2Fop.example.com',
@@ -126,6 +129,7 @@ describe('authorizationResponseOf', () => {
   it('should set iss to the issuer even when the parameters carry another one', async () => {
     const response = await authorizationResponseOf(undefined, REDIRECT_URI, { code: 'code-1', iss: 'https://evil.example.com' }, ISSUER);
 
+    expect(response).toMatchObject({ method: 'redirect', location: expect.any(String) });
     expect(new URL(locationOf(response)).searchParams.getAll('iss')).toEqual([ISSUER]);
   });
 

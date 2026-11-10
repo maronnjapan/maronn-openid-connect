@@ -12,6 +12,8 @@ on:
           - basic
           - implicit
           - hybrid
+          - dynamic
+          - config
       sample_app:
         description: "Sample OP app to test"
         required: false
@@ -48,8 +50,9 @@ jobs:
       fail-fast: false
       matrix:
         # A manual run checks the plan it chose; a labelled pull request
-        # checks the Basic OP, the Implicit OP and the Hybrid OP plans.
-        plan: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.plan) || '["basic","implicit","hybrid"]') }}
+        # checks the Basic OP, the Implicit OP, the Hybrid OP, the Dynamic OP
+        # and the Config OP plans.
+        plan: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.plan) || '["basic","implicit","hybrid","dynamic","config"]') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -69,8 +72,10 @@ jobs:
         env:
           CONFORMANCE_SAMPLE_APP: ${{ github.event.inputs.sample_app || 'hono-cloudflare' }}
           CONFORMANCE_SUITE_IMAGE_TAG: ${{ github.event.inputs.suite_image_tag || 'latest' }}
-          # The modules that wait for a screenshot never finish unattended, and
-          # the runner waits 240 s for each (tests/conformance/README.md).
+          # The modules that wait for a screenshot (or, for
+          # oidcc-server-rotate-keys of the Dynamic OP plan, for a person to
+          # rotate the keys and press Start) never finish unattended, and the
+          # runner waits 240 s for each (tests/conformance/README.md).
           CONFORMANCE_SKIP_MANUAL_REVIEW: "1"
         run: pnpm run conformance:${{ matrix.plan }}-op
 

@@ -41,10 +41,12 @@ export type SoftwareStatementVerifier = (
  *   metadata-retry loop must not be invited.
  * - maxRegistrationBodyBytes: request body limit in UTF-8 bytes.
  * - tokenEndpointAuthMethods: the token_endpoint_auth_method values a client may
- *   register (RFC 7591 §2). The three of core as generated; add private_key_jwt
- *   or another method here once the authenticate-client step of endpoints/token/
- *   verifies it. A method outside client_secret_basic / client_secret_post /
- *   client_secret_jwt registers a confidential client without a client_secret.
+ *   register (RFC 7591 §2): the four the authenticate-client steps verify
+ *   (client-auth.ts) as generated. Add another method here once those steps
+ *   verify it. A method outside client_secret_basic / client_secret_post /
+ *   client_secret_jwt registers a confidential client without a client_secret;
+ *   a private_key_jwt client registers jwks or jwks_uri, and its keys serve
+ *   the private_key_jwt purpose of jwksPurposes (OIDC Core 1.0 §9).
  * - grantTypes: the grant_type values a client may register, among those this
  *   provider answers (authorization_code, the grants of the generated features,
  *   implicit while a feature answers a token or id_token response type). A
@@ -109,7 +111,7 @@ export interface DynamicClientRegistrationConfig {
 export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = {
   maxRegisteredClients: 100,
   maxRegistrationBodyBytes: 16384,
-  tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none'],
+  tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
   grantTypes: ['authorization_code', 'refresh_token', 'implicit'],
   jwksPurposes: ['request_object', 'private_key_jwt', 'dpop'],
   acceptJwksUri: true,

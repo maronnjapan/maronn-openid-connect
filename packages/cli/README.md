@@ -642,6 +642,7 @@ Next.js の生成物では、`_oidc-provider/provider.ts` の `acrResolver` が�
 
 ## クライアント認証の方式
 
+生成 OP は、client_secret_basic、client_secret_post、private_key_jwt（OIDC Core 1.0 §9）と、public client の `none` を受け付ける。
 1 つのクライアントに、client_secret_basic と client_secret_post の両方を登録できる。
 登録する方式は、クライアントの `tokenEndpointAuthMethods`（core の `TokenClientInfo`）に一覧で書く。
 省略すると RFC 7591 §2 の既定どおり `['client_secret_basic']` になり、`['none']` は public client を表す。
@@ -658,8 +659,10 @@ OP はリクエストが送った資格情報から方式を決め、一覧に�
 ```
 
 どの方式で送られても、OP が照合するシークレットは 1 つである（RFC 7591 §2 の `client_secret`）。
-`--db sql` では `client_auths` に方式ごとの行を置き、どの行の `client_secrets` にも同じシークレットのハッシュを入れる。
-`--db kv` では、クライアントのレコードの `client_auths` に方式ごとの要素を置き、どの要素の `secret` も同じハッシュにする。
+`--db sql` では `client_auths` に方式ごとの行を置き、client_secret_basic と client_secret_post の行の `client_secrets` に同じシークレットのハッシュを入れる。
+`--db kv` では、クライアントのレコードの `client_auths` に方式ごとの要素を置き、client_secret_basic と client_secret_post の要素の `secret` を同じハッシュにする。
+private_key_jwt の行（要素）はシークレットを持たない。
+OP は private_key_jwt のクライアントアサーション（RFC 7523 §3）を、`private_key_jwt` の用途で登録した公開鍵か `jwks_uri` の鍵で検証する。
 `registerClient()` はこの形で書き込む。
 シークレットの異なる行（要素）を持つクライアントは設定の誤りとして扱い、OP はそのクライアントを読むときに例外を投げる。
 
@@ -667,12 +670,11 @@ OP はリクエストが送った資格情報から方式を決め、一覧に�
 
 クライアントの公開鍵は、鍵を使う処理（用途）ごとに登録する。
 鍵を使う処理は、core の `ClientKeyResolver` の `findClientKeys(clientId, purpose)` で、自分の用途の鍵だけを受け取る。
-生成 OP が鍵を読むのは署名付き Request Object の検証（OIDC Core 1.0 §6.3.2）で、`request_object` の用途の鍵を使う。
+生成 OP が鍵を読むのは、署名付き Request Object の検証（OIDC Core 1.0 §6.3.2）と private_key_jwt のクライアントアサーションの検証（§9）で、それぞれ `request_object` と `private_key_jwt` の用途の鍵を使う。
 
 用途は文字列で、DB の側にも CHECK を付けていないので、ほかの処理の用途も同じ形で登録できる。
-たとえば、private_key_jwt（OIDC Core 1.0 §9）によるクライアント認証を足すなら、`private_key_jwt` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'private_key_jwt')` を呼ぶ。
-DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途を使う。
-生成 OP は private_key_jwt によるクライアント認証も DPoP も実装しておらず、`request_object` 以外の用途の鍵を読む処理を持たない。
+たとえば、DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'dpop')` を呼ぶ。
+生成 OP は DPoP を実装しておらず、`request_object` と `private_key_jwt` 以外の用途の鍵を読む処理を持たない。
 
 OP は、クライアントの鍵を発行する機能も、公開鍵を登録する API や画面も持たない。
 鍵の組はクライアントが自分で作り、運用者が公開鍵を DB に書き込む。
@@ -803,10 +805,12 @@ export function createDatabase(): SqlDatabase {
 
 | テーブル | 保存するもの |
 |---|---|
-| `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
-| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post。1 つのクライアントに両方を登録できる）と、シークレットのハッシュ |
-| `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
+| `clients` | 登録クライアント（`id` が client_id、`name` が `client_name`）。`is_deleted` を立てたクライアントは OP から見えなくなる。クライアントに 1 つしかない登録メタデータ（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）も列に持ち、登録していない値は NULL になる |
+| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post / private_key_jwt。1 つのクライアントにいくつでも登録できる）と、client_secret_basic と client_secret_post のシークレットのハッシュ。private_key_jwt の行はシークレットを持たない |
+| `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を、`private_key_jwt` の用途の鍵でクライアントアサーションを検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
+| `client_request_uris` | クライアントが登録した `request_uris`（OIDC Core 1.0 §6.2） |
+| `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -820,8 +824,7 @@ export function createDatabase(): SqlDatabase {
 
 ID トークンは保存しない。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためである。
-private_key_jwt によるクライアント認証と authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていない。
-private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_jwks` の `private_key_jwt` の用途の鍵でアサーションを検証する。
+authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていない。
 
 `access_tokens.acr` は、トークンに載せた acr（[認証コンテキスト（acr_values と acr）](#認証コンテキストacr_values-と-acr)を参照）を持ち、acr を決めなかったトークンでは NULL になる。
 
@@ -906,7 +909,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 
 | キー | 保存するもの |
 |---|---|
-| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値 |
+| `client:<client_id>` | 登録クライアントと、`--db sql` の `clients` の列と `client_*` テーブルに当たる値（`client_auths`（シークレットの方式と `private_key_jwt`）、`redirect_uris`、`grant_types`、`response_types`、`scopes`、`request_uris`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`。値の無い項目は null か空の配列） |
 | `client_jwks:<client_id>:<purpose>` | クライアントの 1 つの用途の公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
@@ -914,6 +917,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | `auth_user:<transaction_id>` | トランザクションでログインしたユーザー |
 | `code:<hash>`、`access_token:<hash>`、`refresh_token:<hash>` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュをキーにする |
 | `code_used:<hash>`、`refresh_token_used:<hash>` | 使用済みの印。`setIfAbsent` で書く |
+| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のクライアントアサーション（client_id と `jti` のハッシュ）。`setIfAbsent` で書き、アサーションの期限まで残す |
 | `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
 | `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
 

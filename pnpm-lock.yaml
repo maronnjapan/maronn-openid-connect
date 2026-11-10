@@ -335,8 +335,8 @@ importers:
         specifier: ^39.1.0
         version: 39.1.0
       '@cucumber/messages':
-        specifier: ^32.3.1
-        version: 32.3.1
+        specifier: ^34.2.1
+        version: 34.2.1
       '@maronn-openid-connect/cli':
         specifier: workspace:*
         version: link:../cli
@@ -542,8 +542,8 @@ importers:
         specifier: ^39.1.0
         version: 39.1.0
       '@cucumber/messages':
-        specifier: ^32.3.1
-        version: 32.3.1
+        specifier: ^34.2.1
+        version: 34.2.1
       '@playwright/test':
         specifier: ^1.64.1
         version: 1.64.1
@@ -967,6 +967,9 @@ packages:
 
   '@cucumber/messages@32.3.1':
     resolution: {integrity: sha512-yNQq1KoXRYaEKrWMFmpUQX7TdeQuU9jeGgJAZ3dArTsC/T4NpJ6DnqaJIIgwPnz/wtQIQTNX7/h0rOuF5xY4qQ==}
+
+  '@cucumber/messages@34.2.1':
+    resolution: {integrity: sha512-aj2iCAG9ZOpMVcMxcgShifv5fbR96b7SMgdWcPXXh2QbFp7OEcAnQ5MC5YfWUDSDasmw7FU5NJEsOrXdTQOU1A==}
 
   '@cucumber/query@15.0.1':
     resolution: {integrity: sha512-FMfT3orJblRsOxvU2doECBvQmauizYlj+5JsM8atAKKPbnQTj7v2/OrnuykvQpfZNBf19DYbRq1e832vllRP/g==}
@@ -4217,6 +4220,8 @@ snapshots:
     dependencies:
       class-transformer: 0.5.1
       reflect-metadata: 0.2.2
+
+  '@cucumber/messages@34.2.1': {}
 
   '@cucumber/query@15.0.1(@cucumber/messages@32.3.1)':
     dependencies:

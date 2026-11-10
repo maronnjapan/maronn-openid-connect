@@ -72,6 +72,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(
         errorRedirect('login_required', 'No active session found. Silent authentication failed.'),
       );
@@ -86,6 +87,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(
         errorRedirect('consent_required', 'Consent has not been granted. Silent authentication cannot show consent UI.'),
       );
@@ -100,6 +102,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction, { verifiedHintSubject: 'bob' }));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(
         errorRedirect('login_required', 'id_token_hint subject does not match the active session.'),
       );
@@ -113,6 +116,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(
         errorRedirect('login_required', 'Session exceeds the requested max_age; re-authentication required'),
       );
@@ -128,6 +132,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(errorRedirect('server_error', 'session store is unavailable'));
     });
   });
@@ -139,6 +144,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(
         errorRedirect('login_required', 'sessionResolver is not configured; cannot satisfy prompt=none'),
       );
@@ -151,6 +157,7 @@ describe('completePromptNoneRequest', () => {
 
       const outcome = await completePromptNoneRequest(c, inputOf(transaction));
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual(
         errorRedirect('consent_required', 'consentResolver is not configured; cannot satisfy prompt=none'),
       );

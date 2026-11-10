@@ -57,7 +57,6 @@ async function failureOf(promise: Promise<unknown>): Promise<TokenEndpointError>
     () => undefined,
     (reason: unknown) => reason,
   );
-  expect(error).toBeInstanceOf(TokenEndpointError);
   return error as TokenEndpointError;
 }
 
@@ -119,6 +118,7 @@ describe('exchangeToken', () => {
     await stores.accessTokenStore.set('subject-at', subjectToken());
 
     const error = await failureOf(exchangeToken(c, exchangeRequest({ audience: 'https://api.example.com' }), client));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 400,
@@ -159,6 +159,7 @@ describe('exchangeToken', () => {
     const { c } = await providerContext();
 
     const error = await failureOf(exchangeToken(c, exchangeRequest(), client));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 400,
@@ -171,6 +172,7 @@ describe('exchangeToken', () => {
     await stores.accessTokenStore.set('subject-at', subjectToken());
 
     const error = await failureOf(exchangeToken(c, exchangeRequest(), { ...client, tokenEndpointAuthMethods: ['none'] }));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 400,

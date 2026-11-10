@@ -1,5 +1,4 @@
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -24,9 +23,33 @@ test.describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    await skipUnlessLogoutEnabled(request, issuer);
+    const response = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response.status()).toBe(200);
+    const metadata = await response.json() as { end_session_endpoint?: string };
+    test.skip(
+      metadata.end_session_endpoint === undefined,
+      'This sample OP was generated without --enable rp-initiated-logout',
+    );
+    expect(metadata.end_session_endpoint).toBe(`${issuer}/logout`);
 
-    const idToken = await completeAuthorizationCodeFlow(page, issuer);
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    // A prior spec (or the first scenario) may have recorded consent for this
+    // subject and client, in which case the consent screen is skipped. The
+    // consent URL carries no query (the transaction travels in its cookie).
+    await page.waitForURL(/\/consent\?transaction_id=|\/callback\?/);
+    if (new URL(page.url()).pathname === '/consent') {
+      await page.getByRole('button', { name: 'Approve' }).click();
+    }
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
+
+    const idToken2 = (await page.getByTestId('token-id-token').textContent())?.trim() ?? '';
+    expect(idToken2.split('.')).toHaveLength(3);
+    const idToken = await (idToken2);
 
     // §2: the RP hands the browser to the end_session_endpoint with the ID
     // Token it holds as the hint. Valid hint + matching session: no
@@ -39,7 +62,8 @@ test.describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
     await expect(page).toHaveURL(`${postLogoutRedirectUri}?state=e2e-logout-state`);
     await expect(page.getByTestId('logged-out-state')).toHaveText('e2e-logout-state');
 
-    await expectLoginRequired(page, issuer);
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
   });
 
   test('should require an explicit confirmation when no hint is presented', async ({
@@ -48,9 +72,33 @@ test.describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    await skipUnlessLogoutEnabled(request, issuer);
+    const response = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response.status()).toBe(200);
+    const metadata = await response.json() as { end_session_endpoint?: string };
+    test.skip(
+      metadata.end_session_endpoint === undefined,
+      'This sample OP was generated without --enable rp-initiated-logout',
+    );
+    expect(metadata.end_session_endpoint).toBe(`${issuer}/logout`);
 
-    await completeAuthorizationCodeFlow(page, issuer);
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    // A prior spec (or the first scenario) may have recorded consent for this
+    // subject and client, in which case the consent screen is skipped. The
+    // consent URL carries no query (the transaction travels in its cookie).
+    await page.waitForURL(/\/consent\?transaction_id=|\/callback\?/);
+    if (new URL(page.url()).pathname === '/consent') {
+      await page.getByRole('button', { name: 'Approve' }).click();
+    }
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
+
+    const idToken = (await page.getByTestId('token-id-token').textContent())?.trim() ?? '';
+    expect(idToken.split('.')).toHaveLength(3);
+    (await (idToken));
 
     // §2 MUST: without a valid id_token_hint the OP asks first. Nothing is
     // deleted until the user approves the confirmation form.
@@ -61,55 +109,10 @@ test.describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
     await page.getByRole('button', { name: 'Log out' }).click();
     await expect(page.getByRole('heading', { name: 'Logged out' })).toBeVisible();
 
-    await expectLoginRequired(page, issuer);
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
   });
 });
-
-/** Skip on a sample OP generated without --enable rp-initiated-logout. */
-async function skipUnlessLogoutEnabled(
-  request: APIRequestContext,
-  issuer: string,
-): Promise<void> {
-  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-  expect(response.status()).toBe(200);
-  const metadata = await response.json() as { end_session_endpoint?: string };
-  test.skip(
-    metadata.end_session_endpoint === undefined,
-    'This sample OP was generated without --enable rp-initiated-logout',
-  );
-  expect(metadata.end_session_endpoint).toBe(`${issuer}/logout`);
-}
-
-/**
- * Drive the ordinary code flow through the E2E client and return the issued
- * ID Token (the id_token_hint of the logout scenarios).
- */
-async function completeAuthorizationCodeFlow(page: Page, issuer: string): Promise<string> {
-  await page.goto(`${clientBaseURL}/start`);
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-
-  // A prior spec (or the first scenario) may have recorded consent for this
-  // subject and client, in which case the consent screen is skipped. The
-  // consent URL carries no query (the transaction travels in its cookie).
-  await page.waitForURL(/\/consent\?transaction_id=|\/callback\?/);
-  if (new URL(page.url()).pathname === '/consent') {
-    await page.getByRole('button', { name: 'Approve' }).click();
-  }
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
-
-  const idToken = (await page.getByTestId('token-id-token').textContent())?.trim() ?? '';
-  expect(idToken.split('.')).toHaveLength(3);
-  return idToken;
-}
-
-/** A fresh authorization must land on the login screen: the SSO session is gone. */
-async function expectLoginRequired(page: Page, issuer: string): Promise<void> {
-  await page.goto(`${clientBaseURL}/start`);
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
-}
 
 function requireBaseUrl(baseURL: string | undefined): string {
   if (!baseURL) throw new Error('Playwright baseURL is not configured');

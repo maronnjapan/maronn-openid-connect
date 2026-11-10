@@ -57,3 +57,5 @@ pnpm --filter @maronn-openid-connect/cli test:matrix
 ```
 
 必要な検査は変更範囲と repository の規則から決める。ソースを変えた検査を、その変更前の成功だけで代用しない。成功・失敗・未実行・環境で実行不可を分け、失敗した出力と原因を残す。ローカルの成功を GitHub Actions の成功や、ブラウザ E2E・外部 OIDF 実環境テストの成功として報告しない。
+
+テストの検証は `it` 本体に置き、helper と hook で `expect` を呼ばない（Playwright の `test` / 登録済み BDD step は各 runner のテスト本体）。`node .github/scripts/lint-expect-scope.mjs` はテストファイル以外の support module も AST で調べる。移動前後で検証項目・実行順・非同期の待機が保たれているかも確認する。

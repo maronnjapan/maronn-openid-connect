@@ -16,18 +16,13 @@ function makeInput(
   };
 }
 
-async function expectGrantError(
+async function captureGrantError(
   input: Parameters<typeof processCibaGrant>[0],
-  code: string,
 ): Promise<CibaGrantError> {
   try {
     await processCibaGrant(input);
   } catch (error) {
-    expect(error).toBeInstanceOf(CibaGrantError);
-    const typed = error as CibaGrantError;
-    expect(typed.code).toBe(code);
-    expect(typed.statusCode).toBe(400);
-    return typed;
+    return error as CibaGrantError;
   }
   throw new Error('expected processCibaGrant to throw');
 }
@@ -62,10 +57,10 @@ describe('processCibaGrant', () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord());
 
-      const error = await expectGrantError(
-        makeInput({ store, client: makeClient({ grantTypes: ['authorization_code'] }) }),
-        'unauthorized_client',
-      );
+      const error = await captureGrantError(makeInput({ store, client: makeClient({ grantTypes: ['authorization_code'] }) }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('unauthorized_client');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe('The client is not authorized to use the CIBA grant');
       // The record is untouched: no state transition happened for the
@@ -75,17 +70,26 @@ describe('processCibaGrant', () => {
     });
 
     it('should reject a missing auth_req_id with invalid_request', async () => {
-      const error = await expectGrantError(makeInput({ params: {} }), 'invalid_request');
+      const error = await captureGrantError(makeInput({ params: {} }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe('Missing required parameter: auth_req_id');
     });
 
     it('should reject an empty auth_req_id with invalid_request', async () => {
-      await expectGrantError(makeInput({ params: { auth_req_id: '' } }), 'invalid_request');
+      const error = await captureGrantError(makeInput({ params: { auth_req_id: '' } }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('invalid_request');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should reject an unknown auth_req_id with invalid_grant', async () => {
-      const error = await expectGrantError(makeInput(), 'invalid_grant');
+      const error = await captureGrantError(makeInput());
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('invalid_grant');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The auth_req_id is invalid, expired, or was issued to another client',
@@ -98,10 +102,10 @@ describe('processCibaGrant', () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord());
 
-      const error = await expectGrantError(
-        makeInput({ store, client: makeClient({ clientId: 'other-client' }) }),
-        'invalid_grant',
-      );
+      const error = await captureGrantError(makeInput({ store, client: makeClient({ clientId: 'other-client' }) }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('invalid_grant');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The auth_req_id is invalid, expired, or was issued to another client',
@@ -116,7 +120,10 @@ describe('processCibaGrant', () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord());
 
-      const error = await expectGrantError(makeInput({ store }), 'authorization_pending');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('authorization_pending');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe('The authentication request is still pending');
       expect((await store.findByAuthReqId('auth-req-id-value'))?.lastPolledAt).toEqual(NOW);
@@ -126,7 +133,10 @@ describe('processCibaGrant', () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ lastPolledAt: new Date(NOW.getTime() - 2_000) }));
 
-      const error = await expectGrantError(makeInput({ store }), 'slow_down');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('slow_down');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'Polling too frequently. Increase the interval by 5 seconds.',
@@ -142,11 +152,14 @@ describe('processCibaGrant', () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ lastPolledAt: new Date(NOW.getTime() - 2_000) }));
 
-      await expectGrantError(makeInput({ store }), 'slow_down');
-      await expectGrantError(
-        makeInput({ store, now: new Date(NOW.getTime() + 6_000) }),
-        'slow_down',
-      );
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('slow_down');
+      expect(error.statusCode).toBe(400);
+      const error2 = await captureGrantError(makeInput({ store, now: new Date(NOW.getTime() + 6_000) }));
+      expect(error2).toBeInstanceOf(CibaGrantError);
+      expect(error2.code).toBe('slow_down');
+      expect(error2.statusCode).toBe(400);
 
       expect((await store.findByAuthReqId('auth-req-id-value'))?.interval).toBe(15);
     });
@@ -155,14 +168,20 @@ describe('processCibaGrant', () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ lastPolledAt: new Date(NOW.getTime() - 6_000) }));
 
-      await expectGrantError(makeInput({ store }), 'authorization_pending');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('authorization_pending');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should answer expired_token and delete the record when it expired', async () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ expiresAt: new Date(NOW.getTime() - 1_000) }));
 
-      const error = await expectGrantError(makeInput({ store }), 'expired_token');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('expired_token');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The auth_req_id has expired. Start a new backchannel authentication request.',
@@ -179,14 +198,20 @@ describe('processCibaGrant', () => {
         lastPolledAt: new Date(NOW.getTime() - 1_000),
       }));
 
-      await expectGrantError(makeInput({ store }), 'expired_token');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('expired_token');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should answer access_denied and delete the record after the user denied', async () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ status: 'denied' }));
 
-      const error = await expectGrantError(makeInput({ store }), 'access_denied');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('access_denied');
+      expect(error.statusCode).toBe(400);
 
       expect(error.errorDescription).toBe(
         'The end-user denied the authentication request',
@@ -197,9 +222,15 @@ describe('processCibaGrant', () => {
     it('should answer invalid_grant when polling again after access_denied', async () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ status: 'denied' }));
-      await expectGrantError(makeInput({ store }), 'access_denied');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('access_denied');
+      expect(error.statusCode).toBe(400);
 
-      await expectGrantError(makeInput({ store }), 'invalid_grant');
+      const error2 = await captureGrantError(makeInput({ store }));
+      expect(error2).toBeInstanceOf(CibaGrantError);
+      expect(error2.code).toBe('invalid_grant');
+      expect(error2.statusCode).toBe(400);
     });
   });
 
@@ -233,14 +264,20 @@ describe('processCibaGrant', () => {
       await store.save(approvedRecord());
       await processCibaGrant(makeInput({ store }));
 
-      await expectGrantError(makeInput({ store }), 'invalid_grant');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('invalid_grant');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should reject an approved record missing its approval context', async () => {
       const store = createInMemoryCibaAuthenticationRequestStore();
       await store.save(makeRecord({ status: 'approved' }));
 
-      await expectGrantError(makeInput({ store }), 'invalid_grant');
+      const error = await captureGrantError(makeInput({ store }));
+      expect(error).toBeInstanceOf(CibaGrantError);
+      expect(error.code).toBe('invalid_grant');
+      expect(error.statusCode).toBe(400);
     });
 
     it('should fall back to the requested scope when approvedScope is absent', async () => {

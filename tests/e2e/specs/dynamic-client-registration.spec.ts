@@ -1,6 +1,5 @@
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -38,7 +37,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
     expect(endpoint).toBe(`${issuer}/register`);
   });
@@ -48,7 +50,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     const response = await request.post(`${issuer}/register`, {
@@ -85,18 +90,60 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       token_endpoint_auth_method: 'client_secret_post',
       client_name: 'E2E Confidential Client',
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
     const clientId = requireString(registered.client_id, 'client_id');
     const clientSecret = requireString(registered.client_secret, 'client_secret');
 
-    const { code, state } = await authorizeInBrowser(page, issuer, clientId, 'E2E Confidential Client');
+    const clientName: string = 'E2E Confidential Client';
+    const codeVerifier2 = base64Url(randomBytes(32));
+    const codeChallenge = base64Url(createHash('sha256').update(codeVerifier2).digest());
+    const requestState = base64Url(randomBytes(16));
+
+    const authorizeUrl = new URL('/authorize', issuer);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('redirect_uri', registeredRedirectUri);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('scope', 'openid');
+    authorizeUrl.searchParams.set('state', requestState);
+    authorizeUrl.searchParams.set('nonce', base64Url(randomBytes(16)));
+    authorizeUrl.searchParams.set('code_challenge', codeChallenge);
+    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+    await page.goto(authorizeUrl.toString());
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
+    // The consent screen names the dynamically registered client by its
+    // client_name (OIDC Dynamic Client Registration 1.0 §2).
+    await expect(page.locator('strong')).toHaveText(clientName);
+    await page.getByRole('button', { name: 'Approve' }).click();
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(registeredRedirectUri)}\\?`));
+    const callbackUrl = new URL(page.url());
+    expect(callbackUrl.searchParams.get('state')).toBe(requestState);
+    expect(callbackUrl.searchParams.get('iss')).toBe(issuer);
+    const code2 = callbackUrl.searchParams.get('code');
+    expect(code2).not.toBe(null);
+    const { code, state } = { code: code2 as string, state: { codeVerifier: codeVerifier2 } };
 
     const tokenResponse = await request.post(`${issuer}/token`, {
       form: {
@@ -130,20 +177,62 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       token_endpoint_auth_method: 'none',
       client_name: 'E2E Public Client',
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
     const clientId = requireString(registered.client_id, 'client_id');
     // RFC 6749 §2.1: a public client holds no secret, so none is issued.
     expect(Object.hasOwn(registered, 'client_secret')).toBe(false);
     expect(Object.hasOwn(registered, 'client_secret_expires_at')).toBe(false);
 
-    const { code, state } = await authorizeInBrowser(page, issuer, clientId, 'E2E Public Client');
+    const clientName: string = 'E2E Public Client';
+    const codeVerifier2 = base64Url(randomBytes(32));
+    const codeChallenge = base64Url(createHash('sha256').update(codeVerifier2).digest());
+    const requestState = base64Url(randomBytes(16));
+
+    const authorizeUrl = new URL('/authorize', issuer);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('redirect_uri', registeredRedirectUri);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('scope', 'openid');
+    authorizeUrl.searchParams.set('state', requestState);
+    authorizeUrl.searchParams.set('nonce', base64Url(randomBytes(16)));
+    authorizeUrl.searchParams.set('code_challenge', codeChallenge);
+    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+    await page.goto(authorizeUrl.toString());
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
+    // The consent screen names the dynamically registered client by its
+    // client_name (OIDC Dynamic Client Registration 1.0 §2).
+    await expect(page.locator('strong')).toHaveText(clientName);
+    await page.getByRole('button', { name: 'Approve' }).click();
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(registeredRedirectUri)}\\?`));
+    const callbackUrl = new URL(page.url());
+    expect(callbackUrl.searchParams.get('state')).toBe(requestState);
+    expect(callbackUrl.searchParams.get('iss')).toBe(issuer);
+    const code2 = callbackUrl.searchParams.get('code');
+    expect(code2).not.toBe(null);
+    const { code, state } = { code: code2 as string, state: { codeVerifier: codeVerifier2 } };
 
     const tokenResponse = await request.post(`${issuer}/token`, {
       form: {
@@ -170,29 +259,70 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
-    const metadata = await discoveryMetadata(request, issuer);
+    const response2 = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response2.status()).toBe(200);
+    const metadata = await response2.json() as Record<string, unknown>;
     test.skip(
       !(metadata.response_types_supported as string[] | undefined)?.includes('id_token token'),
       'This sample OP was generated without implicit-flow',
     );
 
-    const registered = await registerClient(request, issuer, {
+    const metadata2: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       application_type: 'native',
       token_endpoint_auth_method: 'none',
       grant_types: ['implicit'],
       response_types: ['token id_token'],
       client_name: 'E2E Implicit Client',
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata2,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
     const clientId = requireString(registered.client_id, 'client_id');
     // The response type comes back normalized (OAuth 2.0 Multiple Response Type Encoding Practices §1.2).
     expect(registered.response_types).toEqual(['id_token token']);
     expect(registered.grant_types).toEqual(['implicit']);
     expect(registered.application_type).toBe('native');
 
-    const { fragment, nonce } = await authorizeImplicitInBrowser(page, issuer, clientId, 'E2E Implicit Client');
+    const clientName: string = 'E2E Implicit Client';
+    const requestState = base64Url(randomBytes(16));
+    const nonce2 = base64Url(randomBytes(16));
+
+    const authorizeUrl = new URL('/authorize', issuer);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('redirect_uri', registeredRedirectUri);
+    authorizeUrl.searchParams.set('response_type', 'id_token token');
+    authorizeUrl.searchParams.set('scope', 'openid');
+    authorizeUrl.searchParams.set('state', requestState);
+    authorizeUrl.searchParams.set('nonce', nonce2);
+
+    await page.goto(authorizeUrl.toString());
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
+    // The consent screen names the dynamically registered client by its
+    // client_name (OIDC Dynamic Client Registration 1.0 §2).
+    await expect(page.locator('strong')).toHaveText(clientName);
+    await page.getByRole('button', { name: 'Approve' }).click();
+
+    // OIDC Core 1.0 §3.2.2.5: the tokens ride in the fragment, never in the query.
+    await page.waitForURL((url) => url.href.startsWith(registeredRedirectUri));
+    const callbackUrl = new URL(page.url());
+    expect(callbackUrl.search).toBe('');
+    const fragment2 = Object.fromEntries(new URLSearchParams(callbackUrl.hash.slice(1)));
+    expect(fragment2['state']).toBe(requestState);
+    const { fragment, nonce } = { fragment: fragment2, nonce: nonce2 };
 
     expect(fragment['token_type']).toBe('Bearer');
     const idToken = decodeJwtPayload(requireString(fragment['id_token'], 'id_token'));
@@ -210,9 +340,14 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
-    const metadata = await discoveryMetadata(request, issuer);
+    const response2 = await request.get(`${issuer}/.well-known/openid-configuration`);
+    expect(response2.status()).toBe(200);
+    const metadata = await response2.json() as Record<string, unknown>;
     test.skip(
       !(metadata.response_types_supported as string[] | undefined)?.includes('id_token'),
       'This sample OP was generated without implicit-flow',
@@ -227,10 +362,16 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
       headers: { 'Content-Type': 'application/json' },
       data: { ...implicitClient, redirect_uris: [registeredRedirectUri] },
     });
-    const registered = await registerClient(request, issuer, {
+    const metadata2: Record<string, unknown> = {
       ...implicitClient,
       redirect_uris: ['https://implicit-client.e2e.example.com/cb'],
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata2,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
 
     expect(refused.status()).toBe(400);
     expect(await refused.json()).toEqual({
@@ -248,13 +389,22 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       scope: 'openid profile openid',
+    };
+    const response2 = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response2.status()).toBe(201);
+    const registered = await response2.json() as Record<string, unknown>;
     expect(registered.scope).toBe('openid profile');
     const clientId = requireString(registered.client_id, 'client_id');
 
@@ -282,10 +432,13 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       application_type: 'web',
       client_name: 'E2E Described Client',
@@ -298,7 +451,13 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
       software_version: '2.0.1',
       default_max_age: 3600,
       id_token_signed_response_alg: 'RS256',
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
 
     expect(registered).toMatchObject({
       application_type: 'web',
@@ -322,15 +481,24 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
     const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const { n, e } = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       jwks: { keys: [{ kty: 'RSA', kid: 'e2e-client-key', n, e }] },
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
 
     expect(registered.jwks).toEqual({
       keys: [{ kty: 'RSA', kid: 'e2e-client-key', use: 'sig', alg: 'RS256', n, e }],
@@ -342,7 +510,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     // The contrast to the flows above: a client_id nobody registered must not
@@ -367,7 +538,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     const response = await request.post(`${issuer}/register`, {
@@ -387,7 +561,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     const response = await request.post(`${issuer}/register`, {
@@ -409,7 +586,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     const response = await request.post(`${issuer}/register`, {
@@ -429,7 +609,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     // A text/plain POST can be sent cross-origin without a CORS preflight, so
@@ -450,7 +633,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     const response = await request.post(`${issuer}/register`, {
@@ -479,25 +665,44 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
     const jwksUri = `${clientBaseURL}/jwks.json`;
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [`${clientBaseURL}/request-object-callback`],
       jwks_uri: jwksUri,
       request_object_signing_alg: 'ES256',
+    };
+    const response3 = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response3.status()).toBe(201);
+    const registered = await response3.json() as Record<string, unknown>;
     expect(registered.jwks_uri).toBe(jwksUri);
     expect(registered.request_object_signing_alg).toBe('ES256');
     const clientId = requireString(registered.client_id, 'client_id');
 
     // OIDC Core 1.0 §6.3.2: an ES256 Request Object verifies with the P-256 key
     // of the jwks_uri, so the OP goes on to sign the user in.
-    await page.goto(await requestObjectAuthorizationUrl(request, clientId, 'ES256'));
+    const alg: 'RS256' | 'ES256' = 'ES256';
+    const url = new URL('/request-object', clientBaseURL);
+    url.search = new URLSearchParams({ client_id: clientId, alg }).toString();
+    const response = await request.get(url.toString());
+    expect(response.status()).toBe(200);
+    await page.goto((await (((await response.json()) as { authorizationUrl: string }).authorizationUrl)));
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
     // An RS256 one is refused: the client registered ES256.
-    const refused = await request.get(await requestObjectAuthorizationUrl(request, clientId, 'RS256'), {
+    const alg2: 'RS256' | 'ES256' = 'RS256';
+    const url2 = new URL('/request-object', clientBaseURL);
+    url2.search = new URLSearchParams({ client_id: clientId, alg: alg2 }).toString();
+    const response2 = await request.get(url2.toString());
+    expect(response2.status()).toBe(200);
+    const refused = await request.get((await (((await response2.json()) as { authorizationUrl: string }).authorizationUrl)), {
       maxRedirects: 0,
       headers: { Accept: 'application/json' },
     });
@@ -515,7 +720,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
     const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const { n, e } = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
@@ -554,14 +762,23 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
-    const registered = await registerClient(request, issuer, {
+    const metadata: Record<string, unknown> = {
       redirect_uris: [registeredRedirectUri],
       client_name: 'E2E Plain Name',
       software_statement: 'not-a-jws',
+    };
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: metadata,
     });
+    expect(response.status()).toBe(201);
+    const registered = await response.json() as Record<string, unknown>;
 
     expect(registered.client_name).toBe('E2E Plain Name');
     expect(Object.hasOwn(registered, 'software_statement')).toBe(false);
@@ -574,7 +791,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
+    const discoveryResponse = await request.get(`${issuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, SKIP_REASON);
 
     const response = await request.post(`${issuer}/register`, {
@@ -593,7 +813,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
   test('should answer 429 once the inventory cap is reached', async ({
     request,
   }) => {
-    const endpoint = await registrationEndpoint(request, restrictedIssuer);
+    const discoveryResponse = await request.get(`${restrictedIssuer}/.well-known/openid-configuration`).catch(() => undefined);
+    test.skip(discoveryResponse === undefined, RESTRICTED_SKIP_REASON);
+    expect(discoveryResponse?.status()).toBe(200);
+    const endpoint = ((await discoveryResponse?.json()) as { registration_endpoint?: string } | undefined)?.registration_endpoint;
     test.skip(endpoint === undefined, RESTRICTED_SKIP_REASON);
 
     // The instance is started with maxRegisteredClients = 3. Whatever earlier
@@ -628,143 +851,6 @@ const SKIP_REASON =
 const RESTRICTED_SKIP_REASON =
   'The capped-registration OP instance is not running for this sample';
 
-interface AuthorizeState {
-  codeVerifier: string;
-}
-
-/** The authorization URL of a Request Object the E2E RP signed for the client with its key of alg. */
-async function requestObjectAuthorizationUrl(
-  request: APIRequestContext,
-  clientId: string,
-  alg: 'RS256' | 'ES256',
-): Promise<string> {
-  const url = new URL('/request-object', clientBaseURL);
-  url.search = new URLSearchParams({ client_id: clientId, alg }).toString();
-  const response = await request.get(url.toString());
-  expect(response.status()).toBe(200);
-  return ((await response.json()) as { authorizationUrl: string }).authorizationUrl;
-}
-
-/** Register a client and return the parsed 201 body. */
-async function registerClient(
-  request: APIRequestContext,
-  issuer: string,
-  metadata: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const response = await request.post(`${issuer}/register`, {
-    headers: { 'Content-Type': 'application/json' },
-    data: metadata,
-  });
-  expect(response.status()).toBe(201);
-  return await response.json() as Record<string, unknown>;
-}
-
-/**
- * Drive /authorize → login → consent in the real browser with the issued
- * client_id and return the code (plus the PKCE verifier the request used).
- */
-async function authorizeInBrowser(
-  page: Page,
-  issuer: string,
-  clientId: string,
-  clientName: string,
-): Promise<{ code: string; state: AuthorizeState }> {
-  const codeVerifier = base64Url(randomBytes(32));
-  const codeChallenge = base64Url(createHash('sha256').update(codeVerifier).digest());
-  const requestState = base64Url(randomBytes(16));
-
-  const authorizeUrl = new URL('/authorize', issuer);
-  authorizeUrl.searchParams.set('client_id', clientId);
-  authorizeUrl.searchParams.set('redirect_uri', registeredRedirectUri);
-  authorizeUrl.searchParams.set('response_type', 'code');
-  authorizeUrl.searchParams.set('scope', 'openid');
-  authorizeUrl.searchParams.set('state', requestState);
-  authorizeUrl.searchParams.set('nonce', base64Url(randomBytes(16)));
-  authorizeUrl.searchParams.set('code_challenge', codeChallenge);
-  authorizeUrl.searchParams.set('code_challenge_method', 'S256');
-
-  await page.goto(authorizeUrl.toString());
-  await loginAndApprove(page, issuer, clientName);
-
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(registeredRedirectUri)}\\?`));
-  const callbackUrl = new URL(page.url());
-  expect(callbackUrl.searchParams.get('state')).toBe(requestState);
-  expect(callbackUrl.searchParams.get('iss')).toBe(issuer);
-  const code = callbackUrl.searchParams.get('code');
-  expect(code).not.toBe(null);
-  return { code: code as string, state: { codeVerifier } };
-}
-
-/**
- * Drive an Implicit Flow request (response_type=id_token token) in the real
- * browser with the issued client_id and return the fragment of the redirect
- * the browser landed on, with the nonce the request used.
- */
-async function authorizeImplicitInBrowser(
-  page: Page,
-  issuer: string,
-  clientId: string,
-  clientName: string,
-): Promise<{ fragment: Record<string, string>; nonce: string }> {
-  const requestState = base64Url(randomBytes(16));
-  const nonce = base64Url(randomBytes(16));
-
-  const authorizeUrl = new URL('/authorize', issuer);
-  authorizeUrl.searchParams.set('client_id', clientId);
-  authorizeUrl.searchParams.set('redirect_uri', registeredRedirectUri);
-  authorizeUrl.searchParams.set('response_type', 'id_token token');
-  authorizeUrl.searchParams.set('scope', 'openid');
-  authorizeUrl.searchParams.set('state', requestState);
-  authorizeUrl.searchParams.set('nonce', nonce);
-
-  await page.goto(authorizeUrl.toString());
-  await loginAndApprove(page, issuer, clientName);
-
-  // OIDC Core 1.0 §3.2.2.5: the tokens ride in the fragment, never in the query.
-  await page.waitForURL((url) => url.href.startsWith(registeredRedirectUri));
-  const callbackUrl = new URL(page.url());
-  expect(callbackUrl.search).toBe('');
-  const fragment = Object.fromEntries(new URLSearchParams(callbackUrl.hash.slice(1)));
-  expect(fragment['state']).toBe(requestState);
-  return { fragment, nonce };
-}
-
-/** Log in as testuser and approve the consent screen, which names the registered client. */
-async function loginAndApprove(page: Page, issuer: string, clientName: string): Promise<void> {
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
-  // The consent screen names the dynamically registered client by its
-  // client_name (OIDC Dynamic Client Registration 1.0 §2).
-  await expect(page.locator('strong')).toHaveText(clientName);
-  await page.getByRole('button', { name: 'Approve' }).click();
-}
-
-/**
- * registration_endpoint from discovery, or undefined when the OP does not
- * advertise it — or, for the restricted instance, is not running at all.
- */
-async function registrationEndpoint(
-  request: APIRequestContext,
-  issuer: string,
-): Promise<string | undefined> {
-  try {
-    const metadata = await discoveryMetadata(request, issuer);
-    return metadata.registration_endpoint as string | undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<Record<string, unknown>> {
-  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-  expect(response.status()).toBe(200);
-  return await response.json() as Record<string, unknown>;
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -775,7 +861,7 @@ function base64Url(bytes: Buffer): string {
 
 function decodeJwtPayload(jwt: string): Record<string, unknown> {
   const segments = jwt.split('.');
-  expect(segments).toHaveLength(3);
+  if (segments.length !== 3) throw new Error('JWT must have three compact serialization segments');
   return JSON.parse(Buffer.from(segments[1] as string, 'base64url').toString('utf8')) as Record<
     string,
     unknown
@@ -783,22 +869,22 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> {
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {
-  expect(baseURL).toBeTruthy();
+  if (!baseURL) throw new Error('Playwright baseURL is required');
   return (baseURL as string).replace(/\/$/, '');
 }
 
 function requireHeader(headers: Record<string, string>, name: string): string {
   const value = headers[name];
-  expect(value, `missing response header: ${name}`).toBeTruthy();
+  if (!value) throw new Error(`Missing response header: ${name}`);
   return value as string;
 }
 
 function requireString(value: unknown, label: string): string {
-  expect(typeof value, `${label} should be a string`).toBe('string');
+  if (typeof value !== 'string') throw new Error(`${label} should be a string`);
   return value as string;
 }
 
 function requireResponse<T>(value: T | undefined): T {
-  expect(value).toBeTruthy();
+  if (!value) throw new Error('A response is required');
   return value as T;
 }

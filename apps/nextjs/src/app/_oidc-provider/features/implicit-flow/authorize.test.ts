@@ -188,7 +188,6 @@ describe('issueImplicitResponse', () => {
 
   /** The redirect target and the parameters in the fragment of a 302. */
   function fragmentOf(response: Response | undefined): { target: string; params: Record<string, string> } {
-    expect(response?.status).toBe(302);
     const location = new URL(response?.headers.get('Location') ?? '');
     return {
       target: location.origin + location.pathname,
@@ -201,6 +200,7 @@ describe('issueImplicitResponse', () => {
   it('should redirect with the tokens, the state and iss in the fragment and finish the transaction', async () => {
     const { response } = await respond('implicit-txn-1', 'id_token token');
 
+    expect(response?.status).toBe(302);
     const { target, params } = fragmentOf(response);
     expect(target).toBe(REDIRECT_URI);
     expect(params).toEqual({
@@ -227,6 +227,7 @@ describe('issueImplicitResponse', () => {
 
     const { response } = await respond('implicit-txn-2', 'id_token token');
 
+    expect(response?.status).toBe(302);
     const accessToken = fragmentOf(response).params['access_token'] ?? '';
     const record = await stores.accessTokenStore.get(accessToken);
     expect(recordGrant.mock.calls).toEqual([['implicit-user', CLIENT_ID, record?.grantId]]);
@@ -237,6 +238,7 @@ describe('issueImplicitResponse', () => {
   it('should answer in the fragment when no response mode was set', async () => {
     const { response } = await respond('implicit-txn-3', 'id_token', undefined);
 
+    expect(response?.status).toBe(302);
     expect(Object.keys(fragmentOf(response).params)).toEqual(['id_token', 'state', 'iss']);
   });
 

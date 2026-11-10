@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveGoogleLoginSubject, type GoogleAccountResolver } from './account-resolver.js';
-import { GoogleLoginErrorCode } from './errors.js';
+import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
 import type { GoogleIdTokenPayload } from './id-token.js';
-import { captureRejection, createGoogleIdTokenPayload, expectGoogleLoginError } from './test-helpers.js';
+import { captureRejection, createGoogleIdTokenPayload } from './test-helpers.js';
 
 const account = createGoogleIdTokenPayload();
 
@@ -37,7 +37,8 @@ describe('resolveGoogleLoginSubject', () => {
 
     const error = await captureRejection(resolveGoogleLoginSubject(account, resolver));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.AccountNotLinked, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.AccountNotLinked, httpStatusCode: 403 });
   });
 
   it('should treat an empty subject as not linked', async () => {
@@ -45,6 +46,7 @@ describe('resolveGoogleLoginSubject', () => {
 
     const error = await captureRejection(resolveGoogleLoginSubject(account, resolver));
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.AccountNotLinked, 403);
+    expect(error).toBeInstanceOf(GoogleLoginError);
+    expect(error).toMatchObject({ name: 'GoogleLoginError', code: GoogleLoginErrorCode.AccountNotLinked, httpStatusCode: 403 });
   });
 });

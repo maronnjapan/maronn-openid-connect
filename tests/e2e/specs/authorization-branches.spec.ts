@@ -20,7 +20,12 @@ test.describe('Authorization endpoint browser branches', () => {
     await page.goto(`${clientBaseURL}/start?prompt=consent`);
     const authorizeRequest = await authorizeRequestPromise;
     const sentState = requireSearchParam(new URL(authorizeRequest.url()), 'state');
-    await login(page, 'testuser');
+    const username: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
     await page.getByRole('button', { name: 'Deny' }).click();
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
 
@@ -46,7 +51,12 @@ test.describe('Authorization endpoint browser branches', () => {
     await page.goto(
       `${clientBaseURL}/start?scope=${encodeURIComponent('openid offline_access')}&prompt=consent`,
     );
-    await login(page, 'testuser');
+    const username: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
     await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const refreshToken = await requiredText(page, 'token-refresh-token');
@@ -108,7 +118,14 @@ test.describe('Authorization endpoint browser branches', () => {
     // offline_access を要求しない = online refresh token。prompt=consent は同意画面を
     // 必ず出してテストを決定的にするためで、offline_access の付与には効かない。
     await page.goto(`${clientBaseURL}/start?scope=${encodeURIComponent('openid')}&prompt=consent`);
-    await loginAndApprove(page, 'testuser');
+    const username: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const onlineRefreshToken = await requiredText(page, 'token-refresh-token');
     expect(onlineRefreshToken).toHaveLength(43);
 
@@ -129,7 +146,14 @@ test.describe('Authorization endpoint browser branches', () => {
     // prompt=login は既存のブラウザセッションを破棄して認証をやり直させる
     // （OIDC Core 1.0 §3.1.2.1）。ログアウト相当のセッション終了がここで起きる。
     await page.goto(`${clientBaseURL}/start?prompt=login`);
-    await loginAndApprove(page, 'testuser');
+    const username2: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username2);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
 
     // 束縛先セッションが消えたので、ローテーション後の online refresh token も使えない。
     const afterReauthentication = await request.post(`${issuer}/token`, {
@@ -159,12 +183,26 @@ test.describe('Authorization endpoint browser branches', () => {
     await page.goto(
       `${clientBaseURL}/start?scope=${encodeURIComponent('openid offline_access')}&prompt=consent`,
     );
-    await loginAndApprove(page, 'testuser');
+    const username: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const offlineRefreshToken = await requiredText(page, 'token-refresh-token');
     expect(offlineRefreshToken).toHaveLength(43);
 
     await page.goto(`${clientBaseURL}/start?prompt=login`);
-    await loginAndApprove(page, 'testuser');
+    const username2: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username2);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
 
     const afterReauthentication = await request.post(`${issuer}/token`, {
       form: {
@@ -186,13 +224,27 @@ test.describe('Authorization endpoint browser branches', () => {
   }) => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
-    await loginAndApprove(page, 'testuser');
+    const username: string = 'testuser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const testUserIdToken = await requiredText(page, 'token-id-token');
 
     const otherContext = await browser.newContext();
     const otherPage = await otherContext.newPage();
     await otherPage.goto(`${clientBaseURL}/start`);
-    await loginAndApprove(otherPage, 'otheruser');
+    const username2: string = 'otheruser';
+    await expect(otherPage).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await otherPage.getByLabel('Username:').fill(username2);
+    await otherPage.getByLabel('Password:').fill('password');
+    await otherPage.getByRole('button', { name: 'Login' }).click();
+    await expect(otherPage).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await otherPage.getByRole('button', { name: 'Approve' }).click();
+    await expect(otherPage.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const otherUserIdToken = await requiredText(otherPage, 'token-id-token');
 
     // A verified id_token_hint succeeds only when its subject matches the active session.
@@ -238,12 +290,26 @@ test.describe('Authorization endpoint browser branches', () => {
     const hintContext = await browser.newContext();
     const hintPage = await hintContext.newPage();
     await hintPage.goto(`${clientBaseURL}/start`);
-    await loginAndApprove(hintPage, 'testuser');
+    const username: string = 'testuser';
+    await expect(hintPage).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await hintPage.getByLabel('Username:').fill(username);
+    await hintPage.getByLabel('Password:').fill('password');
+    await hintPage.getByRole('button', { name: 'Login' }).click();
+    await expect(hintPage).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await hintPage.getByRole('button', { name: 'Approve' }).click();
+    await expect(hintPage.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
     const testUserIdToken = await requiredText(hintPage, 'token-id-token');
 
     // Session belongs to otheruser; SSO alone would issue a code for otheruser.
     await page.goto(`${clientBaseURL}/start`);
-    await loginAndApprove(page, 'otheruser');
+    const username2: string = 'otheruser';
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill(username2);
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
 
     await page.goto(`${clientBaseURL}/start?id_token_hint=${encodeURIComponent(testUserIdToken)}`);
 
@@ -261,20 +327,6 @@ test.describe('Authorization endpoint browser branches', () => {
     await hintContext.close();
   });
 });
-
-async function login(page: Page, username: string): Promise<void> {
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill(username);
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-}
-
-async function loginAndApprove(page: Page, username: string): Promise<void> {
-  await login(page, username);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
-}
 
 async function requiredText(page: Page, testId: string): Promise<string> {
   const value = await page.getByTestId(testId).textContent();

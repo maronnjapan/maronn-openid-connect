@@ -1,4 +1,3 @@
-import { expect } from 'vitest';
 import type { AuthorizationResponse } from '../app/authorize/response-mode';
 
 /**
@@ -25,8 +24,7 @@ export async function jsonResponseOf(response: Response | undefined): Promise<Js
   };
 }
 
-/** Assert that the authorization response is a redirect and return its location. */
+/** The location of a redirect authorization response. */
 export function locationOf(response: AuthorizationResponse | undefined): string {
-  expect(response).toMatchObject({ method: 'redirect', location: expect.any(String) });
   return (response as { location: string }).location;
 }

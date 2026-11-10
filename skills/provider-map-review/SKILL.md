@@ -33,6 +33,8 @@ Hono と Next.js の対応、feature のオン・オフ、owner block の削除�
 
 関数宣言・JSDoc・step marker、意図を書く変更メモ、破壊的変更の changeset を確認する。新しい規則に機械的検査があるか、到達先を手で列挙する負担が持ち込まれていないか調べる。
 
+`expect`（`expect.any` 等を含む）が `it` のコールバック本体だけにあるか確認する。共通 helper、test-support、`describe`、ライフサイクル hook へ隠れた検証も対象にし、helper が返す値を呼び出し元のテスト本体で検証する。Playwright の `test` と `playwright-bdd` の登録済み `Given` / `When` / `Then` は、その runner のテスト本体として扱う。`.github/scripts/lint-expect-scope.mjs` を実行し、移動の際にエラーの型・code・status や途中の redirect 等の検証が落ちていないか差分も照合する。
+
 ## 検査の主張を検証する
 
 実行した検査の SHA、コマンド、終了結果、失敗出力と対処を確認する。コードを変える前の成功、実行していないテスト、環境制限による失敗を成功に読み替えない。ローカルと CI、unit/package tests とブラウザ E2E・外部 OIDF テストを区別する。

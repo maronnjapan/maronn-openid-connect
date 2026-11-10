@@ -45,6 +45,7 @@ describe('verifyIdTokenHint', () => {
 
       const outcome = await verifyIdTokenHint(c, TRANSACTION_ID, transaction, TEST_ISSUER, undefined);
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome)).toEqual({
         target: REDIRECT_URI,
         params: {
@@ -64,6 +65,7 @@ describe('verifyIdTokenHint', () => {
 
       const outcome = await verifyIdTokenHint(c, TRANSACTION_ID, transaction, TEST_ISSUER, undefined);
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome).params).toEqual({
         error: 'login_required',
         error_description: 'No JWK matched the id_token_hint header',
@@ -81,6 +83,7 @@ describe('verifyIdTokenHint', () => {
 
       const outcome = await verifyIdTokenHint(c, TRANSACTION_ID, transaction, TEST_ISSUER, undefined);
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome).params).toEqual({
         error: 'login_required',
         error_description: 'JWKS is unavailable',
@@ -98,6 +101,7 @@ describe('verifyIdTokenHint', () => {
 
       const outcome = await verifyIdTokenHint(c, TRANSACTION_ID, transaction, TEST_ISSUER, undefined);
 
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
       expect(authorizationRedirectOf(outcome).params).toEqual({
         error: 'login_required',
         error_description: 'jwksProvider is not configured; cannot verify id_token_hint',

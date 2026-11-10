@@ -41,7 +41,17 @@ test.describe('JWT introspection response (RFC 9701)', () => {
       'This sample OP was generated without --enable jwt-introspection-response',
     );
 
-    const accessToken = await completeAuthorizationCodeFlow(page, issuer);
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
+    const accessToken = await (locatorText(page.getByTestId('token-access-token'), 'access token'));
 
     // The issuing client itself introspects the token and asks for the signed
     // response (RFC 9701 §4).
@@ -101,7 +111,17 @@ test.describe('JWT introspection response (RFC 9701)', () => {
       'This sample OP was generated without --enable jwt-introspection-response',
     );
 
-    const accessToken = await completeAuthorizationCodeFlow(page, issuer);
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
+
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
+    const accessToken = await (locatorText(page.getByTestId('token-access-token'), 'access token'));
 
     // The e2e resource server is registered as its own client, but the token's
     // aud carries the resource server URL, not that client_id — so on the JWT
@@ -157,28 +177,6 @@ test.describe('JWT introspection response (RFC 9701)', () => {
     expect(algs).toEqual(['RS256']);
   });
 });
-
-/**
- * Drives the browser through authorize -> login -> consent on the shared e2e
- * client app and returns the access token its result page shows.
- */
-async function completeAuthorizationCodeFlow(
-  page: import('@playwright/test').Page,
-  issuer: string,
-): Promise<string> {
-  await page.goto(`${clientBaseURL}/start`);
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=[^&]+$`));
-
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=[^&]+$`));
-
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
-
-  return locatorText(page.getByTestId('token-access-token'), 'access token');
-}
 
 interface DiscoveryMetadata {
   introspection_signing_alg_values_supported?: string[];

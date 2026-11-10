@@ -60,7 +60,6 @@ async function failureOf(promise: Promise<unknown>): Promise<TokenEndpointError>
     () => undefined,
     (reason: unknown) => reason,
   );
-  expect(error).toBeInstanceOf(TokenEndpointError);
   return error as TokenEndpointError;
 }
 
@@ -116,7 +115,9 @@ describe('issueIdJag', () => {
     const otherKey = await rs256Key('not-the-provider-key');
 
     const otherClient = await failureOf(issueIdJag(c, issuanceRequest({ subject_token: await idToken({ aud: 'rp-2' }) }), client));
+    expect(otherClient).toBeInstanceOf(TokenEndpointError);
     const otherSigner = await failureOf(issueIdJag(c, issuanceRequest({ subject_token: await idToken({}, otherKey) }), client));
+    expect(otherSigner).toBeInstanceOf(TokenEndpointError);
 
     const expected = { status: 400, body: { error: 'invalid_request', error_description: 'The provided subject_token is not valid' } };
     expect([otherClient.response, otherSigner.response]).toEqual([expected, expected]);
@@ -126,6 +127,7 @@ describe('issueIdJag', () => {
     const { c } = await providerContext();
 
     const error = await failureOf(issueIdJag(c, issuanceRequest({ subject_token: await idToken() }), client));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 400,
@@ -139,6 +141,7 @@ describe('issueIdJag', () => {
     const codeOnlyClient: TokenClientInfo = { ...client, grantTypes: ['authorization_code'] };
 
     const error = await failureOf(issueIdJag(c, issuanceRequest({ subject_token: await idToken() }), codeOnlyClient));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 400,
@@ -155,6 +158,7 @@ describe('issueIdJag', () => {
     c.set('signingKeys', []);
 
     const error = await failureOf(issueIdJag(c, issuanceRequest({ subject_token: await idToken() }), client));
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response).toEqual({
       status: 500,
@@ -184,6 +188,7 @@ describe('issueIdJag', () => {
     const { access_token: idJag } = (await response!.json()) as { access_token: string };
     await stores.browserSessionStore.delete('session-1');
     const afterLogout = await failureOf(issueIdJag(c, request, client));
+    expect(afterLogout).toBeInstanceOf(TokenEndpointError);
 
     expect(decodeJwt(idJag).payload).toMatchObject({ sub: 'alice', auth_time: NOW - 60 });
     expect(afterLogout.response.body).toEqual({
@@ -200,6 +205,7 @@ describe('issueIdJag', () => {
     const error = await failureOf(
       issueIdJag(c, issuanceRequest({ subject_token: 'rt-1', subject_token_type: TOKEN_TYPE_REFRESH_TOKEN }), client),
     );
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response.body).toEqual({
       error: 'invalid_request',
@@ -219,6 +225,7 @@ describe('issueIdJag', () => {
         client,
       ),
     );
+    expect(error).toBeInstanceOf(TokenEndpointError);
 
     expect(error.response.body).toEqual({
       error: 'invalid_request',

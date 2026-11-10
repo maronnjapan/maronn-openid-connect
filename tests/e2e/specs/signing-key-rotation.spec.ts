@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, test } from '../fixtures';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
@@ -55,7 +55,42 @@ test.describe('signing key rotation (OIDC Core 1.0 §10.1.1)', () => {
     expect(before.includes(kid)).toBe(false);
     expect(await jwksKids(request, issuer)).toEqual([kid, ...before]);
 
-    const idToken = await issueIdToken(page, request, issuer);
+    const codeVerifier = randomBytes(32).toString('base64url');
+    const params = new URLSearchParams({
+      client_id: client.clientId,
+      redirect_uri: client.redirectUri,
+      response_type: 'code',
+      scope: 'openid',
+      state: randomBytes(16).toString('base64url'),
+      nonce: randomBytes(16).toString('base64url'),
+      code_challenge: createHash('sha256').update(codeVerifier).digest('base64url'),
+      code_challenge_method: 'S256',
+      // A fresh login, whatever session an earlier spec left in the browser.
+      prompt: 'login consent',
+    });
+
+    await page.goto(`${issuer}/authorize?${params}`);
+    await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.waitForURL((url) => url.pathname === '/multiple-auth-methods-callback');
+    const code = requireString(new URL(page.url()).searchParams.get('code'), 'code');
+
+    const response = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: client.redirectUri,
+        code_verifier: codeVerifier,
+        client_id: client.clientId,
+        client_secret: client.clientSecret,
+      },
+    });
+    expect(response.status()).toBe(200);
+    const idToken = requireString(((await response.json()) as Record<string, unknown>)['id_token'], 'id_token');
     expect(jwtHeader(idToken)['kid']).toBe(kid);
   });
 
@@ -82,46 +117,6 @@ async function jwksKids(request: APIRequestContext, issuer: string): Promise<str
   const metadata = (await (await request.get(`${issuer}/.well-known/openid-configuration`)).json()) as { jwks_uri: string };
   const jwks = (await (await request.get(metadata.jwks_uri)).json()) as { keys: Array<{ kid: string }> };
   return jwks.keys.map((key) => key.kid);
-}
-
-/** Signs in, approves and redeems the code, and returns the ID Token the token endpoint issued. */
-async function issueIdToken(page: Page, request: APIRequestContext, issuer: string): Promise<string> {
-  const codeVerifier = randomBytes(32).toString('base64url');
-  const params = new URLSearchParams({
-    client_id: client.clientId,
-    redirect_uri: client.redirectUri,
-    response_type: 'code',
-    scope: 'openid',
-    state: randomBytes(16).toString('base64url'),
-    nonce: randomBytes(16).toString('base64url'),
-    code_challenge: createHash('sha256').update(codeVerifier).digest('base64url'),
-    code_challenge_method: 'S256',
-    // A fresh login, whatever session an earlier spec left in the browser.
-    prompt: 'login consent',
-  });
-
-  await page.goto(`${issuer}/authorize?${params}`);
-  await expect(page).toHaveURL(/\/login\?transaction_id=[^&]+$/);
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=[^&]+$/);
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await page.waitForURL((url) => url.pathname === '/multiple-auth-methods-callback');
-  const code = requireString(new URL(page.url()).searchParams.get('code'), 'code');
-
-  const response = await request.post(`${issuer}/token`, {
-    form: {
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: client.redirectUri,
-      code_verifier: codeVerifier,
-      client_id: client.clientId,
-      client_secret: client.clientSecret,
-    },
-  });
-  expect(response.status()).toBe(200);
-  return requireString(((await response.json()) as Record<string, unknown>)['id_token'], 'id_token');
 }
 
 function jwtHeader(jwt: string): Record<string, unknown> {

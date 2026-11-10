@@ -24,7 +24,7 @@
     "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",
     "fastify": "^5.12.2",
-    "google-auth-library": "^11.2.0",
+    "google-auth-library": "^11.3.3",
     "typescript": "^7.0.2"
   }
 }

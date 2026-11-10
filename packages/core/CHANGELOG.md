@@ -1,5 +1,63 @@
 # @maronn-openid-connect/core
 
+## 0.11.0
+
+### Minor Changes
+
+- 4aa963a: クライアントシークレットをハッシュで登録できるようにし、クライアントごとに要求できる scope を制限できるようにする
+  
+  クライアントの登録内容に、任意の項目を 2 つ追加する。
+  どちらも登録しなければ、これまでと同じ挙動になる。
+  
+  - **core: `TokenClientInfo.clientSecretHash` を追加した**。`hashClientSecret(clientSecret)` の戻り値（`sha256:` に続けて、SHA-256 ダイジェストを base64url で表したもの）を登録すると、`verifyClientSecret()` は提示された client_secret のハッシュを登録値と定数時間で比較する（RFC 6819 §5.1.4.1.3）。`clientSecret` と両方を登録した場合は `clientSecretHash` だけを照合に使う。部品関数として `hashClientSecret()` と `verifyClientSecretHash()` を公開した
+  - **core: `ClientInfo.allowedScopes` と `validateClientScope()` を追加した**。`validateClientScope(scope, allowedScopes, redirectUri, state)` は、登録された一覧に無い scope を `invalid_scope` で拒否する（RFC 7591 §2 のクライアントメタデータ `scope`）。`allowedScopes` が `undefined` のクライアントは制限しない
+  - **cli: 生成される認可エンドポイントが `validateClientScope()` を呼ぶ**。`applyOfflineAccessPolicy()` の後に置いているため、許可条件を満たさず無視された `offline_access` は `invalid_scope` にならない。`config.ts` の `RegisteredClient` の説明に 2 つの項目を追記し、契約テストに `clientSecretHash` と `allowedScopes` のケースを追加した
+  
+  クライアント認証を行う生成コードと experimental のエンドポイントはすべて `verifyClientSecret()` を呼んでいるため、`clientSecretHash` で登録したクライアントはどのエンドポイントでも認証できる。
+  `allowedScopes` を検査するのは認可エンドポイントだけで、device authorization grant と CIBA のリクエストエンドポイントは検査しない。
+  
+  experimental と google-login は core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+- 7d06ac2: `claims` リクエストパラメータ（OIDC Core 1.0 §5.5）で読み出せるクレーム名をアロウリストに限定する。`applyRequestedClaims`（UserInfo）と `applyRequestedIdTokenClaims`（ID Token）は、これまで `claims` のキー名を `UserClaimsResolver.findUserClaims()` が返したオブジェクトのプロパティ名として無検査で読み出していたため、DB の行をそのまま返す resolver 実装では `claims={"userinfo":{"password_hash":null}}` のようなリクエストで内部フィールドが scope と無関係に開示された。両関数は新設の `DEFAULT_REQUESTABLE_CLAIMS`（`sub` ＋ `SCOPE_CLAIMS_MAP` の全クレーム名。export 済み）を既定のアロウリストとして own プロパティだけを読み出し、アロウリスト外の要求は §5.5.1 の MUST NOT のとおりエラーにせず黙って省く。アロウリストは新しい第 4 引数で差し替えられる。既定値のままなら標準クレームの挙動は変わらない。
+- d630f25: クライアントの `jwks_uri`（RFC 7591 §2）から鍵を取得する部品と、`request_object_signing_alg`（OpenID Connect Dynamic Client Registration 1.0 §2）の検査を追加し、Request Object の署名検証で鍵と alg を 1 対 1 に固定する（RFC 8725 §3.1）
+  
+  - `validateClientJwksUri()`、`parseClientJwkSet()`、`resolveClientJwksTtlSeconds()`、`fetchClientJwkSet()`、`createClientJwksUriCache()`、`withClientJwksUriKeys()` と `ClientJwksUriError`、`isClientJwksUriError()`（core を 2 度読み込む構成でも形で判定する）、`DEFAULT_CLIENT_JWKS_URI_OPTIONS` を追加する。宛先の検査（https 必須、フラグメントと userinfo の拒否、`localhost` とループバック・私設・リンクローカルの IP リテラルの拒否）、タイムアウト（既定 3 秒）、本文の上限（既定 64 KiB）、リダイレクト不追従、鍵の数の上限（既定 32）、秘密鍵と対称鍵を含む JWK Set の拒否、`Cache-Control: max-age` を下限 30 秒・上限 300 秒に丸めた期限、見慣れない kid での取り直し（OIDC Core 1.0 §10.1.1。既定で 30 秒に 1 回まで）を持つ。既定値はどれも各関数の引数で 1 項目ずつ上書きでき、`fetch` も注入できる
+  - `ClientKeyResolver.findClientKeys()` に任意の第 3 引数 `hint`（`ClientKeyLookupHint`。JOSE ヘッダーの `kid`）を足す。2 引数の実装はそのまま型に合う
+  - `parseRequestObject()` に `requiredSigningAlg` を、`resolveRequestObjectParams()` に `requestObjectSigningAlg` を足す。登録した alg と違う Request Object は、`alg: "none"` も含めてほかのどの検査よりも先に `invalid_request_object` で拒否する（OIDC Core 1.0 §6.3.2）
+  - **破壊的変更**: `parseRequestObject()` と `resolveRequestObjectParams()` の `jwks` オプションを削除し、鍵は `loadJwks`（`(header: { alg, kid? }) => Promise<JwkSet>`）だけで渡す。`loadJwks` は JOSE ヘッダーの検査を通った後でだけ呼ぶので、受け付けない Request Object が鍵の取得（`jwks_uri` への通信など）を引き起こさない。値で持つ鍵は `loadJwks: async () => jwks` で渡す。`ClientJwksUriError` は理由を含まない固定文言（`the client jwks_uri could not be retrieved`）の `invalid_request_object` になる
+  - **破壊的変更**: `DEFAULT_REQUEST_OBJECT_SIGNING_ALGS`（`['RS256']`）を削除し、`resolveRequestObjectParams()` の `supportedSigningAlgs` の既定を、core が検証できる alg すべての `SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS`（RS256、RS384、RS512、ES256、ES384、ES512）にする。各鍵は使える alg を 1 つに固定して検証するので、受け付ける alg を広げても alg の取り違えは起きない。RS256 だけに絞るときは `supportedSigningAlgs: ['RS256']` を渡す
+  - `resolveJwkSigningAlg()`、`importJwkForJwsVerification()` を追加する
+  - 挙動の変化: Request Object の検証は、使える alg（RSA 鍵は `alg`、無ければ RS256。EC 鍵は `crv` から決まる alg）がヘッダーの `alg` と同じ鍵だけを使い、`use` が `sig` 以外の鍵と 2048 ビット未満の RSA 鍵（RFC 7518 §3.3）を使わない。これにより、`alg` の無い静的な RSA 鍵が RS256 の検証に通るようになり（これまでは import に失敗していた）、2048 ビット未満の RSA 鍵と `use: "enc"` の鍵は拒否される。kid は一致するがヘッダーの alg で使える鍵が無いときの `error_description` は `no signing JWK matched the request object header (alg)` になる
+- db21c31: private_key_jwt のクライアント認証（OIDC Core 1.0 §9、RFC 7523 §3）と、`request_uri` による Request Object の取得（OIDC Core 1.0 §6.2、RFC 9101 §5.2）の部品を追加し、署名鍵のキャッシュを破棄できるようにする
+  
+  - クライアントアサーションの検証を、責務ごとの関数として追加する。`decodeClientAssertion()`（JWS の分解。`crit` と空の署名を拒否）、`validateClientAssertionAlg()`（`none` と HS 系、登録した `token_endpoint_auth_signing_alg` と違う alg、受け付けない alg を拒否）、`validateClientAssertionClaims()`（`iss` と `sub` が client_id、`aud` にエンドポイントの URL か issuer、`exp` 必須、`iat` と `nbf` は時計のずれ 60 秒を許して検査、`jti` 必須。個別の `validateClientAssertionSubject()`、`validateClientAssertionAudience()`、`validateClientAssertionTimes()`、`requireClientAssertionJti()` も公開する）、`loadClientAssertionKeys()`（`ClientKeyResolver` の `private_key_jwt` の用途から `kid` で鍵を読む。`ClientJwksUriError` は固定文言の `invalid_client` に変える）、`verifyClientAssertionSignature()`、`consumeClientAssertionJti()`（`ClientAssertionJtiStore` に client_id と `jti` を期限まで記録し、2 回目を拒否する）。どの失敗も `invalid_client` になる。定数 `CLIENT_ASSERTION_TYPE_JWT_BEARER`、`SUPPORTED_CLIENT_ASSERTION_SIGNING_ALGS`（RS256、RS384、RS512、ES256、ES384、ES512）、`DEFAULT_CLIENT_ASSERTION_LEEWAY_SECONDS` も追加する
+  - 型の拡張: `ClientAuthMethod` に `'private_key_jwt'` を、`TokenClientInfo` に `tokenEndpointAuthSigningAlg` を、`PresentedClientCredentials` に `clientAssertion`（方式が `private_key_jwt` のときだけ持つ）を足す
+  - 挙動の変化: `extractClientCredentials()` は `client_assertion_type` と `client_assertion` を先に読み、あれば方式 `private_key_jwt` として返す。片方だけのリクエストと、Basic 認証か `client_secret` との併用は `invalid_request`、jwt-bearer 以外の `client_assertion_type` は `invalid_client` で拒否する。`client_id` が無ければアサーションの `sub` を client_id にする（RFC 7521 §4.2）。`validateClientAuthMethod()` は private_key_jwt のクライアントにシークレットの登録を求めない。補助の `extractClientAssertion()`、`validateClientAssertionNotCombined()`、`resolveClientAssertionClientId()` も公開する
+  - 挙動の変化（セキュリティ）: `verifyClientSecretValue()`（`clientSecretHash` を登録していないクライアントの `verifyClientSecret()`）は、提示されたシークレットが無いか空文字列なら比べずに `invalid_client` で拒否する（`verifyClientSecretHash()` と同じ）。シークレットの照合を、呼び出しの順序や `validateClientAuthMethod()` によらず閉じる側に倒す。private_key_jwt の提示はシークレットを持たず、`verifyClientSecret()` ではなくクライアントアサーションの検証で認証する
+  - **破壊的変更**: `buildProviderMetadata()` に `tokenEndpointAuthSigningAlgValuesSupported` を足し、`token_endpoint_auth_signing_alg_values_supported` を出す。`tokenEndpointAuthMethodsSupported` に `private_key_jwt` か `client_secret_jwt` があるときは必須で（RFC 8414 §2）、無いか空なら例外、`none` を含めても例外
+  - `request_uri` の部品を追加する。`validateRequestUri()`（既定 512 文字まで、https の公開ホスト。宛先の検査は `validateClientJwksUri()` と同じ）、`requestUriFetchUrl()`（フラグメントを除く）、`matchesRegisteredRequestUri()`（登録した `request_uris` との完全一致）、`fetchRequestObjectByReference()`（`Accept: application/jwt` の GET。リダイレクトに従わず、タイムアウト既定 3 秒と本文の上限既定 64 KiB を持ち、`fetch` を注入できる）、`resolveRequestUriParams()`（`request` との併用は `invalid_request`、未登録と取得の失敗は理由を含まない `invalid_request_uri` で拒否し、取得した JWT を `request` に置き換えたパラメータを返す）、`RequestUriError`、`isRequestUriError()`、`DEFAULT_REQUEST_URI_OPTIONS`
+  - `createCachedSigningKeyProvider()` は `invalidate()` を持つ `CachedSigningKeyProvider`（`SigningKeyProvider` の拡張）を返す。`invalidate()` でキャッシュを捨てると、次の呼び出しから元のプロバイダーの新しい鍵を使う（運用中の鍵ローテーション。OIDC Core 1.0 §10.1.1）
+
+### Patch Changes
+
+- edc541a: Require the random authorization transaction ID to match in the browser cookie,
+  screen and submission URLs, and the hidden `transaction_id` field before checking
+  the stored CSRF token or advancing login and consent. Reject missing, mismatched
+  or repeated URL references. Preserve the ID through retries, SSO and the consent
+  redirect after Google login.
+  
+  Generated Next.js password forms now submit to `POST /login/submit` so the handler
+  can verify the actual request URL. Custom login and consent forms must retain the
+  transaction query, hidden `transaction_id`, and hidden `csrf_token`.
+  
+  When regenerating an existing Next.js output directory, remove the obsolete
+  `login/actions.ts` Server Action file.
+- b7bb2a7: JSDoc の無かった関数（`hasAuthScheme` など export しない関数）と、resolver や store のインターフェースのメンバー（`ClientResolver.findClient`、`AuthTransactionStore.get` など）に、振る舞いを書いた JSDoc を足す。挙動は変わらない
+- d58838a: 関数の JSDoc と関数の中のコメント、resolver と store のインターフェースのメンバーの JSDoc を、振る舞いから書く日本語に書き直す。1 段落目は関数が何を返し、何を書き込み、いつ失敗するかを 1 文で書き、条件と理由は 2 段落目以降に、仕様の参照は `@spec` に置く。元の説明がコードと食い違っていた箇所（`validateIdTokenHint` の鍵の選び方、`parseRequestObject` が試す鍵、`applyRequestedIdTokenClaims` が渡されたペイロードをそのまま返す場合など）はコードに合わせた。挙動は変わらない
+- b53ab97: 関数の JSDoc を関数カタログ（`maronn-oidc explain`）が読む形に揃える。1 行目からパイプラインの番号（「ステップ 3:」）を外し、仕様だけの行を `@spec` タグに移す。`buildIdTokenAudience` に JSDoc を書く。挙動は変わらない
+- 83205ba: UserInfo のアクセストークンを、期限の時刻ちょうど（`expiresAt === now`）から期限切れとして扱う。`validateUserInfoTokenExpiration` はこれまで `expiresAt < now` だけを期限切れとしており、同じトークンについて、イントロスペクション（`isIntrospectionTokenActive`）とリフレッシュトークンの判定（`expiresAt <= now`）とは 1 秒ずれていた。RFC 7519 §4.1.4 の `exp` と同じ境界にそろえる。
+- 66e1326: Normalize a missing Request Object key loader to an empty key array. Keep loadJwks optional for permitted unsigned Request Objects, and preserve the explicit RequestObjectError for signed objects with no keys regardless of kid.
+- 71627ac: Give the Request Object and client jwks_uri callback options named public contracts, and generate providers whose endpoints explicitly select registered-client keys. Default user authentication and ID Token verification-key loading now run beneath their endpoint handlers, so the provider map can follow them to core. These changes retain the core API's existing runtime behavior.
+
 ## 0.10.0
 
 ### Minor Changes

@@ -1,5 +1,91 @@
 # @maronn-openid-connect/cli
 
+## 0.16.0
+
+### Minor Changes
+
+- 677ee40: 生成する OP が、クライアントの `jwks_uri`（RFC 7591 §2）と `request_object_signing_alg`（OpenID Connect Dynamic Client Registration 1.0 §2）を扱えるようにする
+  
+  - `registerClient()` に `jwksUri` と `requestObjectSigningAlg` を登録できる。`jwksUri` と `keys` を両方持つクライアントと、http(s) の絶対 URL でない `jwksUri` は、何も書き込まずに Error で拒否する。`--db sql` は `clients` の `jwks_uri` と `request_object_signing_alg` 列に、`--db kv` はクライアントのレコードの `jwks_uri` と `request_object_signing_alg` に保存する
+  - 既定の `ClientKeyResolver`（新しい base のファイル `client-jwks-uri.ts`）が、`jwksUri` を持つクライアントの `clientJwksUriPurposes` の用途の鍵を `jwks_uri` から取得して返す。取得は鍵が必要になったときだけで、https の公開ホストに限り、リダイレクトに従わず、タイムアウトと本文・鍵の数の上限を持つ。鍵は `Cache-Control: max-age` を 30 〜 300 秒に丸めた期間キャッシュし、見慣れない kid では取り直す（OIDC Core 1.0 §10.1.1。既定で 30 秒に 1 回まで）。設定は `ProviderConfig` の平たいフィールド（`allowInsecureClientJwksUri`、`clientJwksUriCacheTtlSeconds`、`clientJwksUriCacheMinTtlSeconds`、`clientJwksUriCacheMaxTtlSeconds`、`clientJwksUriRefetchIntervalSeconds`、`clientJwksUriTimeoutMs`、`clientJwksUriMaxBytes`、`clientJwksUriMaxKeys`、`clientJwksUriCacheMaxEntries`、`clientJwksUriPurposes`）で、1 項目ずつ上書きできる。Hono / Express / Fastify は `applyOidc` の `outboundFetch` で取得に使う fetch を差し替えられ、`clientKeyResolver` に渡した resolver も同じく包む（`jwksUri` を持つクライアントの対象の用途は `jwks_uri` の鍵を返し、それ以外は渡した resolver が答える）
+  - request-object 機能は、受け付ける alg を `requestObjectSigningAlgValuesSupported`（既定は RS256、RS384、RS512、ES256、ES384、ES512）で決め、discovery の `request_object_signing_alg_values_supported` に広告する。クライアントが `requestObjectSigningAlg` を登録していれば、その alg の Request Object だけを受け付ける（OIDC Core 1.0 §6.3.2）。鍵は JOSE ヘッダーの検査を通った後でだけ、`kid` を手がかりに読む
+  - `--enable dynamic-client-registration` の登録エンドポイントは、`jwks_uri` を登録して 201 応答に返す（設定 `acceptJwksUri`、既定 `true`。登録時には取得しない）。`request_object_signing_alg` は discovery が広告する alg の値だけを受理し、`jwks` も登録するときはその alg で使える鍵を要求する。request-object 機能の無い OP では `request_object_signing_alg` を無視する
+  - 取得できない `jwks_uri` のクライアントの Request Object は、理由を含まない固定文言（`the client jwks_uri could not be retrieved`）の `invalid_request_object` で拒否し、理由は `console.warn` に出す
+- 7bd9215: `--enable dynamic-client-registration` が生成する登録エンドポイントで、受理するメタデータを広げ、登録の判定を差し替えられるようにする（RFC 7591 / OpenID Connect Dynamic Client Registration 1.0）
+  
+  - `response_types` に、この OP が答える response_type（implicit-flow / hybrid-flow を生成していれば `id_token`、`id_token token`、`code id_token`、`code token`、`code id_token token`）を登録できる。`grant_types` と `response_types` の対応（RFC 7591 §2.1。`code` は `authorization_code`、`token` と `id_token` は `implicit`）が崩れた登録は `invalid_client_metadata` で拒否する
+  - 登録できる `token_endpoint_auth_method` と `grant_types` を `features/dynamic-client-registration/config.ts` の `tokenEndpointAuthMethods` / `grantTypes`（Next.js は `_oidc-provider/features/dynamic-client-registration/config.ts`）で広げられる。`grantTypes` は OP が答える grant に絞られ、既定は `authorization_code`、`refresh_token`、`implicit`。`client_secret` 系以外の方式（`private_key_jwt` など）を登録したクライアントには `client_secret` を発行しない
+  - `scope`（登録したクライアントの許可 scope 一覧になる。`--scope` を宣言した OP では標準スコープと宣言したスコープだけ）、`client_uri`、`logo_uri`、`tos_uri`、`policy_uri`、`contacts`、`software_id`、`software_version`、`application_type`（既定 `web`。OIDC Registration 1.0 §2 の `redirect_uris` の制約を、省略時も `web` として適用する）、`default_max_age`、`id_token_signed_response_alg` / `userinfo_signed_response_alg`（署名鍵の alg に限る。`id_token_signed_response_alg` は既定 `RS256` を登録する）、`jwks`（RSA / EC の公開鍵。`ClientKeyResolver` の用途 `jwksPurposes` に登録し、署名付き Request Object の検証に使える）を受理し、201 応答に返す。`jwks` と `jwks_uri` の併記は拒否し、`jwks_uri` 単独は理解しないメタデータとして無視する
+  - `software_statement`（RFC 7591 §2.3）を受け付けられるようにする。設定 `verifySoftwareStatement` に渡した関数が検証して返したメタデータを平文の値に優先して適用し、statement をそのまま応答に返す（§3.1.1 / §3.2.1）。関数を設定した OP はすべての登録に `software_statement` を要求し（無ければ `invalid_client_metadata`）、関数は `invalid_software_statement` / `unapproved_software_statement` で拒否する（§3.2.2）。関数を渡さない既定では、これまでどおり statement を無視する。生成コードは statement を自分では検証しない
+  - initial access token の判定を設定 `verifyInitialAccessToken` に渡した関数に委ねる。関数を設定した OP は Bearer トークンの無い登録を 401 で断り、トークンの可否は関数が決める。生成コードはトークンを自分では検証せず、固定文字列の設定 `initialAccessToken` と環境変数 `OIDC_DCR_INITIAL_ACCESS_TOKEN` は無くなる。標準外のメタデータの検証関数の表 `customClientMetadata`（返した値を登録して応答に返す）も同じ `config.ts` にあり、どれも Hono / Express / Fastify では `applyOidc` の `dynamicClientRegistration` オプション、Next.js では `config.ts` の `extendDynamicClientRegistrationConfig()` から渡せる
+  - オプションで渡した一覧（`tokenEndpointAuthMethods`、`grantTypes`、`jwksPurposes`）とカスタムメタデータの表は、生成コードの既定に追加される（`extendDynamicClientRegistrationConfig`）。数値の設定と判定関数は置き換わる
+  - 登録レコードは `RegisteredClient.registrationMetadata` に登録した全メタデータ（カスタムメタデータを含む）を持ち、`jwks` の鍵は `clientKeyResolver` から用途ごとに引ける。Next.js の `ProviderContext`（`_oidc-provider/feature.ts`）に `clientKeyResolver` が加わり、`provider.ts` の `clientKeyResolver` は機能の context フックを通る
+  - OP が適用した既定値（`token_endpoint_auth_method`、`grant_types`、`response_types`、`application_type`、`id_token_signed_response_alg`）をすべて登録メタデータとして 201 応答に返す（OIDC Registration 1.0 §3.2）。`application_type` を省略して `implicit` を登録するクライアントは、https かつ `localhost` 以外の `redirect_uris` が要る
+  - 検証エラーの文言を一部変える。`response_types` の拒否は「この OP が答える response_type の一覧」を、`grant_types` の拒否は「登録できる grant の一覧」を示す
+- db21c31: 生成する OP が、private_key_jwt のクライアント認証、`request_uri`、ログイン画面と同意画面のクライアントの表示を扱えるようにする（OpenID Certification の Dynamic OP プロファイルに合わせる）
+  
+  - private_key_jwt（OIDC Core 1.0 §9）: トークン、イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントが、クライアントアサーションを core の部品で検証する（base の新しいファイル `client-auth.ts`）。`aud` はそのエンドポイントの URL か issuer。鍵は `private_key_jwt` の用途の鍵か `jwks_uri` の鍵で、`jti` の再送は期限まで拒否する（`stores.ts` の `clientAssertionJtiStore`。`--db sql` は新しいテーブル `client_assertion_jtis`、`--db kv` は `client_assertion_jti:<hash>` のキー、`--db` 無しはメモリ）。`registerClient()` に `tokenEndpointAuthMethods: ['private_key_jwt']` と `tokenEndpointAuthSigningAlg` を登録でき、`--db sql` は `client_auths` の `private_key_jwt` の行と `clients.token_endpoint_auth_signing_alg`、`--db kv` はクライアントのレコードの `client_auths` の `private_key_jwt` の要素と `token_endpoint_auth_signing_alg` に保存する。discovery は `token_endpoint_auth_methods_supported` に `private_key_jwt` を、`token_endpoint_auth_signing_alg_values_supported` に `ProviderConfig.tokenEndpointAuthSigningAlgValuesSupported`（既定は RS256、RS384、RS512、ES256、ES384、ES512。private_key_jwt を広告するので空にはできず、空なら discovery が例外になる。RFC 8414 §2）を広告し、イントロスペクションとリボケーションの `*_endpoint_auth_methods_supported` と `*_endpoint_auth_signing_alg_values_supported` も同じにする
+  - `request_uri`（OIDC Core 1.0 §6.2）: request-object 機能の新しいステップ `fetch-request-uri` が、認可エンドポイントの `[resolve-client]` の後、`[resolve-request-object]` の前に、URL の `request_uri` から Request Object を取得し、`request` と同じく検証する。設定は `requestUriParameterSupported`（既定 `true`）、`requireRequestUriRegistration`（既定 `false`）、`allowInsecureRequestUri`、`requestUriTimeoutMs`、`requestUriMaxBytes`、`requestUriMaxLength`（既定 512）。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する（機能を外した OP は `false` を広告し、`request_uri_not_supported` で拒否する）。取得には `outboundFetch`（Hono / Express / Fastify は `createApp` / `applyOidc` のオプション、Next.js は `_oidc-provider/provider.ts`）を使い、`jwks_uri` の取得と共有する。取得の失敗はリダイレクトせずに固定文言の `invalid_request_uri` で拒否し、理由は `console.warn` に出す。`registerClient()` に `requestUris` を登録でき、`--db sql` は新しいテーブル `client_request_uris`、`--db kv` はクライアントのレコードの `request_uris` に保存する
+  - クライアントの表示（OIDC Dynamic Client Registration 1.0 §2）: ログイン画面と同意画面が、クライアントの `clientName`（無ければ client_id）、`logoUri` の画像、`policyUri`、`tosUri`、`clientUri` のリンクを表示する（Hono / Express / Fastify は `views.tsx` の `ClientSummary`、Next.js は `_oidc-provider/client-summary.tsx`）。URL は https のものだけを画面に入れ、`ProviderConfig.allowInsecureClientDisplayUris`（開発用）で http も入れる。`requireClientDisplayUriHostMatch` では、`logoUri` と `policyUri` のホストが `redirectUris` のホストと同じときだけ入れる（同 §9.1）。`registerClient()` に登録でき、`--db sql` は `clients` の `name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` 列、`--db kv` はクライアントのレコードの同名の項目に保存する
+  - **破壊的変更**: Hono / Express / Fastify の `views` の `loginPage` と `consentPage` は `client`（`ClientDisplay`。`clientId` を含む）を必ず受け取り、`ConsentPageParams` の `clientId` は消した。同意画面のビューは client_id を `params.client.clientId` で読む
+  - `--enable dynamic-client-registration`: `tokenEndpointAuthMethods` の既定に `private_key_jwt` を足す。private_key_jwt の登録は `jwks` か `jwks_uri` を要し、`token_endpoint_auth_signing_alg` と、request-object 機能のある OP では `request_uris` を登録できる。登録した `client_name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` は、ログイン画面と同意画面に表示する
+  - **破壊的変更**: `--db sql` のクライアントのテーブルを変えた（`client_auths.client_auth_type` に `private_key_jwt` を足し、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` を `clients` の列にした）。`--db kv` のクライアントのレコードは、どの項目も必ず持つ（`client_auths` に `private_key_jwt` の要素を置き、値の無い項目は `null` か空の配列）。前の CLI で作ったデータベースとクライアントのレコードは作り直す（`schema.sql` を実行し直しても、既存の `clients` と `client_auths` は変わらない）
+  - **破壊的変更**: `registerClient()` は `ClientRegistration` だけを受け取り（`name` は受け取らない）、`clientName` を `clients.name`（`--db kv` はレコードの `name`）に書く
+- b53ab97: `maronn-oidc explain` を足し、生成される OP を CLI のコマンドから core の関数までたどれるようにする
+  
+  - `explain` は、エンドポイントの一覧、1 つのエンドポイントのステップ、ステップの関数が呼ぶ関数（`--depth` 段、core まで）とそれぞれの役割・仕様の節・投げるエラー、関数 1 つの呼び先と `--callers` で呼び元（それを使うステップ、エンドポイント、`--enable` の機能）を表示する。`--format json` は UI 向けの地図を書く。Next.js は `route.ts` のブロックが呼ぶ関数を表示する
+  - 関数カタログ: CLI のビルドが core / experimental / google-login と apps の関数宣言を読み、JSDoc の 1 行目、`@spec`、`@throws`、本体が呼ぶ関数、呼び元を `templates/functions.catalog.json` に焼く
+  - フロー文書は version 2 になる。ステップの `calls` は関数カタログの id（手書きの名前ではなく、ステップの関数のソースから読む）、`functionId` はステップの関数、`dynamicCalls` はソースに現れない呼び出し（resolver のメソッドなど）。version 1 の文書も `--flow` に渡せる
+  - 生成コードのステップの `meta` から手書きの `calls` を外す。残るのは `'consentResolver.recordConsent'` のような、ソースに呼び出しとして現れないものだけ
+  - 生成コードの関数の JSDoc から「ステップ N:」の番号を外し、仕様だけの行を `@spec` タグに移す。JSDoc の無かった補助関数（`createStoreResolvers`、`applyOidc`、db の `createProviderStores` など）に 1 行目を書く
+  - `explain --format json` は、リポジトリの地図ページ（`apps/map`。Cloudflare Workers に置く）の入力になる
+- d58838a: 生成コードの説明と、`graph` と `explain` が表示する名前を日本語にする
+  
+  - 生成コードの関数の JSDoc と関数の中のコメント、resolver と store のインターフェースのメンバーの JSDoc、各 `endpoint.ts` の説明を、振る舞いから書く日本語に書き直す。元の説明がコードと食い違っていた箇所はコードに合わせた。生成コードの挙動は変わらない
+  - ステップ、エンドポイント、エンドポイントのグループ、矢印の名前（`meta` と `defineEndpoint()` の `label`）と、パイプラインとルートハンドラのブロックの目印（`// [step-id] 名前 — 仕様`）の名前を日本語にする。`graph` の図、`explain` の一覧、`--format json` の `label` がこの名前になる。ステップ ID と矢印の値（`authorization_code`、`GET` など）は変わらない
+  - 機能の一覧の説明（`explain` と地図に出る `summary`）を日本語にする
+  - 関数カタログは、JSDoc とコメントの行を、日本語どうしのあいだでは空白を入れずにつなぐ。これまでは一文を折り返すと、`explain` と地図の説明文の文中に空白が入っていた。説明文の箇条書きの行は改行を保つ
+- b1a675c: 関数カタログが関数の本体から処理の流れを読み、生成コードのすべての関数とエンドポイントに振る舞いの説明を付ける
+  
+  - 関数カタログは、関数の本体から呼ぶ関数を実行順に並べた処理の流れ（分岐の条件、`return` と `throw`）を読む。resolver や store のメソッドの呼び出し（`consentResolver.recordConsent()` など）は、そのインターフェースのメンバーの JSDoc で説明する。リポジトリの地図（`apps/map`）の関数のページが、これをエンドポイントのステップと同じ形の図にする
+  - カタログが関数の範囲と呼び出しを読むときに、正規表現リテラルとテンプレートリテラルを文字列やコメントと同じく見分ける。これまで `/"/g` のような正規表現の後ろを読み違え、`htmlResponse` などの関数と 28 の呼び出しを `explain` に出していなかった
+  - JSDoc と関数宣言のあいだに `// eslint-disable-next-line` の行があっても、その JSDoc を関数の説明として読む（`applyOidc`）
+  - `graph --format json` のエンドポイントに、そのエンドポイントの振る舞いを書いた `summary` を足す。生成コードの各 `endpoint.ts` の JSDoc の 1 段落目から読む
+  - 生成コードの関数で JSDoc の無かったもの（export しない関数、Next.js の Route Handler、React コンポーネント）と、resolver や store のインターフェースのメンバーに、振る舞いを書いた JSDoc を足す。各 `endpoint.ts` の JSDoc はエンドポイントの振る舞いを書いた文にする。生成コードの挙動は変わらない
+- 4aa963a: クライアントシークレットをハッシュで登録できるようにし、クライアントごとに要求できる scope を制限できるようにする
+  
+  クライアントの登録内容に、任意の項目を 2 つ追加する。
+  どちらも登録しなければ、これまでと同じ挙動になる。
+  
+  - **core: `TokenClientInfo.clientSecretHash` を追加した**。`hashClientSecret(clientSecret)` の戻り値（`sha256:` に続けて、SHA-256 ダイジェストを base64url で表したもの）を登録すると、`verifyClientSecret()` は提示された client_secret のハッシュを登録値と定数時間で比較する（RFC 6819 §5.1.4.1.3）。`clientSecret` と両方を登録した場合は `clientSecretHash` だけを照合に使う。部品関数として `hashClientSecret()` と `verifyClientSecretHash()` を公開した
+  - **core: `ClientInfo.allowedScopes` と `validateClientScope()` を追加した**。`validateClientScope(scope, allowedScopes, redirectUri, state)` は、登録された一覧に無い scope を `invalid_scope` で拒否する（RFC 7591 §2 のクライアントメタデータ `scope`）。`allowedScopes` が `undefined` のクライアントは制限しない
+  - **cli: 生成される認可エンドポイントが `validateClientScope()` を呼ぶ**。`applyOfflineAccessPolicy()` の後に置いているため、許可条件を満たさず無視された `offline_access` は `invalid_scope` にならない。`config.ts` の `RegisteredClient` の説明に 2 つの項目を追記し、契約テストに `clientSecretHash` と `allowedScopes` のケースを追加した
+  
+  クライアント認証を行う生成コードと experimental のエンドポイントはすべて `verifyClientSecret()` を呼んでいるため、`clientSecretHash` で登録したクライアントはどのエンドポイントでも認証できる。
+  `allowedScopes` を検査するのは認可エンドポイントだけで、device authorization grant と CIBA のリクエストエンドポイントは検査しない。
+  
+  experimental と google-login は core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+
+### Patch Changes
+
+- edc541a: Require the random authorization transaction ID to match in the browser cookie,
+  screen and submission URLs, and the hidden `transaction_id` field before checking
+  the stored CSRF token or advancing login and consent. Reject missing, mismatched
+  or repeated URL references. Preserve the ID through retries, SSO and the consent
+  redirect after Google login.
+  
+  Generated Next.js password forms now submit to `POST /login/submit` so the handler
+  can verify the actual request URL. Custom login and consent forms must retain the
+  transaction query, hidden `transaction_id`, and hidden `csrf_token`.
+  
+  When regenerating an existing Next.js output directory, remove the obsolete
+  `login/actions.ts` Server Action file.
+- 0c66c52: 関数フローで if の条件と成立・不成立を明示し、早期 return 後の到達不能な処理を省く。
+  短絡評価と三項演算子の呼び出しを分岐させ、catch への矢印を例外が発生する呼び出し・throw から出す。
+  条件に添えられたコメントを条件ノードに保持し、地図で具体的な判定内容を表示できるようにする。
+- e3d0267: 生成される UserInfo エンドポイントが、`Authorization: Bearer` の後ろに空白が 2 つ以上あってもアクセストークンを読む（RFC 6750 §2.1 の `"Bearer" 1*SP b64token`）。これまでは最初の空白より後ろをそのままトークンとしていたため、先頭に空白の残った値で照合し、invalid_token で拒否していた。
+- 71627ac: Give the Request Object and client jwks_uri callback options named public contracts, and generate providers whose endpoints explicitly select registered-client keys. Default user authentication and ID Token verification-key loading now run beneath their endpoint handlers, so the provider map can follow them to core. These changes retain the core API's existing runtime behavior.
+
 ## 0.15.1
 
 ### Patch Changes

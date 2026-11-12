@@ -15,6 +15,8 @@ export {
   validateRequestObjectConsistency,
   validateResponseType,
   validateAuthorizationScope,
+  // OIDC Core 1.0 §3.2.2.1 / §3.3.2.1: code 以外の response_type は openid を必須にする
+  validateOpenIdScopeForResponseType,
   validateAuthorizationCodePkce,
   validatePromptParameter,
   applyOfflineAccessPolicy,
@@ -36,6 +38,9 @@ export {
   // RFC 7591 §2: クライアントに登録された scope の照合
   validateClientScope,
   requireAuthorizationScope,
+  // RFC 6749 §3.3: openid のないリクエストも受け付けるときの scope の検証
+  requireExplicitAuthorizationScope,
+  validateAuthorizationScopeNotEmpty,
   validateOpenIdScope,
   filterOfflineAccessScope,
   validateMaxAge,
@@ -116,6 +121,7 @@ export type {
   ClientResolver,
   ResolvedRequestObjectParams,
   ResolveRequestObjectOptions,
+  AuthorizationScopeOptions,
   ValidatedAuthorizationRequest,
   OfflineAccessGrantedCallback,
 } from './authorization-request.js';
@@ -173,6 +179,25 @@ export {
   validateRefreshTokenScopeNotEmpty,
   validateRefreshTokenScopeWithinGrant,
 } from './refresh-token-grant.js';
+
+export {
+  // client_credentials グラントのステップ関数（RFC 6749 §4.4 / OAuth 2.1 §4.2）
+  CLIENT_CREDENTIALS_GRANT_TYPE,
+  CLIENT_CREDENTIALS_FORBIDDEN_SCOPES,
+  validateClientCredentialsGrantAllowed,
+  validateClientCredentialsConfidentialClient,
+  validateClientCredentialsScopeAllowed,
+  validateClientCredentialsScopeRegistered,
+  resolveClientCredentialsScope,
+  resolveClientCredentialsAudience,
+  buildValidatedClientCredentialsRequest,
+  buildClientCredentialsTokenResponse,
+} from './client-credentials-grant.js';
+
+export type {
+  ValidatedClientCredentialsRequest,
+  ClientCredentialsTokenResponse,
+} from './client-credentials-grant.js';
 
 export type {
   TokenRequestParams,

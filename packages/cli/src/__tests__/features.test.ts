@@ -12,6 +12,7 @@ describe('AVAILABLE_FEATURES', () => {
     expect(AVAILABLE_FEATURES).toEqual([
       'pkce',
       'refresh-token',
+      'client-credentials',
       'introspection',
       'revocation',
       'request-object',
@@ -49,6 +50,7 @@ describe('DEFAULT_FEATURES', () => {
     expect(DEFAULT_FEATURES).toEqual({
       pkce: true,
       refreshToken: true,
+      clientCredentials: true,
       introspection: true,
       revocation: true,
       requestObject: true,
@@ -75,6 +77,7 @@ describe('resolveFeatures', () => {
       expect(resolveFeatures({})).toEqual({
         pkce: true,
         refreshToken: true,
+        clientCredentials: true,
         introspection: true,
         revocation: true,
         requestObject: true,
@@ -100,6 +103,7 @@ describe('resolveFeatures', () => {
       expect(resolveFeatures({ disable: ['refresh-token'] })).toEqual({
         pkce: true,
         refreshToken: false,
+        clientCredentials: true,
         introspection: true,
         revocation: true,
         requestObject: true,
@@ -125,6 +129,7 @@ describe('resolveFeatures', () => {
       ).toEqual({
         pkce: false,
         refreshToken: true,
+        clientCredentials: true,
         introspection: false,
         revocation: false,
         requestObject: true,
@@ -154,6 +159,7 @@ describe('resolveFeatures', () => {
       expect(resolveFeatures({ enable: ['request-object'] })).toEqual({
         pkce: true,
         refreshToken: true,
+        clientCredentials: true,
         introspection: true,
         revocation: true,
         requestObject: true,
@@ -177,6 +183,7 @@ describe('resolveFeatures', () => {
       expect(resolveFeatures({ enable: ['par'] })).toEqual({
         pkce: true,
         refreshToken: true,
+        clientCredentials: true,
         introspection: true,
         revocation: true,
         requestObject: true,
@@ -215,6 +222,7 @@ describe('resolveFeatures', () => {
       ).toEqual({
         pkce: true,
         refreshToken: true,
+        clientCredentials: true,
         introspection: true,
         revocation: true,
         requestObject: true,
@@ -238,6 +246,7 @@ describe('resolveFeatures', () => {
       expect(resolveFeatures({ enable: ['par'], disable: ['revocation'] })).toEqual({
         pkce: true,
         refreshToken: true,
+        clientCredentials: true,
         introspection: true,
         revocation: false,
         requestObject: true,
@@ -261,13 +270,13 @@ describe('resolveFeatures', () => {
   describe('validation errors', () => {
     it('should reject an unknown feature name in disable', () => {
       expect(() => resolveFeatures({ disable: ['dpop'] })).toThrow(
-        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par',
+        'Unknown feature: "dpop". Available features: pkce, refresh-token, client-credentials, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par',
       );
     });
 
     it('should reject an unknown feature name in enable', () => {
       expect(() => resolveFeatures({ enable: ['self-issued'] })).toThrow(
-        'Unknown feature: "self-issued". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par',
+        'Unknown feature: "self-issued". Available features: pkce, refresh-token, client-credentials, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par',
       );
     });
 

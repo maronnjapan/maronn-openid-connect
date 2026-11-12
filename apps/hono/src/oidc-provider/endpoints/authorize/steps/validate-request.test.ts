@@ -9,6 +9,7 @@ import {
   STATE,
 } from '../../../../test-support/authorize.js';
 import { providerContext } from '../../../../test-support/context.js';
+import type { ProviderConfig } from '../../../config.js';
 import { findUnsupportedScopes } from '../../../scopes.js';
 import type { AuthorizationRequestInput } from '../outcome.js';
 import { validateAuthorizationRequestParams } from './validate-request.js';
@@ -35,9 +36,10 @@ async function validate(
     effectiveParams?: AuthorizationRequestInput;
     requestObjectClaims?: Record<string, unknown>;
     client?: ClientInfo;
+    config?: Partial<ProviderConfig>;
   } = {},
 ) {
-  const { c } = await providerContext();
+  const { c } = await providerContext({ options: { config: input.config } });
   return validateAuthorizationRequestParams(c, {
     params,
     effectiveParams: input.effectiveParams,
@@ -92,6 +94,17 @@ describe('validateAuthorizationRequestParams', () => {
       });
     });
 
+    // OIDC Core 1.0 §3.1.2.2: a request without openid is not an OpenID Connect
+    // request, but the provider accepts it as an OAuth 2.0 request.
+    it('should accept a scope without openid as an OAuth 2.0 request', async () => {
+      const validated = await validate(paramsWith({ scope: 'reports.read reports.write' }));
+
+      expect(validated).toMatchObject({
+        responseType: 'code',
+        scope: ['reports.read', 'reports.write'],
+      });
+    });
+
     // OIDC Core 1.0 §3.1.3.2: the token request repeats redirect_uri only when
     // the authorization request sent it.
     it('should set redirectUriExplicit to false when the request left redirect_uri out', async () => {
@@ -140,9 +153,37 @@ describe('validateAuthorizationRequestParams', () => {
       });
     });
 
-    // OIDC Core 1.0 §3.1.2.1: scope MUST contain openid.
-    it('should reject a scope without openid with invalid_scope', async () => {
-      await expect(validate(paramsWith({ scope: 'profile' }))).rejects.toMatchObject({
+    // OIDC Core 1.0 §3.1.2.1: with requireOpenIdScope, scope MUST contain openid.
+    it('should reject a scope without openid with invalid_scope when requireOpenIdScope is set', async () => {
+      await expect(
+        validate(paramsWith({ scope: 'profile' }), { config: { requireOpenIdScope: true } }),
+      ).rejects.toMatchObject({
+        error: 'invalid_scope',
+        errorDescription: 'scope must include openid',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+
+    // RFC 6749 §3.3: the provider defines no default scope, so scope is required of an OAuth 2.0 request too.
+    it('should reject a request without scope with invalid_scope', async () => {
+      const params = paramsWith();
+      delete params.scope;
+
+      await expect(validate(params)).rejects.toMatchObject({
+        error: 'invalid_scope',
+        errorDescription: 'Missing scope: this authorization server defines no default scope',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+
+    // OIDC Core 1.0 §3.2.2.1 / §3.3.2.1: a response type other than code is an OpenID Connect flow.
+    it('should reject a response type other than code without openid with invalid_scope', async () => {
+      const implicit: ClientInfo = { ...client, grantTypes: ['implicit'], responseTypes: ['id_token token'] };
+      const params = paramsWith({ response_type: 'id_token token', scope: 'reports.read' });
+
+      await expect(validate(params, { client: implicit })).rejects.toMatchObject({
         error: 'invalid_scope',
         errorDescription: 'scope must include openid',
         redirectUri: REDIRECT_URI,

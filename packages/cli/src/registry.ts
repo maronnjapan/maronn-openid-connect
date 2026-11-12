@@ -50,6 +50,7 @@ const EXPERIMENTAL = ['@maronn-openid-connect/experimental'];
 export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'pkce', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'すべての認可コードのリクエストに PKCE を求める（RFC 7636）' },
   { id: 'refresh-token', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'refresh_token グラント、offline_access、リフレッシュトークンのローテーション' },
+  { id: 'client-credentials', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'client_credentials グラント: クライアント自身のアクセストークン（RFC 6749 §4.4）' },
   { id: 'introspection', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'トークンイントロスペクションエンドポイント（RFC 7662）' },
   { id: 'revocation', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'トークン失効エンドポイント（RFC 7009）' },
   { id: 'request-object', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: '値で渡す署名付きリクエストオブジェクト（OIDC Core 1.0 §6.1）' },
@@ -113,6 +114,7 @@ export function enabledFeatureIds(features: OidcFeatureConfig): string[] {
 export const AVAILABLE_FEATURES = [
   'pkce',
   'refresh-token',
+  'client-credentials',
   'introspection',
   'revocation',
   'request-object',
@@ -201,6 +203,12 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  * - refreshToken: when false, the token endpoint rejects the refresh_token
  *   grant with `unsupported_grant_type`, offline_access is never granted, and
  *   no refresh token is issued or persisted.
+ * - clientCredentials: when true (the default), the token endpoint answers the
+ *   client_credentials grant (RFC 6749 §4.4 / OAuth 2.1 §4.2) for a
+ *   confidential client that registered it: an access token for the client
+ *   itself (sub = client_id), limited to the scopes the client registered,
+ *   without a refresh token or an ID Token. Discovery advertises the grant.
+ *   When false, the grant is rejected with `unsupported_grant_type`.
  * - introspection: when false, the RFC 7662 endpoint is not generated.
  * - revocation: when false, the RFC 7009 endpoint is not generated.
  * - requestObject: when false, the authorize endpoint rejects the `request`
@@ -296,6 +304,7 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
 export interface OidcFeatureConfig {
   pkce: boolean;
   refreshToken: boolean;
+  clientCredentials: boolean;
   introspection: boolean;
   revocation: boolean;
   requestObject: boolean;
@@ -318,6 +327,7 @@ export interface OidcFeatureConfig {
 const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
   pkce: 'pkce',
   'refresh-token': 'refreshToken',
+  'client-credentials': 'clientCredentials',
   introspection: 'introspection',
   revocation: 'revocation',
   'request-object': 'requestObject',
@@ -351,6 +361,7 @@ const EXTENSION_FEATURE_KEYS: Record<ExtensionFeatureName, keyof OidcFeatureConf
 export const DEFAULT_FEATURES: OidcFeatureConfig = {
   pkce: true,
   refreshToken: true,
+  clientCredentials: true,
   introspection: true,
   revocation: true,
   requestObject: true,

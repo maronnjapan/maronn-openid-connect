@@ -11,6 +11,7 @@
 'the body has {word} {string}': 'ボディの {0} が {1} である'
 'the body has {word} {int}': 'ボディの {0} が {1} である'
 'the body has a(n) {word}': 'ボディに {0} がある'
+'the body has no {word}': 'ボディに {0} が無い'
 'the length of {word} is {int}': '{0} の長さが {1} である'
 
 # in-process/token.steps.ts

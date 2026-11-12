@@ -31,10 +31,17 @@ export async function openDriver(): Promise<InProcessDriver> {
   });
   return {
     issuer: TEST_ISSUER,
-    async registerClient({ clientId, clientSecret, redirectUri, authMethod }) {
+    async registerClient({ clientId, clientSecret, redirectUri, authMethod, grantTypes, scope }) {
       await registerClient(
         db,
-        confidentialClient({ clientId, clientSecret, redirectUris: [redirectUri], tokenEndpointAuthMethods: [authMethod] }),
+        confidentialClient({
+          clientId,
+          clientSecret,
+          redirectUris: [redirectUri],
+          tokenEndpointAuthMethods: [authMethod],
+          ...(grantTypes === undefined ? {} : { grantTypes }),
+          ...(scope === undefined ? {} : { scope }),
+        }),
       );
     },
     async storeAuthorizationCode({ code, clientId, redirectUri, scope, codeChallenge }) {

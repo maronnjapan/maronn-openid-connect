@@ -146,6 +146,27 @@ export function readRequestUri(
 }
 
 /**
+ * OAuth 2.0 beside OpenID Connect. OIDC_REQUIRE_OPENID_SCOPE=1 makes the
+ * provider answer OpenID Connect requests only: an authorization request
+ * whose scope has no openid is invalid_scope (OIDC Core 1.0 §3.1.2.1), as it
+ * was before the provider accepted OAuth 2.0 requests.
+ * OIDC_CLIENT_CREDENTIALS_ALLOWED_AUDIENCES lists, separated by commas, the
+ * resources a client_credentials request may name with its audience
+ * parameter (RFC 8707 §2). An unset variable keeps the default of config.ts
+ * and of the client-credentials feature: requests without openid are accepted,
+ * and no audience may be named.
+ */
+export function readOAuthProfile(
+  env: Environment,
+): Partial<Pick<ProviderConfig, 'requireOpenIdScope' | 'clientCredentialsAllowedAudiences'>> {
+  const allowedAudiences = readList(env['OIDC_CLIENT_CREDENTIALS_ALLOWED_AUDIENCES']);
+  return {
+    ...(env['OIDC_REQUIRE_OPENID_SCOPE'] === '1' ? { requireOpenIdScope: true } : {}),
+    ...(allowedAudiences.length > 0 ? { clientCredentialsAllowedAudiences: allowedAudiences } : {}),
+  };
+}
+
+/**
  * EXPERIMENTAL (Cross-App Access / ID-JAG): the trust configuration, so two
  * instances of the app can play the IdP and the resource authorization server
  * against each other (tests/e2e does exactly that).

@@ -16,6 +16,7 @@ export const endpoint = defineEndpoint({
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
     { id: 'parse-request', consumes: [], produces: ['params'] },
     { id: 'authenticate-client', consumes: ['params'], produces: ['tokenClient', 'authenticatedClientId'] },
+    { id: 'dispatch-client-credentials', feature: 'client-credentials', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'dispatch-id-jag-issuance', feature: 'id-jag', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'dispatch-id-jag-redemption', feature: 'id-jag', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'dispatch-token-exchange', feature: 'token-exchange', consumes: ['params', 'tokenClient', 'keys'], produces: [] },

@@ -46,7 +46,7 @@ export const meta = step({
  * `grant_type` の検証（core の `validateGrantTypeSupported()`）は `authorization_code` と `refresh_token` しか受け付けず、この URN を `unsupported_grant_type` で拒否するためである。
  * デバイスコードのグラントなら、このステップが応答まで行い、標準のグラントの処理には進まない。
  *
- * `device_code` のレコードが承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンスで応答する。
+ * `device_code` のレコードが承認済みなら、アクセストークン（`scope` に `openid` があれば ID トークン、`offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンスで応答する。
  * 承認済みでなければ、`processDeviceCodeGrant()` が投げる `DeviceAuthorizationError` を、同じコードとステータス（400）の `TokenEndpointError` にして投げる。
  * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` を表す `TokenEndpointError` を投げる。
  * 投げた `TokenEndpointError` は、トークンエンドポイントのエラー応答のステップがそのまま返す。
@@ -137,34 +137,38 @@ export async function redeemDeviceCode(
       keyId: deviceKeyId,
     });
 
-    // ID トークンは必ず発行する。
-    // デバイス認可エンドポイントが `openid` スコープを必須にしているためである。
-    // RFC 8628 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
-    // 認可コードがないので、`c_hash` も含めない。
-    const deviceAtHash = await computeAtHash(deviceAccessToken, deviceIdTokenPrivateKey);
     const deviceAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
     const { acr: deviceAcr, amr: deviceAmr } = await resolveAcrAmr({
       subject: deviceGrant.subject,
       clientId: deviceGrant.clientId,
       acrResolver: deviceAcrResolver,
     });
-    const deviceIdTokenPayload = buildIdTokenPayload({
-      issuer: deviceConfig.issuer,
-      subject: deviceGrant.subject,
-      clientId: deviceGrant.clientId,
-      scope: deviceGrant.scope,
-      expiresIn: deviceConfig.idTokenExpiresIn,
-      issuedAt: deviceIssuedAt,
-      atHash: deviceAtHash,
-      authTime: deviceGrant.authTime,
-      acr: deviceAcr,
-      amr: deviceAmr,
-    });
-    const deviceIdToken = await generateIdToken({
-      payload: deviceIdTokenPayload,
-      privateKey: deviceIdTokenPrivateKey,
-      keyId: deviceIdTokenKeyId,
-    });
+
+    // ID トークンは、スコープに `openid` があるときだけ発行する（標準のグラントと同じ規則）。
+    // 設定の `requireOpenIdScope` が `false` の OP は `openid` のないデバイス認可リクエストも受け付け、そのグラントにはアクセストークンだけを返す。
+    // RFC 8628 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
+    // 認可コードがないので、`c_hash` も含めない。
+    let deviceIdToken: string | undefined;
+    if (deviceGrant.scope.includes('openid')) {
+      const deviceAtHash = await computeAtHash(deviceAccessToken, deviceIdTokenPrivateKey);
+      const deviceIdTokenPayload = buildIdTokenPayload({
+        issuer: deviceConfig.issuer,
+        subject: deviceGrant.subject,
+        clientId: deviceGrant.clientId,
+        scope: deviceGrant.scope,
+        expiresIn: deviceConfig.idTokenExpiresIn,
+        issuedAt: deviceIssuedAt,
+        atHash: deviceAtHash,
+        authTime: deviceGrant.authTime,
+        acr: deviceAcr,
+        amr: deviceAmr,
+      });
+      deviceIdToken = await generateIdToken({
+        payload: deviceIdTokenPayload,
+        privateKey: deviceIdTokenPrivateKey,
+        keyId: deviceIdTokenKeyId,
+      });
+    }
 
     await accessTokenStore.set(deviceAccessToken, {
       sub: deviceGrant.subject,

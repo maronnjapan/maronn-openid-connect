@@ -122,8 +122,10 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
 
     // パラメータを、認可エンドポイントと同じ規則で検証する（RFC 9126 §2.1）。
     // 登録されていない `redirect_uri` や不正な `scope` は、エンドユーザーが画面を見る前にここで拒否する。
+    // PKCE を省いたリクエストを許すかどうかと、`scope` に `openid` を求めるかどうかは、認可エンドポイントと同じ設定に従う。
     await validatePushedAuthorizationParams(pushedParams, clientResolver, {
       allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
+      requireOpenIdScope: config.requireOpenIdScope,
     });
 
     // 暗号論的な乱数で参照値を作り、その参照値でリクエストを保存する（RFC 9126 §2.2、§7.1）。

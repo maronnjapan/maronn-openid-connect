@@ -7,13 +7,17 @@
  * that cannot do something the interface asks for does not compile.
  */
 
-/** A confidential client registered for the authorization_code and refresh_token grants. */
+/** A confidential client, registered for the authorization_code and refresh_token grants unless it names its own. */
 export interface ConfidentialClient {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
   /** How it authenticates at the token endpoint: client_secret_basic or client_secret_post. */
   authMethod: 'client_secret_basic' | 'client_secret_post';
+  /** The grant types it registers (RFC 7591 §2 grant_types); authorization_code and refresh_token when absent. */
+  grantTypes?: string[];
+  /** The scopes it registers (RFC 7591 §2 scope); no scope list when absent. */
+  scope?: string[];
 }
 
 /** An authorization code as the consent step of the OP stores it, issued to a client for a user. */

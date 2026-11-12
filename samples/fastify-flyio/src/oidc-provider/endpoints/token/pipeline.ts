@@ -1,5 +1,6 @@
 import { WebRouter } from '../../web-router.js';
 import { redeemCibaRequest } from '../../features/ciba/steps/dispatch-ciba.js';
+import { issueClientCredentialsToken } from '../../features/client-credentials/steps/dispatch-client-credentials.js';
 import { redeemDeviceCode } from '../../features/device-authorization-grant/steps/dispatch-device-code.js';
 import { decideRefreshTokenIssuance } from '../../features/refresh-token/steps/decide-refresh-token-issuance.js';
 import { issueRefreshToken } from '../../features/refresh-token/steps/issue-refresh-token.js';
@@ -41,6 +42,10 @@ tokenApp.post('/', async (c) => {
 
     // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
+
+    // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
+    const clientCredentialsResponse = await issueClientCredentialsToken(c, params, tokenClient);
+    if (clientCredentialsResponse) return clientCredentialsResponse;
 
     // [dispatch-device-code] (feature: device-authorization-grant) device_code を引き換える — RFC 8628 §3.4 / §3.5
     const deviceGrantResponse = await redeemDeviceCode(c, params, tokenClient, authenticatedClientId);

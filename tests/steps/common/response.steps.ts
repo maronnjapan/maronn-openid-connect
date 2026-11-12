@@ -48,6 +48,11 @@ Then('the body has a(n) {word}', async ({ exchange }, name: string) => {
   expect(value).not.toBe('');
 });
 
+// A member the response must not carry (a refresh_token or an id_token of a grant that issues none).
+Then('the body has no {word}', async ({ exchange }, name: string) => {
+  expect(jsonBody(exchange)).not.toHaveProperty(name);
+});
+
 Then('the length of {word} is {int}', async ({ exchange }, name: string, length: number) => {
   expect(jsonBody(exchange)[name]).toHaveLength(length);
 });

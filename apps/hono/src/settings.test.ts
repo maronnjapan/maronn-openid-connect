@@ -6,6 +6,7 @@ import {
   readCrossAppAccess,
   readDynamicClientRegistration,
   readList,
+  readOAuthProfile,
   readPostLogoutRedirectUris,
   readRegisteredClients,
   readRequestUri,
@@ -118,6 +119,29 @@ describe('readClientJwksUri', () => {
     expect(() => readClientJwksUri({ OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS: '-1' })).toThrow(
       'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS must be a non-negative integer, not "-1"',
     );
+  });
+});
+
+describe('readOAuthProfile', () => {
+  // The defaults of the code: requests without openid are accepted, and no audience may be named.
+  it('should keep the defaults of the code when nothing is set', () => {
+    expect(readOAuthProfile({})).toEqual({});
+  });
+
+  // OIDC Core 1.0 §3.1.2.1: an OP of OpenID Connect requests only.
+  it('should require the openid scope when OIDC_REQUIRE_OPENID_SCOPE is 1', () => {
+    expect(readOAuthProfile({ OIDC_REQUIRE_OPENID_SCOPE: '1' })).toEqual({ requireOpenIdScope: true });
+  });
+
+  it('should keep accepting requests without openid for any other value', () => {
+    expect(readOAuthProfile({ OIDC_REQUIRE_OPENID_SCOPE: '0' })).toEqual({});
+  });
+
+  // RFC 8707 §2: the resources a client_credentials request may name.
+  it('should read the allowed audiences of client_credentials as a comma-separated list', () => {
+    expect(
+      readOAuthProfile({ OIDC_CLIENT_CREDENTIALS_ALLOWED_AUDIENCES: 'https://api.example.com, https://billing.example.com' }),
+    ).toEqual({ clientCredentialsAllowedAudiences: ['https://api.example.com', 'https://billing.example.com'] });
   });
 });
 

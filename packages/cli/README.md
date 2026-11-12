@@ -525,6 +525,8 @@ export async function register(): Promise<void> {
 | `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
 | `OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW` | `1` で `allowNonPkceAuthorizationCodeFlow` を有効にし、confidential client の PKCE を任意にする（`pkce` 有効時。`_oidc-provider/features/pkce/feature.ts`） |
 | `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT` | `1` で署名の無い Request Object を受け付ける（`request-object` 有効時。`_oidc-provider/features/request-object/feature.ts`） |
+| `OIDC_REQUIRE_OPENID_SCOPE` | `1` で `requireOpenIdScope` を有効にし、`scope` に `openid` のない認可リクエストを `invalid_scope` で拒否する（`_oidc-provider/provider.ts`）。未指定なら OAuth 2.0 のリクエストとして受け付ける |
+| `OIDC_CLIENT_CREDENTIALS_ALLOWED_AUDIENCES` | `client_credentials` グラントの `audience` で要求できるリソース（カンマ区切り。`client-credentials` 有効時。`_oidc-provider/features/client-credentials/feature.ts`）。未指定なら `audience` の指定をすべて拒否する |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | `--db kv` の `instance.ts` が使う Upstash Redis。未指定ならローカルの node:sqlite（`OIDC_SQLITE_PATH`、既定は `.data/oidc.sqlite`） |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時。`_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()`） |
 
@@ -544,6 +546,7 @@ maronn-oidc generate express --disable pkce
 |---|---|---|
 | `pkce` | 有効 | PKCE を任意化する（`allowNonPkceAuthorizationCodeFlow: true`）。明示的な confidential client の完全な非PKCEリクエストのみ許可され、public client や不正な PKCE 値は引き続き拒否される |
 | `refresh-token` | 有効 | `refresh_token` grant を `unsupported_grant_type` で拒否。`offline_access` は付与されず、リフレッシュトークンは発行されない。discovery からも除去される |
+| `client-credentials` | 有効 | `client_credentials` grant（RFC 6749 §4.4 / OAuth 2.1 §4.2）を `unsupported_grant_type` で拒否し、discovery の `grant_types_supported` から除く。有効なときは、`grant_types` に `client_credentials` を登録したコンフィデンシャルクライアントに、クライアント自身のアクセストークン（`sub` は `client_id`）を発行する。スコープはクライアントが登録した範囲に限り、`openid` / `offline_access`、リフレッシュトークン、ID Token は発行しない |
 | `introspection` | 有効 | RFC 7662 introspection エンドポイント（`/introspect`）を生成しない |
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
@@ -553,6 +556,17 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
+
+### OAuth 2.0 のリクエスト（`openid` なし）
+
+生成される OP は OpenID Provider であると同時に OAuth 2.0 の認可サーバーとしても使える。
+
+- `scope` に `openid` のない認可リクエストは、OAuth 2.0 の認可リクエストとして受け付ける（OIDC Core 1.0 §3.1.2.2）。認可コードを交換するとアクセストークンだけが返り、ID Token は発行しない。そのアクセストークンは UserInfo エンドポイントでは `insufficient_scope` になる
+- `client_credentials` グラント（`client-credentials` 機能）は、エンドユーザーが関わらないクライアント自身のアクセストークンを発行する
+- `scope` は省略できない。既定のスコープを持たないので、`scope` のないリクエストは `invalid_scope` で拒否する（RFC 6749 §3.3）
+- `code` 以外の `response_type`（Implicit Flow / Hybrid Flow）と CIBA は OpenID Connect のフローなので、`openid` が必須である
+
+OpenID Connect のリクエストだけを受け付ける OP に戻すには、`ProviderConfig.requireOpenIdScope` を `true` にする（Next.js は `OIDC_REQUIRE_OPENID_SCOPE=1`）。`openid` のないリクエストは `invalid_scope` になり、PAR とデバイス認可のエンドポイント（`--enable` したとき）も同じ設定に従う。`client_credentials` グラントも外すなら `--disable client-credentials` を付ける。
 
 ### 拡張機能（--enable google-login）
 

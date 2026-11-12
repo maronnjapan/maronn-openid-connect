@@ -39,6 +39,7 @@ export default defineConfig({
               label: 'Authorization Code Flow',
               slug: 'concepts/authorization-code-flow',
             },
+            { label: 'Client Credentials Grant', slug: 'concepts/client-credentials' },
             { label: 'PKCE', slug: 'concepts/pkce' },
             { label: 'ID Token', slug: 'concepts/id-token' },
           ],

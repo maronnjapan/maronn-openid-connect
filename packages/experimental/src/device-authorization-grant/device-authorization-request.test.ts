@@ -85,6 +85,40 @@ describe('validateDeviceAuthorizationScope', () => {
       new DeviceAuthorizationError('invalid_scope', 'The openid scope is required'),
     );
   });
+
+  // RFC 8628 §3.1: デバイス認可グラントは OAuth 2.0 のグラントで、openid は要らない。
+  // requireOpenIdScope: false は、認可エンドポイントと同じく openid のないリクエストを受け付ける。
+  describe('with requireOpenIdScope: false', () => {
+    it('should return a scope without openid', () => {
+      expect(
+        validateDeviceAuthorizationScope('reports.read reports.read', { requireOpenIdScope: false }),
+      ).toEqual(['reports.read']);
+    });
+
+    it('should still return a scope with openid', () => {
+      expect(
+        validateDeviceAuthorizationScope('openid profile', { requireOpenIdScope: false }),
+      ).toEqual(['openid', 'profile']);
+    });
+
+    // RFC 6749 §3.3: 既定のスコープを持たないので、scope の省略は invalid_scope で失敗させる
+    it.each([undefined, '   '])('should reject the missing scope %j with invalid_scope', (scope) => {
+      expect(() =>
+        validateDeviceAuthorizationScope(scope, { requireOpenIdScope: false }),
+      ).toThrowError(
+        new DeviceAuthorizationError(
+          'invalid_scope',
+          'Missing scope: this authorization server defines no default scope',
+        ),
+      );
+    });
+  });
+
+  it('should keep requiring openid when requireOpenIdScope is true', () => {
+    expect(() =>
+      validateDeviceAuthorizationScope('profile email', { requireOpenIdScope: true }),
+    ).toThrowError(new DeviceAuthorizationError('invalid_scope', 'The openid scope is required'));
+  });
 });
 
 describe('applyOfflineAccessPolicy', () => {
@@ -254,6 +288,38 @@ describe('processDeviceAuthorizationRequest', () => {
       expires_in: 600,
       interval: 5,
     });
+  });
+
+  it('should accept a scope without openid when requireOpenIdScope is false', async () => {
+    const store = createInMemoryDeviceAuthorizationStore();
+
+    const response = await processDeviceAuthorizationRequest({
+      params: { scope: 'reports.read' },
+      client: DEVICE_CLIENT,
+      issuer: ISSUER,
+      refreshTokenFeatureEnabled: true,
+      store,
+      now: NOW,
+      requireOpenIdScope: false,
+    });
+
+    const record = await store.findByDeviceCode(response.device_code);
+    expect(record?.scope).toEqual(['reports.read']);
+  });
+
+  it('should reject a scope without openid by default', async () => {
+    const store = createInMemoryDeviceAuthorizationStore();
+
+    await expect(
+      processDeviceAuthorizationRequest({
+        params: { scope: 'reports.read' },
+        client: DEVICE_CLIENT,
+        issuer: ISSUER,
+        refreshTokenFeatureEnabled: true,
+        store,
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_scope' });
   });
 
   it('should honor the configured expires_in and interval', async () => {

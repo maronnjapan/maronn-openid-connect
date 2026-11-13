@@ -4,7 +4,7 @@
 
 ## プロジェクトについて
 
-PR の変更内容を読んだ後の理解度確認には、[PR から作問する手順](docs/pr-quizzes.md)を使えます。Actions の **Request a PR quiz** から readRFCInMobile の作問を起動し、レビュー・公開後の問題リンクを PR に表示します。
+PR の変更内容を読んだ後の理解度確認には、[PR から作問する初期設定・操作手順](docs/pr-quizzes.md)を使えます。このリポジトリで作る鍵の発行画面・権限・保存先と、Actions の **Request a PR quiz** から依頼して公開後の問題を開くまでの操作を記載しています。readRFCInMobile 側の準備手順への案内も含みます。
 
 ### コンセプト
 

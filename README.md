@@ -4,6 +4,8 @@
 
 ## プロジェクトについて
 
+PR の変更内容を読んだ後の理解度確認には、[PR から作問する手順](docs/pr-quizzes.md)を使えます。Actions の **Request a PR quiz** から readRFCInMobile の作問を起動し、レビュー・公開後の問題リンクを PR に表示します。
+
 ### コンセプト
 
 **「最新の OIDC/OAuth 仕様を簡単に動く形で検証できる OSS ライブラリ」**

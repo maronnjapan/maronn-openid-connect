@@ -422,6 +422,7 @@ maronn-oidc generate express --disable pkce
 |---|---|---|
 | `pkce` | 有効 | PKCE を任意化する（`allowNonPkceAuthorizationCodeFlow: true`）。明示的な confidential client の完全な非PKCEリクエストのみ許可され、public client や不正な PKCE 値は引き続き拒否される |
 | `refresh-token` | 有効 | `refresh_token` grant を `unsupported_grant_type` で拒否。`offline_access` は付与されず、リフレッシュトークンは発行されない。discovery からも除去される |
+| `client-credentials` | 有効 | `client_credentials` grant（RFC 6749 §4.4 / OAuth 2.1 §4.2）を `unsupported_grant_type` で拒否し、discovery の `grant_types_supported` から除く。有効なときは、`grant_types` に `client_credentials` を登録したコンフィデンシャルクライアントに、クライアント自身のアクセストークン（`sub` は `client_id`）を発行する。スコープはクライアントが登録した範囲に限り、`openid` / `offline_access`、リフレッシュトークン、ID Token は発行しない |
 | `introspection` | 有効 | RFC 7662 introspection エンドポイント（`/introspect`）を生成しない |
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で、URL の `request_uri`（by reference, §6.2）を `request_uri_not_supported` で拒否。discovery は `request_parameter_supported: false` と `request_uri_parameter_supported: false` を広告する。有効なときの `request_uri` の取得は [request_uri](#request_uri) を参照 |
@@ -431,6 +432,17 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
+
+### OAuth 2.0 のリクエスト（`openid` なし）
+
+生成される OP は、OpenID Provider であると同時に OAuth 2.0 の認可サーバーとしても使えます。
+
+- `scope` に `openid` のない認可リクエストは、OAuth 2.0 の認可リクエストとして受け付けます（OIDC Core 1.0 §3.1.2.2）。認可コードを交換するとアクセストークンだけが返り、ID Token は発行しません。そのアクセストークンは UserInfo エンドポイントでは `insufficient_scope` になります
+- `client_credentials` グラント（`client-credentials` 機能）は、エンドユーザーが関わらないクライアント自身のアクセストークンを発行します（[Client Credentials Grant](../../concepts/client-credentials/)）
+- `scope` は省略できません。既定のスコープを持たないので、`scope` のないリクエストは `invalid_scope` で拒否します（RFC 6749 §3.3）
+- `code` 以外の `response_type`（Implicit Flow / Hybrid Flow）と CIBA は OpenID Connect のフローなので、`openid` が必須です
+
+OpenID Connect のリクエストだけを受け付ける OP に戻すには、`ProviderConfig.requireOpenIdScope` を `true` にします（Next.js は `OIDC_REQUIRE_OPENID_SCOPE=1`）。`openid` のないリクエストは `invalid_scope` になり、PAR とデバイス認可のエンドポイント（`--enable` したとき）も同じ設定に従います。`client_credentials` グラントも外すなら `--disable client-credentials` を付けます。
 
 ### Experimental Features
 

@@ -16,6 +16,7 @@ import {
   rejectUnsupportedRequestParams,
   validateResponseType,
   validateAuthorizationScope,
+  validateOpenIdScopeForResponseType,
   validateClientScope,
   validateAuthorizationCodePkce,
   validatePromptParameter,
@@ -194,8 +195,17 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
       ...responseTypesOf(features),
     ]);
 
-    // `scope` がクエリにあり（OIDC Core 1.0 §6.1）、`openid` を含む（同 §3.1.2.1）ことを確かめ、スコープを取り出す。
-    let scope = validateAuthorizationScope(params, requestParams, redirectUri, state);
+    // `scope` がクエリにある（OIDC Core 1.0 §6.1）ことを確かめ、スコープを取り出す。
+    // 設定の `requireOpenIdScope` が `true` なら、`openid` を含まないリクエストを `invalid_scope` で拒否する（同 §3.1.2.1）。
+    // `false`（既定）なら、`openid` のないリクエストを OAuth 2.0 の認可リクエストとして受け付ける（同 §3.1.2.2）。
+    // そのリクエストから発行するトークンは `openid` を持たないので、ID トークンは発行されず、UserInfo エンドポイントも使えない。
+    let scope = validateAuthorizationScope(params, requestParams, redirectUri, state, {
+      requireOpenIdScope: config.requireOpenIdScope,
+    });
+
+    // `code` 以外の `response_type`（インプリシットフローとハイブリッドフロー）は OpenID Connect のフローなので、設定によらず `openid` を求める（OIDC Core 1.0 §3.2.2.1、§3.3.2.1）。
+    // これらのフローは認可エンドポイントで ID トークンを発行するので、`openid` のないリクエストには応答できない。
+    validateOpenIdScopeForResponseType(responseType, scope, redirectUri, state);
 
     // スコープの一覧（`client.scope`）を登録したクライアントは、その一覧のスコープしか要求できない（RFC 7591 §2）。
     // 一覧に無いスコープは、`offline_access` も含めて `invalid_scope` で拒否する。

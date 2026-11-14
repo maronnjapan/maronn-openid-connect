@@ -20,6 +20,7 @@ export const meta = step({
  * 認可サーバーは、認可エンドポイントに送られた認可リクエストと同じようにリクエストを検証しなければならない（RFC 9126 §2.1）。
  * そのため、登録されていない `redirect_uri` や不正な `scope` は、エンドユーザーが画面を見る前にここで拒否する。
  * PKCE を省いたリクエストを許すかどうかは、認可エンドポイントと同じ `allowNonPkceAuthorizationCodeFlow` の設定に従う。
+ * `scope` に `openid` を求めるかどうかも、認可エンドポイントと同じ `requireOpenIdScope` の設定に従う。
  *
  * @spec RFC 9126 §2.1
  * @throws {ParError} `invalid_request`、`invalid_scope`、`unauthorized_client`、`unsupported_response_type`: 認可エンドポイントが拒否するパラメータがあるとき
@@ -29,5 +30,6 @@ export async function validatePushedRequest(c: any, pushedParams: Record<string,
   const config = c.get('config');
   await validatePushedAuthorizationParams(pushedParams, clientResolver, {
     allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
+    requireOpenIdScope: config.requireOpenIdScope,
   });
 }

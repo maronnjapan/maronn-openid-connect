@@ -19,8 +19,9 @@ import { jsonBody, lastResponse, type Exchange } from '../support/target.js';
 const { Given, When, Then } = createBdd(test, { tags: IN_PROCESS_TARGETS });
 
 // Columns: client_id, client_secret, redirect_uri, and token_endpoint_auth_method
-// (client_secret_basic when absent). The clients may use the authorization_code
-// and refresh_token grants.
+// (client_secret_basic when absent), grant_types and scope (both separated by
+// spaces). Without grant_types the clients may use the authorization_code and
+// refresh_token grants; without scope they register no scope list.
 Given('a registered confidential client:', async ({ op }, table: DataTable) => {
   for (const row of table.hashes()) {
     const authMethod = row.token_endpoint_auth_method ?? 'client_secret_basic';
@@ -32,6 +33,8 @@ Given('a registered confidential client:', async ({ op }, table: DataTable) => {
       clientSecret: requiredCell(row, 'client_secret'),
       redirectUri: requiredCell(row, 'redirect_uri'),
       authMethod,
+      ...(row.grant_types === undefined ? {} : { grantTypes: row.grant_types.split(' ') }),
+      ...(row.scope === undefined ? {} : { scope: row.scope.split(' ') }),
     } as const;
     await op.driver.registerClient(client);
     op.clients.set(client.clientId, { ...client, presentedSecret: client.clientSecret });

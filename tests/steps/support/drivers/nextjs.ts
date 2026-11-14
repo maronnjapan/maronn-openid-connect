@@ -43,15 +43,16 @@ export async function openDriver(): Promise<InProcessDriver> {
   const database = createDatabase();
   return {
     issuer: TEST_ISSUER,
-    async registerClient({ clientId, clientSecret, redirectUri, authMethod }) {
+    async registerClient({ clientId, clientSecret, redirectUri, authMethod, grantTypes, scope }) {
       await registerClient(database, {
         clientId,
         clientSecret,
         redirectUris: [redirectUri],
         clientType: 'confidential',
-        grantTypes: ['authorization_code', 'refresh_token'],
+        grantTypes: grantTypes ?? ['authorization_code', 'refresh_token'],
         tokenEndpointAuthMethods: [authMethod],
         responseTypes: ['code'],
+        ...(scope === undefined ? {} : { scope }),
       });
     },
     async storeAuthorizationCode({ code, clientId, redirectUri, scope, codeChallenge }) {

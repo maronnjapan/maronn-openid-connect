@@ -70,6 +70,22 @@ export interface ProviderConfig {
    */
   allowNonPkceAuthorizationCodeFlow: boolean;
   /**
+   * `scope` に `openid` を必須にするか（OIDC Core 1.0 §3.1.2.1）。
+   *
+   * - `false`（既定）: `openid` のない認可リクエストを、OpenID Connect ではない OAuth 2.0 の
+   *   認可リクエストとして受け付ける（OIDC Core 1.0 §3.1.2.2、RFC 6749 §4.1）。発行するトークンは
+   *   `openid` スコープを持たないので、ID トークンは発行されず、UserInfo エンドポイントは
+   *   `insufficient_scope` で拒否する。`code` 以外の `response_type`（インプリシットフローと
+   *   ハイブリッドフロー）は OpenID Connect のフローなので、この設定でも `openid` を求める。
+   * - `true`: OpenID Connect のリクエストだけを受け付け、`openid` のないリクエストを
+   *   `invalid_scope` で拒否する。
+   *
+   * どちらでも `scope` は必須で、この認可サーバーは既定のスコープを持たない（RFC 6749 §3.3）。
+   * 認可エンドポイントのほか、PAR とデバイス認可のエンドポイント（それらの機能を生成したとき）も
+   * この設定に従う。CIBA は仕様が `openid` を求めるので、常に必須である（CIBA Core 1.0 §7.1）。
+   */
+  requireOpenIdScope: boolean;
+  /**
    * The settings below are for the jwks_uri a client registers (RFC 7591 §2,
    * RegisteredClient.jwksUri): the OP fetches the client's keys from it when a
    * process needs them, such as the verification of a signed Request Object
@@ -170,6 +186,8 @@ const baseProviderConfig = {
   // OIDC Core 1.0 §3.1.3.1: authorization code は short-lived であるべき（5 分 = 300 秒）。
   authorizationCodeTtl: 300,
   allowNonPkceAuthorizationCodeFlow: true,
+  // OIDC Core 1.0 §3.1.2.2: `openid` のないリクエストも、OAuth 2.0 の認可リクエストとして受け付ける。
+  requireOpenIdScope: false,
   // RFC 7591 §2 jwks_uri: https and public hosts only (RFC 8725 §3.10).
   allowInsecureClientJwksUri: false,
   // RFC 9111 §5.2.2.1: max-age within 30 to 300 seconds, 300 without max-age.

@@ -22,7 +22,7 @@ PoC開発者が「自分の要件がこの仕様で実現できるか？」を�
 
 - **OpenID Connect Core 1.0** — Authorization Code Flow、UserInfo、`prompt` / `max_age` / `claims` パラメータ、Request Object（§6.1）
 - **OpenID Connect Discovery 1.0** — Provider Metadata / JWKS
-- **OAuth 2.1** — PKCE（S256）必須、refresh token rotation + absolute lifetime
+- **OAuth 2.1** — PKCE（S256）必須、refresh token rotation + absolute lifetime、Client Credentials Grant、`openid` スコープを伴わない Authorization Code Flow
 - **RFC 7662** — Token Introspection
 - **RFC 7009** — Token Revocation
 - **RFC 9068** — JWT Access Token（`jwt` 形式選択時）

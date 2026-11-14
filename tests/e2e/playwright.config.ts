@@ -106,6 +106,19 @@ const oidcClientsJson = JSON.stringify([
     responseTypes: ['code'],
   },
   {
+    // RFC 6749 §4.4: a service that acts for itself, registered for the
+    // client_credentials grant and the scopes of a resource server only, so
+    // the client-credentials spec can prove what the grant issues and refuses.
+    clientId: 'e2e-service',
+    clientSecret: 'e2e-service-secret',
+    redirectUris: [`${clientBaseURL}/unused-callback`],
+    clientType: 'confidential',
+    grantTypes: ['client_credentials'],
+    tokenEndpointAuthMethods: ['client_secret_basic'],
+    responseTypes: ['code'],
+    scope: ['reports.read', 'reports.write'],
+  },
+  {
     // RFC 7591 §2: a client registered with a scope list, so the client-scope
     // spec can prove that a request for any other scope is invalid_scope at
     // /authorize, /device_authorization and the CIBA endpoint.

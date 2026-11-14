@@ -20,6 +20,13 @@ describe('createProviderConfig', () => {
     });
   });
 
+  // OIDC Core 1.0 §3.1.2.2: a request without openid is accepted as an OAuth 2.0 request,
+  // unless the app makes the provider OpenID Connect only.
+  it('should accept authorization requests without the openid scope by default', () => {
+    expect(createProviderConfig().requireOpenIdScope).toBe(false);
+    expect(createProviderConfig({ requireOpenIdScope: true }).requireOpenIdScope).toBe(true);
+  });
+
   // OIDC Core 1.0 §9: private_key_jwt assertions signed with the asymmetric algs core verifies.
   it('should accept the asymmetric algs core verifies for private_key_jwt', () => {
     expect(createProviderConfig().tokenEndpointAuthSigningAlgValuesSupported).toEqual([

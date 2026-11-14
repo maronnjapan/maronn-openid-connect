@@ -125,11 +125,13 @@ async function deviceAuthorization(request: Request): Promise<Response> {
     // クライアントがデバイス認可グラントを登録していることを確かめる（RFC 6749 §5.2）。
     validateDeviceGrantAllowed(client);
 
-    // `scope` があり、`openid` を含むことを確かめる。
-    // RFC 8628 §3.1 では `scope` を省略してよい（OPTIONAL）が、この OP はどこでも `scope` と `openid` を必須にしている（`/authorize` と同じ規則）。
-    // そのため、`scope` のないリクエストは、RFC 8628 では正しくても拒否する。
+    // `scope` があることを確かめる（`/authorize` と同じ規則）。
+    // 設定の `requireOpenIdScope` が `true` なら `openid` も必須にし、`false`（既定）なら `openid` のないリクエストを OAuth 2.0 のデバイス認可リクエストとして受け付ける。
+    // RFC 8628 §3.1 では `scope` を省略してよい（OPTIONAL）が、この OP は既定のスコープを持たないので、`scope` のないリクエストは拒否する（RFC 6749 §3.3）。
     // これは意図して設けた、既知の制限である。
-    const requestedScope = validateDeviceAuthorizationScope(params['scope']);
+    const requestedScope = validateDeviceAuthorizationScope(params['scope'], {
+      requireOpenIdScope: config.requireOpenIdScope,
+    });
 
     // スコープの一覧（`client.scope`）を登録したクライアントが、一覧にないスコープを要求していれば拒否する（RFC 7591 §2）。
     // `/authorize` と同じ規則である。

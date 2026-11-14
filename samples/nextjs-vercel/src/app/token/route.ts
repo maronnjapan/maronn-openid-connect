@@ -5,9 +5,10 @@
  * the token response: authorization_code here, and refresh_token in the
  * (feature: refresh-token) blocks.
  *
- * The grants of the other features (token exchange, ID-JAG, device_code, CIBA)
- * are answered in their own blocks right after client authentication and
- * before validateGrantTypeSupported, each by the grant.ts of its feature.
+ * The grants of the other features (client credentials, token exchange,
+ * ID-JAG, device_code, CIBA) are answered in their own blocks right after
+ * client authentication and before validateGrantTypeSupported, each by the
+ * grant.ts of its feature.
  */
 import {
   validateGrantTypeSupported,
@@ -37,6 +38,7 @@ import {
 } from '@maronn-openid-connect/core';
 import { verifyPresentedClientCredential } from '../_oidc-provider/client-auth';
 import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';
+import { dispatchClientCredentials } from '../_oidc-provider/features/client-credentials/grant';
 import { dispatchDeviceCode } from '../_oidc-provider/features/device-authorization-grant/grant';
 import {
   decideRefreshTokenIssuance,
@@ -99,7 +101,7 @@ export function OPTIONS(request: Request): Response {
  * 提示されたグラントを検証し、キャッシュさせないトークンレスポンスで応答する。
  * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
  * アクセストークンは UserInfo、イントロスペクション、失効の各エンドポイントのために保存し、認可コードは使用済みにする（再び提示されたら拒否し、そのグラントのトークンを失効させる）。
- * 有効にした機能のグラント（ID-JAG、トークン交換、`device_code`、CIBA）には、クライアントの認証の直後にあるそれぞれのブロックが応答する。
+ * 有効にした機能のグラント（`client_credentials`、ID-JAG、トークン交換、`device_code`、CIBA）には、クライアントの認証の直後にあるそれぞれのブロックが応答する。
  *
  * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
  * - 400: リクエストが不正なとき、またはグラントを拒否したとき。
@@ -159,6 +161,10 @@ async function token(request: Request): Promise<Response> {
     await verifyPresentedClientCredential(tokenClient, presentedCredentials, '/token');
 
     const authenticatedClientId = presentedCredentials.clientId;
+
+    // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
+    const clientCredentialsResponse = await dispatchClientCredentials(params, tokenClient, keys);
+    if (clientCredentialsResponse) return clientCredentialsResponse;
 
     // [dispatch-device-code] (feature: device-authorization-grant) device_code を引き換える — RFC 8628 §3.4 / §3.5
     const deviceGrantResponse = await dispatchDeviceCode(params, tokenClient, keys);

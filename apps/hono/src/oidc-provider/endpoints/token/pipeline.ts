@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { redeemCibaRequest } from '../../features/ciba/steps/dispatch-ciba.js';
+import { issueClientCredentialsToken } from '../../features/client-credentials/steps/dispatch-client-credentials.js';
 import { redeemDeviceCode } from '../../features/device-authorization-grant/steps/dispatch-device-code.js';
 import { issueIdJag } from '../../features/id-jag/steps/dispatch-id-jag-issuance.js';
 import { redeemIdJag } from '../../features/id-jag/steps/dispatch-id-jag-redemption.js';
@@ -44,6 +45,10 @@ tokenApp.post('/', async (c) => {
 
     // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
+
+    // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
+    const clientCredentialsResponse = await issueClientCredentialsToken(c, params, tokenClient);
+    if (clientCredentialsResponse) return clientCredentialsResponse;
 
     // [dispatch-id-jag-issuance] (feature: id-jag) ID-JAG を発行する（Cross-App Access） — ID-JAG draft §4.3
     const idJagIssuance = await issueIdJag(c, params, tokenClient);

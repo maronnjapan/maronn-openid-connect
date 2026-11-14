@@ -394,6 +394,25 @@ describe('validatePushedAuthorizationParams', () => {
     ).rejects.toMatchObject({ code: 'invalid_scope', statusCode: 400 });
   });
 
+  // RFC 9126 §2.1: 認可エンドポイントと同じ規則で検証する。openid を必須にしない OP では、
+  // PAR も openid のないリクエストを受け付ける。
+  it('should accept a scope without openid when requireOpenIdScope is false', async () => {
+    await expect(
+      validatePushedAuthorizationParams({ ...validParams(), scope: 'reports.read' }, createClientResolver(), {
+        requireOpenIdScope: false,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('should map a missing scope to invalid_scope when requireOpenIdScope is false', async () => {
+    const { scope: _scope, ...withoutScope } = validParams();
+    await expect(
+      validatePushedAuthorizationParams(withoutScope, createClientResolver(), {
+        requireOpenIdScope: false,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_scope', statusCode: 400 });
+  });
+
   it('should map an unsupported response_type to unsupported_response_type', async () => {
     await expect(
       validatePushedAuthorizationParams({ ...validParams(), response_type: 'token' }, createClientResolver()),

@@ -6,6 +6,7 @@ import { resolveFlowSelection } from '../flow/flow-file.js';
 const ALL_FEATURES: OidcFeatureConfig = {
   pkce: true,
   refreshToken: true,
+  clientCredentials: true,
   introspection: true,
   revocation: true,
   requestObject: true,
@@ -138,6 +139,7 @@ describe('buildOpFlow', () => {
       expect(token?.steps.map((s) => s.id)).toEqual([
         'parse-request',
         'authenticate-client',
+        'dispatch-client-credentials',
         'validate-grant-type',
         'validate-refresh-token-grant',
         'validate-authorization-code-grant',
@@ -162,6 +164,7 @@ describe('buildOpFlow', () => {
       expect(token?.steps.map((s) => s.id)).toEqual([
         'parse-request',
         'authenticate-client',
+        'dispatch-client-credentials',
         'validate-grant-type',
         'validate-authorization-code-grant',
         'select-signing-keys',
@@ -176,12 +179,13 @@ describe('buildOpFlow', () => {
       ]);
     });
 
-    it('should place the experimental grant dispatches between client authentication and grant_type validation', () => {
+    it('should place the grant dispatches of the features between client authentication and grant_type validation', () => {
       const flow = buildOpFlow({ features: ALL_FEATURES });
       const token = flow.endpoints.find((e) => e.id === 'token');
-      expect(token?.steps.slice(0, 8).map((s) => s.id)).toEqual([
+      expect(token?.steps.slice(0, 9).map((s) => s.id)).toEqual([
         'parse-request',
         'authenticate-client',
+        'dispatch-client-credentials',
         'dispatch-id-jag-issuance',
         'dispatch-id-jag-redemption',
         'dispatch-token-exchange',

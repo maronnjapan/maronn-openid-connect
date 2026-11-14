@@ -100,6 +100,12 @@ export interface PushedAuthorizationValidationOptions {
    * 未指定なら core の `DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH`。
    */
   maxClaimsParameterLength?: number;
+  /**
+   * `scope` に `openid` を必須にするか。未指定なら `true`（OIDC Core 1.0 §3.1.2.1）。
+   * `false` にすると、`openid` のないリクエストを OAuth 2.0 の認可リクエストとして受け付ける
+   * （OIDC Core 1.0 §3.1.2.2）。認可エンドポイントと同じ値を渡すこと。
+   */
+  requireOpenIdScope?: boolean;
 }
 
 /** PAR エンドポイント処理のコンテキスト。 */
@@ -260,7 +266,9 @@ export async function validatePushedAuthorizationParams(
       requestParameterSupported: false,
     });
     validateResponseType(request, client, redirectUri, state);
-    validateAuthorizationScope(request, request, redirectUri, state);
+    validateAuthorizationScope(request, request, redirectUri, state, {
+      requireOpenIdScope: options.requireOpenIdScope,
+    });
     validateAuthorizationCodePkce(request, client, redirectUri, state, {
       allowNonPkceAuthorizationCodeFlow: options.allowNonPkceAuthorizationCodeFlow,
     });

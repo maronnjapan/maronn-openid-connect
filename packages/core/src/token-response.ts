@@ -143,6 +143,7 @@ export interface AccessTokenPayloadInput {
  * アクセストークンのペイロードを組み立てて返す。
  *
  * 返すペイロードは `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`scope`、`client_id` を持ち（RFC 9068 §2.2）、`acr` を渡したときだけ `acr` も持つ（RFC 9068 §2.2.1）。
+ * `scope` が空の配列のときは、`scope` を持たない（RFC 9068 §2.2.3）。
  * `aud` は `audience` から重複を取り除いた配列で、`audience` が空か省略されていれば `issuer` だけの配列にする（{@link buildAccessTokenAudience}）。
  * `iat` は `issuedAt`（省略したときは現在のエポック秒）、`exp` は `iat` に `expiresIn` を足した値で、`scope` はスコープを半角空白でつないだ文字列である。
  * `jti` を省略すると 128 ビットの乱数から作った値を入れるので、`jti` は発行のたびに異なる。
@@ -173,7 +174,10 @@ export function buildAccessTokenPayload(
     // RS256（RFC 8017 §8.2 の RSASSA-PKCS1-v1_5）は同じ入力から同じ署名を作る方式なので、`jti` がないと、二つのグラントのアクセストークンがバイト単位で同じになる。
     // すると、トークンの文字列をキーにするストアで後のトークンが先のトークンのレコードを上書きし、先のグラントをグラント ID で失効させても、エラーにならないまま、そのトークンは失効しない。
     jti: input.jti ?? generateRandomString(16),
-    scope: scope.join(' '),
+    // スコープが一つもなければ `scope` を入れない。
+    // `scope` クレームの値は一つ以上のスコープを空白で区切った文字列であり（RFC 6749 §3.3、RFC 8693 §4.2）、空文字列はその形に合わない。
+    // スコープを登録していないクライアントの `client_credentials` グラントが、これに当たる。
+    ...(scope.length > 0 ? { scope: scope.join(' ') } : {}),
     client_id: clientId,
     // `acr` を渡されたときだけ `acr` を入れる（RFC 9068 §2.2.1 では省略できるクレームである）。
     // リソースサーバーは、トークンがどの認証コンテキストで発行されたかを `acr` で判断できる。

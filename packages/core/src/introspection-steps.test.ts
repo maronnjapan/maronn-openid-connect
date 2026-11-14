@@ -236,6 +236,28 @@ describe('buildIntrospectionResponse', () => {
     });
   });
 
+  // RFC 7662 §2.2: scope は任意のメンバー。スコープのないトークン（スコープを登録していない
+  // クライアントの client_credentials グラント）では、空文字列にせず省く。
+  it('should leave scope out for an access token without scopes', () => {
+    const result = buildIntrospectionResponse({
+      tokenType: 'access_token',
+      accessToken: { ...defaultAccessToken, sub: 'client123', scope: [] },
+    });
+
+    expect(result).toEqual({
+      active: true,
+      client_id: 'client123',
+      token_type: 'Bearer',
+      sub: 'client123',
+      exp: NOW + 3600,
+      iat: NOW - 10,
+      nbf: NOW - 10,
+      aud: ['https://op.example.com/userinfo'],
+      iss: 'https://op.example.com',
+      jti: 'jti-1',
+    });
+  });
+
   it('should add the acr of an access token issued for one', () => {
     const result = buildIntrospectionResponse({
       tokenType: 'access_token',

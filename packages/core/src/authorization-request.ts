@@ -1172,30 +1172,84 @@ export function validateResponseType(
 }
 
 /**
+ * {@link validateAuthorizationScope} のオプション。
+ */
+export interface AuthorizationScopeOptions {
+  /**
+   * `scope` に `openid` を必須にするか。既定は `true`。
+   *
+   * - `true`: OpenID Connect のリクエストだけを受け付け、`openid` のないリクエストを `invalid_scope` で拒否する（OIDC Core 1.0 §3.1.2.1）。
+   * - `false`: `openid` のないリクエストを、OpenID Connect ではない OAuth 2.0 の認可リクエストとして受け付ける（OIDC Core 1.0 §3.1.2.2）。
+   *   そのリクエストから発行するトークンは `openid` スコープを持たないので、ID トークンは発行されず、UserInfo エンドポイントも使えない。
+   */
+  requireOpenIdScope?: boolean;
+}
+
+/**
  * `scope` を検証し、重複を除いた配列を返す。
  *
- * `scope` は、リクエストオブジェクトがあっても OAuth 2.0 のリクエスト構文（クエリ、`queryParams`）で送る必要があり、クエリになければ `invalid_request` を投げる（OIDC Core 1.0 §6.1）。
- * 有効な値（`effectiveParams`。リクエストオブジェクトを使わないならクエリと同じものを渡す）を空白で分けて重複を除き、`openid` が含まれなければ `invalid_scope` を投げる（OIDC Core 1.0 §3.1.2.1）。
- * どちらのエラーも、リダイレクトで返す `AuthorizationError` である。
+ * `scope` は、リクエストオブジェクトがあっても OAuth 2.0 のリクエスト構文（クエリ、`queryParams`）で送る必要がある（OIDC Core 1.0 §6.1）。
+ * 有効な値（`effectiveParams`。リクエストオブジェクトを使わないならクエリと同じものを渡す）を空白で分けて重複を除いて返す。
+ *
+ * `options.requireOpenIdScope` が `true`（既定）なら、OpenID Connect のリクエストとして検証する。
+ * クエリに `scope` がなければ `invalid_request` を、`openid` が含まれなければ `invalid_scope` を投げる（OIDC Core 1.0 §3.1.2.1）。
+ *
+ * `false` なら、`openid` のないリクエストも OAuth 2.0 の認可リクエストとして受け付ける（OIDC Core 1.0 §3.1.2.2）。
+ * この認可サーバーは既定のスコープを持たないので、クエリに `scope` がないときと、値が一つもないときは `invalid_scope` を投げる（RFC 6749 §3.3）。
+ *
+ * どのエラーも、リダイレクトで返す `AuthorizationError` である。
  *
  * @spec OIDC Core 1.0 §6.1
  * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OIDC Core 1.0 §3.1.2.2
+ * @spec RFC 6749 §3.3
  */
 export function validateAuthorizationScope(
   queryParams: Pick<AuthorizationRequestParams, 'scope'>,
   effectiveParams: Pick<AuthorizationRequestParams, 'scope'>,
   redirectUri: string,
   state?: string,
+  options: AuthorizationScopeOptions = {},
 ): string[] {
-  const queryScopeValue = requireAuthorizationScope(queryParams.scope, redirectUri, state);
+  const requireOpenIdScope = options.requireOpenIdScope ?? true;
+  const queryScopeValue = requireOpenIdScope
+    ? requireAuthorizationScope(queryParams.scope, redirectUri, state)
+    : requireExplicitAuthorizationScope(queryParams.scope, redirectUri, state);
 
   const scopeValue = effectiveParams.scope ?? queryScopeValue;
   // 空白区切りの `scope` を集合として扱い、最初に現れた順を保ったまま重複を取り除く（RFC 6749 §3.3）。
   // トークンエンドポイント（`refresh_token` グラント）と同じ扱いであり、重複を取り除いても権限は変わらない。
   const scope = parseScope(scopeValue);
-  validateOpenIdScope(scope, redirectUri, state);
+  if (requireOpenIdScope) {
+    validateOpenIdScope(scope, redirectUri, state);
+  } else {
+    validateAuthorizationScopeNotEmpty(scope, redirectUri, state);
+  }
 
   return scope;
+}
+
+/**
+ * `code` 以外の `response_type` に `openid` がなければ `invalid_scope` を投げる。
+ *
+ * `code` 以外の `response_type`（`id_token`、`id_token token`、`code id_token`、`code token`、`code id_token token`）は、OpenID Connect が定めるインプリシットフローとハイブリッドフローの値である（OIDC Core 1.0 §3.2.2.1、§3.3.2.1）。
+ * どちらのフローのリクエストも `openid` を含まなければならないので、`openid` のないリクエストを OAuth 2.0 のリクエストとして受け付ける設定（{@link AuthorizationScopeOptions.requireOpenIdScope} が `false`）でも、これらの値には `openid` を求める。
+ * `response_type` が `code` なら何もしない。
+ * エラーは、リダイレクトで返す `AuthorizationError` である。
+ *
+ * @spec OIDC Core 1.0 §3.2.2.1
+ * @spec OIDC Core 1.0 §3.3.2.1
+ */
+export function validateOpenIdScopeForResponseType(
+  responseType: AuthorizationResponseType,
+  scope: readonly string[],
+  redirectUri: string,
+  state?: string,
+): void {
+  if (responseType === 'code') {
+    return;
+  }
+  validateOpenIdScope(scope, redirectUri, state);
 }
 
 /**
@@ -1640,6 +1694,55 @@ export function requireAuthorizationScope(
   }
 
   return queryScopeValue;
+}
+
+/**
+ * クエリに `scope` がなければ `invalid_scope` を投げる。
+ *
+ * `openid` のないリクエストも受け付ける設定で、クエリの `scope` を確かめて返す。
+ * クライアントが `scope` を省いたとき、認可サーバーは、あらかじめ決めた既定値で処理するか、不正なスコープとしてリクエストを失敗させなければならない（RFC 6749 §3.3）。
+ * この認可サーバーは既定のスコープを持たないので、ないとき（空文字列を含む）は、リダイレクトで返す `invalid_scope` の `AuthorizationError` を投げる。
+ *
+ * @spec RFC 6749 §3.3
+ */
+export function requireExplicitAuthorizationScope(
+  queryScopeValue: string | undefined,
+  redirectUri: string,
+  state?: string,
+): string {
+  if (!queryScopeValue) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidScope,
+      'Missing scope: this authorization server defines no default scope',
+      redirectUri,
+      state
+    );
+  }
+
+  return queryScopeValue;
+}
+
+/**
+ * スコープの値が一つもなければ `invalid_scope` を投げる。
+ *
+ * 解析済みのスコープが空（`scope` が空白だけだった）なら、リダイレクトで返す `invalid_scope` の `AuthorizationError` を投げる。
+ * `scope` は一つ以上の値を空白で区切った並びである（RFC 6749 §3.3）。
+ *
+ * @spec RFC 6749 §3.3
+ */
+export function validateAuthorizationScopeNotEmpty(
+  scope: readonly string[],
+  redirectUri: string,
+  state?: string,
+): void {
+  if (scope.length === 0) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidScope,
+      'scope must include at least one value',
+      redirectUri,
+      state
+    );
+  }
 }
 
 /**

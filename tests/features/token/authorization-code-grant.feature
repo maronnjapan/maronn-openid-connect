@@ -24,6 +24,19 @@ Feature: The authorization_code grant at the token endpoint
     And the body has an id_token
     And the body has a refresh_token
 
+  @id:token-authorization-code-without-openid @spec:OIDC-Core-3.1.2.2 @spec:RFC6749-4.1.4 @hono @nextjs
+  Scenario: Exchange a code without the openid scope for an access token without an ID Token
+    ja: openid スコープのない認可コードを、ID トークンのないアクセストークンと交換する
+    Given the client "client-1" has the authorization code "code-oauth":
+      | scope        | code_verifier                                  |
+      | reports.read | verifier-0123456789-abcdefghijklmnopqrstuvwxyz |
+    When the client "client-1" redeems the authorization code "code-oauth"
+    Then the HTTP status is 200
+    And the body has token_type "Bearer"
+    And the body has scope "reports.read"
+    And the body has an access_token
+    And the body has no id_token
+
   @id:token-missing-required-parameter @spec:RFC6749-4.1.3 @spec:OIDC-Core-3.1.3.2 @hono @nextjs
   Scenario Outline: Reject a request without <parameter> with <error>
     ja: <parameter> のないリクエストを <error> で拒否する

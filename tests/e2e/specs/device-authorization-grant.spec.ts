@@ -192,6 +192,70 @@ test.describe('Device Authorization Grant (RFC 8628)', () => {
     expect(forged.status()).toBe(403);
   });
 
+  // RFC 8628 §3.1 / §3.2: the device authorization grant is an OAuth 2.0 grant,
+  // so a request without the openid scope gets its codes like any other.
+  test('should answer a device authorization request without the openid scope', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await deviceAuthorizationEndpoint(request, issuer);
+    test.skip(
+      endpoint === undefined,
+      'This sample OP was generated without --enable device-authorization-grant',
+    );
+
+    const authorization = await request.post(`${issuer}/device_authorization`, {
+      form: { client_id: clientId, client_secret: clientSecret, scope: 'profile' },
+    });
+    const codes = await authorization.json() as Record<string, unknown>;
+    // The user has not decided yet: the device_code is known and pending.
+    const poll = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: DEVICE_GRANT_TYPE,
+        device_code: String(codes.device_code),
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+
+    expect(authorization.status()).toBe(200);
+    expect(authorization.headers()['cache-control']).toBe('no-store');
+    expect(Object.keys(codes).sort()).toEqual([
+      'device_code',
+      'expires_in',
+      'interval',
+      'user_code',
+      'verification_uri',
+      'verification_uri_complete',
+    ]);
+    expect(poll.status()).toBe(400);
+    expect(((await poll.json()) as { error: string }).error).toBe('authorization_pending');
+  });
+
+  // RFC 6749 §3.3: the OP defines no default scope, so a request without scope fails.
+  test('should refuse a device authorization request without scope with invalid_scope', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await deviceAuthorizationEndpoint(request, issuer);
+    test.skip(
+      endpoint === undefined,
+      'This sample OP was generated without --enable device-authorization-grant',
+    );
+
+    const authorization = await request.post(`${issuer}/device_authorization`, {
+      form: { client_id: clientId, client_secret: clientSecret },
+    });
+
+    expect(authorization.status()).toBe(400);
+    expect(await authorization.json()).toEqual({
+      error: 'invalid_scope',
+      error_description: 'Missing scope: this authorization server defines no default scope',
+    });
+  });
+
   test('should reject a device_code presented by a different client', async ({
     request,
     baseURL,

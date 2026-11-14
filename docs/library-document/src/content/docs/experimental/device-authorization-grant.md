@@ -35,7 +35,7 @@ description: ブラウザを持たないデバイスを別デバイスのブラ�
 | RFC 8628 §3.4 / §3.5 | トークンエンドポイントの grant 分岐と状態機械（4 エラーコード・`slow_down` の +5 秒） |
 | RFC 8628 §4 | Provider Metadata（`device_authorization_endpoint` / `grant_types_supported`） |
 | RFC 8628 §6.1 | base-20 文字種 `BCDFGHJKLMNPQRSTVWXZ` × 8 文字の `user_code` |
-| RFC 8628 §3.1 の `scope` 省略 | **非対応**（本 OP は `scope` 必須かつ `openid` 必須。後述の「既知の制約」参照） |
+| RFC 8628 §3.1 の `scope` 省略 | **非対応**（本 OP は既定のスコープを持たないので `scope` 必須。後述の「既知の制約」参照） |
 | RFC 8628 §5.1 のレート制限 | **非実装**（デプロイ層の責務。後述の「セキュリティ上の注意」参照） |
 
 ## ユースケース
@@ -226,8 +226,8 @@ const redisDeviceStore: DeviceAuthorizationStore = {
 |---|---|---|
 | クライアント認証失敗 | 401 | `invalid_client`（`WWW-Authenticate: Basic` 付き） |
 | `grantTypes` に URN 未登録 | 400 | `unauthorized_client` |
-| `scope` 欠落 | 400 | `invalid_request` |
-| `openid` scope 欠落 | 400 | `invalid_scope` |
+| `scope` 欠落 | 400 | `invalid_scope`（`requireOpenIdScope: true` の OP では `invalid_request`） |
+| `openid` scope 欠落（`requireOpenIdScope: true` の OP のみ） | 400 | `invalid_scope` |
 | form-urlencoded でない / パラメータ重複 | 400 | `invalid_request` |
 | POST 以外のメソッド | 405 | — |
 
@@ -294,8 +294,8 @@ hidden の `csrf_token` は多層防御として維持していますが、単�
 
 ## 既知の制約
 
-- **`scope` が必須で、`openid` を含む必要があります。** RFC 8628 §3.1 では `scope` は OPTIONAL ですが、本 OP は認可エンドポイントと同じプロファイル制限をデバイス認可にも課しています。OAuth 単体（OIDC なし）のデバイス認可には対応していません
-- **`nonce` / `prompt` / `max_age` / `login_hint` などの OIDC 認可リクエストパラメータは受け付けません。** RFC 8628 のデバイス認可リクエストは `client_id` / `scope` のみを定義しているためです。発行される ID Token に `nonce` は含まれません（`c_hash` も、認可コードが存在しないため含まれません）
+- **`scope` が必須です。** RFC 8628 §3.1 では `scope` は OPTIONAL ですが、本 OP は既定のスコープを持たないので、認可エンドポイントと同じく `scope` のないリクエストを `invalid_scope` で拒否します（RFC 6749 §3.3）。`openid` は必須ではなく、`openid` のないリクエストは OAuth 単体（OIDC なし）のデバイス認可として受け付け、アクセストークンだけを返します（ID Token は発行しません）。`ProviderConfig.requireOpenIdScope` を `true` にすると、認可エンドポイントと同じく `openid` も必須になります
+- **`nonce` / `prompt` / `max_age` / `login_hint` などの OIDC 認可リクエストパラメータは受け付けません。** RFC 8628 のデバイス認可リクエストは `client_id` / `scope` のみを定義しているためです。`scope` に `openid` があるときに発行される ID Token に `nonce` は含まれません（`c_hash` も、認可コードが存在しないため含まれません）
 - **`resource` / `audience`（RFC 8707）は受け付けません。** 指定されても未知パラメータとして無視されます
 - **`user_code` の再発行・延長はできません。** 期限切れの場合はデバイスが最初からやり直します
 - **同じ `user_code` を別ブラウザから `POST /device` すると、先のブラウザのバインディングが無効になります**（last-writer-wins）。`user_code` を知る者がレコードの承認 / 拒否を左右できるのは RFC 8628 のモデルどおりです
@@ -316,7 +316,7 @@ hidden の `csrf_token` は多層防御として維持していますが、単�
 | `/device_authorization` が 404 | `--enable device-authorization-grant` を付けずに生成しています。再生成してください |
 | `Cannot find module '@maronn-openid-connect/experimental/device-authorization-grant'` | `pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental` を実行してください |
 | `unauthorized_client` になる | クライアント登録の `grantTypes` に `urn:ietf:params:oauth:grant-type:device_code` を追加してください |
-| `invalid_request: Missing required parameter: scope` | 本 OP は `scope` 必須です。`scope=openid` を付けてください |
+| `invalid_scope: Missing scope: ...`（`requireOpenIdScope: true` の OP では `invalid_request: Missing required parameter: scope`） | 本 OP は `scope` 必須です。`scope=openid` など、要求するスコープを付けてください |
 | curl で `/device/login` が 403 | cookie jar を使っていません。`POST /device` を `-c jar.txt` で実行し、以降を `-b jar.txt` で送ってください |
 | ブラウザで 403 になる | 別のタブ / ブラウザで同じ `user_code` を再投入し、バインディングが回転しています。`/device` からやり直してください |
 | ポーリングがずっと `slow_down` | `interval` を守っていません。`slow_down` を受けたら 5 秒足してから次を送ってください（RFC 8628 §3.5） |

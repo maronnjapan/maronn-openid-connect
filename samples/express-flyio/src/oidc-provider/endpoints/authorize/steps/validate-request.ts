@@ -8,6 +8,7 @@ import {
   validateRequestObjectConsistency,
   validateResponseType,
   validateAuthorizationScope,
+  validateOpenIdScopeForResponseType,
   validateClientScope,
   validateAuthorizationCodePkce,
   validatePromptParameter,
@@ -46,6 +47,9 @@ export const meta = step({
  * 検証はそれぞれ core の独立した関数で、OIDC Core 1.0 §3.1.2 の順に呼ぶ。
  * 検証を一つ外すにはその呼び出しを消し、独自の処理を足すには二つの検証の間に差し込む。
  *
+ * `scope` に `openid` を求めるかは、設定の `requireOpenIdScope` で決まる。
+ * 求めない（既定）なら、`openid` のないリクエストを OpenID Connect ではない OAuth 2.0 の認可リクエストとして受け付ける。
+ *
  * このステップより前に `redirect_uri` を確かめているので、ここでの失敗はリダイレクトでき、エラーはリクエストの `state` と一緒にクライアントへ返る。
  * ただし、クライアントが登録した `default_max_age` が不正なときは、設定の誤りとして、リダイレクトしない `server_error` を投げる。
  *
@@ -55,6 +59,7 @@ export const meta = step({
  * @spec OIDC Core 1.0 §3.1.2.2
  * @spec OAuth 2.1 §4.1.1
  * @spec OAuth 2.1 §7.5
+ * @spec RFC 6749 §3.3
  */
 export async function validateAuthorizationRequestParams(
   c: any,
@@ -92,8 +97,17 @@ export async function validateAuthorizationRequestParams(
   // OP が応答するのは、`code` と、機能が応答するレスポンスタイプ（`response-type.ts` の `supportedResponseTypes()`）である。
   const responseType = validateResponseType(params, client, redirectUri, state, supportedResponseTypes());
 
-  // `scope` がクエリにあり（OIDC Core 1.0 §6.1）、`openid` を含む（同 §3.1.2.1）ことを確かめ、スコープを取り出す。
-  let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
+  // `scope` がクエリにある（OIDC Core 1.0 §6.1）ことを確かめ、スコープを取り出す。
+  // 設定の `requireOpenIdScope` が `true` なら、`openid` を含まないリクエストを `invalid_scope` で拒否する（同 §3.1.2.1）。
+  // `false`（既定）なら、`openid` のないリクエストを OAuth 2.0 の認可リクエストとして受け付ける（同 §3.1.2.2）。
+  // そのリクエストから発行するトークンは `openid` を持たないので、ID トークンは発行されず、UserInfo エンドポイントも使えない。
+  let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state, {
+    requireOpenIdScope: config.requireOpenIdScope,
+  });
+
+  // `code` 以外の `response_type`（インプリシットフローとハイブリッドフロー）は OpenID Connect のフローなので、設定によらず `openid` を求める（OIDC Core 1.0 §3.2.2.1、§3.3.2.1）。
+  // これらのフローは認可エンドポイントで ID トークンを発行するので、`openid` のないリクエストには応答できない。
+  validateOpenIdScopeForResponseType(responseType, scope, redirectUri, state);
 
   // スコープの一覧（`client.scope`）を登録したクライアントは、その一覧のスコープしか要求できない（RFC 7591 §2）。
   // 一覧に無いスコープは、`offline_access` も含めて `invalid_scope` で拒否する。

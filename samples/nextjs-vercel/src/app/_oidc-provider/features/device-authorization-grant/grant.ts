@@ -37,7 +37,7 @@ import { noStoreJson, oauthError } from '../../http';
 /**
  * 承認済みの `device_code` でトークンを発行して返す。
  *
- * `processDeviceCodeGrant()` で `device_code` のレコードの状態を判定し、承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンス（キャッシュ禁止の JSON）で応答する。
+ * `processDeviceCodeGrant()` で `device_code` のレコードの状態を判定し、承認済みなら、アクセストークン（`scope` に `openid` があれば ID トークン、`offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンス（キャッシュ禁止の JSON）で応答する。
  * 承認済みでなければ `DeviceAuthorizationError` を投げ、`dispatchDeviceCode()` がそれを OAuth のエラーレスポンスにして返す。
  * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` で応答する。
  *
@@ -94,31 +94,35 @@ export async function redeemDeviceCode(
     keyId: keys.general[0].keyId,
   });
 
-  // ID トークンは必ず発行する。
-  // デバイス認可エンドポイントが `openid` スコープを必須にしているためである。
-  // RFC 8628 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
-  // 認可コードがないので、`c_hash` も含めない。
   const { acr, amr } = await resolveAcrAmr({
     subject: deviceGrant.subject,
     clientId: deviceGrant.clientId,
     acrResolver,
   });
-  const idToken = await generateIdToken({
-    payload: buildIdTokenPayload({
-      issuer: config.issuer,
-      subject: deviceGrant.subject,
-      clientId: deviceGrant.clientId,
-      scope: deviceGrant.scope,
-      expiresIn: config.idTokenExpiresIn,
-      issuedAt,
-      atHash: await computeAtHash(accessToken, idTokenKey.privateKey),
-      authTime: deviceGrant.authTime,
-      acr,
-      amr,
-    }),
-    privateKey: idTokenKey.privateKey,
-    keyId: idTokenKey.keyId,
-  });
+
+  // ID トークンは、スコープに `openid` があるときだけ発行する（標準のグラントと同じ規則）。
+  // 設定の `requireOpenIdScope` が `false` の OP は `openid` のないデバイス認可リクエストも受け付け、そのグラントにはアクセストークンだけを返す。
+  // RFC 8628 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
+  // 認可コードがないので、`c_hash` も含めない。
+  let idToken: string | undefined;
+  if (deviceGrant.scope.includes('openid')) {
+    idToken = await generateIdToken({
+      payload: buildIdTokenPayload({
+        issuer: config.issuer,
+        subject: deviceGrant.subject,
+        clientId: deviceGrant.clientId,
+        scope: deviceGrant.scope,
+        expiresIn: config.idTokenExpiresIn,
+        issuedAt,
+        atHash: await computeAtHash(accessToken, idTokenKey.privateKey),
+        authTime: deviceGrant.authTime,
+        acr,
+        amr,
+      }),
+      privateKey: idTokenKey.privateKey,
+      keyId: idTokenKey.keyId,
+    });
+  }
 
   await stores.accessTokenStore.set(accessToken, {
     sub: deviceGrant.subject,

@@ -96,7 +96,8 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     const response = await request.get(
       `${issuer}/authorize?response_type=code&client_id=${clientId}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        '&scope=profile&state=e2e-form-post-state&response_mode=form_post' +
+        // An invalid prompt value is a redirectable error on every OP, whether or not it requires the openid scope.
+        '&scope=openid&prompt=unknown-prompt&state=e2e-form-post-state&response_mode=form_post' +
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       { maxRedirects: 0 },
     );
@@ -108,7 +109,7 @@ test.describe('OAuth 2.0 Form Post Response Mode', () => {
     expect(response.headers()['pragma']).toBe('no-cache');
     const html = await response.text();
     expect(html).toContain(`<form method="post" action="${redirectUri}">`);
-    expect(html).toContain('<input type="hidden" name="error" value="invalid_scope"/>');
+    expect(html).toContain('<input type="hidden" name="error" value="invalid_request"/>');
     expect(html).toContain('<input type="hidden" name="state" value="e2e-form-post-state"/>');
     expect(html).toContain(`<input type="hidden" name="iss" value="${issuer}"/>`);
   });

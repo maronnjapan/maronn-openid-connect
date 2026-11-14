@@ -10,6 +10,7 @@
 import type { Feature } from './feature';
 import { pkce } from './features/pkce/feature';
 import { refreshToken } from './features/refresh-token/feature';
+import { clientCredentials } from './features/client-credentials/feature';
 import { introspection } from './features/introspection/feature';
 import { revocation } from './features/revocation/feature';
 import { requestObject } from './features/request-object/feature';
@@ -24,6 +25,7 @@ import { googleLogin } from './features/google-login/feature';
 export const features: readonly Feature[] = [
   pkce,
   refreshToken,
+  clientCredentials,
   introspection,
   revocation,
   requestObject,

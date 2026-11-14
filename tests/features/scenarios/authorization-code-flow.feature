@@ -16,3 +16,18 @@ Feature: Authorization code flow
     And the body has scope "openid profile"
     And the body has a refresh_token
     And the length of refresh_token is 43
+
+  @id:auth-code-flow-without-openid @spec:OIDC-Core-3.1.2.2 @spec:RFC6749-4.1 @http
+  Scenario: Return an access token without an ID Token for a request without the openid scope
+    ja: openid スコープのないリクエストに、ID トークンのないアクセストークンを返す
+    Given the user "testuser" can log in with the password "password"
+    When the client "e2e-features-client" sends an authorization request with scope "profile"
+    And the user logs in on the login page
+    And the user approves on the consent page
+    And the client redeems the authorization code for tokens
+    Then the HTTP status is 200
+    And the "Cache-Control" header is "no-store"
+    And the body has token_type "Bearer"
+    And the body has scope "profile"
+    And the body has an access_token
+    And the body has no id_token

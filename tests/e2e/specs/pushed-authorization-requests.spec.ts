@@ -100,6 +100,31 @@ test.describe('Pushed Authorization Requests (RFC 9126)', () => {
     expect((await response.json()).error).toBe('invalid_client');
   });
 
+  // RFC 9126 §2.1 / OIDC Core 1.0 §3.1.2.2: a pushed request is validated as the
+  // authorization endpoint validates it, so a request without the openid scope
+  // is accepted as an OAuth 2.0 request, and the authorization endpoint then
+  // takes the End-User to the login screen with it.
+  test('should accept a pushed request without the openid scope as an OAuth 2.0 request', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const parEndpoint = await pushedAuthorizationEndpoint(request, issuer);
+    test.skip(parEndpoint === undefined, 'This sample OP was generated without --enable par');
+
+    const pushed = await request.post(`${issuer}/par`, { form: { ...pushedRequestForm(), scope: 'profile' } });
+    const { request_uri: requestUri } = (await pushed.json()) as { request_uri: string };
+    const authorization = await request.get(
+      `${issuer}/authorize?client_id=${clientId}&request_uri=${encodeURIComponent(requestUri)}`,
+      { maxRedirects: 0 },
+    );
+
+    expect(pushed.status()).toBe(201);
+    expect(requestUri.startsWith(REQUEST_URI_PREFIX)).toBe(true);
+    expect(authorization.status()).toBe(302);
+    expect(authorization.headers()['location']).toMatch(/\/login\?transaction_id=[^&]+$/);
+  });
+
   test('should reject an unknown request_uri without redirecting', async ({
     request,
     baseURL,

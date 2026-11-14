@@ -39,7 +39,7 @@ deviceAuthorizationApp.post('/', async (c) => {
     const client = await authenticateDeviceClient(c, params, authorization);
 
     // [validate-request] 登録済みのグラントとスコープを検証する — RFC 8628 §3.1 / RFC 7591 §2 / OIDC Core 1.0 §11
-    const scope = validateDeviceAuthorizationRequest(params, client);
+    const scope = validateDeviceAuthorizationRequest(c, params, client);
 
     // [issue-device-code] device_code と user_code を発行する — RFC 8628 §3.2 / §5.2
     const record = await issueDeviceCodes(c, client, scope);

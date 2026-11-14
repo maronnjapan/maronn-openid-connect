@@ -75,6 +75,33 @@ describe('dispatchDeviceCode', () => {
     });
   });
 
+  // RFC 8628 §3.5: a device authorization without the openid scope is an OAuth 2.0 grant
+  // (the provider accepts it unless requireOpenIdScope is set), answered with an access token only.
+  it('should answer an approved device_code without the openid scope with an access token only', async () => {
+    const record = pendingDeviceRecord({
+      status: 'approved',
+      subject: 'alice',
+      authTime: NOW_SECONDS - 60,
+      approvedScope: ['reports.read'],
+      grantId: 'grant-device-oauth',
+    });
+    await deviceAuthorizationStore.save(record);
+
+    const response = await dispatchDeviceCode(deviceCodeRequest(record.deviceCode), deviceClient, providerSigningKeys(await rs256Key()));
+    const parts = await jsonResponseOf(response);
+    const body = parts?.body as Record<string, unknown>;
+
+    expect(parts).toMatchObject({ status: 200, cacheControl: 'no-store', pragma: 'no-cache' });
+    expect(Object.keys(body).sort()).toEqual(['access_token', 'expires_in', 'scope', 'token_type']);
+    expect(body).toMatchObject({ token_type: 'Bearer', expires_in: 3600, scope: 'reports.read' });
+    expect(await stores.accessTokenStore.get(body['access_token'] as string)).toMatchObject({
+      sub: 'alice',
+      clientId: 'device-client',
+      scope: ['reports.read'],
+      grantId: 'grant-device-oauth',
+    });
+  });
+
   // RFC 8628 §3.5 / RFC 6749 §5.2: every other state is an OAuth error in the JSON shape, never cached.
   describe('Errors', () => {
     it('should answer a pending device_code with authorization_pending', async () => {

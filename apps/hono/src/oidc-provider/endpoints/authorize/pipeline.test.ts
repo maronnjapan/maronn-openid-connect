@@ -122,6 +122,114 @@ describe('processAuthorizationRequest', () => {
     });
   });
 
+  // OIDC Core 1.0 §3.1.2.2: a request without the openid scope is not an OpenID Connect
+  // request, but may be a valid OAuth 2.0 authorization request (RFC 6749 §4.1).
+  describe('OAuth 2.0 request without openid', () => {
+    it('should continue on the login screen with the requested scope', async () => {
+      const { db } = await providerWithClient();
+
+      const outcome = await authorize(db, authorizationParams({ scope: 'reports.read reports.write' }));
+
+      const [transactionId] = transactionIdsOf(db);
+      expect(outcome).toEqual({ kind: 'login', transactionId, cookies: [transactionCookie(transactionId!)] });
+      expect(db.transactions.get('auth_txn:' + transactionId)?.value).toMatchObject({
+        clientId: CLIENT_ID,
+        responseType: 'code',
+        scope: 'reports.read reports.write',
+      });
+    });
+
+    it('should issue a code for SSO with prior consent to the requested scope', async () => {
+      const { db, stores } = await providerWithClient();
+      const cookie = await signIn(stores);
+      await stores.consentStore.grant(SUBJECT, CLIENT_ID, ['reports.read']);
+
+      const outcome = await authorize(db, authorizationParams({ scope: 'reports.read' }), { cookie });
+
+      const [code] = [...db.codes.keys()];
+      expect(outcome).toEqual({
+        kind: 'authorization_response',
+        response: { method: 'redirect', location: `${REDIRECT_URI}?code=${code}&state=${STATE}&iss=${encodeURIComponent(TEST_ISSUER)}` },
+      });
+      expect(db.codes.get(code!)).toMatchObject({ subject: SUBJECT, scope: ['reports.read'] });
+    });
+
+    // RFC 6749 §3.3: the provider defines no default scope.
+    it('should redirect invalid_scope for a request without scope', async () => {
+      const { db } = await providerWithClient();
+      const params = authorizationParams();
+      delete params['scope'];
+
+      const outcome = await authorize(db, params);
+
+      expect(outcome).toEqual({
+        kind: 'authorization_response',
+        response: {
+          method: 'redirect',
+          location:
+            `${REDIRECT_URI}?error=invalid_scope` +
+            '&error_description=Missing+scope%3A+this+authorization+server+defines+no+default+scope' +
+            `&state=${STATE}&iss=${encodeURIComponent(TEST_ISSUER)}`,
+        },
+      });
+      expect(db.transactions.size).toBe(0);
+    });
+
+    // OIDC Core 1.0 §3.1.2.1: with requireOpenIdScope the provider answers OpenID Connect requests only.
+    it('should redirect invalid_scope when requireOpenIdScope is set', async () => {
+      const { db } = await providerWithClient();
+
+      const outcome = await authorize(db, authorizationParams({ scope: 'reports.read' }), {
+        options: { config: { requireOpenIdScope: true } },
+      });
+
+      expect(outcome).toEqual({
+        kind: 'authorization_response',
+        response: {
+          method: 'redirect',
+          location:
+            `${REDIRECT_URI}?error=invalid_scope&error_description=scope+must+include+openid` +
+            `&state=${STATE}&iss=${encodeURIComponent(TEST_ISSUER)}`,
+        },
+      });
+      expect(db.transactions.size).toBe(0);
+    });
+
+    // OIDC Core 1.0 §3.2.2.1: the Implicit Flow is an OpenID Connect flow, so it needs openid.
+    it('should redirect invalid_scope in the fragment for an Implicit Flow request without openid', async () => {
+      const { db } = await providerWithImplicitClient();
+
+      const outcome = await authorize(db, implicitParams({ scope: 'reports.read' }));
+
+      const { target, params } = fragmentRedirectOf(outcome);
+      expect(target).toBe(REDIRECT_URI);
+      expect(params).toEqual({
+        error: 'invalid_scope',
+        error_description: 'scope must include openid',
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+      expect(db.accessTokens.size).toBe(0);
+    });
+
+    // OIDC Core 1.0 §3.3.2.1: so is the Hybrid Flow.
+    it('should redirect invalid_scope in the fragment for a Hybrid Flow request without openid', async () => {
+      const { db } = await providerWithHybridClient();
+
+      const outcome = await authorize(db, hybridParams({ response_type: 'code token', scope: 'reports.read' }));
+
+      const { target, params } = fragmentRedirectOf(outcome);
+      expect(target).toBe(REDIRECT_URI);
+      expect(params).toEqual({
+        error: 'invalid_scope',
+        error_description: 'scope must include openid',
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+      expect(db.codes.size).toBe(0);
+    });
+  });
+
   // OIDC Core 1.0 §3.1.2.3: an active session is reused instead of the login screen.
   describe('Single Sign-On', () => {
     it('should issue a code when the End-User already consented to the requested scopes', async () => {
@@ -228,7 +336,9 @@ describe('processAuthorizationRequest', () => {
     it('should post a validation error to the redirect_uri', async () => {
       const { db } = await providerWithClient();
 
-      const outcome = await authorize(db, authorizationParams({ response_mode: 'form_post', scope: 'profile' }));
+      const outcome = await authorize(db, authorizationParams({ response_mode: 'form_post', scope: 'profile' }), {
+        options: { config: { requireOpenIdScope: true } },
+      });
 
       expect(outcome).toEqual({
         kind: 'authorization_response',

@@ -245,7 +245,7 @@ const grant = await processCibaGrant({ params, client, store });
 
 - Poll モードのみです。Ping / Push（クライアント通知エンドポイントへの callback）は生成されません
 - ヒントは `login_hint` のみです。`id_token_hint`（期限切れ ID トークンによる再認証ヒント）は将来拡張として記録されています
-- `scope` は必須で、`openid` を含む必要があります（本 OP 全体のプロファイル制限）
+- `scope` は必須で、`openid` を含む必要があります（CIBA Core 1.0 §7.1。`ProviderConfig.requireOpenIdScope` が `false` の OP でも変わりません）
 - 認証デバイス UI は pull 型です。実運用の CIBA で典型的なスマホへのプッシュ通知は、通知基盤ごと UI を差し替えて実現してください（前節の API 利用例参照）
 - ログイン失敗の計数はログイントランザクション単位です。ユーザー（subject）単位のスロットリングは別途デプロイ層で行ってください
 

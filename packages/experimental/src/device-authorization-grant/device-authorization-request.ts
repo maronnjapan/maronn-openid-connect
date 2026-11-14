@@ -63,29 +63,53 @@ export function validateDeviceGrantAllowed(client: DeviceAuthorizationClient): v
   }
 }
 
+/** {@link validateDeviceAuthorizationScope} のオプション。 */
+export interface DeviceAuthorizationScopeOptions {
+  /**
+   * `scope` に `openid` を必須にするか。未指定なら `true`。
+   * `false` にすると、`openid` のないリクエストを OAuth 2.0 のデバイス認可リクエストとして受け付ける（RFC 8628 §3.1）。
+   * 認可エンドポイントと同じ値を渡すこと。
+   */
+  requireOpenIdScope?: boolean;
+}
+
 /**
  * `scope` を検証し、重複を除いた値の配列を返す。
  *
- * RFC 8628 §3.1 では `scope` を省略できる（OPTIONAL）が、この OP は認可エンドポイントと同じ制限（`scope` と `openid` を必須とする）をデバイス認可にも課す。
- * RFC 8628 が認める `scope` の省略に対応しないのは、既知の制限である。
+ * 値は空白で区切り、重複は最初に現れたものだけを残す。
+ * この扱いは core の `validateAuthorizationScope` と同じで、`options.requireOpenIdScope` の意味も同じである。
+ *
+ * `options.requireOpenIdScope` が `true`（既定）なら、認可エンドポイントと同じく OpenID Connect のリクエストだけを受け付ける。
  * `scope` がないか空白だけなら `invalid_request` を、`openid` を含まなければ `invalid_scope` を投げる。
  *
- * 値は空白で区切り、重複は最初に現れたものだけを残す。
- * この扱いは core の `validateAuthorizationScope` と同じである。
+ * `false` なら、`openid` のないリクエストも受け付ける。
+ * RFC 8628 §3.1 では `scope` を省略できる（OPTIONAL）が、この OP は既定のスコープを持たないので、`scope` がないか空白だけなら `invalid_scope` を投げる（RFC 6749 §3.3）。
+ * `scope` の省略に対応しないのは、既知の制限である。
  *
  * @spec RFC 8628 §3.1
- * @throws {DeviceAuthorizationError} `invalid_request`: `scope` がないか空白だけのとき。
- * @throws {DeviceAuthorizationError} `invalid_scope`: `scope` に `openid` がないとき。
+ * @spec RFC 6749 §3.3
+ * @throws {DeviceAuthorizationError} `invalid_request`: `openid` を必須にしていて、`scope` がないか空白だけのとき。
+ * @throws {DeviceAuthorizationError} `invalid_scope`: `openid` を必須にしていて `scope` に `openid` がないとき、または `openid` を必須にしておらず `scope` がないか空白だけのとき。
  */
-export function validateDeviceAuthorizationScope(scope: string | undefined): string[] {
+export function validateDeviceAuthorizationScope(
+  scope: string | undefined,
+  options: DeviceAuthorizationScopeOptions = {},
+): string[] {
+  const requireOpenIdScope = options.requireOpenIdScope ?? true;
   if (scope === undefined || scope.trim() === '') {
+    if (!requireOpenIdScope) {
+      throw new DeviceAuthorizationError(
+        'invalid_scope',
+        'Missing scope: this authorization server defines no default scope',
+      );
+    }
     throw new DeviceAuthorizationError(
       'invalid_request',
       'Missing required parameter: scope',
     );
   }
   const values = [...new Set(scope.trim().split(/\s+/).filter((value) => value.length > 0))];
-  if (!values.includes('openid')) {
+  if (requireOpenIdScope && !values.includes('openid')) {
     throw new DeviceAuthorizationError(
       'invalid_scope',
       'The openid scope is required',
@@ -184,12 +208,13 @@ export function buildDeviceAuthorizationResponse(
  * デバイス認可エンドポイントの処理を 1 つにまとめた関数で、{@link validateDeviceGrantAllowed}、{@link validateDeviceAuthorizationScope}、{@link applyOfflineAccessPolicy}、{@link createDeviceAuthorizationRecord}、{@link buildDeviceAuthorizationResponse} を仕様の順に呼ぶだけである。
  * 生成されたコードは通常この関数を使わずにこれらの関数を順に呼び、検証を差し替えたり除いたりできるようにしている。
  * `expiresIn` と `interval` を省略すると、{@link DEFAULT_DEVICE_CODE_EXPIRES_IN}（600 秒）と {@link DEFAULT_POLL_INTERVAL}（5 秒）を使う。
+ * `requireOpenIdScope` は {@link validateDeviceAuthorizationScope} にそのまま渡し、省略すると `openid` を必須にする。
  *
  * @spec RFC 8628 §3.1
  * @spec RFC 8628 §3.2
  * @throws {DeviceAuthorizationError} `unauthorized_client`: クライアントがデバイスコードのグラントタイプを登録していないとき。
- * @throws {DeviceAuthorizationError} `invalid_request`: `scope` がないか空白だけのとき。
- * @throws {DeviceAuthorizationError} `invalid_scope`: `scope` に `openid` がないとき。
+ * @throws {DeviceAuthorizationError} `invalid_request`: `openid` を必須にしていて、`scope` がないか空白だけのとき。
+ * @throws {DeviceAuthorizationError} `invalid_scope`: `openid` を必須にしていて `scope` に `openid` がないとき、または `openid` を必須にしておらず `scope` がないか空白だけのとき。
  * @throws {Error} ユーザーコードが決められた回数続けて既存のコードと衝突したとき。
  */
 export async function processDeviceAuthorizationRequest(input: {
@@ -201,10 +226,13 @@ export async function processDeviceAuthorizationRequest(input: {
   refreshTokenFeatureEnabled: boolean;
   store: DeviceAuthorizationStore;
   now?: Date;
+  requireOpenIdScope?: boolean;
 }): Promise<DeviceAuthorizationResponse> {
   validateDeviceGrantAllowed(input.client);
 
-  const requestedScope = validateDeviceAuthorizationScope(input.params['scope']);
+  const requestedScope = validateDeviceAuthorizationScope(input.params['scope'], {
+    requireOpenIdScope: input.requireOpenIdScope,
+  });
   const scope = applyOfflineAccessPolicy(requestedScope, {
     client: input.client,
     refreshTokenFeatureEnabled: input.refreshTokenFeatureEnabled,

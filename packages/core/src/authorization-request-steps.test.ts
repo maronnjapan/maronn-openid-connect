@@ -16,6 +16,9 @@ import {
   validateRequestObjectConsistency,
   validateResponseType,
   validateAuthorizationScope,
+  validateOpenIdScopeForResponseType,
+  requireExplicitAuthorizationScope,
+  validateAuthorizationScopeNotEmpty,
   validateAuthorizationCodePkce,
   validatePromptParameter,
   applyOfflineAccessPolicy,
@@ -352,6 +355,139 @@ describe('validateAuthorizationScope', () => {
     );
 
     expect(result).toEqual(['openid', 'profile']);
+  });
+
+  // OIDC Core 1.0 §3.1.2.2: openid のないリクエストは OpenID Connect のリクエストではないが、
+  // 有効な OAuth 2.0 のリクエストでありうる。requireOpenIdScope: false はそれを受け付ける。
+  describe('with requireOpenIdScope: false', () => {
+    it('should accept a scope without openid as an OAuth 2.0 request', () => {
+      const params = validParams({ scope: 'reports.read reports.write reports.read' });
+
+      const result = validateAuthorizationScope(params, params, redirectUri, 'abc', {
+        requireOpenIdScope: false,
+      });
+
+      expect(result).toEqual(['reports.read', 'reports.write']);
+    });
+
+    it('should still accept a scope with openid', () => {
+      const params = validParams({ scope: 'openid profile' });
+
+      const result = validateAuthorizationScope(params, params, redirectUri, 'abc', {
+        requireOpenIdScope: false,
+      });
+
+      expect(result).toEqual(['openid', 'profile']);
+    });
+
+    it('should reject missing scope in the query parameters with invalid_scope', () => {
+      // RFC 6749 §3.3: 既定のスコープを持たない認可サーバーは、scope の省略を invalid_scope で失敗させる
+      const queryParams = validParams({ scope: undefined });
+      const effectiveParams = validParams({ scope: 'reports.read' });
+
+      const error = captureError(() =>
+        validateAuthorizationScope(queryParams, effectiveParams, redirectUri, 'abc', {
+          requireOpenIdScope: false,
+        })
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidScope);
+      expect(error?.errorDescription).toBe(
+        'Missing scope: this authorization server defines no default scope'
+      );
+      expect(error?.redirectUri).toBe(redirectUri);
+      expect(error?.state).toBe('abc');
+    });
+
+    it('should reject a scope of whitespace only with invalid_scope', () => {
+      const params = validParams({ scope: '  ' });
+
+      const error = captureError(() =>
+        validateAuthorizationScope(params, params, redirectUri, 'abc', {
+          requireOpenIdScope: false,
+        })
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidScope);
+      expect(error?.errorDescription).toBe('scope must include at least one value');
+    });
+  });
+
+  it('should keep requiring openid when requireOpenIdScope is true', () => {
+    const params = validParams({ scope: 'reports.read' });
+
+    const error = captureError(() =>
+      validateAuthorizationScope(params, params, redirectUri, 'abc', {
+        requireOpenIdScope: true,
+      })
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidScope);
+    expect(error?.errorDescription).toBe('scope must include openid');
+  });
+});
+
+describe('validateOpenIdScopeForResponseType', () => {
+  it('should accept response_type=code without openid', () => {
+    expect(() =>
+      validateOpenIdScopeForResponseType('code', ['reports.read'], redirectUri, 'abc')
+    ).not.toThrow();
+  });
+
+  // OIDC Core 1.0 §3.2.2.1 / §3.3.2.1: インプリシットフローとハイブリッドフローは openid が必須
+  it.each([
+    'id_token',
+    'id_token token',
+    'code id_token',
+    'code token',
+    'code id_token token',
+  ] as const)('should reject response_type=%s without openid with invalid_scope', (responseType) => {
+    const error = captureError(() =>
+      validateOpenIdScopeForResponseType(responseType, ['reports.read'], redirectUri, 'abc')
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidScope);
+    expect(error?.errorDescription).toBe('scope must include openid');
+    expect(error?.redirectUri).toBe(redirectUri);
+    expect(error?.state).toBe('abc');
+  });
+
+  it('should accept response_type=code id_token with openid', () => {
+    expect(() =>
+      validateOpenIdScopeForResponseType('code id_token', ['openid', 'profile'], redirectUri, 'abc')
+    ).not.toThrow();
+  });
+});
+
+describe('requireExplicitAuthorizationScope', () => {
+  it('should return the scope value of the query', () => {
+    expect(requireExplicitAuthorizationScope('reports.read', redirectUri, 'abc')).toBe('reports.read');
+  });
+
+  it('should reject an empty scope value with invalid_scope', () => {
+    const error = captureError(() => requireExplicitAuthorizationScope('', redirectUri, 'abc'));
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidScope);
+  });
+});
+
+describe('validateAuthorizationScopeNotEmpty', () => {
+  it('should accept a scope with one value', () => {
+    expect(() => validateAuthorizationScopeNotEmpty(['reports.read'], redirectUri, 'abc')).not.toThrow();
+  });
+
+  it('should reject a scope with no value with invalid_scope', () => {
+    const error = captureError(() => validateAuthorizationScopeNotEmpty([], redirectUri, 'abc'));
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidScope);
+    expect(error?.redirectUri).toBe(redirectUri);
+    expect(error?.state).toBe('abc');
   });
 });
 

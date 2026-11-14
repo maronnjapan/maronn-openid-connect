@@ -4,6 +4,7 @@
   "features": {
     "pkce": true,
     "refreshToken": true,
+    "clientCredentials": true,
     "introspection": true,
     "revocation": true,
     "requestObject": true,

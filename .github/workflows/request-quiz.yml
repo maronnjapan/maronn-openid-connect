@@ -1,4 +1,4 @@
-name: Request a PR quiz
+name: Request PR quiz materials
 
 on:
   workflow_dispatch:
@@ -10,14 +10,11 @@ on:
         description: 対象仕様 ID (例 rfc-6749。空なら PR の変更内容だけを出題)
       focus_paths:
         description: 対象ファイル・ディレクトリ (カンマ区切り。ディレクトリは末尾 /)
-      part:
-        description: 分割番号 (8変更ファイルずつ)
-        default: '1'
       question_count:
-        description: 問題数 (2〜10、カテゴリ数以上)
+        description: 作問する人・ツールへの任意のメモとして保存する問題数
         default: '7'
       question_categories:
-        description: カテゴリ (カンマ区切り)
+        description: 作問メモとして保存するカテゴリ (カンマ区切り)
         default: vocabulary,knowledge,flow,design,debugging,comparison,implementation
 
 permissions:
@@ -37,13 +34,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - name: Validate and request a draft quiz in readRFCInMobile
+      - name: Send PR information for material preparation in readRFCInMobile
         run: node .github/scripts/request-quiz.mjs
         env:
           QUIZ_DISPATCH_TOKEN: ${{ secrets.QUIZ_DISPATCH_TOKEN }}
           PR_NUMBER: ${{ inputs.pr_number }}
           SPEC_ID: ${{ inputs.spec_id }}
           FOCUS_PATHS: ${{ inputs.focus_paths }}
-          QUIZ_PART: ${{ inputs.part || '1' }}
           QUESTION_COUNT: ${{ inputs.question_count }}
           QUESTION_CATEGORIES: ${{ inputs.question_categories }}

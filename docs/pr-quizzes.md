@@ -79,7 +79,7 @@ Environment は、GitHub 上で設定をまとめて保存する場所です。r
 7. 移動先で **Prepare quiz materials or publish a quiz** の新しい実行を開きます。入力条件が今の依頼と一致することを確認します。
 8. 資料保存が成功するまで待ち、Summary の **資料を見る** を開きます。PR 本文・議論・変更一覧・変更前後コードなどが保存されています。
 
-maronn-openid-connect の処理の成功は「情報を送り、資料保存を依頼できた」という意味です。受信側の資料が保存されたところまで確認します。問題数・カテゴリの入力は作問メモで、問題生成は開始しません。
+maronn-openid-connect の処理の成功は「情報を送り、資料保存を依頼できた」という意味です。受信側の資料が保存されたところまで確認します。問題数・カテゴリの入力は作問メモで、問題生成は開始しません。`question_count` に既定値はなく、空欄なら問題数は未指定です。
 
 **完了の確認：** readRFCInMobile の quiz/materials-<run>-<attempt> ブランチに PR #194 の作問資料 JSON が保存されること。
 
@@ -104,12 +104,32 @@ GitHub App の作成・インストール・投稿権限は readRFCInMobile 側�
 | --- | --- |
 | PR の変更内容だけを出題する | `spec_id` を空欄にする |
 | 仕様と照合する | `spec_id` に `rfc-6749`・`oidc-core-1_0` など、readRFCInMobile に登録された ID を入れる |
+| 通常の対象パスを使う | `focus_paths` の初期値のまま実行する。`apps/hono/`、`apps/nextjs/`、`packages/core/`、`packages/experimental/`、`packages/google-login/`、`tests/`、`docs/` が対象 |
 | 特定のファイルだけを問う | `focus_paths` にファイルパスを入れる。複数ならカンマ区切り |
 | ディレクトリ全体を対象にする | `focus_paths` に `packages/core/src/` などを入れる。末尾の `/` が必要 |
-| 対象の変更ファイルが多い | 既定で全変更ファイルを取得する。必要なら focus_paths で任意に絞る |
-| 作問する人・ツールへ希望を伝える | question_count・question_categories を作問メモとして指定。問題数の独自上限はない |
+| PR の全変更ファイルを対象にする | `focus_paths` の初期値を消して空欄にする。対象ファイル数による分割・制限はない |
+| 問題数を指定しない | `question_count` を空欄のままにする |
+| 作問する人・ツールへ希望を伝える | `question_count`・`question_categories` を作問メモとして指定。問題数の独自上限はない |
+
+現在の `packages/` 配下では、`cli`・`map-analysis`・`test-catalog`・`test-reach` 以外を初期値に含めています。パスは制限ではなく初期値なので、必要なら上書きできます。パッケージを追加したときは Workflow と送信スクリプトの初期値も更新してください。
 
 作問は情報送信と分離して行います。PR の作成・更新やこの Workflow の送信だけでは、AI 作問を開始しません。
+
+## 7. 実行者を maronnjapan に限定する
+
+`request-quiz.yml` の送信ジョブには、次の条件を設定しています。
+
+```yaml
+jobs:
+  request:
+    if: github.ref == 'refs/heads/main' && github.actor == 'maronnjapan' && github.triggering_actor == 'maronnjapan'
+```
+
+`github.actor` は最初の実行者、`github.triggering_actor` は今回の実行・再実行を要求した人です。両方が `maronnjapan` で、Branch が main の場合だけ、送信ジョブが実行されます。他の人による起動・再実行はジョブがスキップされ、送信トークンを使いません。
+
+GitHub の `workflow_dispatch` はリポジトリへの write 権限で起動を許可するため、この条件でも他の write 権限保持者が実行履歴を作ることはできます。起動操作自体を自分だけにするなら、[Settings → Collaborators](https://github.com/maronnjapan/maronn-openid-connect/settings/access) で他のユーザー・チーム・連携の write 以上の権限を見直します。この権限変更は他の Workflow やコードの更新にも影響します。
+
+条件の書き換えも防ぐ場合は、main の Ruleset / Branch protection でレビューなしの直接 push を制限し、管理者や連携の bypass も確認します。トークンを追加で保護するなら、[quiz-authoring Environment](https://github.com/maronnjapan/maronn-openid-connect/settings/environments) の Deployment branches を main のみにし、Required reviewers を `maronnjapan` のみに設定します。自分が起動して自分で承認する運用では、Prevent self-review は無効にします。承認の迂回を防ぐ場合は Allow administrators to bypass configured protection rules も無効にします。詳細は [GitHub の Environment 保護ルール](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)を参照してください。
 
 ## 困ったとき
 
@@ -118,7 +138,7 @@ GitHub App の作成・インストール・投稿権限は readRFCInMobile 側�
 | Request PR quiz materials が見当たらない | main に `request-quiz.yml` があるか。0-3を確認 |
 | `Set QUIZ_DISPATCH_TOKEN` と出る | **このリポジトリの** quiz-authoring → Environment secrets に名前が完全一致しているか |
 | 起動の依頼が403または404で失敗 | トークンの期限、対象が readRFCInMobile か、Actions が Read and write か、readRFCInMobile の main に `quiz-authoring.yml` があるか |
-| 実行がスキップされる | Run workflow で Branch に main を選んだか |
+| 実行がスキップされる | Branch が main か、最初の実行者と今回の実行・再実行者の両方が maronnjapan か |
 | 依頼は成功したが問題が見つからない | Summary のリンク先で資料保存の結果を確認。その資料から問題を別途作成・公開する |
 | readRFCInMobile 側が失敗 | 同リポジトリの[PR 連携手順](https://github.com/maronnjapan/readRFCInMobile/blob/main/apps/quiz/docs/pr-integration.md)を確認 |
 | 公開したが PR にリンクがない | readRFCInMobile 側の GitHub App の設定と、設定を問題アプリへ反映する公開処理が済んでいるか |

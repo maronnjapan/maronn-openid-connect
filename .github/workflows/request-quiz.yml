@@ -10,9 +10,9 @@ on:
         description: 対象仕様 ID (例 rfc-6749。空なら PR の変更内容だけを出題)
       focus_paths:
         description: 対象ファイル・ディレクトリ (カンマ区切り。ディレクトリは末尾 /)
+        default: apps/hono/,apps/nextjs/,packages/core/,packages/experimental/,packages/google-login/,tests/,docs/
       question_count:
-        description: 作問する人・ツールへの任意のメモとして保存する問題数
-        default: '7'
+        description: 作問する人・ツールへの任意のメモとして保存する問題数 (空なら未指定)
       question_categories:
         description: 作問メモとして保存するカテゴリ (カンマ区切り)
         default: vocabulary,knowledge,flow,design,debugging,comparison,implementation
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   request:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.actor == 'maronnjapan' && github.triggering_actor == 'maronnjapan'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: quiz-authoring

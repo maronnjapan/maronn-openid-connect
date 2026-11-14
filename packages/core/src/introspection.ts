@@ -152,6 +152,7 @@ export function isRefreshTokenActive(
  * 保存済みのアクセストークンの情報から、`active: true` のイントロスペクションのレスポンスを組み立てる。
  * `token_type` は `Bearer` にし、`scope` は空白区切りの文字列にする。
  * `client_id`、`sub`、`exp` は常に含め、`iat`、`nbf`、`iss`、`jti`、`acr` は保存されているときだけ、`aud` は `audience` が空でないときだけ含める。
+ * `scope` は、スコープが一つもないトークン（スコープを登録していないクライアントの `client_credentials` グラントのトークン）では含めない。
  * 有効期限や `nbf` は確かめず、常に `active: true` を返す。
  *
  * @spec RFC 7662 §2.2
@@ -160,7 +161,8 @@ export function isRefreshTokenActive(
 function buildAccessTokenResponse(info: AccessTokenInfo): IntrospectionResponse {
   const res: Extract<IntrospectionResponse, { active: true }> = {
     active: true,
-    scope: info.scope.join(' '),
+    // `scope` は任意のメンバーで、値は一つ以上のスコープを空白で区切った文字列なので、スコープがなければ省く（RFC 7662 §2.2、RFC 6749 §3.3）。
+    ...(info.scope.length > 0 ? { scope: info.scope.join(' ') } : {}),
     client_id: info.clientId,
     token_type: 'Bearer',
     sub: info.sub,

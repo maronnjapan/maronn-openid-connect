@@ -260,7 +260,7 @@ function extractLoginHint(params: Record<string, string>): string {
  * `scope` を検証し、重複を除いた値の配列を返す。
  *
  * CIBA §7.1 は、`scope` に `openid` を含めることを求める（CIBA は OpenID Connect の拡張である）。
- * この OP は、認可エンドポイントとデバイス認可と同じ制限（`scope` と `openid` を必須とする）を CIBA にも課す。
+ * 認可エンドポイントとデバイス認可は `openid` のないリクエストも OAuth 2.0 のリクエストとして受け付けられるが、CIBA は仕様が `openid` を求めるので、設定によらず `scope` と `openid` を必須にする。
  * `scope` がないか空白だけなら `invalid_request` を、`openid` を含まなければ `invalid_scope` を投げる。
  *
  * 値は空白で区切り、重複は最初に現れたものだけを残す。

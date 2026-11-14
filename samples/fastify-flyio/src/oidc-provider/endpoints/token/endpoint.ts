@@ -20,6 +20,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'authenticate-client',
+    'dispatch-client-credentials',
     'dispatch-device-code',
     'dispatch-ciba',
     'validate-grant-type',

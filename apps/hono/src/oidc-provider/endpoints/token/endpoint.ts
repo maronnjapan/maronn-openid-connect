@@ -20,6 +20,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'authenticate-client',
+    'dispatch-client-credentials',
     'dispatch-id-jag-issuance',
     'dispatch-id-jag-redemption',
     'dispatch-token-exchange',

@@ -11,6 +11,8 @@ export enum TokenErrorCode {
   UnauthorizedClient = 'unauthorized_client',
   UnsupportedGrantType = 'unsupported_grant_type',
   InvalidScope = 'invalid_scope',
+  /** RFC 8707 §2: 要求されたリソース（オーディエンス）が不正か、許可されていない。 */
+  InvalidTarget = 'invalid_target',
 }
 
 /**

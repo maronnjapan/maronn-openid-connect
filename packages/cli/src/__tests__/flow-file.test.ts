@@ -220,7 +220,7 @@ describe('resolveFlowSelection', () => {
       const token = endpointOf(doc, 'token');
       (token as unknown as { steps: string[] }).steps = [...token.steps.map((s) => s.id), 'dpop'];
       expect(() => resolveFlowSelection(doc)).toThrow(
-        'endpoint "token" has an unknown step "dpop". Steps of this endpoint: parse-request, authenticate-client, validate-grant-type',
+        'endpoint "token" has an unknown step "dpop". Steps of this endpoint: parse-request, authenticate-client, dispatch-client-credentials, validate-grant-type',
       );
     });
 
@@ -291,7 +291,7 @@ describe('resolveFlowSelection', () => {
       ids.splice(2, 0, authenticate as string);
       (token as unknown as { steps: string[] }).steps = ids;
       expect(() => resolveFlowSelection(doc)).toThrow(
-        'endpoint "token": step "validate-grant-type" reads "tokenClient", which no earlier step produces (produced by "authenticate-client")',
+        'endpoint "token": step "dispatch-client-credentials" reads "tokenClient", which no earlier step produces (produced by "authenticate-client")',
       );
     });
 

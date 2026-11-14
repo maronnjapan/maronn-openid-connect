@@ -54,7 +54,13 @@ import { createStoreResolvers } from './resolvers';
  * only), and OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS /
  * OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS replace how long keys without
  * max-age are kept and how often an unknown kid fetches the jwks_uri again
- * (0: every time). The other settings of config.ts keep their defaults.
+ * (0: every time).
+ *
+ * OAuth 2.0 beside OpenID Connect: OIDC_REQUIRE_OPENID_SCOPE=1 makes the
+ * provider answer OpenID Connect requests only, so an authorization request
+ * whose scope has no openid is invalid_scope (OIDC Core 1.0 §3.1.2.1). Left
+ * unset, such a request is accepted as an OAuth 2.0 request (§3.1.2.2).
+ * The other settings of config.ts keep their defaults.
  */
 export const config: ProviderConfig = createProviderConfig({
   issuer: process.env.OIDC_ISSUER ?? process.env.ISSUER ?? 'http://localhost:3000',
@@ -64,6 +70,7 @@ export const config: ProviderConfig = createProviderConfig({
   accessTokenFormat: 'jwt',
   authorizationCodeTtl: 300,
   allowInsecureClientJwksUri: process.env.OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI === '1',
+  requireOpenIdScope: process.env.OIDC_REQUIRE_OPENID_SCOPE === '1',
   ...secondsFromEnvironment('clientJwksUriCacheTtlSeconds', 'OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS'),
   ...secondsFromEnvironment('clientJwksUriRefetchIntervalSeconds', 'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS'),
 });

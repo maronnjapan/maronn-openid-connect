@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formPost, requestTo, TEST_ISSUER } from '../../../../../test-support/context.js';
 import { rs256Key, staticKeyProvider } from '../../../../../test-support/keys.js';
 import { createApp } from '../../../../app.js';
+import type { ProviderConfig } from '../../../../config.js';
 import { createClientKeyResolver, createClientResolver, registerClient } from '../../../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../../../db/memory/database.js';
 import { createProviderStores } from '../../../../db/memory/stores.js';
@@ -9,7 +10,7 @@ import { deviceAuthorizationStore } from '../../store.js';
 
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 
-async function appWithDeviceClient() {
+async function appWithDeviceClient(config: Partial<ProviderConfig> = {}) {
   const db = createEmptyDatabase();
   await registerClient(db, {
     clientId: 'tv-app',
@@ -30,7 +31,7 @@ async function appWithDeviceClient() {
     storage: createProviderStores(db),
     clientResolver: createClientResolver(db),
     clientKeyResolver: createClientKeyResolver(db),
-    config: { issuer: TEST_ISSUER },
+    config: { issuer: TEST_ISSUER, ...config },
   });
 }
 
@@ -57,6 +58,40 @@ describe('deviceAuthorizationApp', () => {
       scope: ['openid', 'profile'],
       status: 'pending',
       userCodeDisplay: body['user_code'],
+    });
+  });
+
+  // RFC 8628 §3.1: the grant is an OAuth 2.0 grant, so a request without the openid
+  // scope gets its codes; the provider reads requireOpenIdScope from its settings.
+  it('should answer a request without the openid scope with a device_code for that scope', async () => {
+    const app = await appWithDeviceClient();
+
+    const response = await app.request(
+      formPost('/device_authorization', { client_id: 'tv-app', client_secret: 'tv-secret', scope: 'reports.read' }),
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(await deviceAuthorizationStore.findByDeviceCode(String(body['device_code']))).toMatchObject({
+      clientId: 'tv-app',
+      scope: ['reports.read'],
+      status: 'pending',
+    });
+  });
+
+  // OIDC Core 1.0 §3.1.2.1: a provider of OpenID Connect requests only refuses it.
+  it('should answer a request without the openid scope with 400 invalid_scope when requireOpenIdScope is set', async () => {
+    const app = await appWithDeviceClient({ requireOpenIdScope: true });
+
+    const response = await app.request(
+      formPost('/device_authorization', { client_id: 'tv-app', client_secret: 'tv-secret', scope: 'reports.read' }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.json()).toEqual({
+      error: 'invalid_scope',
+      error_description: 'The openid scope is required',
     });
   });
 

@@ -118,7 +118,7 @@ describe('renderStep', () => {
 
   it('should say where the step sits in the pipeline and what it reads and defines', () => {
     const text = renderStep(map, endpoint, step, 1);
-    expect(text).toContain('pipeline: [parse-request] → [authenticate-client] → [validate-grant-type]');
+    expect(text).toContain('pipeline: [parse-request] → [authenticate-client] → [dispatch-client-credentials]');
     expect(text).toContain('reads: params, authorization   defines: tokenClient, authenticatedClientId');
   });
 

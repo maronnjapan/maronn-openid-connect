@@ -19,6 +19,7 @@ import {
   readClientJwksUri,
   readCrossAppAccess,
   readDynamicClientRegistration,
+  readOAuthProfile,
   readRequestUri,
   readPostLogoutRedirectUris,
   readRegisteredClients,
@@ -64,6 +65,8 @@ export async function createServerApp(env: Environment): Promise<Hono> {
       ...readClientJwksUri(env),
       // The request_uri of the authorization requests (OIDC Core 1.0 §6.2): tests/e2e serves them over http on 127.0.0.1.
       ...readRequestUri(env),
+      // OAuth 2.0 beside OpenID Connect: whether a request needs the openid scope, and the audiences of client_credentials.
+      ...readOAuthProfile(env),
       // EXTENSION (google-login): the button appears once a Google OAuth
       // client ID is configured.
       ...(googleClientId ? { googleLogin: { clientId: googleClientId } } : {}),

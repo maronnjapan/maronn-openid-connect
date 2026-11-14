@@ -43,6 +43,7 @@ export {
 export type {
   DeviceAuthorizationClient,
   DeviceAuthorizationResponse,
+  DeviceAuthorizationScopeOptions,
 } from './device-authorization-request.js';
 
 export {

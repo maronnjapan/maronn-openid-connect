@@ -16,6 +16,8 @@ describe('createProviderConfig', () => {
       authorizationCodeTtl: 300,
       // The pkce feature makes PKCE required of confidential clients too (OAuth 2.1 §4.1.1).
       allowNonPkceAuthorizationCodeFlow: false,
+      // OIDC Core 1.0 §3.1.2.2: a request without openid is accepted as an OAuth 2.0 request.
+      requireOpenIdScope: false,
       // The jwks_uri of the clients (RFC 7591 §2): https and public addresses only,
       // keys kept for max-age within 30 to 300 seconds (300 without max-age), an
       // unknown kid refetched at most every 30 seconds, and the fetch bounded.
@@ -46,6 +48,9 @@ describe('createProviderConfig', () => {
       requestUriTimeoutMs: 3000,
       requestUriMaxBytes: 65536,
       requestUriMaxLength: 512,
+      // The client-credentials feature lets no audience be requested until the
+      // resources are listed (RFC 8707 §2).
+      clientCredentialsAllowedAudiences: [],
     });
   });
 

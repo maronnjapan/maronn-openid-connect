@@ -145,6 +145,25 @@ describe('redeemDeviceCode', () => {
       expect(await store.findByDeviceCode(record.deviceCode)).toBeNull();
     });
 
+    // RFC 8628 §3.5: a device authorization without the openid scope is an OAuth 2.0 grant
+    // (the provider accepts it unless requireOpenIdScope is set), answered with an access token only.
+    it('should issue an access token without an ID Token when the approved scope has no openid', async () => {
+      const { c, stores, record } = await tokenContext(approved({ approvedScope: ['reports.read'] }));
+
+      const response = await redeemDeviceCode(c, deviceCodeRequest(record.deviceCode), tokenClient, 'device-client');
+      const body = (await response?.json()) as Record<string, string>;
+
+      expect(response?.status).toBe(200);
+      expect(body).toMatchObject({ token_type: 'Bearer', expires_in: 3600, scope: 'reports.read' });
+      expect(Object.keys(body).sort()).toEqual(['access_token', 'expires_in', 'scope', 'token_type']);
+      expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({
+        sub: 'alice',
+        clientId: 'device-client',
+        scope: ['reports.read'],
+        grantId: 'grant-1',
+      });
+    });
+
     // OIDC Core 1.0 §11: offline_access survived the device authorization endpoint's policy.
     it('should also issue a refresh token of the same grant when the approved scope has offline_access', async () => {
       const { c, stores, record } = await tokenContext(approved({ approvedScope: ['openid', 'offline_access'] }));

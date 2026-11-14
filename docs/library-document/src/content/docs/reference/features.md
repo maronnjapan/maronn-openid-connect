@@ -35,7 +35,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 
 | パラメータ | 挙動 |
 |---|---|
-| `scope` | `openid` 必須。`profile` / `email` / `address` / `phone` / `offline_access` に対応 |
+| `scope` | 必須。`openid` を含むリクエストは OpenID Connect のリクエストとして、含まないリクエストは OAuth 2.0 の認可リクエストとして受け付ける（OIDC Core 1.0 §3.1.2.2）。`openid` / `profile` / `email` / `address` / `phone` / `offline_access` に対応。`requireOpenIdScope: true` にすると `openid` のないリクエストを `invalid_scope` で拒否する（[OAuth 2.0 のリクエスト](#oauth-20-のリクエストopenid-なし)） |
 | `state` | 認可レスポンスでそのまま返却 |
 | `response_mode` | `form_post` に対応（OAuth 2.0 Form Post Response Mode）。認可レスポンス（成功もリダイレクト可能なエラーも）を、リダイレクト URI を `action` とする HTML フォームの hidden フィールドにして、ブラウザから POST させる。応答には `Cache-Control: no-cache, no-store` を付ける。`iss`（RFC 9207）もフィールドに含める。トグル `form-post-response-mode` で無効化できる。`implicit-flow` 有効時は `fragment` にも対応し（OAuth 2.0 Multiple Response Type Encoding Practices §2.1）、パラメータと `iss` をリダイレクト URI のフラグメントで返す。Implicit Flow と Hybrid Flow の既定はフラグメントで、`query` と JARM の `.jwt` 系の指定は `invalid_request` になる（同 §3 / §5）。`response_type=code` の要求は、`response_mode` が未指定か `query` なら従来どおりクエリで返す。それ以外の値は、Experimental 機能 JARM を有効にしたときの `.jwt` 系を除いて無視する |
 | `nonce` | ID Token の `nonce` クレームとして返却。Implicit Flow と、認可エンドポイントが ID Token を返す Hybrid Flow（`code id_token`、`code id_token token`）では必須 |
@@ -51,12 +51,37 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `request_uri` | URL の `request_uri`（Request Object by reference, OIDC Core 1.0 §6.2）から Request Object を取得し、`request` と同じく検証する。取得は https の公開ホストに限り、512 文字まで、フラグメントを除いて GET し、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB までに制限する。取得に失敗すると、リダイレクトせずに固定文言の `invalid_request_uri` で拒否する。`request` との併用は `invalid_request`。`requireRequestUriRegistration: true` では、クライアントが登録した `request_uris` と完全一致する値だけを取得する。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する。トグル `request-object` を外すと `request_uri_not_supported` で拒否する。PAR の `urn:ietf:params:oauth:request_uri:` は PAR が解決する |
 | `registration` | 未対応。仕様通り `registration_not_supported` で拒否（OIDC Core 1.0 §3.1.2.6） |
 
+### OAuth 2.0 のリクエスト（`openid` なし）
+
+`scope` に `openid` のない認可リクエストは、OpenID Connect のリクエストではありませんが、OAuth 2.0 の認可リクエストとして処理します（OIDC Core 1.0 §3.1.2.2、RFC 6749 §4.1）。ログインと同意は同じ画面を通り、認可コードを交換するとアクセストークンだけが返ります。
+
+- ID Token は発行しない（トークンレスポンスに `id_token` が無い）
+- UserInfo エンドポイントは、そのアクセストークンを `insufficient_scope`（403）で拒否する（OIDC Core 1.0 §5.3.1）
+- リフレッシュトークンは、OpenID Connect のリクエストと同じ規則で発行する（クライアントが `grant_types` に `refresh_token` を登録していること）
+- `code` 以外の `response_type`（Implicit Flow と Hybrid Flow）は OpenID Connect のフローなので、設定によらず `openid` が必須（無ければ `invalid_scope`）
+- `scope` 自体は必須。この OP は既定のスコープを持たないので、`scope` のないリクエストは `invalid_scope` で拒否する（RFC 6749 §3.3）
+
+OpenID Connect のリクエストだけを受け付ける OP に戻すには、`ProviderConfig.requireOpenIdScope` を `true` にします。このとき `openid` のないリクエストは `invalid_scope`、`scope` のないリクエストは `invalid_request` になります（OIDC Core 1.0 §3.1.2.1）。Experimental 機能の PAR とデバイス認可のエンドポイントも同じ設定に従います。CIBA は仕様が `openid` を求めるので、常に必須です（CIBA Core 1.0 §7.1）。
+
 ## Token Endpoint
 
-- グラント: `authorization_code` / `refresh_token`
+- グラント: `authorization_code` / `refresh_token` / `client_credentials`（`refresh-token`、`client-credentials` のトグルで増減）
 - クライアント認証: `client_secret_basic` / `client_secret_post` / `private_key_jwt`（OIDC Core 1.0 §9） / `none`（public client）。1 つのクライアントに `client_secret_basic` と `client_secret_post` の両方を登録可能。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
 - private_key_jwt: クライアントアサーション（RFC 7523 §3）の alg は RS256 / RS384 / RS512 / ES256 / ES384 / ES512（`none` と HS 系は拒否）。`iss` と `sub` が client_id、`aud` にエンドポイントの URL か issuer、`exp` と `jti` が必須で、同じ `jti` の再送は期限まで拒否する。鍵はクライアントが `private_key_jwt` の用途に登録した公開鍵か `jwks_uri` の鍵。検証の失敗はすべて `invalid_client`、アサーションとシークレットの併用は `invalid_request`。イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントも同じ検証を行う（詳細は [CLI Guide の private_key_jwt](../../guides/cli/#private_key_jwt)）
 - 認可コード: ワンタイム使用、TTL 既定 300 秒、redirect_uri 一致検証、PKCE `code_verifier` の S256 検証
+
+### Client Credentials Grant
+
+`client-credentials` 有効時（既定）、トークンエンドポイントは `grant_type=client_credentials`（RFC 6749 §4.4 / OAuth 2.1 §4.2）に応答します。エンドユーザーは関わらず、認証したクライアントが自分自身のアクセストークンを得ます。
+
+- 使えるのは、クライアント登録の `grant_types` に `client_credentials` があるコンフィデンシャルクライアントだけ（無ければ `unauthorized_client`。パブリッククライアントも `unauthorized_client`）
+- スコープは、クライアント登録の `scope` にある値だけを発行する（外れれば `invalid_scope`）。`scope` を省くと登録したスコープのすべてになり、スコープを登録していないクライアントにはスコープのないトークンを発行する
+- `openid` と `offline_access` は発行しない（`invalid_scope`）。ID Token とリフレッシュトークンも返さない（RFC 6749 §4.4.3）
+- アクセストークンの `sub` は `client_id`（RFC 9068 §2.2）。`aud` は issuer で、UserInfo エンドポイントは含めない
+- `audience` パラメータ（空白区切り）で発行先のリソースを指定できるのは、`ProviderConfig.clientCredentialsAllowedAudiences` に挙げた値だけ。既定は空で、`audience` を指定したリクエストは `invalid_target` で拒否する（RFC 8707 §2）
+- discovery の `grant_types_supported` に `client_credentials` を広告する
+
+詳細は [Client Credentials Grant](../../concepts/client-credentials/) を参照してください。
 
 ### Access Token
 
@@ -65,7 +90,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `jwt`（既定） | RFC 9068 準拠の自己完結型 JWT。ステートレス検証可能 |
 | `opaque` | CSPRNG ベースの不透明文字列。ストア参照 / Introspection で検証し、即時失効に強い |
 
-クレーム: `iss` / `sub` / `aud` / `exp` / `iat` / `nbf` / `jti` / `scope` / `client_id`（RFC 9068 §2.2）。`acr_values` を要求された（または `AcrResolver` が acr を返した）場合は、ID Token と同じ `acr`（RFC 9068 §2.2.1）も含む。
+クレーム: `iss` / `sub` / `aud` / `exp` / `iat` / `nbf` / `jti` / `scope` / `client_id`（RFC 9068 §2.2）。スコープが一つもないトークン（スコープを登録していないクライアントの `client_credentials` グラント）には `scope` を含めない。`acr_values` を要求された（または `AcrResolver` が acr を返した）場合は、ID Token と同じ `acr`（RFC 9068 §2.2.1）も含む。
 
 `jti` は発行ごとに 128bit の CSPRNG 値を生成する。RS256（RSASSA-PKCS1-v1_5）は決定的な署名方式のため、
 `jti` のような発行ごとの可変要素が無いと、同じクレームのトークンを同じ秒に 2 回発行したときに
@@ -104,7 +129,7 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 
 ## UserInfo Endpoint
 
-- Bearer アクセストークンで認証（`invalid_token` / `insufficient_scope` エラー対応）
+- Bearer アクセストークンで認証（`invalid_token` / `insufficient_scope` エラー対応）。`openid` スコープのないアクセストークン（OAuth 2.0 のリクエストや `client_credentials` グラントのもの）は `insufficient_scope` で拒否する（OIDC Core 1.0 §5.3.1）
 - scope に応じた標準クレームの返却（OIDC Core 1.0 §5.4）: `profile` / `email` / `address` / `phone`
 - `claims` リクエストパラメータによる個別クレーム要求に対応
 - 署名付き UserInfo レスポンス（JWT）の生成に対応
@@ -140,6 +165,8 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `accessTokenFormat` | `'jwt'` | `'jwt'` または `'opaque'` |
 | `authorizationCodeTtl` | `300` | 認可コード有効期間（秒） |
 | `allowNonPkceAuthorizationCodeFlow` | `false` | confidential client の非 PKCE フローを許可（conformance 互換モード） |
+| `requireOpenIdScope` | `false` | `true` にすると、`scope` に `openid` のない認可リクエストを `invalid_scope` で拒否する（OpenID Connect のリクエストだけを受け付ける）。既定では OAuth 2.0 のリクエストとして受け付ける |
+| `clientCredentialsAllowedAudiences` | `[]` | `client_credentials` グラントの `audience` パラメータで要求できるリソースの一覧（client-credentials 機能）。空なら `audience` の指定をすべて `invalid_target` で拒否する |
 | `allowUnsignedRequestObject` | `false` | 署名なし（`alg: none`）Request Object の互換受理 |
 | `requestObjectSigningAlgValuesSupported` | `['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']` | 署名付き Request Object に受け付ける alg（request-object 機能） |
 | `allowInsecureClientJwksUri` | `false` | クライアントの `jwks_uri` に、http と `localhost`、ループバック・私設・リンクローカルのアドレスを許す（開発用） |
@@ -157,7 +184,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 
 ## Feature Toggles
 
-CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` / `form-post-response-mode` / `implicit-flow` / `hybrid-flow` を機能単位で増減できます。`hybrid-flow` は `implicit-flow` を必要とするので、`implicit-flow` を外すときは `hybrid-flow` も外します。詳細は [CLI Guide](../../guides/cli/) を参照してください。
+CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credentials` / `introspection` / `revocation` / `request-object` / `form-post-response-mode` / `implicit-flow` / `hybrid-flow` を機能単位で増減できます。`hybrid-flow` は `implicit-flow` を必要とするので、`implicit-flow` を外すときは `hybrid-flow` も外します。詳細は [CLI Guide](../../guides/cli/) を参照してください。
 
 ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`__Host-oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します。`POST /login`・`POST /consent` は、ブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたことも確かめます（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 

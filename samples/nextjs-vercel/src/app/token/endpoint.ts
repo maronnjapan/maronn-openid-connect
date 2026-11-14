@@ -16,6 +16,7 @@ export const endpoint = defineEndpoint({
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
     { id: 'parse-request', consumes: [], produces: ['params'] },
     { id: 'authenticate-client', consumes: ['params'], produces: ['tokenClient', 'authenticatedClientId'] },
+    { id: 'dispatch-client-credentials', feature: 'client-credentials', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'dispatch-device-code', feature: 'device-authorization-grant', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'dispatch-ciba', feature: 'ciba', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'validate-grant-type', consumes: ['params', 'tokenClient'], produces: ['grantType'] },

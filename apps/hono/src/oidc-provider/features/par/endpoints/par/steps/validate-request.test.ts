@@ -52,12 +52,21 @@ describe('validatePushedRequest', () => {
     });
   });
 
-  // OIDC Core 1.0 §3.1.2.1: scope MUST contain openid.
-  it('should reject a scope without openid with invalid_scope', async () => {
+  // OIDC Core 1.0 §3.1.2.2 / RFC 9126 §2.1: a request without openid is an OAuth 2.0
+  // request, accepted here as the authorization endpoint accepts it.
+  it('should accept a scope without openid as an OAuth 2.0 request', async () => {
     const { c } = await contextWithClient();
+
+    await expect(validatePushedRequest(c, pushedParams({ scope: 'reports.read' }))).resolves.toBeUndefined();
+  });
+
+  // OIDC Core 1.0 §3.1.2.1: with requireOpenIdScope, scope MUST contain openid.
+  it('should reject a scope without openid with invalid_scope when requireOpenIdScope is set', async () => {
+    const { c } = await contextWithClient({ requireOpenIdScope: true });
 
     await expect(validatePushedRequest(c, pushedParams({ scope: 'profile' }))).rejects.toMatchObject({
       code: 'invalid_scope',
+      errorDescription: 'scope must include openid',
     });
   });
 

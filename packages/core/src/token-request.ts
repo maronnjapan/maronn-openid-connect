@@ -20,8 +20,10 @@ export interface TokenRequestParams {
   client_secret?: string;
   // refresh_token grant
   refresh_token?: string;
-  // refresh_token grant: 要求するスコープ（スペース区切り）
+  // refresh_token grant / client_credentials grant: 要求するスコープ（スペース区切り）
   scope?: string;
+  // client_credentials grant: アクセストークンの audience（スペース区切り）
+  audience?: string;
 }
 
 /**

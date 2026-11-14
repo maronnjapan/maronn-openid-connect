@@ -37,7 +37,7 @@ Client                   Authorization Server              Resource Server
 | `response_type` | 必須 | `code` 固定 |
 | `client_id` | 必須 | クライアント識別子 |
 | `redirect_uri` | 必須 | リダイレクト先URI |
-| `scope` | 必須 | `openid` を含むスペース区切りのスコープ |
+| `scope` | 必須 | スペース区切りのスコープ。`openid` を含めると OpenID Connect のリクエストになる |
 | `state` | 推奨 | CSRF対策のランダム値 |
 | `nonce` | 推奨 | リプレイ攻撃対策 |
 | `code_challenge` | 必須 | PKCE チャレンジ (OAuth 2.1) |
@@ -83,8 +83,40 @@ grant_type=authorization_code
 }
 ```
 
+## OAuth 2.0 としての利用（`openid` なし）
+
+`scope` に `openid` を含めないリクエストは、OpenID Connect のリクエストではなく、OAuth 2.0 の認可リクエストとして処理されます（OIDC Core 1.0 §3.1.2.2、RFC 6749 §4.1）。リソースサーバーの API を呼ぶためのアクセストークンだけが要るクライアントは、この形で使えます。
+
+```
+GET /authorize?response_type=code&client_id=CLIENT_ID
+  &redirect_uri=https://client.example.com/callback
+  &scope=reports.read&state=STATE
+  &code_challenge=CODE_CHALLENGE&code_challenge_method=S256
+```
+
+ログインと同意は OpenID Connect のリクエストと同じ画面を通り、認可コードを交換するとアクセストークンだけが返ります。
+
+```json
+{
+  "access_token": "ACCESS_TOKEN",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "reports.read"
+}
+```
+
+- ID Token は発行されません
+- そのアクセストークンで UserInfo エンドポイントを呼ぶと、`insufficient_scope`（403）で拒否されます（OIDC Core 1.0 §5.3.1）
+- `scope` は省略できません。省略すると `invalid_scope` になります（RFC 6749 §3.3）
+- Implicit Flow と Hybrid Flow（`code` 以外の `response_type`）は OpenID Connect のフローなので、`openid` が必須です
+
+OpenID Connect のリクエストだけを受け付けたい場合は、`ProviderConfig.requireOpenIdScope` を `true` にします。`openid` のないリクエストは `invalid_scope` で拒否されます（OIDC Core 1.0 §3.1.2.1）。
+
+独自のスコープ（`reports.read` など）の宣言と、ユーザーごとの許可は [Features の Custom Scopes](../../reference/features/#custom-scopes) を参照してください。
+
 ## See Also
 
 - [PKCE](../pkce/) — `code_challenge` / `code_verifier` の詳細
 - [ID Token](../id-token/) — レスポンスに含まれる `id_token` の構造
+- [Client Credentials Grant](../client-credentials/) — エンドユーザーが関わらない、クライアント自身のアクセストークン
 - [Features](../../reference/features/) — 対応パラメータの一覧

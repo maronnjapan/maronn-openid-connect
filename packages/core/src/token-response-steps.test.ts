@@ -61,6 +61,31 @@ describe('buildAccessTokenPayload', () => {
     });
   });
 
+  // RFC 9068 §2.2.3 / RFC 6749 §3.3: scope クレームは一つ以上のスコープの並び。
+  // スコープを登録していないクライアントの client_credentials グラントでは、空文字列にせず省く。
+  it('should leave scope out of the payload when no scope is issued', () => {
+    const result = buildAccessTokenPayload({
+      issuer: 'https://op.example.com',
+      subject: 'service-1',
+      clientId: 'service-1',
+      scope: [],
+      audience: ['https://api.example.com'],
+      expiresIn: 3600,
+      issuedAt: NOW,
+      jti: 'fixed-jti-for-assertion',
+    });
+
+    expect(result).toEqual({
+      iss: 'https://op.example.com',
+      sub: 'service-1',
+      aud: ['https://api.example.com'],
+      exp: NOW + 3600,
+      iat: NOW,
+      jti: 'fixed-jti-for-assertion',
+      client_id: 'service-1',
+    });
+  });
+
   it('should add the acr of the authentication to the payload', () => {
     const result = buildAccessTokenPayload({
       issuer: 'https://op.example.com',

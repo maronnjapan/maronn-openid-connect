@@ -4,12 +4,13 @@ import { pathToFileURL } from 'node:url';
 export const quizRepository = 'maronnjapan/readRFCInMobile';
 export const quizWorkflow = 'quiz-authoring.yml';
 const categories = ['vocabulary', 'knowledge', 'flow', 'design', 'debugging', 'comparison', 'implementation'];
+const defaultFocusPaths = 'apps/hono/,apps/nextjs/,packages/core/,packages/experimental/,packages/google-login/,tests/,docs/';
 
 /** Send PR information for material preparation; authoring is a separate operation. */
-export function quizRequest({ prNumber, specId = '', focusPaths = '', questionCount = '7', questionCategories = categories.join(',') }) {
+export function quizRequest({ prNumber, specId = '', focusPaths = defaultFocusPaths, questionCount = '', questionCategories = categories.join(',') }) {
   const positive = (value) => /^[1-9]\d*$/.test(String(value)) && Number.isSafeInteger(Number(value));
   if (!positive(prNumber)) throw new Error('PR number must be a positive integer.');
-  if (!positive(questionCount)) throw new Error('The optional question count must be a positive integer.');
+  if (questionCount !== '' && !positive(questionCount)) throw new Error('The optional question count must be a positive integer.');
   if (specId && !/^[a-z0-9][a-z0-9_-]{0,99}$/.test(specId)) throw new Error('Specify a registered specification ID, or leave it empty for a PR-only quiz.');
   const selected = questionCategories.split(',').map((c) => c.trim());
   if (!selected.length || new Set(selected).size !== selected.length || selected.some((c) => !categories.includes(c))) throw new Error('Choose distinct quiz categories.');
@@ -33,8 +34,8 @@ export async function requestQuiz(input, { token, fetcher = fetch } = {}) {
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   try {
-    const input = { prNumber: process.env.PR_NUMBER, specId: process.env.SPEC_ID || '', focusPaths: process.env.FOCUS_PATHS || '',
-      questionCount: process.env.QUESTION_COUNT || '7', questionCategories: process.env.QUESTION_CATEGORIES || categories.join(',') };
+    const input = { prNumber: process.env.PR_NUMBER, specId: process.env.SPEC_ID || '', focusPaths: process.env.FOCUS_PATHS ?? defaultFocusPaths,
+      questionCount: process.env.QUESTION_COUNT ?? '', questionCategories: process.env.QUESTION_CATEGORIES || categories.join(',') };
     if (process.argv.includes('--dry-run')) console.log(JSON.stringify(quizRequest(input), null, 2));
     else {
       const url = await requestQuiz(input, { token: process.env.QUIZ_DISPATCH_TOKEN });

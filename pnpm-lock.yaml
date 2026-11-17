@@ -329,8 +329,8 @@ importers:
   packages/test-catalog:
     devDependencies:
       '@cucumber/cucumber-expressions':
-        specifier: 19.0.0
-        version: 19.0.0
+        specifier: 20.2.0
+        version: 20.2.0
       '@cucumber/gherkin':
         specifier: ^39.1.0
         version: 39.1.0
@@ -1003,6 +1003,9 @@ packages:
 
   '@cucumber/cucumber-expressions@19.0.0':
     resolution: {integrity: sha512-4FKoOQh2Uf6F6/Ln+1OxuK8LkTg6PyAqekhf2Ix8zqV2M54sH+m7XNJNLhOFOAW/t9nxzRbw2CcvXbCLjcvHZg==}
+
+  '@cucumber/cucumber-expressions@20.2.0':
+    resolution: {integrity: sha512-qzQYovDERDTf4iFvnJwhWxU2J0Yj25cVFoxr78WJqNt+Lvt9xZWobEG9bu3rQ35HTmlbmreoCGZcTKPwskH33Q==}
 
   '@cucumber/gherkin-utils@11.0.0':
     resolution: {integrity: sha512-LJ+s4+TepHTgdKWDR4zbPyT7rQjmYIcukTwNbwNwgqr6i8Gjcmzf6NmtbYDA19m1ZFg6kWbFsmHnj37ZuX+kZA==}
@@ -4562,6 +4565,10 @@ snapshots:
   '@cucumber/ci-environment@13.0.0': {}
 
   '@cucumber/cucumber-expressions@19.0.0':
+    dependencies:
+      regexp-match-indices: 1.0.2
+
+  '@cucumber/cucumber-expressions@20.2.0':
     dependencies:
       regexp-match-indices: 1.0.2
 

@@ -19,7 +19,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@cucumber/cucumber-expressions": "19.0.0",
+    "@cucumber/cucumber-expressions": "20.2.0",
     "@cucumber/gherkin": "^39.1.0",
     "@cucumber/messages": "^34.2.1",
     "@maronn-openid-connect/cli": "workspace:*",

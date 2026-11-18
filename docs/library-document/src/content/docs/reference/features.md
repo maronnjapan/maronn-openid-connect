@@ -185,7 +185,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `allowInsecureClientDisplayUris` | `false` | ログイン・同意画面に http の `logo_uri` などを入れる（開発用） |
 | `requireClientDisplayUriHostMatch` | `false` | `logo_uri` と `policy_uri` を、`redirect_uris` のホストと同じときだけ画面に入れる |
 | `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg（dpop 機能）。discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。非対称の alg だけで、`@maronn-openid-connect/dpop` が検証できない alg は挙げても受け付けない |
-| `dpopProofMaxAgeSeconds` | `60` | DPoP proof を `iat` から何秒まで受け付けるか（dpop 機能。RFC 9449 §11.1） |
+| `dpopProofMaxAgeSeconds` | `60` | DPoP proof を `iat` から何秒まで受け付けるか（dpop 機能。RFC 9449 §11.1）。時計のずれの `dpopProofLeewaySeconds` は別に足すので、既定では `iat` から 120 秒まで受け付ける |
 | `dpopProofLeewaySeconds` | `60` | DPoP proof の `iat` に許す時計のずれ（秒。dpop 機能） |
 
 ## Feature Toggles

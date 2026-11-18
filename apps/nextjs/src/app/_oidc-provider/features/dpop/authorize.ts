@@ -21,7 +21,8 @@ import { buildDpopConfirmation, isDpopError, parseDpopJkt } from '@maronn-openid
  * `dpop_jkt` は DPoP の鍵の JWK Thumbprint（SHA-256 を base64url にした 43 文字）で、返した確認 `{ jkt }` はトランザクションから認可コードへ引き継がれる。
  * トークンエンドポイントは、その鍵の DPoP proof が付いた交換だけを受け付ける（RFC 9449 §10）。
  * PAR では、プッシュしたリクエストの `DPoP` ヘッダーの鍵が `dpop_jkt` として届く（RFC 9449 §10.1）。
- * `requestParams` はリクエストオブジェクトの値で上書きしたパラメータなので、リクエストオブジェクトの値がクエリの値より優先する（OIDC Core 1.0 §6.1）。
+ * 検証したリクエストオブジェクトに `dpop_jkt` があれば、クエリの値より優先する（OIDC Core 1.0 §6.1、RFC 9101 §6.3）。
+ * core がリクエストオブジェクトのクレームで上書きするパラメータ（`requestParams`）は決まった名前だけなので、`dpop_jkt` はリクエストオブジェクトのクレーム（`requestObjectClaims`）から読む。
  *
  * @spec RFC 9449 §10
  * @throws {AuthorizationError} `invalid_request`: `dpop_jkt` が JWK Thumbprint の形でないとき（クライアントへリダイレクトで返す）
@@ -29,9 +30,14 @@ import { buildDpopConfirmation, isDpopError, parseDpopJkt } from '@maronn-openid
 export function validateDpopJktParameter(
   request: { redirectUri: string; state: string | undefined },
   requestParams: AuthorizationRequestParams,
+  requestObjectClaims: Record<string, unknown> | undefined,
 ): Readonly<Record<string, string>> | undefined {
   try {
-    const jkt = parseDpopJkt((requestParams as { dpop_jkt?: unknown }).dpop_jkt);
+    const value =
+      requestObjectClaims !== undefined && 'dpop_jkt' in requestObjectClaims
+        ? requestObjectClaims['dpop_jkt']
+        : (requestParams as { dpop_jkt?: unknown }).dpop_jkt;
+    const jkt = parseDpopJkt(value);
     return jkt === undefined ? undefined : buildDpopConfirmation(jkt);
   } catch (error) {
     if (!isDpopError(error)) throw error;

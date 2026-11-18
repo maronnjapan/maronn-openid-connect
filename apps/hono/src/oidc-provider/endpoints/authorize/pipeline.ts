@@ -86,7 +86,7 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
     validateHybridRequest(validatedRequest, effectiveParams ?? params, responseMode);
 
     // [validate-dpop-jkt] (feature: dpop) 認可コードを束縛する鍵（dpop_jkt）を確かめる — RFC 9449 §10
-    const codeConfirmation = validateDpopJktParameter(validatedRequest, effectiveParams ?? params);
+    const codeConfirmation = validateDpopJktParameter(validatedRequest, effectiveParams ?? params, requestObjectClaims);
 
     // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     const { transactionId, transaction, transactionTtlSeconds } = await createAuthorizationTransaction(c, validatedRequest, responseMode, codeConfirmation);

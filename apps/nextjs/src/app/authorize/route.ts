@@ -292,7 +292,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     validateHybridRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, responseMode);
 
     // [validate-dpop-jkt] (feature: dpop) 認可コードを束縛する鍵（dpop_jkt）を確かめる — RFC 9449 §10
-    const codeConfirmation = validateDpopJktParameter({ redirectUri, state }, requestParams);
+    const codeConfirmation = validateDpopJktParameter({ redirectUri, state }, requestParams, requestObjectClaims);
 
     // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     // 各検証の結果から、検証済みのリクエストを組み立てる。

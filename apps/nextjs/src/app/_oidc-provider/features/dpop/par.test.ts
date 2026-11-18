@@ -108,6 +108,17 @@ describe('bindPushedDpopKey', () => {
     });
   });
 
+  // RFC 9126 §2.1: the pushed request is validated as the authorization endpoint would.
+  it('should reject a pushed dpop_jkt that is not a thumbprint, with or without a DPoP header', async () => {
+    const response = await push(pushedRequest({ dpop_jkt: 'not-a-thumbprint' }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint',
+    });
+  });
+
   it('should push a request without a DPoP header as it is, its dpop_jkt included', async () => {
     const { status, transactionCnf } = await pushAndAuthorize(pushedRequest({ dpop_jkt: OTHER_JKT }));
 

@@ -85,16 +85,27 @@ describe('validateDpopJktParameter', () => {
 
   it('should return the confirmation of dpop_jkt, or nothing without it', () => {
     expect([
-      validateDpopJktParameter(request, { client_id: CLIENT_ID, dpop_jkt: JKT } as AuthorizationRequestParams),
-      validateDpopJktParameter(request, { client_id: CLIENT_ID }),
+      validateDpopJktParameter(request, { client_id: CLIENT_ID, dpop_jkt: JKT } as AuthorizationRequestParams, undefined),
+      validateDpopJktParameter(request, { client_id: CLIENT_ID }, undefined),
     ]).toEqual([{ jkt: JKT }, undefined]);
+  });
+
+  // OIDC Core 1.0 §6.1 / RFC 9101 §6.3: core does not copy dpop_jkt from the Request Object into the parameters.
+  it('should take dpop_jkt from the Request Object over the query, and from the query when the Request Object has none', () => {
+    const query = { client_id: CLIENT_ID, dpop_jkt: '0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I' } as AuthorizationRequestParams;
+
+    expect([
+      validateDpopJktParameter(request, query, { dpop_jkt: JKT }),
+      validateDpopJktParameter(request, { client_id: CLIENT_ID }, { dpop_jkt: JKT }),
+      validateDpopJktParameter(request, query, { scope: 'openid' }),
+    ]).toEqual([{ jkt: JKT }, { jkt: JKT }, { jkt: '0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I' }]);
   });
 
   // RFC 9449 §10: dpop_jkt is a JWK Thumbprint; a malformed one is an invalid request.
   it('should throw an invalid_request the client is redirected to for a dpop_jkt that is not a thumbprint', () => {
     let thrown: unknown;
     try {
-      validateDpopJktParameter(request, { client_id: CLIENT_ID, dpop_jkt: 'not-a-thumbprint' } as AuthorizationRequestParams);
+      validateDpopJktParameter(request, { client_id: CLIENT_ID, dpop_jkt: 'not-a-thumbprint' } as AuthorizationRequestParams, undefined);
     } catch (error) {
       thrown = error;
     }

@@ -91,13 +91,14 @@ DPoP スキームで提示したリクエストは、トークンの期限切れ
 - `dpop_jkt` は認可トランザクションに保存され、そこから発行する認可コード（同意、SSO、`prompt=none`、Hybrid Flow の `code` のどれでも）に引き継がれる
 - トークンエンドポイントは、その鍵の DPoP proof を付けた交換だけを受け付ける。別の鍵か DPoP proof の無い交換は `invalid_grant`
 - 形式が正しくない `dpop_jkt` は、`invalid_request` をクライアントへリダイレクトで返す
-- Request Object の `dpop_jkt` は、クエリの値より優先する（OIDC Core 1.0 §6.1）
+- 検証した Request Object に `dpop_jkt` があれば、クエリの値より優先する（OIDC Core 1.0 §6.1、RFC 9101 §6.3）。Request Object に無ければクエリの値を使う
 
 ### PAR（--enable par と組み合わせたとき）
 
 Experimental 機能の PAR も有効にすると、プッシュした認可リクエストの `DPoP` ヘッダーの鍵が、そのリクエストの `dpop_jkt` になります（RFC 9449 §10.1）。DPoP proof の `htm` はリクエストのメソッド、`htu` は issuer の `/par` です。
 
 - `dpop_jkt` と DPoP proof の両方があれば、同じ鍵でなければ 400 の `invalid_dpop_proof` で拒否する
+- プッシュした `dpop_jkt` の形は、`DPoP` ヘッダーが無くてもプッシュのときに確かめ、正しくなければ 400 の `invalid_request` で拒否する（認可エンドポイントと同じ検証。RFC 9126 §2.1）
 - DPoP proof を受け付けないときも、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 で応答する
 - `DPoP` ヘッダーが無ければ、プッシュした `dpop_jkt`（あれば）をそのまま使う
 
@@ -108,8 +109,8 @@ Experimental 機能の PAR も有効にすると、プッシュした認可リ�
 | 項目 | 既定値 | 説明 |
 |---|---|---|
 | `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg。Discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。`@maronn-openid-connect/dpop` が検証できない alg は、挙げても受け付けない（`EdDSA` は Ed25519 の鍵だけ） |
-| `dpopProofMaxAgeSeconds` | `60` | DPoP proof を、その `iat` から何秒まで受け付けるか（RFC 9449 §11.1）。同じ `jti` の再利用を覚えておく期間にもなる |
-| `dpopProofLeewaySeconds` | `60` | DPoP proof の `iat` に許す時計のずれ（秒） |
+| `dpopProofMaxAgeSeconds` | `60` | DPoP proof を、その `iat` から何秒まで受け付けるか（RFC 9449 §11.1）。時計のずれの `dpopProofLeewaySeconds` は別に足すので、`iat` が「今 − `dpopProofMaxAgeSeconds` − `dpopProofLeewaySeconds`」以上の DPoP proof を受け付ける（既定では `iat` から 120 秒まで）。`jti` は、受け付ける最後の秒まで覚える |
+| `dpopProofLeewaySeconds` | `60` | DPoP proof の `iat` に許す時計のずれ（秒）。未来の `iat` は「今 + この値」まで受け付け、古い側の範囲にもこの値を足す |
 
 ```typescript
 applyOidc(app, {
@@ -142,7 +143,7 @@ await registerClient(db, {
 
 ## CORS
 
-ブラウザで動くクライアントのために、トークンエンドポイントと UserInfo エンドポイントの CORS に次を加えます。
+ブラウザで動くクライアントのために、クライアントが直接呼ぶエンドポイント（トークンエンドポイント、UserInfo エンドポイントと、ほかの機能の PAR、イントロスペクション、リボケーション、動的クライアント登録、デバイス認可、CIBA のエンドポイント）の CORS に次を加えます。PAR には DPoP proof を送ることがあります（RFC 9449 §10.1）。
 
 - `Access-Control-Allow-Headers` に `DPoP`（DPoP proof を送るリクエストヘッダー）
 - `Access-Control-Expose-Headers` に `WWW-Authenticate`（DPoP のチャレンジをクライアントが読めるようにする。RFC 9449 §7.1）

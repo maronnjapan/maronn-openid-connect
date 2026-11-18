@@ -21,7 +21,11 @@ import { isSupportedDpopSigningAlg, verifyJwsSignature, type DpopPublicJwk } fro
 /** DPoP proof の JOSE ヘッダーの `typ`（RFC 9449 §4.2）。 */
 export const DPOP_PROOF_TYPE = 'dpop+jwt';
 
-/** DPoP proof の `iat` から、DPoP proof を受け付ける秒数の既定値。 */
+/**
+ * DPoP proof の `iat` から、DPoP proof を受け付ける秒数の既定値。
+ *
+ * 時計のずれ（{@link DEFAULT_DPOP_PROOF_LEEWAY_SECONDS}）はこれとは別に足すので、既定では `iat` から 120 秒まで受け付ける。
+ */
 export const DEFAULT_DPOP_PROOF_MAX_AGE_SECONDS = 60;
 
 /** DPoP proof の `iat` に許す時計のずれ（秒）の既定値。 */
@@ -55,7 +59,7 @@ export interface DpopProofClaimsPolicy {
   uri: string;
   /** 現在時刻（Unix epoch 秒） */
   now: number;
-  /** `iat` から DPoP proof を受け付ける秒数。既定は {@link DEFAULT_DPOP_PROOF_MAX_AGE_SECONDS} */
+  /** `iat` から DPoP proof を受け付ける秒数（時計のずれの `leewaySeconds` は別に足す）。既定は {@link DEFAULT_DPOP_PROOF_MAX_AGE_SECONDS} */
   maxAgeSeconds?: number;
   /** 時計のずれとして許す秒数。既定は {@link DEFAULT_DPOP_PROOF_LEEWAY_SECONDS} */
   leewaySeconds?: number;
@@ -67,7 +71,11 @@ export interface ValidatedDpopProofClaims {
   jti: string;
   /** DPoP proof の `iat`（Unix epoch 秒） */
   iat: number;
-  /** `jti` を覚えておく期限（Unix epoch 秒）。これより後は、`iat` が古すぎて DPoP proof が拒否される */
+  /**
+   * `jti` を覚えておく期限（Unix epoch 秒、この時刻を含まない）。
+   * DPoP proof を受け付ける最後の秒の次の秒で、この時刻からは `iat` が古すぎて DPoP proof が拒否される。
+   * `jti` のストアは期限の時刻になった `jti` を忘れてよいので、受け付ける最後の秒にも `jti` が残る。
+   */
   replayWindowEndsAt: number;
 }
 
@@ -229,7 +237,9 @@ export function validateDpopProofClaims(
   if (iat > policy.now + leeway || iat < policy.now - maxAge - leeway) {
     throw invalidProof('The DPoP proof iat claim is not within the acceptable window');
   }
-  return { jti, iat, replayWindowEndsAt: Math.ceil(iat) + maxAge + leeway };
+  // 受け付ける最後の秒（`now` が `iat + maxAge + leeway` 以下の整数）の次の秒までを、`jti` を覚える期間にする。
+  // `jti` のストアは期限の時刻になった `jti` を忘れてよい（`DpopProofJtiStore`）ので、最後の秒を期限にすると、その秒の再利用を見逃す。
+  return { jti, iat, replayWindowEndsAt: Math.floor(iat + maxAge + leeway) + 1 };
 }
 
 /**

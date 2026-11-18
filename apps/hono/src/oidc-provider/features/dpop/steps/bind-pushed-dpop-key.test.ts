@@ -91,6 +91,34 @@ describe('bindPushedDpopKey', () => {
     });
   });
 
+  // RFC 9126 §2.1: the pushed request is validated as the authorization endpoint would.
+  it('should reject a pushed dpop_jkt that is not a thumbprint, with or without a DPoP header', async () => {
+    const { app } = await appWithClient();
+
+    const response = await app.request(pushedRequest({ dpop_jkt: 'not-a-thumbprint' }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint',
+    });
+  });
+
+  // The rejection is built through the context, so the CORS middleware's headers stay on it.
+  it('should keep the CORS headers on a rejected DPoP proof', async () => {
+    const key = await dpopKey();
+    const { app } = await appWithClient();
+
+    const response = await app.request(
+      pushedRequest({}, { Origin: 'https://rp.example.com', DPoP: await dpopProof(key, { htm: 'POST', htu: `${TEST_ISSUER}/token` }) }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
+    expect(response.headers.get('Cache-Control')).toBe('no-cache, no-store');
+  });
+
   it('should push a request without a DPoP header as it is, its dpop_jkt included', async () => {
     const { app, db } = await appWithClient();
 

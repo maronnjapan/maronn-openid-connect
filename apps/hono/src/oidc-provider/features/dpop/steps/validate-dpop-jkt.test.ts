@@ -14,6 +14,7 @@ import {
   validatedRequestOf,
 } from '../../../../test-support/authorize.js';
 import { providerContext, requestTo, TEST_ISSUER } from '../../../../test-support/context.js';
+import { unsignedJwt } from '../../../../test-support/feature-endpoints.js';
 import { createEmptyDatabase, type MemoryDatabase } from '../../../db/memory/database.js';
 import { createProviderStores } from '../../../db/memory/stores.js';
 import { processAuthorizationRequest } from '../../../endpoints/authorize/pipeline.js';
@@ -43,9 +44,34 @@ async function authorize(db: MemoryDatabase, params: Record<string, string>, coo
 describe('validateDpopJktParameter', () => {
   it('should return the confirmation of dpop_jkt, or nothing without it', () => {
     expect([
-      validateDpopJktParameter(validatedRequestOf(), paramsOf({ dpop_jkt: JKT })),
-      validateDpopJktParameter(validatedRequestOf(), paramsOf()),
+      validateDpopJktParameter(validatedRequestOf(), paramsOf({ dpop_jkt: JKT }), undefined),
+      validateDpopJktParameter(validatedRequestOf(), paramsOf(), undefined),
     ]).toEqual([{ jkt: JKT }, undefined]);
+  });
+
+  // OIDC Core 1.0 §6.1 / RFC 9101 §6.3: core does not copy dpop_jkt from the Request Object into effectiveParams.
+  it('should take dpop_jkt from the Request Object over the query, and from the query when the Request Object has none', () => {
+    const query = paramsOf({ dpop_jkt: '0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I' });
+
+    expect([
+      validateDpopJktParameter(validatedRequestOf(), query, { dpop_jkt: JKT }),
+      validateDpopJktParameter(validatedRequestOf(), paramsOf(), { dpop_jkt: JKT }),
+      validateDpopJktParameter(validatedRequestOf(), query, { scope: 'openid' }),
+    ]).toEqual([{ jkt: JKT }, { jkt: JKT }, { jkt: '0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I' }]);
+  });
+
+  it('should bind the transaction to the dpop_jkt of an unsigned Request Object the OP accepts', async () => {
+    const { db } = await providerWithClient();
+    const requestObject = unsignedJwt({ ...authorizationParams(), client_id: CLIENT_ID, dpop_jkt: JKT });
+    const { c } = await providerContext({
+      db,
+      request: requestTo(authorizePath({ client_id: CLIENT_ID, response_type: 'code', scope: 'openid', request: requestObject })),
+      options: { config: { allowUnsignedRequestObject: true } },
+    });
+
+    await processAuthorizationRequest(c);
+
+    expect([...db.transactions.values()].map((entry) => (entry.value as { cnf?: unknown }).cnf)).toEqual([{ jkt: JKT }]);
   });
 
   // RFC 9449 §10: dpop_jkt is a JWK Thumbprint; a malformed one is an invalid request.

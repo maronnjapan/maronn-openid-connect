@@ -33,27 +33,28 @@ export interface PushedDpopBinding {
  * `/authorize` がこのリクエストを展開すると、`dpop_jkt` が認可コードをその鍵に束縛する（RFC 9449 §10）。
  * `dpop_jkt` と DPoP proof の両方があれば、同じ鍵でなければ拒否する。
  * `DPoP` ヘッダーがなければ何も返さず、プッシュされた `dpop_jkt`（あれば）をそのまま使う。
+ * プッシュされた `dpop_jkt` の形は、`DPoP` ヘッダーの有無にかかわらずここで確かめる（認可エンドポイントと同じ検証。RFC 9126 §2.1）。
  *
- * 拒否するときは、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON のレスポンス（`no-store`）を `dpopRejection` に入れて返す。
+ * 拒否するときは、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON のレスポンス（`no-cache, no-store`）を `dpopRejection` に入れて返す。
  * PAR の機能のエラーの型を使わないのは、DPoP の機能が PAR の機能なしでも生成されるためである。
+ * レスポンスはコンテキストで組み立てるので、CORS のミドルウェアが付けたヘッダーも残る。
  *
  * @spec RFC 9449 §10.1
+ * @spec RFC 9126 §2.1
  * @spec RFC 9126 §2.3
  */
 export async function bindPushedDpopKey(c: any, pushedParams: Record<string, string>): Promise<PushedDpopBinding> {
   try {
+    const pushedJkt = parseDpopJkt(pushedParams.dpop_jkt);
     const proof = readDpopProofHeader(c.req.header('DPoP'));
     if (proof === undefined) return {};
     const proofJkt = await verifyDpopRequestProof(c, proof, { method: c.req.method, path: '/par' });
-    const dpopJkt = resolvePushedDpopJkt(parseDpopJkt(pushedParams.dpop_jkt), proofJkt);
+    const dpopJkt = resolvePushedDpopJkt(pushedJkt, proofJkt);
     return dpopJkt === undefined ? {} : { dpopBoundParams: { ...pushedParams, dpop_jkt: dpopJkt } };
   } catch (error) {
     if (!isDpopError(error)) throw error;
-    return {
-      dpopRejection: new Response(JSON.stringify({ error: error.error, error_description: error.errorDescription }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' },
-      }),
-    };
+    c.header('Cache-Control', 'no-cache, no-store');
+    c.header('Pragma', 'no-cache');
+    return { dpopRejection: c.json({ error: error.error, error_description: error.errorDescription }, 400) };
   }
 }

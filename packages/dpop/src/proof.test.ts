@@ -174,7 +174,7 @@ describe('validateDpopProofClaims', () => {
   it('should return the jti, the iat and the end of the replay window', () => {
     const validated = validateDpopProofClaims(claimsAt(NOW - 5), { method: 'POST', uri: TOKEN_URI, now: NOW });
 
-    expect(validated).toEqual({ jti: 'jti-1', iat: NOW - 5, replayWindowEndsAt: NOW - 5 + 60 + 60 });
+    expect(validated).toEqual({ jti: 'jti-1', iat: NOW - 5, replayWindowEndsAt: NOW - 5 + 60 + 60 + 1 });
   });
 
   it('should compare htu without the query and the fragment, after normalizing the URI', () => {
@@ -217,7 +217,17 @@ describe('validateDpopProofClaims', () => {
     const policy = { method: 'POST', uri: TOKEN_URI, now: NOW, maxAgeSeconds: 10, leewaySeconds: 5 };
 
     expect(errorOf(() => validateDpopProofClaims(claimsAt(NOW - 16), policy))?.error).toBe('invalid_dpop_proof');
-    expect(validateDpopProofClaims(claimsAt(NOW - 15), policy).replayWindowEndsAt).toBe(NOW);
+    expect(validateDpopProofClaims(claimsAt(NOW - 15), policy).replayWindowEndsAt).toBe(NOW + 1);
+  });
+
+  // RFC 9449 §11.1: the jti is remembered through the last second the proof is accepted.
+  it('should end the replay window after the last second the proof is accepted', () => {
+    const policy = { method: 'POST', uri: TOKEN_URI, now: NOW, maxAgeSeconds: 0, leewaySeconds: 0 };
+
+    const { replayWindowEndsAt } = validateDpopProofClaims(claimsAt(NOW), policy);
+
+    expect(replayWindowEndsAt).toBe(NOW + 1);
+    expect(errorOf(() => validateDpopProofClaims(claimsAt(NOW), { ...policy, now: replayWindowEndsAt }))?.error).toBe('invalid_dpop_proof');
   });
 });
 

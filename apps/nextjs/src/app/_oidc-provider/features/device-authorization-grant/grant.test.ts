@@ -6,6 +6,7 @@ import { decodeJwt } from '../../../../test-support/jwt';
 import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { stores } from '../../provider';
+import type { TokenBinding } from '../../token-binding';
 import { dispatchDeviceCode } from './grant';
 import { deviceAuthorizationStore } from './store';
 
@@ -22,6 +23,12 @@ const deviceClient: TokenClientInfo = {
   grantTypes: [DEVICE_CODE_GRANT_TYPE, 'refresh_token'],
   tokenEndpointAuthMethods: ['none'],
 };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the tokens are bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the grant for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -72,6 +79,43 @@ describe('dispatchDeviceCode', () => {
       clientId: 'device-client',
       scope: ['openid', 'profile'],
       grantId: 'grant-device-approved',
+    });
+  });
+
+  // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the access token and its record,
+  // answers its token_type, and binds the public client's refresh token to refreshTokenCnf.
+  it('should bind the access token and the refresh token to the key of the binding', async () => {
+    const record = pendingDeviceRecord({
+      status: 'approved',
+      subject: 'alice',
+      authTime: NOW_SECONDS - 60,
+      approvedScope: ['openid', 'offline_access'],
+      grantId: 'grant-device-bound',
+    });
+    await deviceAuthorizationStore.save(record);
+
+    const response = await dispatchDeviceCode(
+      deviceCodeRequest(record.deviceCode),
+      deviceClient,
+      providerSigningKeys(await rs256Key()),
+      BINDING,
+    );
+    const parts = await jsonResponseOf(response);
+    const body = parts?.body as Record<string, unknown>;
+
+    expect(parts).toMatchObject({ status: 200, cacheControl: 'no-store', pragma: 'no-cache' });
+    expect(body).toMatchObject({ token_type: 'DPoP', expires_in: 3600, scope: 'openid offline_access' });
+    expect(decodeJwt(body['access_token'] as string).payload).toMatchObject({ sub: 'alice', cnf: { jkt: JKT } });
+    expect(await stores.accessTokenStore.get(body['access_token'] as string)).toMatchObject({
+      sub: 'alice',
+      grantId: 'grant-device-bound',
+      cnf: { jkt: JKT },
+      tokenType: 'DPoP',
+    });
+    expect(await stores.refreshTokenStore.get(body['refresh_token'] as string)).toMatchObject({
+      subject: 'alice',
+      grantId: 'grant-device-bound',
+      cnf: { jkt: JKT },
     });
   });
 

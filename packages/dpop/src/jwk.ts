@@ -70,24 +70,15 @@ interface AlgorithmProfile {
  * @spec RFC 8037 §3.1
  */
 function profileOf(alg: string): AlgorithmProfile | undefined {
+  const rsaHash = /^(?:RS|PS)(256|384|512)$/.exec(alg)?.[1];
+  if (rsaHash !== undefined) {
+    const bits = Number(rsaHash);
+    // RSASSA-PSS の salt は、ハッシュの出力と同じ長さにする（RFC 7518 §3.5）。
+    return alg.startsWith('PS')
+      ? { kty: 'RSA', importParams: { name: 'RSA-PSS', hash: `SHA-${bits}` }, verifyParams: { name: 'RSA-PSS', saltLength: bits / 8 } }
+      : { kty: 'RSA', importParams: { name: 'RSASSA-PKCS1-v1_5', hash: `SHA-${bits}` }, verifyParams: { name: 'RSASSA-PKCS1-v1_5' } };
+  }
   switch (alg) {
-    case 'RS256':
-    case 'RS384':
-    case 'RS512': {
-      const hash = `SHA-${alg.slice(2)}`;
-      return { kty: 'RSA', importParams: { name: 'RSASSA-PKCS1-v1_5', hash }, verifyParams: { name: 'RSASSA-PKCS1-v1_5' } };
-    }
-    case 'PS256':
-    case 'PS384':
-    case 'PS512': {
-      const bits = Number(alg.slice(2));
-      // RSASSA-PSS の salt は、ハッシュの出力と同じ長さにする（RFC 7518 §3.5）。
-      return {
-        kty: 'RSA',
-        importParams: { name: 'RSA-PSS', hash: `SHA-${bits}` },
-        verifyParams: { name: 'RSA-PSS', saltLength: bits / 8 },
-      };
-    }
     case 'ES256':
       return ecProfile('P-256', 'SHA-256', 64);
     case 'ES384':

@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.15.1",
+  "cliVersion": "0.17.0",
   "framework": "fastify",
   "features": {
     "pkce": true,
@@ -20,7 +20,8 @@
     "jwtIntrospectionResponse": false,
     "rpInitiatedLogout": false,
     "dynamicClientRegistration": true,
-    "googleLogin": true
+    "googleLogin": true,
+    "dpop": false
   },
   "scopes": [],
   "db": "sql",

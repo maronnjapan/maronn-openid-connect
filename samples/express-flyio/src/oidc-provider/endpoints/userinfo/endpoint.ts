@@ -4,7 +4,7 @@ import { defineEndpoint } from '../step.js';
  * 提示されたアクセストークンのエンドユーザーについて、トークンのスコープと `claims` パラメータに応じたクレームを JSON で返す。
  * クライアントが `userinfo_signed_response_alg` を登録していれば、署名した JWT で返す。
  *
- * トークンがないとき、または不正なときは、`Bearer` のエラーで応答する。
+ * トークンがないとき、または不正なときは、`Bearer` のエラーで応答する（DPoP の機能があり、トークンを DPoP スキームで提示したときは `DPoP` のエラー）。
  * レスポンスは、成功でもエラーでもキャッシュさせない（`Cache-Control: no-store`）。
  *
  * @spec OIDC Core 1.0 §5.3

@@ -5,6 +5,7 @@ import {
   INACTIVE_INTROSPECTION_RESPONSE,
   type IntrospectionResponse,
 } from '@maronn-openid-connect/core';
+import { withTokenBinding } from '../../../../../token-binding.js';
 import { step } from '../../../../../endpoints/step.js';
 
 export const meta = step({
@@ -26,12 +27,15 @@ export const meta = step({
  * 有効なトークンには、`active: true` と、`scope`、`client_id`、`token_type`、`exp`、`sub` などのメンバーを返す。
  * 登録されていない、期限切れ、まだ有効になっていない、ローテーションで使用済みになったトークンは、ほかのメンバーを含めない `{ active: false }` として報告する（RFC 7662 §2.2）。
  * ほかのメンバーを含めないので、呼び出し元は「存在しなかった」トークンと「もう有効でない」トークンを区別できない。
+ * 機能（dpop）が鍵に束縛したアクセストークンには、保存した確認の `cnf` と、`token_type`（DPoP なら `DPoP`）を返す（RFC 9449 §6.2）。
  *
  * @spec RFC 7662 §2.2
+ * @spec RFC 9449 §6.2
  */
 export function describeIntrospectedToken(resolved: ResolvedIntrospectionToken | null): IntrospectionResponse {
   if (resolved !== null && isIntrospectionTokenActive(resolved)) {
-    return buildIntrospectionResponse(resolved);
+    const response = buildIntrospectionResponse(resolved);
+    return resolved.tokenType === 'access_token' ? withTokenBinding(response, resolved.accessToken) : response;
   }
   return INACTIVE_INTROSPECTION_RESPONSE;
 }

@@ -9,7 +9,8 @@ export const meta = step({
   label: '/authorize と同じ規則でリクエストを検証する',
   spec: 'RFC 9126 §2.1',
   function: 'validatePushedRequest',
-  consumes: ['pushedParams'],
+  consumes: ['pushedParams', 'dpopBoundParams'],
+  optional: ['dpopBoundParams'],
   produces: [],
   removable: false,
 });

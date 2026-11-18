@@ -33,6 +33,10 @@ describe('identifiersIn', () => {
     expect([...identifiersIn('f(`a${g({ x: `b${inner}` })}c`, after);')]).toEqual(['f', 'g', 'x', 'inner', 'after']);
   });
 
+  it('should read the names after a quote that no quote closes on its line, as in a regex literal', () => {
+    expect([...identifiersIn("if (/['\"]/.test(raw)) return rejectQuoted(raw);")]).toEqual(['if', 'raw', 'return', 'rejectQuoted']);
+  });
+
   it('should not take the // of a URL in a template literal for a comment', () => {
     expect([...identifiersIn('const url = `https://${host}/token`; next(url);')]).toEqual(['const', 'url', 'host', 'next']);
   });

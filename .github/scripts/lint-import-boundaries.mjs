@@ -227,8 +227,14 @@ function codeWithoutLiterals(code) {
     } else if (char === "'" || char === '"') {
       let at = index + 1;
       while (at < code.length && code[at] !== char && code[at] !== '\n') at += code[at] === '\\' ? 2 : 1;
-      index = Math.min(at + 1, code.length);
-      result += ' ';
+      // A quote with no closing one on its line (in a regex literal such as /['"]/) starts no string.
+      if (at < code.length && code[at] === char) {
+        index = at + 1;
+        result += ' ';
+      } else {
+        result += char;
+        index += 1;
+      }
     } else if (char === '`') {
       index = templateText(index + 1);
       result += ' ';

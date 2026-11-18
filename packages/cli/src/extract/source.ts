@@ -225,8 +225,15 @@ function codeWithoutLiterals(code: string): string {
       index = end === -1 ? code.length : end;
       result += ' ';
     } else if (char === "'" || char === '"') {
-      index = endOfQuoted(code, index, char);
-      result += ' ';
+      const end = endOfQuoted(code, index, char);
+      // A quote with no closing one on its line (in a regex literal such as /['"]/) starts no string.
+      if (end === undefined) {
+        result += char;
+        index += 1;
+      } else {
+        index = end;
+        result += ' ';
+      }
     } else if (char === '`') {
       index = endOfTemplateText(code, index + 1, substitutions, depth);
       result += ' ';
@@ -248,14 +255,15 @@ function codeWithoutLiterals(code: string): string {
 /**
  * 引用符で始まる文字列リテラルの終わりの次の位置を返す。
  *
- * エスケープした引用符は飛ばし、閉じる引用符か改行で終わる。
+ * エスケープした引用符は飛ばす。
+ * 同じ行に閉じる引用符が無ければ `undefined` を返す（正規表現リテラルの中の引用符などで、文字列は始まっていない）。
  */
-function endOfQuoted(code: string, start: number, quote: string): number {
+function endOfQuoted(code: string, start: number, quote: string): number | undefined {
   let index = start + 1;
   while (index < code.length && code[index] !== quote && code[index] !== '\n') {
     index += code[index] === '\\' ? 2 : 1;
   }
-  return Math.min(index + 1, code.length);
+  return index < code.length && code[index] === quote ? index + 1 : undefined;
 }
 
 /**

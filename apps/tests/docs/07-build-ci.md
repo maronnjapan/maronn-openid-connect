@@ -110,7 +110,7 @@ flowchart LR
 
 | スクリプト | 中身 |
 |---|---|
-| `build` | `core`、`experimental`、`google-login`、`cli`、`map-analysis`、`test-catalog` の `build` |
+| `build` | `core`、`experimental`、`google-login`、`dpop`、`cli`、`map-analysis`、`test-catalog` の `build` |
 | `build:map` | `cli` の `build` → `map-analysis` の `build` → `test-catalog` の `build` → `map` の `build` |
 | `lint` | `lint-import-boundaries.mjs` → `lint-function-docs.mjs` → `lint-function-forms.mjs` → `lint-e2e-fixtures.mjs` → `lint-features.mjs` → `lint-steps.mjs` → `lint-tests.mjs` → `test-steps` の `lint` |
 | `test:ci` | `test:ci-gate` → `test:supply-chain` → `test:release-contract` → `packages/*` の `test` → `apps/*` の `test` → `e2e` の `test:unit` → `cli` の `test:matrix` → `test:conformance` |
@@ -220,7 +220,7 @@ redirect URI は何も配らず、ステップがブラウザの行き着いた 
 
 | 足したもの | 版 | 足したパッケージ | 使い道 |
 |---|---|---|---|
-| `@vitest/coverage-istanbul` | `5.0.5` | `packages/core`、`experimental`、`google-login`、`apps/hono`、`apps/nextjs` | Vitest の到達を Istanbul で計る（[②-3](02-measure.md#-3-vitest-のテストごとの到達)） |
+| `@vitest/coverage-istanbul` | `5.0.5` | `packages/core`、`experimental`、`google-login`、`dpop`、`apps/hono`、`apps/nextjs` | Vitest の到達を Istanbul で計る（[②-3](02-measure.md#-3-vitest-のテストごとの到達)） |
 | `@maronn-openid-connect/test-reach` | `workspace:*` | 上の 5 つ、`packages/cli`、`map-analysis`、`test-catalog`、`apps/map`、`apps/tests`、`tests/e2e` | `vitest.config` の `testReports`、E2E の報告と到達 |
 | `@cucumber/gherkin` | `^39.1.0` | `packages/test-catalog`、`tests/steps` | 機能ファイルを読む。<br>`lint-features.mjs` は `tests/steps` から解決する |
 | `@cucumber/messages` | `^32.3.1` | `packages/test-catalog`、`tests/steps` | gherkin の parser に渡す `IdGenerator` |
@@ -238,7 +238,7 @@ redirect URI は何も配らず、ステップがブラウザの行き着いた 
 `tests/steps` は `pnpm-workspace.yaml` の `tests/*` でワークスペースに入り、ルートの `typecheck` の `--filter "./tests/*"` で型を検査される。
 `@vitest/coverage-istanbul` の版は、ルートの `pnpm.overrides` が固定する Vitest の版（`5.0.5`）とそろえてある。
 
-公開するパッケージ（`core`、`experimental`、`google-login`、`cli`）の `package.json` が変わると、CI の `changeset-coverage` は changeset を求める。
+公開するパッケージ（`core`、`experimental`、`google-login`、`dpop`、`cli`）の `package.json` が変わると、CI の `changeset-coverage` は changeset を求める。
 リリースは要らないので、空の changeset `.changeset/test-map-no-release.md` を足す。
 
 ### ⑦-1-f 生成物と .gitignore
@@ -610,7 +610,7 @@ flowchart LR
 
 | ステップ | 書くもの |
 |---|---|
-| `pnpm run test:ci` | Vitest のどのパッケージも `vitest/<名前>.json` と `junit/vitest-<名前>.xml`。<br>計測する 5 パッケージ（`core`、`experimental`、`google-login`、`app-hono`、`app-nextjs`）は、ほかに `reach/vitest-<名前>.jsonl` と `coverage/vitest/<名前>/lcov.info` |
+| `pnpm run test:ci` | Vitest のどのパッケージも `vitest/<名前>.json` と `junit/vitest-<名前>.xml`。<br>計測する 6 パッケージ（`core`、`experimental`、`google-login`、`dpop`、`app-hono`、`app-nextjs`）は、ほかに `reach/vitest-<名前>.jsonl` と `coverage/vitest/<名前>/lcov.info` |
 | `pnpm run test:features` | `playwright/in-process.json`、`junit/features-in-process.junit.xml` |
 | `pnpm run test:e2e` | 実行先（`hono`、`nextjs`）ごとに `playwright/<実行先>.json`、`junit/e2e-<実行先>.junit.xml`、`reach/e2e-<実行先>.jsonl`、`coverage/e2e/<実行先>/lcov.info`。<br>途中のものとして `v8/<実行先>/` と `access/<実行先>-<役>.log` |
 
@@ -699,7 +699,7 @@ Codecov は、ディレクトリの中で名前が `*junit*.xml` か `*test*.xml
 |---|---|---|
 | `coverage.status.project.default.informational` | `true` | 全体のカバレッジで状態を落とさない |
 | `coverage.status.patch.default.informational` | `true` | 変えた行のカバレッジで状態を落とさない。<br>閾値はまだ決めていない |
-| `flags.vitest.paths`、`flags.e2e.paths` | `packages/core/src/`、`packages/experimental/src/`、`packages/google-login/src/`、`apps/hono/src/oidc-provider/`、`apps/hono/src/web/`、`apps/nextjs/src/app/` | 関数カタログの根だけを数える |
+| `flags.vitest.paths`、`flags.e2e.paths` | `packages/core/src/`、`packages/experimental/src/`、`packages/google-login/src/`、`packages/dpop/src/`、`apps/hono/src/oidc-provider/`、`apps/hono/src/web/`、`apps/nextjs/src/app/` | 関数カタログの根だけを数える |
 | `comment.layout` | `condensed_header, diff, flags, files, footer` | コメントの欄 |
 | `comment.require_changes` | `false` | 変化が無くてもコメントする |
 

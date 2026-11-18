@@ -147,7 +147,7 @@ export interface TestCase {
   /** A stable id (see id.ts): the `@id` tag, the `// @test-id` comment, else a hash of the root, the describe path and the title. */
   id: string;
   kind: TestKind;
-  /** The root it belongs to: core, experimental, google-login, hono, nextjs, e2e, features, or the tool (cli, map, map-analysis, test-catalog, test-reach, tests-viewer, scripts). */
+  /** The root it belongs to: core, experimental, google-login, dpop, hono, nextjs, e2e, features, or the tool (cli, map, map-analysis, test-catalog, test-reach, tests-viewer, scripts). */
   root: string;
   source: { file: string; lines: [number, number]; form: 'code' | 'feature' };
   /** The name of the `it`, or of the scenario, in English. */

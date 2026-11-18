@@ -140,7 +140,7 @@ describe('the catalog of the repository', () => {
     for (const file of ['apps/hono/src/oidc-provider/endpoints/token/steps/authenticate-client.test.ts', 'apps/hono/src/oidc-provider/features/id-jag/config.test.ts', 'packages/experimental/src/dynamic-client-registration/registration-request.test.ts']) {
       expect([file, of(file).length > 0 && of(file).every((test) => test.kind === 'unit' && test.requests === undefined)]).toEqual([file, true]);
     }
-    expect(tests.filter((test) => ['core', 'experimental', 'google-login'].includes(test.root) && test.kind !== 'unit')).toEqual([]);
+    expect(tests.filter((test) => ['core', 'experimental', 'google-login', 'dpop'].includes(test.root) && test.kind !== 'unit')).toEqual([]);
   });
 
   it('should say why a request of an API test reaches no endpoint, and give the code that answers it', () => {

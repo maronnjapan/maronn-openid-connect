@@ -20,7 +20,7 @@ export interface SidebarProps {
   page: 'endpoint' | 'changes' | 'wiring';
 }
 
-/** The tier of a feature in words: on by default, of the experimental package, or a login method of an extension. */
+/** The tier of a feature in words: on by default, of the experimental package, or of an extension package of its own. */
 const TIER_LABELS: Record<MapFeature['tier'], string> = { stable: '既定', experimental: '実験的', extension: '拡張' };
 
 /**

@@ -15,6 +15,7 @@ export const FUNCTION_ROOTS = [
   'packages/core/src',
   'packages/experimental/src',
   'packages/google-login/src',
+  'packages/dpop/src',
   'apps/hono/src/oidc-provider',
   'apps/hono/src/web',
   'apps/nextjs/src/app',

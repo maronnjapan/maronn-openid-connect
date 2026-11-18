@@ -10,7 +10,13 @@ import {
   EXTENSION_FEATURES,
   resolveFeatures,
 } from './registry.js';
-import { enabledFeatureIds, findFeature, type OidcFeatureConfig } from './registry.js';
+import {
+  enabledFeatureIds,
+  featureKeyOf,
+  findFeature,
+  type ExtensionFeatureName,
+  type OidcFeatureConfig,
+} from './registry.js';
 import type { GeneratedFile } from './generated-file.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
@@ -36,6 +42,35 @@ const INSTALL_COMMANDS: Record<string, string> = {
 
 const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
+const DPOP_PACKAGE = '@maronn-openid-connect/dpop';
+
+/**
+ * What generate / setup say about each extension feature they generated: the
+ * name of its install step, and what is left to do once it is generated.
+ */
+const EXTENSION_GUIDANCE: Record<ExtensionFeatureName, { readonly label: string; readonly note: string }> = {
+  'google-login': {
+    label: 'the Google login extension',
+    note:
+      'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
+      'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
+      'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
+  },
+  dpop: {
+    label: 'the DPoP extension',
+    note:
+      `dpop: the generated code imports ${DPOP_PACKAGE} (pnpm add\n` +
+      `${DPOP_PACKAGE}). A client opts in by sending a DPoP proof in the DPoP\n` +
+      'header: its tokens are then bound to its key (token_type DPoP); without one they stay\n' +
+      'Bearer. Register dpopBoundAccessTokens: true on a client that must always use DPoP.\n' +
+      'Server-provided nonces (RFC 9449 §8 / §9) are not implemented.\n',
+  },
+};
+
+/** The extension features a feature configuration enables, in registry order. */
+function enabledExtensionsOf(features: OidcFeatureConfig): ExtensionFeatureName[] {
+  return EXTENSION_FEATURES.filter((name) => features[featureKeyOf(name)]);
+}
 
 /** The step that registers the clients and users the generated OP starts without. */
 const REGISTER_STEP =
@@ -154,6 +189,14 @@ Extension features (disabled by default): ${extensionFeatures}
   samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
   authorized redirect URI of that Google OAuth client. Enable with:
   --enable google-login
+  dpop (${DPOP_PACKAGE}): OAuth 2.0 DPoP (RFC 9449). The token endpoint checks
+  the DPoP proof of a request and binds the access token (and a public
+  client's refresh token) to its key, the UserInfo endpoint takes
+  Authorization: DPoP with a proof, and /authorize and PAR bind the code to
+  dpop_jkt. Clients opt in by sending DPoP proofs (dpopBoundAccessTokens: true
+  makes them mandatory for a client); without one the tokens stay Bearer.
+  Web Crypto only, so it runs on edge runtimes too. Enable with:
+  --enable dpop
 
 Custom scopes (none declared by default): the standard scopes (openid, profile,
   email, address, phone, offline_access) are always handled by the generated
@@ -907,11 +950,9 @@ export function run(args: string[]): void {
     const enabledExtensions = EXTENSION_FEATURES.filter((name) => parsed.enable.includes(name));
     if (enabledExtensions.length > 0) {
       console.log(`Extension features enabled: ${enabledExtensions.join(', ')}`);
-      console.log(
-        'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
-          'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
-          'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
-      );
+      for (const name of enabledExtensions) {
+        console.log(EXTENSION_GUIDANCE[name].note);
+      }
     }
     if (scopes.length > 0) {
       console.log(`Custom scopes: ${scopes.join(', ')}`);
@@ -958,13 +999,9 @@ export function run(args: string[]): void {
         ...(featurePackagesOf(features).includes(EXPERIMENTAL_PACKAGE)
           ? [`Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`]
           : []),
-        ...(features.googleLogin
-          ? [
-              `Install the Google login extension: pnpm add ${featurePackagesOf(features)
-                .filter((name) => name !== EXPERIMENTAL_PACKAGE)
-                .join(' ')}`,
-            ]
-          : []),
+        ...enabledExtensionsOf(features).map(
+          (name) => `Install ${EXTENSION_GUIDANCE[name].label}: pnpm add ${(findFeature(name)?.packages ?? []).join(' ')}`,
+        ),
         'Start the server',
       ];
       console.log(`\nNext steps:`);

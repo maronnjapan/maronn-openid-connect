@@ -15,7 +15,7 @@
  * resolver's method reads) reaches every call of the resolver's member. An
  * implementation in the code of an app (hono, nextjs) runs under the
  * endpoints generated from that app only; one in a library (core,
- * experimental, google-login) under every source. A way that goes through a
+ * experimental, google-login, dpop) under every source. A way that goes through a
  * member stops at the call of the member (an implementation has no frame to
  * open) and names the members below it (Reach.through).
  */

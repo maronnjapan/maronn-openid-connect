@@ -185,11 +185,12 @@ interface RawReach {
 
 到達に残すのは、関数カタログのディレクトリの中のソースの位置だけである。
 
-ディレクトリ（`FUNCTION_ROOTS`）は次の六つで、`.github/scripts/lint-function-docs.mjs` と同じ並びである。
+ディレクトリ（`FUNCTION_ROOTS`）は次の七つで、`.github/scripts/lint-function-docs.mjs` と同じ並びである。
 
 - `packages/core/src`
 - `packages/experimental/src`
 - `packages/google-login/src`
+- `packages/dpop/src`
 - `apps/hono/src/oidc-provider`
 - `apps/hono/src/web`
 - `apps/nextjs/src/app`
@@ -313,14 +314,15 @@ flowchart LR
 | `packages/core` | `packages/core/src` |
 | `packages/experimental` | `packages/experimental/src`、`packages/core/src` |
 | `packages/google-login` | `packages/google-login/src`、`packages/core/src` |
-| `apps/hono` | `apps/hono/src/oidc-provider`、`apps/hono/src/web`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src` |
-| `apps/nextjs` | `apps/nextjs/src/app`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src` |
+| `packages/dpop` | `packages/dpop/src` |
+| `apps/hono` | `apps/hono/src/oidc-provider`、`apps/hono/src/web`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src`、`packages/dpop/src` |
+| `apps/nextjs` | `apps/nextjs/src/app`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src`、`packages/dpop/src` |
 | `packages/cli`、`packages/map-analysis`、`packages/test-catalog`、`packages/test-reach`、`apps/map`、`apps/tests` | なし（報告だけを書く） |
 
 アプリとパッケージのテストは、エイリアスでほかのパッケージの `src` を読むので、そのディレクトリも計る。
-計る 5 パッケージは、devDependency に `@vitest/coverage-istanbul`（5.0.5）を持つ。
+計る 6 パッケージは、devDependency に `@vitest/coverage-istanbul`（5.0.5）を持つ。
 
-`core`、`experimental`、`google-login` は、自前の `coverage`（`provider: 'v8'`）を先に書いている。
+`core`、`experimental`、`google-login`、`dpop` は、自前の `coverage`（`provider: 'v8'`）を先に書いている。
 `testReports()` を `test` の最後に広げるので、計るときはその `coverage` を丸ごと置き換える。
 
 実装：
@@ -807,7 +809,7 @@ V8 がアプリのモジュールを最初の行から数えるためである�
 3. 計るときは、アプリを `withAccessLog`（[②-6-g](#-6-g-アクセスログ)）で包んでから `serve` する
 
 hono の OP の中で、ライブラリは `packages/*/dist` の JavaScript として動く。
-`core`、`experimental`、`google-login` の `exports` が `./dist/` を指すからである（`core` は `./dist/index.js`）。
+`core`、`experimental`、`google-login`、`dpop` の `exports` が `./dist/` を指すからである（`core` は `./dist/index.js`）。
 tsc は `sourceMap: true` で隣に `.js.map` を書き、[②-6-e](#-6-e-スクリプトの読み方) と [②-6-f](#-6-f-走った関数) はそれで `packages/*/src` に戻す。
 `test:e2e:app-hono` は、先にアプリの `build`（ライブラリの tsc）を走らせて、これらを作る。
 

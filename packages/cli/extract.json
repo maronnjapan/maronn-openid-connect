@@ -46,6 +46,14 @@
         "\\.test\\.tsx?$",
         "(^|/)test-helpers\\.ts$"
       ]
+    },
+    "dpop": {
+      "package": "@maronn-openid-connect/dpop",
+      "directory": "../dpop/src",
+      "exclude": [
+        "\\.test\\.tsx?$",
+        "(^|/)test-helpers\\.ts$"
+      ]
     }
   },
   "frameworks": {

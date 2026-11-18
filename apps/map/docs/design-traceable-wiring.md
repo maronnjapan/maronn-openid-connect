@@ -4,7 +4,7 @@
 
 この設計は `claude/upbeat-faraday-64u0g7` の `ef250f1` を基準に、実際の `build:map` の出力を読んで選んだ。題材はクライアントの `jwks_uri` だが、規則と解析はその名前を条件にしない。
 
-CLI の `extract.json` は core・experimental・google-login・hono・nextjs の範囲を定める。関数カタログはその範囲のトップレベルの `function` 宣言を読む。CLI の explain は endpoint の step 関数とその calls を根にする。flow は endpoint/step の meta と機能の contribution から作り、Next.js の step の calls は Route Handler の marker block から読む。
+CLI の `extract.json` は core・experimental・google-login・dpop・hono・nextjs の範囲を定める。関数カタログはその範囲のトップレベルの `function` 宣言を読む。CLI の explain は endpoint の step 関数とその calls を根にする。flow は endpoint/step の meta と機能の contribution から作り、Next.js の step の calls は Route Handler の marker block から読む。
 
 apps/map は同じカタログを受け取るが、実行トレースの根は Hono の handler/pipeline 本体、Next.js の Route Handler/Server Action である。`createApp` や `setRequestContext`、module initializer は自動では根にならない。根を決めるのは `packages/map-analysis/src/analyze.ts`、解析するファイルと package exports の source への付替えは `roots.ts` である。
 

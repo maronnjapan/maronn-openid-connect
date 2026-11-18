@@ -41,7 +41,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
 
 describe('EXTENSION_FEATURES', () => {
   it('should list the extension features in a stable order', () => {
-    expect(EXTENSION_FEATURES).toEqual(['google-login']);
+    expect(EXTENSION_FEATURES).toEqual(['google-login', 'dpop']);
   });
 });
 
@@ -67,6 +67,7 @@ describe('DEFAULT_FEATURES', () => {
       rpInitiatedLogout: false,
       dynamicClientRegistration: false,
       googleLogin: false,
+      dpop: false,
     });
   });
 });
@@ -94,6 +95,7 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
         googleLogin: false,
+        dpop: false,
       });
     });
   });
@@ -120,6 +122,7 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
         googleLogin: false,
+        dpop: false,
       });
     });
 
@@ -146,6 +149,7 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
         googleLogin: false,
+        dpop: false,
       });
     });
 
@@ -176,6 +180,7 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
         googleLogin: false,
+        dpop: false,
       });
     });
 
@@ -200,6 +205,7 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
         googleLogin: false,
+        dpop: false,
       });
     });
 
@@ -217,6 +223,7 @@ describe('resolveFeatures', () => {
             'rp-initiated-logout',
             'dynamic-client-registration',
             'google-login',
+            'dpop',
           ],
         }),
       ).toEqual({
@@ -239,6 +246,7 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: true,
         dynamicClientRegistration: true,
         googleLogin: true,
+        dpop: true,
       });
     });
 
@@ -263,14 +271,15 @@ describe('resolveFeatures', () => {
         rpInitiatedLogout: false,
         dynamicClientRegistration: false,
         googleLogin: false,
+        dpop: false,
       });
     });
   });
 
   describe('validation errors', () => {
     it('should reject an unknown feature name in disable', () => {
-      expect(() => resolveFeatures({ disable: ['dpop'] })).toThrow(
-        'Unknown feature: "dpop". Available features: pkce, refresh-token, client-credentials, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par',
+      expect(() => resolveFeatures({ disable: ['unknown-feature'] })).toThrow(
+        'Unknown feature: "unknown-feature". Available features: pkce, refresh-token, client-credentials, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par',
       );
     });
 

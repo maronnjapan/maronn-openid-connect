@@ -152,7 +152,7 @@ flowchart LR
 | 地図のデータの段 | 地図のデータを作るスクリプト。<br>道具もここで動く | `apps/map/scripts/build-data.mjs` | [⑦-2](07-build-ci.md#-2-データの段) |
 | 根 | 関数カタログを作る解析の単位。<br>名前（`core`、`hono` など）、ディレクトリ、`include`、`exclude` を持つ | `AnalysisRoot` | [①-1-b](01-read.md#-1-b-テストファイルの分け方) |
 | 関数カタログ | 地図が読む関数の一覧。<br>① は `Repository.cli.catalog` を、③ と ⑤ は `MapData.functions` を読み、どちらも同じ id で引く | `Repository.cli.catalog`、`MapData.functions` | [地図から使うもの](#地図から使うもの) |
-| 関数カタログのディレクトリ | 関数カタログの関数を置くディレクトリ。<br>`packages/core/src`、`packages/experimental/src`、`packages/google-login/src`、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` | `FUNCTION_ROOTS` | [②-1-c](02-measure.md#-1-c-関数カタログのディレクトリ) |
+| 関数カタログのディレクトリ | 関数カタログの関数を置くディレクトリ。<br>`packages/core/src`、`packages/experimental/src`、`packages/google-login/src`、`packages/dpop/src`、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` | `FUNCTION_ROOTS` | [②-1-c](02-measure.md#-1-c-関数カタログのディレクトリ) |
 | エンドポイントの処理本体 | エンドポイントの本体のうち、関数カタログの関数でないもの。<br>例は hono の `tokenApp.post('/', async (c) => { … })` の無名の handler | `MapData.bodies` | |
 | フレーム | 関数カタログの関数と、エンドポイントの処理本体をまとめた呼び名 | フレームの id | |
 | エンドポイント | hono と Next.js のエンドポイント。<br>それぞれ 17 個ある | `<source>:<id>` | |
@@ -421,7 +421,7 @@ classDiagram
 
 | もの | id の形 | 例 |
 |---|---|---|
-| 関数カタログの関数 | `<root>:<module>#<name>`。<br>root は根の名前（`core`、`experimental`、`google-login`、`hono`、`nextjs`） | `core:client-auth.ts#verifyClientSecret` |
+| 関数カタログの関数 | `<root>:<module>#<name>`。<br>root は根の名前（`core`、`experimental`、`google-login`、`dpop`、`hono`、`nextjs`） | `core:client-auth.ts#verifyClientSecret` |
 | エンドポイントの処理本体 | hono は `endpoint:<エンドポイント>`、Next.js は `endpoint:nextjs:<エンドポイント>` | `endpoint:token` |
 | interface のメンバー | `<root>:<module>#<型>.<メンバー>` | `core:auth-transaction.ts#AuthTransactionStore.get` |
 | ソースのファイル | `<root>:<module>`（`MapData.sources` の鍵） | `core:access-token-issuer.ts` |
@@ -602,7 +602,7 @@ API のうち 51 枚は、行き先が `own` か `app` だけで、エンドポ�
 作るもの：
 
 - パッケージ `@maronn-openid-connect/test-reach`（`packages/test-reach/src`）と、各 `vitest.config.ts` の `testReports`
-- 計る 5 パッケージの devDependencies の `@vitest/coverage-istanbul`（`5.0.5`）
+- 計る 6 パッケージの devDependencies の `@vitest/coverage-istanbul`（`5.0.5`）
 - `apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs`
 - `tests/e2e/fixtures.ts`、`tests/e2e/reach`、spec の `test` の import 先、`tests/e2e/playwright.config.ts` のレポーターと `reachRun` と `reachEnv`
 - `tests/e2e/package.json` の `test:unit` と、ルートの `test:ci` のその項

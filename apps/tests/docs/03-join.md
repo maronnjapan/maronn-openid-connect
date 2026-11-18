@@ -682,7 +682,7 @@ flowchart LR
 |---|---|
 | `hono:` で始まるか、`endpoint:` で始まり `endpoint:nextjs:` で始まらない | `hono` |
 | `nextjs:` か `endpoint:nextjs:` で始まる | `nextjs` |
-| ほか（`core:`、`experimental:`、`google-login:`） | 無し（どちらのエンドポイントにも届く） |
+| ほか（`core:`、`experimental:`、`google-login:`、`dpop:`） | 無し（どちらのエンドポイントにも届く） |
 
 ```ts
 function reachableFrames(data: MapData, source: 'hono' | 'nextjs', root: string): Set<string> {

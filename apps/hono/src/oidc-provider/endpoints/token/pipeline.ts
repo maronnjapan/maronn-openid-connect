@@ -33,10 +33,10 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  * `maronn-oidc graph --detail steps --endpoint token`): parse the request,
  * authenticate the client, check the DPoP proof (dpop), dispatch the grants
  * a feature answers, validate the grant, select the keys, resolve the
- * subject, issue and store the tokens, and answer. Delete a block to drop that step, or insert your own
- * logic between two blocks. A block whose marker names a feature belongs to
- * that feature, and its step is in features/<id>/. A step that throws ends in
- * respondTokenError().
+ * subject, issue and store the tokens, and answer. Delete a block to drop
+ * that step, or insert your own logic between two blocks. A block whose
+ * marker names a feature belongs to that feature, and its step is in
+ * features/<id>/. A step that throws ends in respondTokenError().
  */
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 

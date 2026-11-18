@@ -12,13 +12,13 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | パス | 役割 | 準拠仕様 |
 |---|---|---|
 | `/authorize` | 認可エンドポイント | OIDC Core 1.0 §3.1.2 / OAuth 2.1 §4.1 |
-| `/token` | トークンエンドポイント | OIDC Core 1.0 §3.1.3 / OAuth 2.1 §3.2 |
-| `/userinfo` | UserInfo エンドポイント | OIDC Core 1.0 §5.3 |
+| `/token` | トークンエンドポイント（拡張機能 `dpop` 有効時は DPoP proof を検査し、トークンを鍵に束縛する） | OIDC Core 1.0 §3.1.3 / OAuth 2.1 §3.2 / RFC 9449 §5 |
+| `/userinfo` | UserInfo エンドポイント（拡張機能 `dpop` 有効時は `Authorization: DPoP` も受け付ける） | OIDC Core 1.0 §5.3 / RFC 9449 §7 |
 | `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） | — |
 | `/login/google` | Sign in with Google の `login_uri`（拡張機能 `google-login` 有効時のみ生成） | Google Identity Services |
 | `/.well-known/openid-configuration` | Provider Metadata | OpenID Connect Discovery 1.0 |
 | `/.well-known/jwks.json` | JWKS（公開鍵） | RFC 7517 |
-| `/introspect` | Token Introspection（トグルで無効化可） | RFC 7662 |
+| `/introspect` | Token Introspection（トグルで無効化可。拡張機能 `dpop` 有効時は、鍵に束縛したトークンの `cnf` と `token_type` も返す） | RFC 7662 / RFC 9449 §6.2 |
 | `/revoke` | Token Revocation（トグルで無効化可） | RFC 7009 |
 
 ## Authorization Endpoint
@@ -50,6 +50,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。受け付ける alg は `requestObjectSigningAlgValuesSupported`（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512）で、discovery の `request_object_signing_alg_values_supported` に広告する。クライアントが `request_object_signing_alg` を登録していれば、その alg の Request Object だけを受け付ける（OIDC Core 1.0 §6.3.2）。鍵は、クライアントが `request_object` の用途に登録した公開鍵か、登録した `jwks_uri` から取得した鍵で、使える alg がヘッダーの `alg` と同じ鍵だけを使う（RFC 8725 §3.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理 |
 | `request_uri` | URL の `request_uri`（Request Object by reference, OIDC Core 1.0 §6.2）から Request Object を取得し、`request` と同じく検証する。取得は https の公開ホストに限り、512 文字まで、フラグメントを除いて GET し、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB までに制限する。取得に失敗すると、リダイレクトせずに固定文言の `invalid_request_uri` で拒否する。`request` との併用は `invalid_request`。`requireRequestUriRegistration: true` では、クライアントが登録した `request_uris` と完全一致する値だけを取得する。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する。トグル `request-object` を外すと `request_uri_not_supported` で拒否する。PAR の `urn:ietf:params:oauth:request_uri:` は PAR が解決する |
 | `registration` | 未対応。仕様通り `registration_not_supported` で拒否（OIDC Core 1.0 §3.1.2.6） |
+| `dpop_jkt` | 拡張機能 `dpop` 有効時のみ。DPoP の鍵の JWK Thumbprint（SHA-256 の base64url、43 文字）で、認可コードをその鍵に束縛する。トークンエンドポイントは、同じ鍵の DPoP proof を付けた交換だけを受け付ける（RFC 9449 §10）。形式が正しくなければ `invalid_request` をリダイレクトで返す。Request Object の値はクエリより優先する。PAR では、プッシュしたリクエストの `DPoP` ヘッダーの鍵が `dpop_jkt` になる（RFC 9449 §10.1）。`dpop` が無効なときは無視する |
 
 ### OAuth 2.0 のリクエスト（`openid` なし）
 
@@ -69,6 +70,7 @@ OpenID Connect のリクエストだけを受け付ける OP に戻すには、`
 - クライアント認証: `client_secret_basic` / `client_secret_post` / `private_key_jwt`（OIDC Core 1.0 §9） / `none`（public client）。1 つのクライアントに `client_secret_basic` と `client_secret_post` の両方を登録可能。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
 - private_key_jwt: クライアントアサーション（RFC 7523 §3）の alg は RS256 / RS384 / RS512 / ES256 / ES384 / ES512（`none` と HS 系は拒否）。`iss` と `sub` が client_id、`aud` にエンドポイントの URL か issuer、`exp` と `jti` が必須で、同じ `jti` の再送は期限まで拒否する。鍵はクライアントが `private_key_jwt` の用途に登録した公開鍵か `jwks_uri` の鍵。検証の失敗はすべて `invalid_client`、アサーションとシークレットの併用は `invalid_request`。イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントも同じ検証を行う（詳細は [CLI Guide の private_key_jwt](../../guides/cli/#private_key_jwt)）
 - 認可コード: ワンタイム使用、TTL 既定 300 秒、redirect_uri 一致検証、PKCE `code_verifier` の S256 検証
+- DPoP（拡張機能 `dpop` 有効時のみ。RFC 9449）: `DPoP` ヘッダーの DPoP proof を検査し、アクセストークンをその鍵に束縛する（`token_type` は `DPoP`、アクセストークンに `cnf.jkt`）。パブリッククライアントにはリフレッシュトークンも同じ鍵に束縛する。DPoP proof の不備は `invalid_dpop_proof`、束縛した鍵と違う鍵での認可コード・リフレッシュトークンの提示は `invalid_grant`（どちらも 400）。`DPoP` ヘッダーの無いリクエストには従来どおり Bearer トークンを発行する。詳細は [DPoP（拡張）](../../guides/dpop/)
 
 ### Client Credentials Grant
 
@@ -133,6 +135,7 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 - scope に応じた標準クレームの返却（OIDC Core 1.0 §5.4）: `profile` / `email` / `address` / `phone`
 - `claims` リクエストパラメータによる個別クレーム要求に対応
 - 署名付き UserInfo レスポンス（JWT）の生成に対応
+- 拡張機能 `dpop` 有効時は、`Authorization: DPoP <token>` と、`ath` にアクセストークンのハッシュを入れた DPoP proof を受け付け、トークンが DPoP proof の鍵に束縛されていることを確かめる（RFC 9449 §7.1）。鍵に束縛したトークンを Bearer で提示すると `invalid_token` で拒否する（RFC 9449 §7.2）。DPoP の失敗は `WWW-Authenticate: DPoP` に、受け付ける alg（`algs`）を入れて応答する
 
 ## Client Keys
 
@@ -181,6 +184,9 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `requestUriTimeoutMs` / `requestUriMaxBytes` / `requestUriMaxLength` | `3000` / `65536` / `512` | `request_uri` の取得のタイムアウト（ミリ秒）、Request Object の上限（バイト）、`request_uri` の長さの上限（文字。request-object 機能） |
 | `allowInsecureClientDisplayUris` | `false` | ログイン・同意画面に http の `logo_uri` などを入れる（開発用） |
 | `requireClientDisplayUriHostMatch` | `false` | `logo_uri` と `policy_uri` を、`redirect_uris` のホストと同じときだけ画面に入れる |
+| `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg（dpop 機能）。discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。非対称の alg だけで、`@maronn-openid-connect/dpop` が検証できない alg は挙げても受け付けない |
+| `dpopProofMaxAgeSeconds` | `60` | DPoP proof を `iat` から何秒まで受け付けるか（dpop 機能。RFC 9449 §11.1） |
+| `dpopProofLeewaySeconds` | `60` | DPoP proof の `iat` に許す時計のずれ（秒。dpop 機能） |
 
 ## Feature Toggles
 
@@ -188,11 +194,12 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credenti
 
 ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`__Host-oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します。`POST /login`・`POST /consent` は、ブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたことも確かめます（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 
-さらに、ログイン手段を足す**拡張機能**があります。仕様ではなく認証方式の追加なので Experimental とは別カテゴリで、実装は別 package（`@maronn-openid-connect/google-login`）にあり、既定では無効です。
+さらに、**拡張機能**があります。OP に足す任意の機能を、それぞれ専用の package で提供するもので、既定では無効です（`--enable` で有効にします）。Experimental（API が不安定で、リリースは常に patch）とは別カテゴリで、API は安定していて、package は通常の semver でリリースします。
 
 | 機能名 | 内容 | 実装 |
 |---|---|---|
 | `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
+| `dpop` | DPoP（RFC 9449）でアクセストークンをクライアントの鍵に束縛する。トークンエンドポイントが DPoP proof を検査して `token_type: DPoP` のトークンを発行し、UserInfo エンドポイントが `Authorization: DPoP` を受け付け、`dpop_jkt` と PAR の `DPoP` ヘッダーが認可コードを鍵に束縛する。詳細は [DPoP（拡張）](../../guides/dpop/) | `@maronn-openid-connect/dpop`（Web Crypto だけで動き、エッジランタイムでも動く） |
 
 ## Custom Scopes
 

@@ -158,6 +158,7 @@ flowchart TB
 | `core` | `packages/core/src` |
 | `experimental` | `packages/experimental/src` |
 | `google-login` | `packages/google-login/src` |
+| `dpop` | `packages/dpop/src` |
 | `hono` | `apps/hono/src` |
 | `nextjs` | `apps/nextjs/src` |
 
@@ -2586,7 +2587,7 @@ flowchart TB
 どちらもプロセスの中で HTTP の形を取り、分ける根拠がコードに無いからである。
 
 例：`api` は 217 枚で、hono 190、nextjs 20、機能ファイル 7 である。
-core、experimental、google-login のテストに `api` は無い。
+core、experimental、google-login、dpop のテストに `api` は無い。
 hono の 51 枚は、エンドポイントの対象を持たない（行き先が `own` か `app` だけ）。
 
 ### ①-9-b 対象と根拠

@@ -265,7 +265,7 @@ export function kindCounts(entries: ReadonlyArray<Pick<TestEntry, 'kind'>>): Rec
  * The roots of the files page in their order: the roots of the provider
  * first, then the E2E tests and the feature files, then the tools.
  */
-const ROOT_ORDER = ['core', 'experimental', 'google-login', 'hono', 'nextjs', 'e2e', 'features'];
+const ROOT_ORDER = ['core', 'experimental', 'google-login', 'dpop', 'hono', 'nextjs', 'e2e', 'features'];
 
 export interface FileGroup {
   root: string;

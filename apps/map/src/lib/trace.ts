@@ -306,7 +306,7 @@ export function sourceOf(framework: string): string {
   return framework === 'nextjs' ? 'nextjs' : 'hono';
 }
 
-/** Whether the code of an id runs for a source: an app root (`hono:`, `nextjs:`) only for its own, a package root (`core:`, `experimental:`, `google-login:`) and anything else for every source; every source runs it when none is given. */
+/** Whether the code of an id runs for a source: an app root (`hono:`, `nextjs:`) only for its own, a package root (`core:`, `experimental:`, `google-login:`, `dpop:`) and anything else for every source; every source runs it when none is given. */
 export function runsFor(id: string, source: string | undefined): boolean {
   if (source === undefined) return true;
   const root = id.slice(0, Math.max(0, id.indexOf(':')));

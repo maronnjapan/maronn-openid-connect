@@ -9,6 +9,7 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 - `@maronn-openid-connect/cli`
 - `@maronn-openid-connect/experimental`
 - `@maronn-openid-connect/google-login`
+- `@maronn-openid-connect/dpop`
 
 通常のリリース運用（changeset を貯めて Version Packages PR をマージすると publish される二段階フロー）は
 `release.yml` 冒頭のコメントを参照。本ドキュメントは **publish を成立させるための初期セットアップ**を扱う。
@@ -135,6 +136,18 @@ experimental と違う点は 3 つ。
   Dependabot がこれを bump したときの扱いは
   [changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)を参照
 
+### dpop は core に依存しない拡張パッケージ
+
+`@maronn-openid-connect/dpop` は DPoP（RFC 9449）の検査を CLI 生成コードの OP に加える拡張パッケージで、
+google-login と同じく changeset を手で書き、0.x の semver として互換性の変化に応じて minor / major も使う。
+google-login と違うのは、**core に依存しない**こと（`dependencies` / `peerDependencies` とも空。
+Web Crypto だけで DPoP proof を検査し、失敗は core のエラー型ではなく自前の `DpopError` で投げる）。
+
+- core を peer 参照しないので、[core の minor / major では同時にリリースする](#core-の-minor--major-では-experimental-も一緒にリリースする)規則と
+  [peer range は「下限」を宣言する](#peer-range-は下限を宣言する)規則の対象外。`verify-release-contract.mjs` の
+  `CORE_DEPENDENT_PACKAGES` にも列挙しない。core のリリースが dpop のリリースを強制することはない
+- production 依存も持たない（`dependencies` は空）
+
 ### どのパッケージを単独でリリースできるか
 
 | リリース対象 | 単独で出せるか |
@@ -142,7 +155,8 @@ experimental と違う点は 3 つ。
 | `@maronn-openid-connect/cli` のみ | **出せる**。cli は core に依存していない（`dependencies` / `peerDependencies` とも空） |
 | `@maronn-openid-connect/experimental` のみ | **出せる**。自動 changeset の想定運用そのもの |
 | `@maronn-openid-connect/google-login` のみ | **出せる**。core を peer 参照するが、core を上げない限り単独で publish できる |
-| `@maronn-openid-connect/core` のみ | **出せない**。bump 種別によらず experimental と google-login が同時リリースになる |
+| `@maronn-openid-connect/dpop` のみ | **出せる**。core に依存していない（`dependencies` / `peerDependencies` とも空） |
+| `@maronn-openid-connect/core` のみ | **出せない**。bump 種別によらず experimental と google-login が同時リリースになる（dpop は巻き込まれない） |
 
 core が単独で出せないのは、[peer range は「下限」を宣言する](#peer-range-は下限を宣言する)の規則が
 **patch にも効く**ため。core を 0.1.0 → 0.1.1 に上げるだけでも下限を `>=0.1.1` へ上げる必要があり、
@@ -389,6 +403,7 @@ cat packages/core/package.json   # publishConfig.access = "public" を確認
 cat packages/cli/package.json
 cat packages/experimental/package.json
 cat packages/google-login/package.json
+cat packages/dpop/package.json
 
 # 3. クリーンな状態でビルド
 pnpm install --frozen-lockfile
@@ -399,6 +414,7 @@ pnpm run build
 pnpm --filter @maronn-openid-connect/core         publish --access public --no-git-checks
 pnpm --filter @maronn-openid-connect/experimental publish --access public --no-git-checks
 pnpm --filter @maronn-openid-connect/google-login publish --access public --no-git-checks
+pnpm --filter @maronn-openid-connect/dpop         publish --access public --no-git-checks
 pnpm --filter @maronn-openid-connect/cli          publish --access public --no-git-checks
 ```
 
@@ -411,10 +427,11 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 - https://www.npmjs.com/package/@maronn-openid-connect/cli
 - https://www.npmjs.com/package/@maronn-openid-connect/experimental
 - https://www.npmjs.com/package/@maronn-openid-connect/google-login
+- https://www.npmjs.com/package/@maronn-openid-connect/dpop
 
 > 初回手動 publish では provenance（来歴証明）は付かない。provenance は CI の OIDC publish で自動付与される。
 
-### 後から追加したパッケージのブートストラップ（google-login の例）
+### 後から追加したパッケージのブートストラップ（google-login・dpop の例）
 
 既存パッケージが CI publish で回っている状態でパッケージを追加した場合も、そのパッケージだけは
 同じブートストラップ（手動 publish → Trusted Publisher 設定）が要る。`@maronn-openid-connect/google-login`
@@ -434,6 +451,16 @@ version は確定済みなのでブートストラップ後の次の main への
 検出される）が、その間 同じ Version Packages PR に乗った他パッケージの publish 結果と
 混ざって原因を追いにくくなる。
 
+`@maronn-openid-connect/dpop` も同じ手順で始める。`packages/dpop/package.json` の `version` を **`0.0.0`** で
+main に入れ、初回リリース用の changeset（patch）が `0.0.1` へ上げる。dpop は core に依存しないので、
+手動 publish の順序に制約はない（core より先でも後でもよい）。
+
+1. main の `0.0.0` をローカルから手動 publish する（`pnpm --filter @maronn-openid-connect/dpop publish --access public --no-git-checks`）
+2. npm 側で dpop の Trusted Publisher を設定する（次節）
+3. dpop の changeset を含む Version Packages PR をマージする。CI の OIDC publish が `0.0.1` を provenance 付きで publish する
+
+google-login と同じく、**1 と 2 を終える前に Version Packages PR をマージしないこと。**
+
 ---
 
 ## Trusted Publisher の設定（次回以降のための npm 側設定）
@@ -448,6 +475,7 @@ version は確定済みなのでブートストラップ後の次の main への
    - `@maronn-openid-connect/cli`
    - `@maronn-openid-connect/experimental`
    - `@maronn-openid-connect/google-login`
+   - `@maronn-openid-connect/dpop`
 2. **Settings** タブ → **Trusted Publisher**（Publishing access）セクションへ
 3. **GitHub Actions** を選び、以下を登録する
 
@@ -754,7 +782,7 @@ PUBLISHED_PACKAGES='[{"name":"@maronn-openid-connect/cli","version":"0.15.1"}]' 
 | CI publish が `404` / `403` で失敗 | パッケージ未作成、または Trusted Publisher 未設定。初回手動 publish と npm 側設定を確認 |
 | `Workflow does not match` 系エラー | npm の Trusted Publisher の Workflow filename が `release.yml` と一致しているか確認 |
 | publish 後の `Verify published package provenance` が失敗 | まず publish 自体が成功しているか npm registry を直接照会して確認する（`npm view <name>@<version>`）。`npm registry が 15 分待っても次のバージョンを返しません` で落ちていたら npm の反映待ちなので、しばらく置いて `verify-provenance` ジョブだけを re-run する（そのジョブの Re-run job。[registry に載るのを待ってから検証する](#registry-に載るのを待ってから検証する)）。`Missing verified SLSA provenance attestation` で落ちた場合は Trusted Publisher の repository/workflow 設定、`id-token: write`、公開リポジトリであることを確認 |
-| `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli` / `experimental` / `google-login`） |
+| `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli` / `experimental` / `google-login` / `dpop`） |
 | スコープ付きで `402 Payment Required` | `--access public` 指定漏れ。`publishConfig.access: "public"` も併せて確認 |
 | Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |
 | CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では core を peer 参照するパッケージ（experimental / google-login）も同時にリリースする（`pnpm changeset` でエラーに列挙されたパッケージの changeset を追加する） |

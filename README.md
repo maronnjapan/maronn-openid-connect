@@ -45,6 +45,7 @@ OpenID Connect 関連機能をプロジェクトへ導入する CLI ツールで
 Authorization Code Flow や OpenID Connect の拡張機能を実行するためのコードを生成します。
 `maronn-oidc graph` は、生成される OP をエンドポイントとステップの図（Mermaid）か JSON のフロー文書として書き出します。
 フロー文書を編集して `--flow` で渡すと、ステップを消したり並べ替えたりした OP を生成できます。
+既定では無効の機能は、`--enable` で加えます。実験的機能（`packages/experimental`）と、それぞれ専用のパッケージで提供する拡張機能（`packages/google-login` の `google-login`、`packages/dpop` の `dpop`）があります。
 
 ### packages/google-login
 
@@ -52,6 +53,13 @@ Sign in with Google（Google Identity Services の redirect mode）を、`packag
 Google が `login_uri` へ POST する ID トークンの検証は Google 公式の `google-auth-library` に委ね、このパッケージは `g_csrf_token` の Double Submit Cookie 検証、任意の `hd` / `email_verified` の確認、core の認証トランザクションへの束縛（nonce）を提供します。ログイン画面の UI は生成せず、置くべき GIS の設定（`g_id_onload` の属性）だけを Node 非依存のサブパス `@maronn-openid-connect/google-login/sign-in` で組み立てます（プレーン HTML / React / Vue のどれでも使えます）。
 単体で使うものではなく、core と組み合わせて `packages/cli` の生成コードから呼び出す想定です。`maronn-oidc generate <framework> --enable google-login` で生成コードに組み込まれ（拡張機能。既定では無効）、ログイン画面の「Google でログイン」ボタンと `POST /login/google` の受け口が追加されます。`samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel` は `GOOGLE_CLIENT_ID` を設定すると Google ログインが有効になります。
 `google-auth-library` の要件により Node.js 22 以上限定で、エッジランタイムでは動きません。
+
+### packages/dpop
+
+OAuth 2.0 Demonstrating Proof of Possession（DPoP、RFC 9449）を、OP に加えるための拡張パッケージです。
+DPoP proof の検査（`typ`、非対称の `alg`、`jwk` と署名、`jti` / `htm` / `htu` / `iat`、保護されたリソースでの `ath`、`jti` の再利用の拒否）、JWK Thumbprint（RFC 7638）、トークンと認可コードの鍵への束縛（`cnf.jkt`、`dpop_jkt`、`dpop_bound_access_tokens`）、保護されたリソースの `DPoP` スキームを、別々の関数として提供します。
+単体で使うものではなく、`packages/cli` の生成コードから呼び出す想定です。`maronn-oidc generate <framework> --enable dpop` で生成コードに組み込まれ（拡張機能。既定では無効）、トークンエンドポイントが DPoP proof の鍵にトークンを束縛し、UserInfo エンドポイントが `Authorization: DPoP` を受け付けます。
+core には依存せず、検査は Web Crypto だけで行うので、エッジランタイムでも動きます。サーバーが発行する nonce（RFC 9449 §8 / §9）には対応していません。
 
 ### apps/*
 

@@ -463,18 +463,24 @@ API は安定しておらず、破壊的に変更されることがあります�
 
 ### Extension Features
 
-拡張機能は、OAuth / OIDC の仕様ではなく**ログイン手段**を生成コードに足すカテゴリで、**既定では無効**です。実装は別 package にあり、`--enable` で明示したときだけ生成コードから import されます。
+拡張機能は、OP に足す任意の機能を、それぞれ専用の package で提供するカテゴリで、**既定では無効**です。実装は別 package にあり、`--enable` で明示したときだけ生成コードから import されます。Experimental 機能と違い、API は安定していて、package は通常の semver でリリースされます。`google-login` はログイン手段を、`dpop` は送信者制約付きのトークンを足します。
 
 ```bash
 maronn-oidc generate express --enable google-login
-pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library
+
+maronn-oidc generate hono --enable dpop
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/dpop
 ```
 
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
+| `dpop` | 無効 | DPoP（RFC 9449）。トークンエンドポイントが `DPoP` ヘッダーの DPoP proof を検査してアクセストークンをその鍵に束縛し（`token_type: DPoP`、`cnf.jkt`）、UserInfo エンドポイントが `Authorization: DPoP` を受け付ける。`dpop_jkt` と PAR の `DPoP` ヘッダーは認可コードを鍵に束縛する | `@maronn-openid-connect/dpop`（Web Crypto だけで動き、エッジランタイムでも動く） |
 
 有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
+
+`dpop` を有効にしても、DPoP proof を送らないクライアントには従来どおり Bearer トークンを発行します。設定、クライアントのメタデータ、制限は [DPoP（拡張）](../dpop/) を参照してください。
 
 ## Custom Scopes
 
@@ -1095,7 +1101,7 @@ maronn-oidc explain fn verifyClientSecret --callers   # 関数の役割、呼ぶ
 maronn-oidc explain hono --format json -o map.json    # UI 向けの JSON
 ```
 
-関数の情報は、CLI のビルドが core / experimental / google-login と apps の関数宣言から作る関数カタログ（JSDoc の 1 行目、`@spec`、`@throws`、本体が呼ぶ関数、呼び元）から来ます。ステップが呼ぶ関数はステップのソースから読むので、手で書く一覧はありません。
+関数の情報は、CLI のビルドが core / experimental / google-login / dpop と apps の関数宣言から作る関数カタログ（JSDoc の 1 行目、`@spec`、`@throws`、本体が呼ぶ関数、呼び元）から来ます。ステップが呼ぶ関数はステップのソースから読むので、手で書く一覧はありません。
 
 同じ地図を、ブラウザでクリックしながらたどるページ（Provider Map、リポジトリの `apps/map`）があります。
 フレームワークと機能を切り替えるとその構成の `generate` のコマンドラインになり、エンドポイントの処理を字下げした行で表示します。

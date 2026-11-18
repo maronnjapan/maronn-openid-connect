@@ -382,7 +382,7 @@ PR のコメントに書く Markdown の形は「変更メモと影響範囲」�
 解析器は `packages/` の非公開のワークスペースパッケージ（名前は仮に `@maronn-openid-connect/map-analysis`）に置き、`apps/map` は表示だけを持つ。
 解析側が持つのは、木の読み取り、木の差分と式の差分、影響範囲の計算、変更メモの解析と雛形の生成、`map.json` と関数ごとのファイルの書き出しである。
 表示側が持つのは、アウトライン、図、決定の選択、ハッシュである。
-解析器は各ルート（`packages/core`、`packages/experimental`、`packages/google-login`、`apps/hono`、`apps/nextjs`）の既存の `tsconfig.json` からプログラムを作り、関数ごとに木を出す。
+解析器は各ルート（`packages/core`、`packages/experimental`、`packages/google-login`、`packages/dpop`、`apps/hono`、`apps/nextjs`）の既存の `tsconfig.json` からプログラムを作り、関数ごとに木を出す。
 呼び先の解決は型で行い、resolver や store のメンバーも受け取りの型から引く（名前の末尾で推定する規則は要らなくなる）。
 関数の id はいまのカタログと同じ `<root>:<module>#<name>` にし、CLI のカタログ（`calls` と `calledBy`、`explain` が使う）と一致することをテストで確かめる。
 CLI 側の字句解析による流れの読み取り（`extract/function-flow.ts`）は、地図が使わなくなった時点で消す。

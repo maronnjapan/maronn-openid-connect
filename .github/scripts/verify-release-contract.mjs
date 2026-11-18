@@ -7,6 +7,8 @@
  * 拡張パッケージが、まだ組み合わせて試していない新しい core をそのまま受け入れる」
  * 状態になる。そこで core の minor / major リリース時は、core を peer 参照する
  * パッケージも同時にリリースすることを CI で強制する。
+ * @maronn-openid-connect/dpop は core に依存しない（peerDependencies を持たない）ので、
+ * この契約の対象外である。
  *
  * あわせて、release.yml の changesets/action が @changesets/cli と組む major であることも検査する
  * （{@link assertChangesetsActionMatchesCli}）。組み合わせが外れると publish は成功したまま、
@@ -29,6 +31,7 @@ const BREAKING_BUMPS = new Set(['minor', 'major']);
  * これらはモノレポ内の core（= 次に publish される core）だけを相手にビルド・テストされる
  * ため、peer range の下限と core の minor / major との同時リリースを CI で強制する対象になる。
  * core を peer 参照するパッケージを増やしたらここに足す。
+ * core を参照しない公開パッケージ（@maronn-openid-connect/dpop）は足さない。
  */
 export const CORE_DEPENDENT_PACKAGES = [
   { name: EXPERIMENTAL, manifestPath: 'packages/experimental/package.json' },
@@ -92,7 +95,7 @@ export function assertCoreBreakingChangeReleasesCoreDependents(
  * マージ忘れで複数の変更がたまっても 1 回の patch に吸収されるようにしている。
  * 手書きの changeset が minor / major を指定するとこの前提が崩れるため CI で弾く。
  *
- * google-login はこの対象外。手書きの changeset で semver（0.x）を進める。
+ * google-login と dpop（拡張パッケージ）はこの対象外。手書きの changeset で semver（0.x）を進める。
  */
 export function assertExperimentalReleasesAreAlwaysPatch(changesets) {
   const nonPatch = changesets.filter(

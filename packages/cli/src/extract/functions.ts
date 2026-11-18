@@ -4,7 +4,7 @@
  *
  * A card describes one function declaration (`function name(...) {...}`,
  * exported or not) of a root: a library package (core, experimental,
- * google-login) or an extracted app source (hono, nextjs). The card carries
+ * google-login, dpop) or an extracted app source (hono, nextjs). The card carries
  * what its JSDoc says — the summary (its first paragraph), the specification
  * sections (`@spec`, or the references the text names), what it throws — and
  * what its body calls: the functions of the catalog it calls by name, in the
@@ -38,7 +38,7 @@ export interface FunctionCard {
   /** `<root>:<module>#<name>`, unique in the catalog. */
   id: string;
   name: string;
-  /** The root the function is in: a library (core, experimental, google-login) or an app source (hono, nextjs). */
+  /** The root the function is in: a library (core, experimental, google-login, dpop) or an app source (hono, nextjs). */
   package: string;
   /** The file, relative to the root. */
   module: string;

@@ -22,7 +22,7 @@ test('omitted inputs scope the materials to provider code, tests and docs withou
   const request = quizRequest({ prNumber: '194' });
   assert.equal(request.inputs.question_count, '');
   assert.deepEqual(request.inputs.focus_paths.split(','), [
-    'apps/hono/', 'apps/nextjs/', 'packages/core/', 'packages/experimental/', 'packages/google-login/', 'tests/', 'docs/',
+    'apps/hono/', 'apps/nextjs/', 'packages/core/', 'packages/experimental/', 'packages/google-login/', 'packages/dpop/', 'tests/', 'docs/',
   ]);
   assert.equal(quizRequest({ prNumber: '194', questionCount: '', focusPaths: '' }).inputs.focus_paths, '');
 });

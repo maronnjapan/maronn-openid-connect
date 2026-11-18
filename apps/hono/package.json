@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login run build && tsc --noEmit",
+    "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login --filter @maronn-openid-connect/dpop run build && tsc --noEmit",
     "start": "tsx src/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -14,7 +14,8 @@
   "dependencies": {
     "@maronn-openid-connect/core": "workspace:*",
     "@maronn-openid-connect/experimental": "workspace:*",
-    "@maronn-openid-connect/google-login": "workspace:*"
+    "@maronn-openid-connect/google-login": "workspace:*",
+    "@maronn-openid-connect/dpop": "workspace:*"
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.8",

@@ -16,6 +16,7 @@ import { step } from '../../../endpoints/step.js';
 import { resolveGrantableScopes } from '../../../scopes.js';
 import type { AuthSessionInfo } from '../../../store.js';
 import { createFragmentResponseMode } from '../../implicit-flow/response-mode.js';
+import { confirmationOf } from '../../../token-binding.js';
 import { issueHybridTokens } from '../tokens.js';
 
 export const meta = step({
@@ -84,6 +85,7 @@ export async function issueHybridConsentResponse(
       responseParams,
       session,
       grantedScope,
+      codeConfirmation: confirmationOf(transaction),
     });
   } catch (error) {
     if (!(error instanceof AuthorizationError)) throw error;

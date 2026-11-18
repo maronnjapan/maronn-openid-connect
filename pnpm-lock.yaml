@@ -20,6 +20,9 @@ importers:
       '@maronn-openid-connect/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@maronn-openid-connect/dpop':
+        specifier: workspace:*
+        version: link:../../packages/dpop
       '@maronn-openid-connect/experimental':
         specifier: workspace:*
         version: link:../../packages/experimental
@@ -236,6 +239,27 @@ importers:
         version: 5.1.0(@edge-runtime/vm@5.0.0)(@types/node@26.6.6)(@vitest/coverage-istanbul@5.0.5)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/core:
+    devDependencies:
+      '@edge-runtime/vm':
+        specifier: ^5.0.0
+        version: 5.0.0
+      '@maronn-openid-connect/test-reach':
+        specifier: workspace:*
+        version: link:../test-reach
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      '@vitest/coverage-istanbul':
+        specifier: 5.0.5
+        version: 5.0.5(vitest@5.1.0)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@edge-runtime/vm@5.0.0)(@types/node@26.6.6)(@vitest/coverage-istanbul@5.0.5)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/dpop:
     devDependencies:
       '@edge-runtime/vm':
         specifier: ^5.0.0

@@ -11,6 +11,7 @@ import type { LoginMethod } from '../endpoints/login/login-method.js';
 import {
   applyContextOf,
   configOf,
+  corsHeadersOf,
   defineFeature,
   discoveryOf,
   loginMethodsOf,
@@ -272,5 +273,17 @@ describe('loginMethodsOf', () => {
     ];
 
     expect(loginMethodsOf(features)).toEqual([google, passkey]);
+  });
+});
+
+describe('corsHeadersOf', () => {
+  it('should list the CORS headers of the features once each, in the order of the features', () => {
+    const features: Feature[] = [
+      defineFeature({ id: 'a', cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate'] } }),
+      defineFeature({ id: 'b' }),
+      defineFeature({ id: 'c', cors: { allowHeaders: ['DPoP', 'X-Other'] } }),
+    ];
+
+    expect(corsHeadersOf(features)).toEqual({ allowHeaders: ['DPoP', 'X-Other'], exposeHeaders: ['WWW-Authenticate'] });
   });
 });

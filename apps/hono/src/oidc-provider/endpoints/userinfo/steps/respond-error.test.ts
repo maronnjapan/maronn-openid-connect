@@ -33,6 +33,17 @@ describe('respondUserInfoError', () => {
     expect(await response.json()).toEqual({ error: 'invalid_token', error_description: 'Access token is invalid' });
   });
 
+  // RFC 9449 §7.1: a token presented with another scheme is challenged with that scheme.
+  it('should answer with the challenge of the scheme the token was presented with, and its parameters', () => {
+    const error = new UserInfoError(UserInfoErrorCode.InvalidToken, 'Access token is invalid');
+
+    const response = respondUserInfoError(contextOf(), error, { scheme: 'DPoP', parameters: 'algs="ES256"' });
+
+    expect(response.headers.get('WWW-Authenticate')).toBe(
+      'DPoP realm="UserInfo", error="invalid_token", error_description="Access token is invalid", algs="ES256"',
+    );
+  });
+
   // RFC 6750 §3.1: insufficient_scope is 403.
   it('should answer insufficient_scope with 403', () => {
     const error = new UserInfoError(UserInfoErrorCode.InsufficientScope, 'The openid scope is required');

@@ -24,6 +24,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'authenticate-client',
+    'bind-pushed-dpop-key',
     'validate-request',
     'store-request',
     'respond',

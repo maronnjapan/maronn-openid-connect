@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bindPushedDpopKey } from '../../../dpop/steps/bind-pushed-dpop-key.js';
 import { authenticatePushingClient } from './steps/authenticate-client.js';
 import { parsePushedAuthorizationRequest } from './steps/parse-request.js';
 import { respondParError } from './steps/respond-error.js';
@@ -34,11 +35,15 @@ parApp.post('/', async (c) => {
     // [authenticate-client] プッシュしたクライアントを認証する — RFC 9126 §2.1
     const { clientId, pushedParams } = await authenticatePushingClient(c, params, authorization);
 
+    // [bind-pushed-dpop-key] (feature: dpop) プッシュした認可リクエストを DPoP の鍵に束縛する — RFC 9449 §10.1
+    const { dpopBoundParams, dpopRejection } = await bindPushedDpopKey(c, pushedParams);
+    if (dpopRejection) return dpopRejection;
+
     // [validate-request] /authorize と同じ規則でリクエストを検証する — RFC 9126 §2.1
-    await validatePushedRequest(c, pushedParams);
+    await validatePushedRequest(c, dpopBoundParams ?? pushedParams);
 
     // [store-request] 新しい request_uri でリクエストを保存する — RFC 9126 §2.2 / §7.1
-    const parResponse = await storePushedRequest(c, clientId, pushedParams);
+    const parResponse = await storePushedRequest(c, clientId, dpopBoundParams ?? pushedParams);
 
     // [respond] 201 で応答する（no-store） — RFC 9126 §2.2
     return respondPar(c, parResponse);

@@ -42,6 +42,21 @@ describe('describeIntrospectedToken', () => {
       });
     });
 
+    // RFC 9449 §6.2: a DPoP-bound access token is reported with its cnf and token_type DPoP.
+    it('should describe the key and the token_type of an access token bound to a key', () => {
+      const accessToken = { ...accessTokenInfo({ expiresAt: NOW + 600 }), cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' };
+
+      const response = describeIntrospectedToken({ tokenType: 'access_token', accessToken });
+
+      expect(response).toMatchObject({ active: true, token_type: 'DPoP', cnf: { jkt: 'jkt-1' } });
+    });
+
+    it('should answer { active: false } alone for an expired access token bound to a key', () => {
+      const accessToken = { ...accessTokenInfo({ expiresAt: NOW - 1 }), cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' };
+
+      expect(describeIntrospectedToken({ tokenType: 'access_token', accessToken })).toEqual({ active: false });
+    });
+
     it('should describe an unused refresh token within its lifetime', () => {
       const refreshToken = refreshTokenInfo({ subject: 'user-1', clientId: 'client-1', expiresAt: NOW + 600 });
 

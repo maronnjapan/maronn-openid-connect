@@ -17,6 +17,7 @@ import {
 import { respondToClient, type AuthorizationResponseMode } from '../../../authorize/response-mode';
 import { config, loadSigningKeys, resolvers, stores } from '../../provider';
 import { createFragmentResponseMode } from '../implicit-flow/response-mode';
+import { confirmationOf } from '../../token-binding';
 import { issueHybridTokens } from './tokens';
 
 /**
@@ -94,6 +95,7 @@ export async function issueHybridResponse(input: {
     session,
     grantedScope,
     keys,
+    codeConfirmation: confirmationOf(transaction),
   });
   // グラントを記録する。
   // 同意を取り消すと、このグラントのトークン（認可エンドポイントが発行したものと、トークンエンドポイントがこの認可コードに対して発行するもの）が失効する。

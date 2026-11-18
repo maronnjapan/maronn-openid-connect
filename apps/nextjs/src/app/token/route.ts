@@ -9,6 +9,11 @@
  * ID-JAG, device_code, CIBA) are answered in their own blocks right after
  * client authentication and before validateGrantTypeSupported, each by the
  * grant.ts of its feature.
+ *
+ * With the dpop extension, the (feature: dpop) blocks after client
+ * authentication check the DPoP proof and decide the key the tokens are
+ * bound to (tokenBinding, token-binding.ts); every grant then binds the
+ * tokens it issues to it. Without a binding the tokens are Bearer tokens.
  */
 import {
   validateGrantTypeSupported,
@@ -40,6 +45,7 @@ import { verifyPresentedClientCredential } from '../_oidc-provider/client-auth';
 import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';
 import { dispatchClientCredentials } from '../_oidc-provider/features/client-credentials/grant';
 import { dispatchDeviceCode } from '../_oidc-provider/features/device-authorization-grant/grant';
+import { validateDpopGrantBinding, verifyDpopTokenRequest } from '../_oidc-provider/features/dpop/token';
 import { dispatchIdJagIssuance, dispatchIdJagRedemption } from '../_oidc-provider/features/id-jag/grant';
 import {
   decideRefreshTokenIssuance,
@@ -71,6 +77,7 @@ import {
   uniqueParams,
   withCors,
 } from '../_oidc-provider/http';
+import { accessTokenClaimsOf, accessTokenRecordOf, tokenTypeOf } from '../_oidc-provider/token-binding';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -164,8 +171,16 @@ async function token(request: Request): Promise<Response> {
 
     const authenticatedClientId = presentedCredentials.clientId;
 
+    // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5 / §5.2
+    const { dpopJkt, tokenBinding, dpopRejection } = await verifyDpopTokenRequest(request, tokenClient);
+    if (dpopRejection) return dpopRejection;
+
+    // [validate-dpop-grant-binding] (feature: dpop) 認可コードとリフレッシュトークンを束縛した鍵を確かめる — RFC 9449 §5 / §10
+    const dpopGrantRejection = await validateDpopGrantBinding(params, authenticatedClientId, dpopJkt);
+    if (dpopGrantRejection) return dpopGrantRejection;
+
     // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
-    const clientCredentialsResponse = await dispatchClientCredentials(params, tokenClient, keys);
+    const clientCredentialsResponse = await dispatchClientCredentials(params, tokenClient, keys, tokenBinding);
     if (clientCredentialsResponse) return clientCredentialsResponse;
 
     // [dispatch-id-jag-issuance] (feature: id-jag) ID-JAG を発行する（Cross-App Access） — ID-JAG draft §4.3
@@ -173,19 +188,19 @@ async function token(request: Request): Promise<Response> {
     if (idJagIssuance) return idJagIssuance;
 
     // [dispatch-id-jag-redemption] (feature: id-jag) jwt-bearer グラントで ID-JAG を引き換える — ID-JAG draft §4.4 / RFC 7523 §2.1
-    const idJagRedemption = await dispatchIdJagRedemption(params, tokenClient, keys);
+    const idJagRedemption = await dispatchIdJagRedemption(params, tokenClient, keys, tokenBinding);
     if (idJagRedemption) return idJagRedemption;
 
     // [dispatch-token-exchange] (feature: token-exchange) トークン交換 — RFC 8693 §2.1
-    const exchanged = await dispatchTokenExchange(params, tokenClient, keys);
+    const exchanged = await dispatchTokenExchange(params, tokenClient, keys, tokenBinding);
     if (exchanged) return exchanged;
 
     // [dispatch-device-code] (feature: device-authorization-grant) device_code を引き換える — RFC 8628 §3.4 / §3.5
-    const deviceGrantResponse = await dispatchDeviceCode(params, tokenClient, keys);
+    const deviceGrantResponse = await dispatchDeviceCode(params, tokenClient, keys, tokenBinding);
     if (deviceGrantResponse) return deviceGrantResponse;
 
     // [dispatch-ciba] (feature: ciba) auth_req_id を引き換える（CIBA） — CIBA Core 1.0 §10.1 / §11
-    const cibaGrantResponse = await dispatchCiba(params, tokenClient, keys);
+    const cibaGrantResponse = await dispatchCiba(params, tokenClient, keys, tokenBinding);
     if (cibaGrantResponse) return cibaGrantResponse;
 
     // [validate-grant-type] grant_type を検証する — RFC 6749 §5.2
@@ -292,16 +307,20 @@ async function token(request: Request): Promise<Response> {
 
     // ペイロードに `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`scope`、`client_id` を入れ、認証の `acr` があればそれも入れる（RFC 9068 §2.2、§2.2.1）。
     // アクセストークンに独自のクレームを加えるときは、署名する前のここでペイロードに加える。
-    const accessTokenPayload = buildAccessTokenPayload({
-      issuer: config.issuer,
-      subject,
-      clientId: validatedRequest.clientId,
-      scope: validatedRequest.scope,
-      audience: effectiveAudience,
-      expiresIn: config.accessTokenExpiresIn,
-      issuedAt,
-      acr,
-    });
+    // 機能（dpop）がトークンを鍵に束縛するときは、その鍵の確認のクレーム `cnf` を加える（RFC 7800 §3.1、RFC 9449 §6.1）。
+    const accessTokenPayload = {
+      ...buildAccessTokenPayload({
+        issuer: config.issuer,
+        subject,
+        clientId: validatedRequest.clientId,
+        scope: validatedRequest.scope,
+        audience: effectiveAudience,
+        expiresIn: config.accessTokenExpiresIn,
+        issuedAt,
+        acr,
+      }),
+      ...accessTokenClaimsOf(tokenBinding),
+    };
 
     // `provider.ts` が設定の `accessTokenFormat` から選んだ方式で、JWT か不透明な文字列のトークンを発行する。
     const accessToken = await accessTokenIssuer.issue({
@@ -369,6 +388,9 @@ async function token(request: Request): Promise<Response> {
       claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
       // トークンを発行したときの `acr` を保存し、不透明な文字列のトークンでもイントロスペクションが `acr` を返せるようにする（RFC 9068 §2.2.1、RFC 9470 §6.2）。
       acr,
+      // 機能（dpop）がトークンを鍵に束縛したときは、確認の `cnf` と `token_type` を保存する。
+      // 不透明な文字列のトークンでも、イントロスペクションが `cnf` を返し（RFC 9449 §6.2）、UserInfo エンドポイントが提示の仕方と照らし合わせられるようにする。
+      ...accessTokenRecordOf(tokenBinding),
     });
 
     // [issue-refresh-token] (feature: refresh-token) リフレッシュトークンを発行して保存する — OAuth 2.1 §4.3.1 / §6.1
@@ -382,15 +404,17 @@ async function token(request: Request): Promise<Response> {
       audience: effectiveAudience,
       acr,
       amr,
+      binding: tokenBinding,
     });
 
     // [revoke-rotated-refresh-token] (feature: refresh-token) 古いリフレッシュトークンを失効させる — OAuth 2.1 §4.3.1
     await revokeRotatedRefreshToken(params, validatedRequest);
 
     // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
+    // 鍵に束縛したトークンは、束縛の `token_type`（DPoP なら `DPoP`）で返す（RFC 9449 §5）。
     const tokenResponse = {
       access_token: accessToken,
-      token_type: 'Bearer' as const,
+      token_type: tokenTypeOf(tokenBinding),
       expires_in: config.accessTokenExpiresIn,
       id_token: idToken,
       scope: validatedRequest.scope.join(' '),

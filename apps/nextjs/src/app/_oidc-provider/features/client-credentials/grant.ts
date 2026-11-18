@@ -29,6 +29,12 @@ import {
 } from '../../provider';
 import { noStoreJson } from '../../http';
 import { findUnsupportedScopes } from '../../scopes';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../token-binding';
 
 /**
  * グラントタイプが `client_credentials` ならアクセストークンで応答する。
@@ -44,6 +50,7 @@ import { findUnsupportedScopes } from '../../scopes';
  * - `openid` と `offline_access` は発行しない。ID トークンとリフレッシュトークンも返さない（RFC 6749 §4.4.3）。
  * - `sub` は `client_id` にする（RFC 9068 §2.2）。
  * - `audience` で要求できるのは、設定の `clientCredentialsAllowedAudiences` にあるリソースだけである（RFC 8707 §2）。
+ * - 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、アクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * 検証に失敗すると、中で呼ぶ core の関数が `TokenError` を投げ、ルートハンドラが OAuth のエラーレスポンスにする。
  * 検証はそれぞれ core の独立した関数なので、一つずつ取り除いたり、差し替えたり、独自の方針（クライアントごとのオーディエンスの制限など）を間に挟んだりできる。
@@ -52,6 +59,7 @@ import { findUnsupportedScopes } from '../../scopes';
  * @spec OAuth 2.1 §4.2
  * @spec RFC 9068 §2.2
  * @spec RFC 8707 §2
+ * @spec RFC 9449 §5
  * @throws {TokenError} `unauthorized_client`: クライアントが `client_credentials` を登録していないとき、またはパブリッククライアントのとき
  * @throws {TokenError} `invalid_scope`: 発行できないスコープ、クライアントに登録されていないスコープ、OP が受け付けないスコープを要求したとき
  * @throws {TokenError} `invalid_target`: 許可されていないオーディエンスを要求したとき
@@ -60,6 +68,7 @@ export async function dispatchClientCredentials(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== CLIENT_CREDENTIALS_GRANT_TYPE) return undefined;
 
@@ -116,15 +125,19 @@ export async function dispatchClientCredentials(
 
   // ペイロードに `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`client_id` を入れ、スコープがあれば `scope` も入れる（RFC 9068 §2.2）。
   // エンドユーザーの認証がないので、`acr` は入れない。
-  const accessTokenPayload = buildAccessTokenPayload({
-    issuer: config.issuer,
-    subject: validatedRequest.subject,
-    clientId: validatedRequest.clientId,
-    scope: validatedRequest.scope,
-    audience,
-    expiresIn: config.accessTokenExpiresIn,
-    issuedAt,
-  });
+  // 機能（dpop）がトークンを鍵に束縛するときは、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+  const accessTokenPayload = {
+    ...buildAccessTokenPayload({
+      issuer: config.issuer,
+      subject: validatedRequest.subject,
+      clientId: validatedRequest.clientId,
+      scope: validatedRequest.scope,
+      audience,
+      expiresIn: config.accessTokenExpiresIn,
+      issuedAt,
+    }),
+    ...accessTokenClaimsOf(binding),
+  };
   // `provider.ts` が設定の `accessTokenFormat` から選んだ方式で、JWT か不透明な文字列のトークンを発行する。
   // 新しいトークンには、登録された鍵のうち最初の鍵で署名する。
   const accessToken = await accessTokenIssuer.issue({
@@ -145,15 +158,19 @@ export async function dispatchClientCredentials(
     audience,
     issuer: config.issuer,
     jti: accessTokenPayload.jti,
+    // 鍵に束縛したトークンは、確認の `cnf` と `token_type` も保存する（RFC 9449 §6.2）。
+    ...accessTokenRecordOf(binding),
   });
 
   // 200 でトークンレスポンスを返す。
   // `access_token`、`token_type`、`expires_in` と、発行したスコープがあれば `scope` を入れ、リフレッシュトークンと ID トークンは入れない（RFC 6749 §4.4.3）。
-  return noStoreJson(
-    buildClientCredentialsTokenResponse({
+  // 鍵に束縛したトークンの `token_type` は、束縛の `token_type`（DPoP なら `DPoP`）にする（RFC 9449 §5）。
+  return noStoreJson({
+    ...buildClientCredentialsTokenResponse({
       accessToken,
       expiresIn: config.accessTokenExpiresIn,
       scope: validatedRequest.scope,
     }),
-  );
+    token_type: tokenTypeOf(binding),
+  });
 }

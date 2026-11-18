@@ -33,6 +33,13 @@ import {
 } from '../../provider';
 import { deviceAuthorizationStore } from './store';
 import { noStoreJson, oauthError } from '../../http';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  refreshTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../token-binding';
 
 /**
  * 承認済みの `device_code` でトークンを発行して返す。
@@ -41,14 +48,18 @@ import { noStoreJson, oauthError } from '../../http';
  * 承認済みでなければ `DeviceAuthorizationError` を投げ、`dispatchDeviceCode()` がそれを OAuth のエラーレスポンスにして返す。
  * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` で応答する。
  *
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、アクセストークン（パブリッククライアントにはリフレッシュトークンも）をその鍵に束縛する（RFC 9449 §5）。
+ *
  * @spec RFC 8628 §3.4
  * @spec RFC 8628 §3.5
+ * @spec RFC 9449 §5
  * @throws {DeviceAuthorizationError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `device_code` のレコードが承認済みでないか、使えないとき。
  */
 export async function redeemDeviceCode(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response> {
   const deviceGrant = await processDeviceCodeGrant({
     params,
@@ -89,7 +100,8 @@ export async function redeemDeviceCode(
     issuedAt,
   });
   const accessToken = await accessTokenIssuer.issue({
-    payload: accessTokenPayload,
+    // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+    payload: { ...accessTokenPayload, ...accessTokenClaimsOf(binding) },
     privateKey: keys.general[0].privateKey,
     keyId: keys.general[0].keyId,
   });
@@ -136,6 +148,7 @@ export async function redeemDeviceCode(
     audience,
     issuer: config.issuer,
     jti: accessTokenPayload.jti,
+    ...accessTokenRecordOf(binding),
   });
 
   // `scope` に `offline_access` があれば、リフレッシュトークンを発行する（OIDC Core 1.0 §11）。
@@ -164,12 +177,14 @@ export async function redeemDeviceCode(
       acr,
       amr,
       azp: undefined,
+      // パブリッククライアントのリフレッシュトークンは、DPoP proof の鍵に束縛する（RFC 9449 §5）。
+      ...refreshTokenRecordOf(binding),
     });
   }
 
   return noStoreJson({
     access_token: accessToken,
-    token_type: 'Bearer' as const,
+    token_type: tokenTypeOf(binding),
     expires_in: config.accessTokenExpiresIn,
     id_token: idToken,
     scope: deviceGrant.scope.join(' '),
@@ -187,17 +202,21 @@ export async function redeemDeviceCode(
  * デバイスコードのグラントなら `redeemDeviceCode()` で応答し、`DeviceAuthorizationError` は RFC 6749 §5.2 の形のエラーレスポンス（400）にして返す。
  * それ以外の例外は、そのまま投げ直す。
  *
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、`redeemDeviceCode()` が発行するトークンをその鍵に束縛する（RFC 9449 §5）。
+ *
  * @spec RFC 8628 §3.4
  * @spec RFC 8628 §3.5
+ * @spec RFC 9449 §5
  */
 export async function dispatchDeviceCode(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== DEVICE_CODE_GRANT_TYPE) return undefined;
   try {
-    return await redeemDeviceCode(params, client, keys);
+    return await redeemDeviceCode(params, client, keys, binding);
   } catch (error) {
     if (error instanceof DeviceAuthorizationError) {
       return oauthError(error.code, error.errorDescription, error.statusCode);

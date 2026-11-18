@@ -51,7 +51,11 @@ function responseParamsOf(overrides: Partial<AuthorizationResponseParams> = {}):
 /** Issue the code and the tokens of the response type for the End-User, who registered with a name and an email. */
 async function issue(
   responseType: string,
-  input: { responseParams?: Partial<AuthorizationResponseParams>; grantedScope?: string[] } = {},
+  input: {
+    responseParams?: Partial<AuthorizationResponseParams>;
+    grantedScope?: string[];
+    codeConfirmation?: Readonly<Record<string, string>>;
+  } = {},
 ) {
   const signingKey = await rs256Key();
   await registerClient(createDatabase(), {
@@ -66,6 +70,7 @@ async function issue(
     session: { subject: SUBJECT, authTime: AUTH_TIME, sessionId: 'session-1' },
     grantedScope: input.grantedScope ?? ['openid', 'profile'],
     keys: providerSigningKeys(signingKey),
+    codeConfirmation: input.codeConfirmation,
   });
   return { ...issued, signingKey };
 }
@@ -229,6 +234,18 @@ describe('issueHybridTokens', () => {
         claims,
         sessionId: 'session-1',
       });
+    });
+
+    // RFC 9449 §10: a request bound to a key with dpop_jkt (the dpop extension)
+    // binds the code too, so the token endpoint asks for a proof of that key.
+    it('should carry the confirmation the authorization request was bound to into the stored code', async () => {
+      const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+      const { parameters } = await issue('code id_token', { codeConfirmation: cnf });
+      const { parameters: unbound } = await issue('code id_token');
+
+      expect(await stores.authCodeStore.get(parameters['code'] ?? '')).toMatchObject({ cnf });
+      expect(await stores.authCodeStore.get(unbound['code'] ?? '')).not.toHaveProperty('cnf');
     });
   });
 

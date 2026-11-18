@@ -45,6 +45,7 @@ import {
   type AuthTransaction,
   type SessionInfo,
 } from '@maronn-openid-connect/core';
+import { validateDpopJktParameter } from '../_oidc-provider/features/dpop/authorize';
 import { resolveFormPostResponseContext } from '../_oidc-provider/features/form-post-response-mode/authorize';
 import { issueHybridResponse, validateHybridRequest } from '../_oidc-provider/features/hybrid-flow/authorize';
 import {
@@ -74,6 +75,7 @@ import {
 } from '../_oidc-provider/http';
 import { buildTransactionCookie } from '../_oidc-provider/cookies';
 import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider/scopes';
+import { confirmationRecordOf } from '../_oidc-provider/token-binding';
 import {
   authorizationResponseOf,
   respondToClient,
@@ -289,6 +291,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // [validate-hybrid-request] (feature: hybrid-flow) ハイブリッドフローのリクエストを検証する — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
     validateHybridRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, responseMode);
 
+    // [validate-dpop-jkt] (feature: dpop) 認可コードを束縛する鍵（dpop_jkt）を確かめる — RFC 9449 §10
+    const codeConfirmation = validateDpopJktParameter({ redirectUri, state }, requestParams);
+
     // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     // 各検証の結果から、検証済みのリクエストを組み立てる。
     // 形は core の `ValidatedAuthorizationRequest`（`createAuthTransaction()` が受け取る型）なので、上の検証を足したり消したりしても、後の処理（トランザクション、認可コード）は影響を受けない。
@@ -318,8 +323,13 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // ログインと同意のあいだリクエストを保持するトランザクションを、検証済みのリクエストと新しい CSRF トークンから作る。
     // CSRF トークンは、ログインフォームと同意画面のフォームに埋め込む。
     // トランザクション ID は、`HttpOnly` のトランザクションの Cookie（`_oidc-provider/cookies.ts` の `buildTransactionCookie()`）でしか OP の外へ出さない。
+    // 機能（dpop）が認可リクエストを鍵に束縛するとき（`codeConfirmation`。`dpop_jkt`、RFC 9449 §10）は、その確認を `cnf` としてトランザクションに入れる。
+    // このトランザクションから発行する認可コードは、同じ `cnf` を引き継ぐ。
     const csrfToken = generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken);
+    const transaction = {
+      ...createAuthTransaction(validatedRequest, csrfToken),
+      ...confirmationRecordOf({ cnf: codeConfirmation }),
+    };
     const transactionId = generateRandomString(32);
     const transactionTtlSeconds = 10 * 60;
     // 同意のステップはストアから読み戻したトランザクションしか使わないので、求められたレスポンスモードの名前をトランザクションに記録してから、10 分間保存する。
@@ -522,7 +532,9 @@ async function issueAuthorizationResponse(
     // 認可コードの有効期間は `ProviderConfig` の `authorizationCodeTtl` で設定でき、既定は 300 秒である（OIDC Core 1.0 §3.1.3.1）。
     ttlSeconds: config.authorizationCodeTtl,
   });
-  await authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
+  // トークンエンドポイントは、同じ鍵の DPoP proof が付いた交換だけを受け付ける。
+  await authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
   // エンドユーザー、クライアント、グラント ID の組を記録する。
   // 同意を取り消すと、このグラントから発行したトークンも失効する。
   await consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);

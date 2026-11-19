@@ -96,6 +96,7 @@ apps/tests/public/data/          gitignore する
 └── tests/
     ├── by-file/<hash>.json      テストファイルごとのカード（FileTests）
     ├── sources/<hash>.json      ページが見せるファイルの本文（TestSource）
+    ├── cases/<hash>.json        エンドポイントごとのケース（EndpointCases、⑤-11）
     └── diff.json                PR のビルドだけ（TestDiff）
 ```
 
@@ -1130,9 +1131,75 @@ flowchart TB
 - `packages/test-catalog/src/join.ts`：`entryOf`、`countTests`
 - `packages/test-catalog/src/run.ts`：`readRun`
 
+## ⑤-11 ケースのファイル
+
+エンドポイントごとに、リクエストの道筋（ケース）と、それをテストがどう確かめているかを `tests/cases/<hash>.json` に書く。
+ページは、エンドポイントのページが「ケースで確かめる」を出すときに、そのエンドポイントの分だけを読む（[⑥-7-d](06-viewer.md#-7-d-ケースで確かめる)）。
+
+ケースは、地図がそのエンドポイントの処理本体（`FlowEndpoint.root` のフレーム）に用意する選択である。
+地図のフレームのファイルが持つ選択（`FrameFile.selections`）と同じものを、同じ関数で求める。
+
+| 手順 | 規則 |
+|---|---|
+| 対象のエンドポイント | hono と nextjs の、処理本体の木があり、その木にステップの印（`TreeNode.step`）が一つでもあるもの |
+| 選択 | `frameSelections(tree, uses)`（ステップへ進む道筋、終わり方）と `failureSelections(root, trees, failures, nameOf)`（下から上がる失敗）。<br>`change` の選択（PR の変更に至る道筋）は使わない |
+| たどる | `walkFlow(tree, selection.decisions)`。処理本体のフレームだけをたどり、呼び出しの中へは入らない。<br>選択が `fails` と決めた呼び出しは、そこで失敗する |
+| 通るステップ | `stepsOf(walked)`：たどった止まりのステップの id を、初めて届いた順に一度ずつ |
+| 終わり方 | 失敗がフレームの外へ出れば `escapes`。<br>失敗か `catch` を通って終われば `error-response`。<br>ほかは `response` |
+| 失敗 | 選択の `failure`（エラー、投げる関数）。無ければ、たどって届いた `throw` のエラーで、投げる関数は処理本体。<br>`code` は `errorCodeOf(error)`、`step` は失敗した止まりのステップ |
+| id | `kind`、`name`、`target` を NUL でつないだ SHA-256 の先頭 12 桁（`caseId`）。<br>同じ id の選択は一度だけ |
+
+失敗を期待するテストは、不足の規則（[③-8](03-join.md)）と同じ語彙で結ぶ。
+
+```ts
+/** テストが失敗を期待するか：エラーのコード、無ければクラスが、テストの期待するエラーにある。 */
+function expectsFailure(test, error) {
+  const code = errorCodeOf(error); // TokenError(invalid_client) → invalid_client
+  if (code !== undefined) return (test.errors ?? []).includes(code);
+  const name = errorClassOf(error); // TokenEndpointError。Error だけは undefined
+  return name !== undefined && (test.errors ?? []).includes(name);
+}
+```
+
+| 欄（`FailureTests`） | 入るテスト |
+|---|---|
+| `direct` | 投げる関数のフレームのテスト（`joined.frames.get(from).tests`：名指す、呼ぶ、宣言する、計測した実行で到達する）のうち、`expectsFailure` のもの。<br>投げる関数が処理本体なら空 |
+| `byCode` | エンドポイントのテスト（`joined.endpoints.get(鍵).tests`）のうち、`direct` に無く、`expectsFailure` のもの |
+| `nearby` | 上の二つがどちらも空のときだけ。投げる関数のフレームのテストのうち、`outcome` が `failure` で、`errors` が空のもの |
+
+- 三つとも、テストの id を重複なく昇順に並べる
+- テストの名前や、リクエストのパラメータからは結ばない
+- E2E と API のテストがどの道筋を通るかは読み取れないので、失敗でないケースにテストの欄は無い
+
+```ts
+interface EndpointCases { version: 1; key: string; cases: EndpointCase[] }
+interface EndpointCase {
+  id: string;
+  kind: 'step' | 'exit' | 'failure';
+  name: string;          // 地図の選択の名前。コードはバッククォートで囲む
+  note?: string;         // どこへ行くか（→ return respondToken(…)）
+  steps: string[];       // 通るステップの id
+  end: 'response' | 'error-response' | 'escapes';
+  failure?: { error: string; code?: string; from: string; name: string; step?: string };
+  tests?: { direct: string[]; byCode: string[]; nearby: string[] };
+}
+```
+
+ファイルは鍵（`<source>:<endpoint>`）の昇順に、[⑤-3](#-3-ハッシュの名前) の名前で書き、前のビルドの残りを消す。
+索引の `cases` に、鍵から url（`./data/tests/cases/<hash>.json`）への表を置く。
+ケースのあるエンドポイントが一つも無ければ、`cases` の欄を置かない。
+
+例：hono の `token` は 135 個のケース（ステップへ進む道筋 8、終わり方 2、失敗 125）を持つ。
+
+実装：
+
+- `packages/test-catalog/src/cases.ts`：`endpointCases`、`casesOf`、`failureTests`、`expectsFailure`、`errorClassOf`、`caseId`
+- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段
+- `packages/map-analysis/src/walk.ts`：`walkFlow`、`stepsOf`
+
 ## この章の出力
 
-- ⑥ は、`apps/tests/public/data` の五種類のファイルを読む
+- ⑥ は、`apps/tests/public/data` の六種類のファイルを読む
 - ⑥ は、型を `@maronn-openid-connect/test-catalog/model` から読む
 - ⑦ のビルドで、テストのページの `vite build` が `public/data` を `dist/data` に写し、`copy-tests-viewer.mjs` が地図の `dist/tests/` に写す
 

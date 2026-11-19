@@ -1,6 +1,7 @@
 /**
- * EXTENSION (dpop): the failures of the DPoP checks (DpopError). The responses
- * of each endpoint to them are in error-responses.ts.
+ * EXTENSION (dpop): the failures of the DPoP checks (DpopError). The token and
+ * UserInfo endpoints answer them through error-responses.ts; PAR and /authorize
+ * answer them in their own steps (bind-pushed-dpop-key, validate-dpop-jkt).
  *
  * DPoP（RFC 9449）の検査が失敗したときのエラー。
  *
@@ -26,7 +27,7 @@ export type DpopErrorCode =
 /**
  * DPoP の検査の失敗。
  *
- * `error` と `errorDescription` は、`error-responses.ts` の `tokenEndpointErrorOf()` と `userInfoEndpointErrorOf()` がエンドポイントに合ったエラーレスポンスにする。
+ * `error` と `errorDescription` は、トークンエンドポイントと UserInfo エンドポイントでは `error-responses.ts` の `tokenEndpointErrorOf()` と `userInfoEndpointErrorOf()` が、PAR と認可エンドポイントではそれぞれのステップ（`bind-pushed-dpop-key` と `validate-dpop-jkt`）が、エンドポイントに合ったエラーレスポンスにする。
  */
 export class DpopError extends Error {
   public readonly error: DpopErrorCode;

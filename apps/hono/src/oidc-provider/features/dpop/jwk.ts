@@ -4,7 +4,6 @@
  * DPoP proof は、クライアントが選んだ鍵ペアの秘密鍵で署名し、公開鍵を JOSE ヘッダーの `jwk` に入れて送る（RFC 9449 §4.2）。
  * OP はその公開鍵で署名を検証し、公開鍵の JWK Thumbprint（RFC 7638、SHA-256）でトークンを鍵に束縛する（RFC 9449 §6）。
  */
-import type { webcrypto } from 'node:crypto';
 import { decodeBase64Url, encodeBase64Url } from './base64url.js';
 import { DpopError } from './errors.js';
 
@@ -221,7 +220,7 @@ export async function verifyJwsSignature(
         ? { kty: 'EC', crv: jwk.crv, x: jwk.x, y: jwk.y }
         : { kty: 'OKP', crv: jwk.crv, x: jwk.x };
   try {
-    const key = await crypto.subtle.importKey('jwk', publicMembers as webcrypto.JsonWebKey, profile.importParams, false, ['verify']);
+    const key = await crypto.subtle.importKey('jwk', publicMembers as JsonWebKey, profile.importParams, false, ['verify']);
     return await crypto.subtle.verify(profile.verifyParams, key, signature, new TextEncoder().encode(signingInput));
   } catch {
     return false;

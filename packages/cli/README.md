@@ -604,7 +604,7 @@ pnpm add hono @maronn-openid-connect/core
 | `resource.ts` | UserInfo エンドポイントの `Authorization: DPoP` の読み取り、束縛の検査、`WWW-Authenticate: DPoP` のチャレンジ |
 | `base64url.ts` | JWS と JWK Thumbprint が使う base64url |
 | `errors.ts` | 検査の失敗（`DpopError`） |
-| `error-responses.ts` | `DpopError` から作るエンドポイントごとのエラーレスポンス |
+| `error-responses.ts` | `DpopError` から作る、トークンエンドポイントと UserInfo エンドポイントのエラーレスポンス（PAR と認可エンドポイントは、それぞれのステップが応答を作る） |
 | `config.ts` | `ProviderConfig` と `RegisteredClient` に足す設定と既定値 |
 | `feature.ts` | 機能の登録（Discovery の `dpop_signing_alg_values_supported`、CORS の `DPoP` と `WWW-Authenticate`） |
 | `steps/`（Next.js は `token.ts`、`userinfo.ts`、`authorize.ts`、`par.ts`） | トークン、UserInfo、認可、PAR の各エンドポイントで、上のファイルの検査を呼ぶステップ |

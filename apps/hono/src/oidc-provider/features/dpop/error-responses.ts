@@ -1,6 +1,6 @@
 /**
- * EXTENSION (dpop): the responses of the failures of the DPoP checks
- * (DpopError of errors.ts) at each endpoint.
+ * EXTENSION (dpop): the responses of the token and UserInfo endpoints to the
+ * failures of the DPoP checks (DpopError of errors.ts).
  *
  * Kept apart from errors.ts, as in the Next.js template: the checks import
  * errors.ts alone, and only the steps need the endpoint responses.

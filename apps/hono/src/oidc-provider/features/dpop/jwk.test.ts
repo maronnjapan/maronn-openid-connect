@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { generateDpopKey } from '../../../test-support/dpop.js';
 
 import { DpopError } from './errors.js';
 import { computeJwkThumbprint, isSupportedDpopSigningAlg, validateDpopProofJwk, verifyJwsSignature, type DpopPublicJwk } from './jwk.js';
-import { generateDpopKey } from '../../../test-support/dpop.js';
 
 /** The RSA key of the example of RFC 7638 §3.1. */
 const RFC7638_KEY: DpopPublicJwk = {

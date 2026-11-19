@@ -1,6 +1,6 @@
 /**
- * EXTENSION (dpop): the responses of the failures of the DPoP checks
- * (DpopError of errors.ts) at each endpoint.
+ * EXTENSION (dpop): the responses of the token and UserInfo endpoints to the
+ * failures of the DPoP checks (DpopError of errors.ts).
  *
  * Kept apart from errors.ts because it imports http.ts: errors.ts is loaded
  * with the feature list (config.ts imports jwk.ts, which throws DpopError), and

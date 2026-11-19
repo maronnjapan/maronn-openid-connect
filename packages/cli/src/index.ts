@@ -49,11 +49,11 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
     'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
   dpop:
-    'dpop: every DPoP check is generated into features/dpop/ (no package to install), so change\n' +
-    'the policy there. A client opts in by sending a DPoP proof in the DPoP header: its tokens\n' +
-    'are then bound to its key (token_type DPoP); without one they stay Bearer. Register\n' +
-    'dpopBoundAccessTokens: true on a client that must always use DPoP. Server-provided nonces\n' +
-    '(RFC 9449 §8 / §9) are not implemented.\n',
+    'dpop: every DPoP check is generated into features/dpop/ (_oidc-provider/features/dpop/ for\n' +
+    'Next.js), with no package to install, so change the policy there. A client opts in by\n' +
+    'sending a DPoP proof in the DPoP header: its tokens are then bound to its key (token_type\n' +
+    'DPoP); without one they stay Bearer. Register dpopBoundAccessTokens: true on a client that\n' +
+    'must always use DPoP. Server-provided nonces (RFC 9449 §8 / §9) are not implemented.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -179,7 +179,8 @@ Extension features (disabled by default): ${extensionFeatures}
   and /authorize and PAR bind the code to dpop_jkt. Clients opt in by sending
   DPoP proofs (dpopBoundAccessTokens: true makes them mandatory for a client);
   without one the tokens stay Bearer. Every check is generated into
-  features/dpop/ with no package beside core, so change the policy there.
+  features/dpop/ (_oidc-provider/features/dpop/ for Next.js) with no package
+  beside core, so change the policy there.
   Web Crypto only, so it runs on edge runtimes too. Enable with:
   --enable dpop
 

@@ -514,9 +514,9 @@ describe('run', () => {
       );
     });
 
-    it('should tell that the DPoP checks are generated into features/dpop/', () => {
+    it('should tell that the DPoP checks are generated into features/dpop/, and where for Next.js', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
-        'dpop: every DPoP check is generated into features/dpop/ (no package to install), so change the policy there.',
+        'dpop: every DPoP check is generated into features/dpop/ (_oidc-provider/features/dpop/ for Next.js), with no package to install, so change the policy there.',
       );
     });
 
@@ -595,7 +595,7 @@ describe('run', () => {
     // dpop has no package of its own: the help points at the generated code instead.
     it('should say that the dpop checks are generated into features/dpop/ with no package beside core', () => {
       expect(helpText().replace(/\s+/g, ' ')).toContain(
-        'Every check is generated into features/dpop/ with no package beside core, so change the policy there.',
+        'Every check is generated into features/dpop/ (_oidc-provider/features/dpop/ for Next.js) with no package beside core, so change the policy there.',
       );
     });
 

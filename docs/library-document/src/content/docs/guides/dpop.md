@@ -5,7 +5,7 @@ description: CLI の --enable dpop で、アクセストークンをクライア
 
 `--enable dpop` は、生成される OP に OAuth 2.0 Demonstrating Proof of Possession（DPoP、[RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)）を足す**拡張機能**です。既定では無効です。
 
-DPoP のコードは、検査も配線もすべて生成コードの `features/dpop/`（Hono / Express / Fastify は `oidc-provider/features/dpop/`、Next.js は `app/_oidc-provider/features/dpop/`）に入ります。専用の package は無く、core のほかにインストールするものは増えません。生成した OP の利用者は、DPoP の検査をすべて読んで、方針を変えたいときはそのファイルを直接直せます（[生成されるもの](#生成されるもの)）。
+DPoP の検査とステップは、すべて生成コードの `features/dpop/`（Hono / Express / Fastify は `oidc-provider/features/dpop/`、Next.js は `app/_oidc-provider/features/dpop/`）に入ります。各エンドポイントのパイプライン（Next.js は Route Handler）の `(feature: dpop)` のブロックが、それを呼びます。専用の package は無く、core のほかにインストールするものは増えません。生成した OP の利用者は、DPoP の検査をすべて読んで、方針を変えたいときはそのファイルを直接直せます（[生成されるもの](#生成されるもの)）。
 
 拡張機能は、`--enable` で名前を挙げたときだけ生成する任意の機能のカテゴリです。API が不安定なことを理由に分けた Experimental とは別のカテゴリです。`google-login` はログイン手段を足し、上流の ID プロバイダーとその公式クライアントライブラリを取り込むので専用の package を使います。`dpop` は送信者制約付きのトークン（sender-constrained tokens）を足し、コードがすべて生成コードに入ります。
 
@@ -179,7 +179,7 @@ DPoP のコードは、Hono / Express / Fastify では `oidc-provider/features/d
 - `iat` の範囲や `htu` の比べ方を変える: `proof.ts` の `validateDpopProofClaims()` と、`htu.ts` の `normalizeDpopHtu()`
 - DPoP proof の鍵を、クライアントが登録した鍵に限る: `proof.ts` の `verifyDpopRequestProof()` で、`ClientKeyResolver` の `dpop` の用途の鍵と照らし合わせる
 - リフレッシュトークンを束縛するクライアントを変える: `binding.ts` の `selectDpopRefreshTokenJkt()`
-- エラーの応答を変える: `error-responses.ts`
+- エラーの応答を変える: トークンエンドポイントと UserInfo エンドポイントは `error-responses.ts`。PAR は `bindPushedDpopKey()`（Hono / Express / Fastify は `steps/bind-pushed-dpop-key.ts`、Next.js は `par.ts`）、認可エンドポイントは `validateDpopJktParameter()`（`steps/validate-dpop-jkt.ts`、Next.js は `authorize.ts`）が応答を作る
 
 ## 制限と注意点
 

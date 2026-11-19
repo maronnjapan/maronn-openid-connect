@@ -39,7 +39,7 @@ describe('base64url', () => {
 });
 
 describe('isDpopError', () => {
-  it('should recognize a DpopError and an error of the same shape from another copy of the package', () => {
+  it('should recognize a DpopError and an error of the same shape from another copy of this module', () => {
     const copy = Object.assign(new Error('x'), { name: 'DpopError', error: 'invalid_token', errorDescription: 'x' });
 
     expect([

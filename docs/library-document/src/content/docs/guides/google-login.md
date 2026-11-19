@@ -3,7 +3,7 @@ title: Google ログイン（拡張）
 description: CLI の --enable google-login で Sign in with Google を OP のログイン手段に足す。
 ---
 
-`--enable google-login` は、生成される OP のログイン画面に「Google でログイン」（Sign in with Google、Google Identity Services の redirect mode）を追加する**拡張機能**です。OAuth / OIDC の仕様ではなく**ログイン手段**を足すものなので、Experimental とは別カテゴリで、既定では無効です。実装は別 package の `@maronn-openid-connect/google-login` にあり、有効にしたときだけ生成コードから import されます。
+`--enable google-login` は、生成される OP のログイン画面に「Google でログイン」（Sign in with Google、Google Identity Services の redirect mode）を追加する**拡張機能**です。拡張機能は `--enable` で名前を挙げたときだけ生成する任意の機能で、API が不安定なことを理由に分けた Experimental とは別カテゴリです。既定では無効です。google-login は上流の ID プロバイダーとその公式クライアントライブラリを取り込むので、実装は別 package の `@maronn-openid-connect/google-login` にあり、有効にしたときだけ生成コードから import されます。
 
 Google が `login_uri` へ POST する ID トークンの検証は Google 公式の [`google-auth-library`](https://github.com/googleapis/google-auth-library-nodejs) に委ねます（公開鍵の取得・ローテーション追随、署名・`aud`・`iss`・`exp` の検証）。このため **Node.js 22 以上限定**で、Cloudflare Workers などのエッジランタイムでは動かない可能性があります。
 

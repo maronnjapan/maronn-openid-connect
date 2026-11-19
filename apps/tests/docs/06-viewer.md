@@ -38,7 +38,7 @@ flowchart LR
 
 | 項目 | 内容 |
 |---|---|
-| 入力 | ⑤ が `apps/tests/public/data` に書く五種類のファイル（`tests.json`、`outline.json`、`tests/by-file/<hash>.json`、`tests/sources/<hash>.json`、`tests/diff.json`）。<br>型は `@maronn-openid-connect/test-catalog/model` から読む |
+| 入力 | ⑤ が `apps/tests/public/data` に書く六種類のファイル（`tests.json`、`outline.json`、`tests/by-file/<hash>.json`、`tests/sources/<hash>.json`、`tests/cases/<hash>.json`、`tests/diff.json`）。<br>型は `@maronn-openid-connect/test-catalog/model` から読む |
 | 出力 | ブラウザに出す画面。<br>`vite build` が書く `apps/tests/dist`（`index.html`、`assets/`、`data/`） |
 | 実装 | `apps/tests` の `package.json`、`vite.config.ts`、`tsconfig.json`、`vitest.config.ts`、`index.html`、`src/main.tsx`、`src/App.tsx`、`src/styles.css`、`src/components/`（`Header`、`Home`、`KindPage`、`EndpointPage`、`FilesPage`、`PrPage`、`SearchPage`、`Panel`、`TestDetail`、`TestList`、`TestCode`、`CodeRefs`、`CodeView`、`Target`、`PrMarks`、`ErrorBoundary`、`ui`、`app-context`）、`src/lib/`（`route`、`load`、`data`、`filter`、`kinds`、`targets`、`pr`、`helpers`、`lines`、`tokenize`、`format` と、そのテスト、`fixture`）<br>作る順：[再現の手順](README.md#再現の手順)の [9](README.md#9-テストのページ) |
 
@@ -431,7 +431,7 @@ flowchart LR
 
 ### ⑥-2-a 読むファイルと時
 
-ページは ⑤ の五種類のファイルを、ページからの相対の url で読む。
+ページは ⑤ の六種類のファイルを、ページからの相対の url で読む。
 
 | ファイル | url | 読む時 | 読む部品 |
 |---|---|---|---|
@@ -440,6 +440,7 @@ flowchart LR
 | PR の差分 | `./data/tests/diff.json`（`DIFF_URL`） | 索引の `diff` が `true` なら、索引の後に一度。<br>最初の画面の前 | `App` |
 | カードのファイル | 索引の項目の `card`（`./data/tests/by-file/<hash>.json`） | テストを開いたとき。<br>カードの要る一覧の行が見えたとき（[⑥-10-e](#-10-e-一行で言う対象) の `needsCard`） | `useCard`、`useCards` |
 | 本文のファイル | `index.sources[パス]`（`./data/tests/sources/<hash>.json`） | コードを見せるとき | `useSource` |
+| ケースのファイル | `index.cases[鍵]`（`./data/tests/cases/<hash>.json`） | エンドポイントのページがケースを出すとき（[⑥-7-d](#-7-d-ケースで確かめる)） | `EndpointPage`（`useJson`） |
 
 ```ts
 // App の最初の useEffect。toError(e) は e instanceof Error ? e : new Error(String(e))
@@ -909,6 +910,8 @@ flowchart LR
 | `changed` | `endpoint`、`kind`、`file`、`search` | `1` なら、PR が触れたテストだけを残す（[⑥-13-e](#-13-e-この-pr-の変更だけ)） | `1` でない値 |
 | `step` | `endpoint` | 絞るステップの id | 空 |
 | `fn` | `endpoint` | 絞る関数のフレームの id。<br>`step` があれば読まない | 空 |
+| `cases` | `endpoint` | `1` なら、一覧の代わりにケースを出す（[⑥-7-d](#-7-d-ケースで確かめる)）。<br>`case` があれば書かない | `1` でない値 |
+| `case` | `endpoint` | 選んだケースの id。あれば `cases` も真にする | 空 |
 | `pkg` | `kind` の `unit` | ユニットテストのパッケージ | 空 |
 | `q` | `search` | 検索の語 | なし（無ければ空の語） |
 
@@ -1819,6 +1822,68 @@ Next.js の `token` では、`parse-request` など 7 個のステップが「�
 - `apps/tests/src/components/EndpointPage.tsx`：`EndpointPage`、`Flow`、`Step`、`selection`、`pick`、`narrow`、`FIRST_OTHERS`
 - `apps/tests/src/lib/data.ts`：[⑥-3-d](#-3-d-ページが出すエンドポイントのテスト) の関数、`endpointRemoved`、`framesRemoved`
 - `apps/tests/src/lib/targets.ts`：`stepHasCode`
+
+### ⑥-7-d ケースで確かめる
+
+索引の `cases` にそのエンドポイントの url があれば、一覧の上に「テスト一覧」と「ケースで確かめる」の切り替えを出す。
+「ケースで確かめる」（ビューの `cases`）は、一覧の代わりに、リクエストの道筋（ケース、[⑤-11](05-data.md#-11-ケースのファイル)）ごとの確認を出す。
+ケースのファイルは、この表示を初めて出すときに読む。
+
+切り替えると、ビューから `step`、`fn`、`test`、`code`、`kind`、`outcome`、`case`、`cases` を消して書き直す。
+ケースを選ぶと `case` を書く（ケースの表示の中での選び直しは `replace`）。
+
+| 部分 | 規則 |
+|---|---|
+| ケースの選択 | `<select>`。先頭は「エンドポイント全体（ケースを選ぶ）」。<br>続けて「ステップへ進む道筋」「終わり方」、失敗はエラーごとの `optgroup`（`失敗: <error>`）で、項目は印と「<投げる関数> から」 |
+| 確認状況 | 規則ごとに一行（下の表）。印と言葉で言い、色だけでは示さない |
+| ケースの一覧 | ケースを選んでいないときだけ。<br>ステップへ進む道筋と終わり方は一行ずつ（名前、ステップの数、終わり方）。<br>失敗はエラーごとに畳み、投げる場所の数と印ごとの数を添える。開くと投げる場所が並び、選ぶとそのケースになる |
+| ステップの表 | ケースが通るステップ（選んでいなければ全ステップ）を一行ずつ：番号、名前、ユニットテスト（合計、正常・異常・境界）、出る失敗（数と印ごとの数）。<br>ユニットテストの数を選ぶと `step` を書いて一覧をそのステップに絞る。<br>失敗の数を選ぶと、その行に失敗を並べる |
+| テスト | 失敗のケース：`direct`、`byCode`、`nearby` を、理由の文を付けた三つの節に分けて並べる（8 件まで、「すべて表示」）。<br>ほかのケース：通るステップのユニットテストと、エンドポイントの E2E・API テストの一覧（[⑥-9](#-9-テストの一覧)）。<br>`step` で絞っているときは、どちらもそのステップのユニットテストの一覧 |
+
+確認状況の行は、次の規則で決める（`summarize`）。
+
+| 行 | 印 | 言うこと |
+|---|---|---|
+| この失敗を確かめるテスト（失敗のケースだけ） | 失敗の印（下の表） | 印の言葉と、三つの欄の件数 |
+| ステップのユニットテスト | 全部にあれば ✓、無いステップがあれば △ | 通るステップの数、ユニットテストのある数、合計（正常系・異常系・境界値）、テストの無いステップの名前 |
+| 起こり得る失敗（失敗でないケースと、全体） | いちばん弱い印 | そのステップで上がる失敗の数と、印ごとの数。<br>失敗が無ければ「読み取れません」 |
+| リクエストするテスト | 一件でもあれば ✓、無ければ ✗ | E2E と API の件数（正常系・異常系）。<br>ケースごとに分けていない理由 |
+| 終わり方（ケースだけ） | 応答なら ■、ほかは ✕ | `endWords` |
+
+失敗の印は、ケースの `tests` から決める（`verdictOf`）。
+
+| 印 | 言葉 | 条件 |
+|---|---|---|
+| ✓ | 確認あり | `direct` が一件以上 |
+| △ | 同じエラーのテストのみ | `direct` が空で、`byCode` が一件以上 |
+| △ | 異常系テストのみ | 上の二つが空で、`nearby` が一件以上 |
+| ✗ | テストなし | 三つとも空 |
+
+数を並べるところでは、二つの △ を一つにまとめ、内訳を `title` に書く。
+
+ケースを選ぶと、左の「処理の流れ」がその道筋を示す。
+
+| 部分 | 規則 |
+|---|---|
+| 通るステップ | 番号の丸を `--accent` の線で囲む |
+| 通らないステップ | 薄くし、丸を破線にする |
+| 縦の線 | 最初に通るステップから最後に通るステップまでを `--accent` にする |
+| 終わり方 | ステップの下に一行（`endWords`） |
+| 再生 | 「▶ 道筋を再生」。通るステップを、届く順に 1.1 秒（`STEP_MS`）ずつ進む |
+| 印 | 丸い印が、今のステップの丸まで縦に動く（0.52 秒）。失敗で終わるケースは `--failed` |
+| 今のステップ | 通ったステップは丸を塗り、今のステップは輪を付けて地を `--accent-soft` にする。<br>ボタンの下に「<n> / <全体> <名前>」と、そのステップのユニットテストと出る失敗の数を出す（`aria-live`） |
+| 動きを減らす設定 | 印は動かず、ステップだけが移る |
+
+再生の位置はケースごとに持ち、別のケースを選ぶと最初からになる。
+最後のステップまで進むと止まり、ボタンは「↻ もう一度再生」になる。
+
+例：hono の `token` で「`TokenError(invalid_client)` で終わる（`verifyClientSecretHash` から）」を選ぶと、通るステップは 3 個（解析、クライアントの認証、エラーの応答）で、印は ✓（投げる関数のテスト 2 件）である。
+
+実装：
+
+- `apps/tests/src/components/CasePanel.tsx`：`CasePanel`、`Verdicts`、`StepTable`、`StepFailures`、`CaseList`、`EvidenceTests`、`VerdictMark`、`VerdictCountsLine`
+- `apps/tests/src/components/EndpointPage.tsx`：`showCases`、再生の状態、`Flow` の道筋の表示
+- `apps/tests/src/lib/cases.ts`：`verdictOf`、`caseGroups`、`stepChecks`、`pathChecks`、`summarize`、`caseTests`、`requestTests`、`endWords`、`STEP_MS`
 
 ## ⑥-8 ファイルと検索と PR のページ
 

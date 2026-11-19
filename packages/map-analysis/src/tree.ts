@@ -27,7 +27,11 @@ import type { Branch, CallTarget, FlowTree, StepMark, TreeNode } from './model.j
 import { SyntaxKind, getLeadingCommentRanges, type Node, type SourceFile } from './ts.js';
 import { any, codeText, endLine, is, isFunctionLike, lineAt, nameOf, startLine, stringOf, textOf, unwrap, walk } from './ast.js';
 import type { FileResolution } from './resolve.js';
+import { ends } from './walk.js';
 import { SIDE_WORDS, actionWords, bindingNames, conditionWords, errorWords, predicateWords, shorten } from './words.js';
+
+// Whether a list ends its frame is the walk's to say (walk.ts, which the page shares); the analysis reads it from here as before.
+export { ends };
 
 /** A marker line: `// [id] (feature: f) Label — Spec`. */
 const MARKER = /^\/\/ \[([a-z0-9-]+)\](?: \(feature: ([a-z0-9-]+)\))? (.*)$/;
@@ -98,40 +102,6 @@ function commentLines(text: string): string[] {
 /** Whether a comment is a directive for a tool (eslint, TypeScript), not words for a reader. */
 function isDirective(lines: readonly string[]): boolean {
   return /^(eslint-|@ts-|prettier-ignore|istanbul |c8 )/.test(lines.join(' ').trim());
-}
-
-/** Whether a list ends the frame whatever its decisions choose. */
-export function ends(nodes: readonly TreeNode[]): boolean {
-  return nodes.some(endsNode);
-}
-
-/** Whether a node ends the frame whatever its decisions choose. */
-function endsNode(node: TreeNode): boolean {
-  switch (node.kind) {
-    case 'return':
-      return node.local !== true;
-    case 'throw':
-      return true;
-    case 'if':
-      return (node.branches ?? []).length === 2 && (node.branches ?? []).every((branch) => ends(branch.nodes));
-    case 'switch': {
-      const branches = node.branches ?? [];
-      if (!branches.some((branch) => branch.key === 'default' || branch.label === 'default')) return false;
-      return branches.every((branch, index) => ends(branch.nodes) || (branch.fallsThrough === true && index < branches.length - 1));
-    }
-    case 'try': {
-      const branches = node.branches ?? [];
-      const attempt = branches.find((branch) => branch.key === 'try');
-      const handler = branches.find((branch) => branch.key === 'catch');
-      const final = branches.find((branch) => branch.key === 'finally');
-      if (final !== undefined && ends(final.nodes)) return true;
-      return attempt !== undefined && ends(attempt.nodes) && (handler === undefined || ends(handler.nodes));
-    }
-    case 'block':
-      return ends(node.branches?.[0]?.nodes ?? []);
-    default:
-      return false;
-  }
 }
 
 /** Whether a node or one below it is of a kind. */

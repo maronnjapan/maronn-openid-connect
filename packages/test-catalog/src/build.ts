@@ -16,6 +16,8 @@
  *     file, or the file of a helper, of a step definition, of a function, of
  *     an endpoint body, or of the app a test sends requests to routes that
  *     are no endpoint of (TestsIndex.sources);
+ *   - tests/cases/<hash>.json: the cases of an endpoint (the ways a request
+ *     takes through it, cases.ts), read when its page opens;
  *   - tests/diff.json: in the build of a pull request, the diff of the tests.
  *
  * The run (MAP_TEST_REPORTS: the directory a run with MARONN_TEST_REPORTS
@@ -28,6 +30,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { git, nodesOf, removeStale, writeHashed, type BuildContext, type BuildExtension } from '@maronn-openid-connect/map-analysis';
 import { ASPECTS_FILE, readAspects, type AspectTable } from './aspects.js';
+import { endpointCases } from './cases.js';
 import { EndpointIndex, readCatalog } from './catalog.js';
 import { diffCatalogs } from './diff.js';
 import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from './discover.js';
@@ -416,6 +419,15 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     }
     removeStale(join(out, 'tests', 'sources'), writtenSources);
   }
+  // The cases of each endpoint (the ways a request takes through it, and the tests that speak for each failure), a file an endpoint.
+  const cases: NonNullable<TestsIndex['cases']> = {};
+  if (out !== undefined) {
+    const writtenCases = new Set<string>();
+    for (const [key, endpoint] of [...endpointCases(data, repository.head.trees, context.failures, joined)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      cases[key] = `./data/tests/cases/${writeHashed(join(out, 'tests', 'cases'), key, JSON.stringify(endpoint), writtenCases)}`;
+    }
+    removeStale(join(out, 'tests', 'cases'), writtenCases);
+  }
   const index: TestsIndex = {
     version: 1,
     ...(run === undefined ? {} : { run: run.run.run }),
@@ -437,6 +449,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     requiredAspects: tables.aspects.required,
     sources,
     aspectLabels: Object.fromEntries(tables.aspects.aspects.map((rule) => [rule.id, rule.label])),
+    ...(Object.keys(cases).length === 0 ? {} : { cases }),
   };
 
   const sections: string[] = [];

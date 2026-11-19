@@ -11,7 +11,9 @@
  *     #/test/<id>                         one test on a page of its own
  *
  * A list keeps its state in the query: `step` or `fn` narrows an endpoint to
- * the unit tests of a step or a function, `kind` and `outcome` filter the
+ * the unit tests of a step or a function, `cases=1` shows the cases of an
+ * endpoint and `case` one of them (the ways a request takes through it,
+ * with what the tests say about each), `kind` and `outcome` filter the
  * list, `changed=1` keeps the tests a pull request changed (in the build of
  * one), `pkg` chooses the package of the unit tests, and `test` opens a test
  * in the panel over it (`code` the code of a function, an endpoint or a step,
@@ -67,6 +69,10 @@ export interface View {
   step?: string;
   /** A function (frame id) the endpoint reaches whose unit tests the list shows, for one that is not a step. */
   fn?: string;
+  /** The endpoint page shows its cases (the ways a request takes through it) instead of the plain list. */
+  cases?: boolean;
+  /** The case of the endpoint the page shows, by id; it shows the cases too. */
+  case?: string;
   kind?: KindFilter;
   outcome?: OutcomeFilter;
   /** On a list, only the tests the pull request added, changed or removed. */
@@ -174,6 +180,9 @@ export function parseHash(hash: string): View {
     const fn = query.get('fn');
     if (step !== null && step !== '') view.step = step;
     else if (fn !== null && fn !== '') view.fn = fn;
+    const chosen = query.get('case');
+    if (chosen !== null && chosen !== '') view.case = chosen;
+    if (view.case !== undefined || query.get('cases') === '1') view.cases = true;
   }
   return view;
 }
@@ -211,6 +220,8 @@ export function formatHash(view: View): string {
   if (view.page === 'endpoint') {
     if (view.step !== undefined) query.set('step', view.step);
     else if (view.fn !== undefined) query.set('fn', view.fn);
+    if (view.case !== undefined) query.set('case', view.case);
+    else if (view.cases === true) query.set('cases', '1');
   }
   if (view.kind !== undefined && view.kind !== 'all' && view.page !== 'kind') query.set('kind', view.kind);
   if (view.outcome !== undefined && view.outcome !== 'both') query.set('outcome', view.outcome);

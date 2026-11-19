@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { openingCamera, type Rect, type Size } from '../lib/camera';
+import { openingCamera, STAGE_SCALE, type Rect, type Size } from '../lib/camera';
 import type { Mark } from '../lib/changes';
 import { BOX_INSET, boxActions, boxLine, boxOf, isRegion, layoutDiagram, REGION_HEADER, REGION_INSET, regionLine, spokenLabel, type CardAction, type Diagram, type DiagramGroup, type DiagramNode, type ExitTag } from '../lib/diagram';
 import { EDGE_LABEL_COLUMNS, textColumns, truncateColumns, type LayoutBox, type LayoutDirection, type LayoutGroup } from '../lib/graph';
@@ -19,6 +19,10 @@ export interface FlowDiagramProps {
   active: Active;
   /** The node selected in this frame, by its id in the tree: the box or the region that shows it is highlighted, and the diagram opens on it. */
   selected: string | null;
+  /** A node the diagram opens on when none is selected: the scene a playback shows when it comes to this frame. */
+  openOn?: string | null | undefined;
+  /** The diagram is the stage of the page, not a pane beside the outline: a layout narrower than its area opens enlarged to fill more of it (see STAGE_SCALE). */
+  roomy?: boolean;
   /** The node whose box to bring into view at the same scale, and a key that changes each time it should be (a selection, a step opened or folded). */
   reveal?: { node: string; key: number } | null | undefined;
   /** What to give the keyboard focus once it is drawn: the box that shows a node, or the diagram itself for null (the element the reader activated went away). onFocused says it has it. */
@@ -34,6 +38,24 @@ export interface FlowDiagramProps {
   onToggleStep: (step: string, keyboard: boolean) => void;
   /** The focus asked for (see focus) is given. */
   onFocused?: () => void;
+  /** The playback of a request on this diagram (see Playing); absent outside the flow view. */
+  play?: Playing | undefined;
+}
+
+/**
+ * Where a playback is on a diagram: the box or the region the request is at
+ * (by its id), the one it came from in this diagram (the token travels the
+ * arrow between them), the ones it has been through, how the scene reads,
+ * and a key that changes with each scene so the travel starts again.
+ */
+export interface Playing {
+  at: string | undefined;
+  from: string | undefined;
+  visited: ReadonlySet<string>;
+  tone: 'normal' | 'end' | 'error' | 'caught';
+  key: number;
+  /** How long the token takes at most to travel, in milliseconds. */
+  duration: number;
 }
 
 /** How long the pointer rests on a box before its card shows, and how long a card shown by hovering stays once the pointer leaves (time to move onto it). */
@@ -73,6 +95,26 @@ function shapeElement(svg: SVGSVGElement | null, id: string): SVGGElement | null
   return svg?.querySelector<SVGGElement>(`[data-box="${CSS.escape(id)}"]`) ?? null;
 }
 
+/** Whether the reader asked for less motion: the token then does not travel, and the box it reaches is lit at once. */
+function reducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** The point an arrow drawn in a straight line leaves a box from and reaches one at: the middle of the side that faces the other box. */
+function facing(from: Rect, to: Rect): string {
+  const fromX = from.x + from.width / 2;
+  const fromY = from.y + from.height / 2;
+  const toX = to.x + to.width / 2;
+  const toY = to.y + to.height / 2;
+  // Boxes one above the other join bottom to top (or top to bottom); boxes side by side join at their sides.
+  if (Math.abs(toY - fromY) >= Math.abs(toX - fromX) * 0.25) {
+    const down = toY >= fromY;
+    return `M${fromX},${down ? from.y + from.height : from.y} L${toX},${down ? to.y : to.y + to.height}`;
+  }
+  const right = toX >= fromX;
+  return `M${right ? from.x + from.width : from.x},${fromY} L${right ? to.x : to.x + to.width},${toY}`;
+}
+
 /** Whether a tag is on the chosen way: a box's own exit with its box, a tag of rows when one of them is. */
 function tagOn(id: string, tag: ExitTag, boxOn: boolean, rows: ReadonlySet<string>): boolean {
   return tag.rows.length === 0 ? boxOn : tag.rows.some((index) => rows.has(`${id}|${index}`));
@@ -97,11 +139,13 @@ function tagOn(id: string, tag: ExitTag, boxOn: boolean, rows: ReadonlySet<strin
  * belongs to its frame: looking inside a call closes it, and no card follows
  * the reader into another frame.
  */
-export function FlowDiagram({ diagram, active, selected, reveal, focus, label, marks, onSelect, onOpen, onToggleStep, onFocused }: FlowDiagramProps) {
+export function FlowDiagram({ diagram, active, selected, openOn, roomy = false, reveal, focus, label, marks, onSelect, onOpen, onToggleStep, onFocused, play }: FlowDiagramProps) {
   const [direction, setDirection] = useState<LayoutDirection>('TB');
   const marker = useId();
   const cardId = useId();
   const svg = useRef<SVGSVGElement>(null);
+  const trail = useRef<SVGPathElement>(null);
+  const token = useRef<SVGGElement>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const follow = useRef<(() => void) | null>(null);
   // The shape whose card shows, how it came (the pointer resting on it, the keyboard focus, or pinned: a tap, a button of the card), and the
@@ -135,8 +179,60 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
     }
     return before;
   }, [placed, groupById]);
+  // The way the token travels to the box the playback is at: the arrow from the box it came from, else a straight line between the two.
+  const travel = useMemo(() => {
+    if (play === undefined || play.at === undefined || play.from === undefined || play.from === play.at) return undefined;
+    const edge = diagram.edges.findIndex((candidate) => candidate.from === play.from && candidate.to === play.at);
+    const arrow = edge === -1 ? undefined : placed.arrows.find((candidate) => candidate.index === edge);
+    if (arrow !== undefined) return arrow.d;
+    const from = rects.get(play.from);
+    const to = rects.get(play.at);
+    return from === undefined || to === undefined ? undefined : facing(from, to);
+  }, [play?.at, play?.from, diagram, placed, rects]);
+  const playKey = play?.key;
+  const playDuration = play?.duration ?? 0;
+  // Move the token along its way, drawing the way behind it; the box it reaches is lit by its class (styles.css), which waits for the travel.
+  useLayoutEffect(() => {
+    const path = trail.current;
+    const dot = token.current;
+    if (path === null || dot === null) return;
+    const total = travel === undefined ? 0 : path.getTotalLength();
+    if (travel === undefined || total === 0 || reducedMotion()) {
+      dot.style.opacity = '0';
+      path.style.opacity = '0';
+      svg.current?.style.setProperty('--travel', '0ms');
+      return;
+    }
+    // A short hop is quick, a long arrow takes no more than the scene leaves it.
+    const span = Math.max(180, Math.min(playDuration, 160 + total * 2.4));
+    // The box the token travels to lights up when it arrives (styles.css waits this long).
+    svg.current?.style.setProperty('--travel', `${Math.round(span)}ms`);
+    const started = performance.now();
+    let frame = 0;
+    path.style.opacity = '1';
+    path.style.strokeDasharray = String(total);
+    dot.style.opacity = '1';
+    const tick = (now: number) => {
+      const linear = Math.min(1, (now - started) / span);
+      const eased = linear < 0.5 ? 2 * linear * linear : 1 - (-2 * linear + 2) ** 2 / 2;
+      const point = path.getPointAtLength(total * eased);
+      dot.setAttribute('transform', `translate(${point.x},${point.y})`);
+      path.style.strokeDashoffset = String(total * (1 - eased));
+      if (linear < 1) frame = requestAnimationFrame(tick);
+      else {
+        dot.style.opacity = '0';
+        path.style.opacity = '0';
+      }
+    };
+    tick(started);
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playKey, travel, playDuration]);
+  /** The classes a playback gives a box or a region: been through, and the one the request is at (with how its scene reads). */
+  const playClass = (id: string): string => (play === undefined ? '' : `${play.visited.has(id) ? ' played' : ''}${play.at === id ? ` playing play-${play.tone}${travel === undefined ? '' : ' arriving'}` : ''}`);
   const selectedShape = selected === null ? undefined : boxOf(diagram, selected);
-  const anchor = rects.get(selectedShape?.id ?? 'start') ?? rects.get('start');
+  const openShape = selectedShape ?? (openOn == null ? undefined : boxOf(diagram, openOn));
+  const anchor = rects.get(openShape?.id ?? 'start') ?? rects.get('start');
   const revealShape = reveal == null ? undefined : boxOf(diagram, reveal.node);
   const focusShape = focus == null || focus.node === null ? undefined : boxOf(diagram, focus.node)?.id;
   const cardGone = shownCard !== null && (card === null || (!byId.has(card.id) && !groupById.has(card.id)));
@@ -379,7 +475,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
     return (
       <g
         key={`label:${group.id}`}
-        className={`region-label${selectedShape?.id === group.id ? ' selected' : ''}`}
+        className={`region-label${selectedShape?.id === group.id ? ' selected' : ''}${playClass(group.id)}`}
         data-box={group.id}
         tabIndex={0}
         role="button"
@@ -427,7 +523,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
     return (
       <g
         key={node.id}
-        className={`box ${on ? 'on' : 'off'}${chosen ? ' selected' : ''} tone-${node.tone}${selectable ? ' clickable' : ''}`}
+        className={`box ${on ? 'on' : 'off'}${chosen ? ' selected' : ''} tone-${node.tone}${selectable ? ' clickable' : ''}${playClass(node.id)}`}
         data-box={node.id}
         tabIndex={selectable ? 0 : undefined}
         role={selectable ? 'button' : undefined}
@@ -462,7 +558,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
       key={`${diagram.key}:${direction}`}
       width={placed.width}
       height={placed.height}
-      opening={(view: Size) => openingCamera(view, placed, anchor)}
+      opening={(view: Size) => openingCamera(view, placed, anchor, roomy ? STAGE_SCALE : 1)}
       reveal={reveal == null ? null : { box: revealShape === undefined ? undefined : rects.get(revealShape.id), key: reveal.key }}
       overlay={overlay}
       onMove={closeCard}
@@ -474,7 +570,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
         </div>
       }
     >
-      <svg ref={svg} className="diagram" viewBox={`0 0 ${placed.width} ${placed.height}`} width={placed.width} height={placed.height} role="group" aria-label={label}>
+      <svg ref={svg} className={`diagram${play === undefined ? '' : ' playing-diagram'}`} viewBox={`0 0 ${placed.width} ${placed.height}`} width={placed.width} height={placed.height} role="group" aria-label={label}>
         <defs>
           <marker id={`${marker}-on`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" className="head on" />
@@ -484,7 +580,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
           </marker>
         </defs>
         {placed.groups.map((rect) => (
-          <g key={rect.id} className={`region${selectedShape?.id === rect.id ? ' selected' : ''}${active.groups.has(rect.id) ? ' on' : ' off'}`}>
+          <g key={rect.id} className={`region${selectedShape?.id === rect.id ? ' selected' : ''}${active.groups.has(rect.id) ? ' on' : ' off'}${playClass(rect.id)}`}>
             {selectedShape?.id === rect.id ? <rect className="halo" x={rect.x - 4} y={rect.y - 4} width={rect.width + 8} height={rect.height + 8} rx={13} /> : null}
             <rect className="area" x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx={10} />
           </g>
@@ -504,6 +600,15 @@ export function FlowDiagram({ diagram, active, selected, reveal, focus, label, m
           </g>
         ))}
         {placed.boxes.map((box) => [...(labelsBefore.get(box.id) ?? []).map(regionLabel), boxShape(box)])}
+        {play !== undefined ? (
+          <g className={`travel play-${play.tone}`} aria-hidden="true">
+            <path ref={trail} className="trail" d={travel ?? 'M0,0'} />
+            <g ref={token} className="token">
+              <circle className="token-glow" r={11} />
+              <circle className="token-dot" r={5.5} />
+            </g>
+          </g>
+        ) : null}
       </svg>
     </DiagramViewport>
   );

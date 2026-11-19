@@ -337,6 +337,7 @@ h1, h2, h3, h4 { margin: 0; }
 .where { color: var(--muted); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
 .code-button { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; font-size: 12.5px; }
 .code-button:hover { border-color: var(--accent); background: var(--accent-soft); }
+a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .call-source { font-size: 12px; }
 .links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .row { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 6px 9px; cursor: pointer; min-width: 0; }
@@ -588,3 +589,115 @@ h1, h2, h3, h4 { margin: 0; }
 .wiring-code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
 .wiring-search { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .wiring-search input { min-width: 0; width: min(100%, 320px); padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--fg); font: inherit; }
+
+/* ---- the flow view: the diagram as the stage, a request played through it, and beside it what happens in the scene shown */
+.flow-open { flex: none; color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.flow-area { background: var(--surface); }
+.flow-area.maximized { position: fixed; inset: 0; z-index: 30; }
+.work.flow-work { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); }
+.flow-player { min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 12px; border-right: 1px solid var(--line); background: var(--surface); }
+.flow-scene { flex: 0 1 auto; min-height: 96px; max-height: 46%; overflow: auto; }
+.flow-stage { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.flow-stage .crumbs { flex: none; padding: 8px 12px; background: var(--surface); }
+.flow-label { color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.flow-controls { display: flex; flex-direction: column; gap: 8px; }
+.flow-way { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.flow-way select { flex: 1; min-width: 0; height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; }
+.flow-buttons { display: flex; align-items: center; gap: 4px; }
+.flow-buttons .icon { width: 34px; height: 34px; font-size: 14px; border-color: var(--line); }
+.flow-buttons .icon:disabled, .flow-play:disabled { opacity: 0.4; cursor: default; }
+.flow-play { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.flow-play[aria-pressed="true"] { background: var(--surface); color: var(--accent); }
+.flow-speed { flex: none; }
+.flow-speed button { padding: 3px 7px; font-size: 12px; }
+.flow-scrub { width: 100%; margin: 0; accent-color: var(--accent); }
+.flow-depth { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.flow-depth .code-button:disabled { opacity: 0.45; cursor: default; }
+.flow-max { margin-left: auto; flex: none; }
+.flow-stage .crumbs { align-items: center; }
+.flow-stage .crumb-hint { margin-left: 0; }
+.flow-max[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+
+.scene-card { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--surface); }
+.scene-card.tone-error { border-left-color: var(--danger); }
+.scene-where { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); min-width: 0; }
+.scene-count { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); }
+.tone-error .scene-count { color: var(--danger); }
+.scene-frame { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); font-size: 11.5px; }
+.scene-title { font-size: 16px; font-weight: 600; line-height: 1.45; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.scene-title code { font-size: 13px; }
+.scene-kind { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.scene-text { margin: 0; font-size: 13px; color: var(--fg); white-space: pre-line; overflow-wrap: anywhere; }
+.scene-values { margin: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.scene-values code { display: inline-block; margin-right: 4px; padding: 0 5px; border-radius: 3px; background: var(--surface-2); }
+.scene-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.scene-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 13px; min-width: 0; }
+.scene-line .line-kind { flex: none; font-size: 11px; line-height: 16px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
+.scene-line .line-words { min-width: 0; overflow-wrap: anywhere; }
+.scene-line code { font-size: 12px; }
+.scene-line.line-throws .line-kind, .scene-line.line-fails .line-kind { color: var(--danger); border-color: var(--danger); }
+.scene-line.line-returns .line-kind, .scene-line.line-ends .line-kind, .scene-line.line-catches .line-kind, .scene-line.line-enters .line-kind { color: var(--accent); border-color: var(--accent); }
+.line-error { margin-left: 6px; color: var(--danger); }
+.line-sides { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+.assumed-mark { flex: none; font-size: 10.5px; line-height: 15px; padding: 0 4px; border: 1px dashed var(--muted); border-radius: 3px; color: var(--muted); }
+
+.scene-inside { font-size: 12.5px; }
+.scene-inside ol { margin: 4px 0 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 2px; }
+.scene-inside li { overflow-wrap: anywhere; }
+
+.flow-way-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; }
+.flow-way-head h4 { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.flow-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; flex: 1 1 0; min-height: 96px; overflow: auto; }
+.flow-item { flex: none; }
+.flow-item button { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 6px; border: 0; border-left: 2px solid var(--line); background: none; text-align: left; cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.flow-item button:hover { background: var(--surface-2); }
+.flow-item.done button { color: var(--fg); border-left-color: var(--accent); }
+.flow-item.current button { color: var(--fg); font-weight: 600; background: var(--accent-soft); border-left-color: var(--accent); }
+.flow-mark { flex: none; width: 12px; text-align: center; font-size: 9px; color: var(--faint); }
+.flow-item.done .flow-mark, .flow-item.current .flow-mark { color: var(--accent); }
+.flow-item.tone-error .flow-mark { color: var(--danger); }
+.flow-item.tone-error.current button { background: var(--danger-soft); border-left-color: var(--danger); }
+.flow-no { flex: none; min-width: 1.6em; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--faint); }
+.flow-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-foot { margin: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+
+/* The playback on the diagram: the boxes the request has been through are filled, the one it is at stands out, and a token travels the arrow to it. */
+.diagram.playing-diagram .box.played .frame { fill: var(--accent-soft); stroke: var(--accent); stroke-dasharray: none; }
+.diagram.playing-diagram .box.played.tone-error .frame { fill: var(--danger-soft); stroke: var(--danger); }
+.diagram.playing-diagram .box.playing .frame { fill: var(--accent); stroke: var(--accent); stroke-width: 2.4; stroke-dasharray: none; }
+.diagram.playing-diagram .box.playing .title, .diagram.playing-diagram .box.playing .box-tag { fill: var(--accent-fg); }
+.diagram.playing-diagram .box.playing.play-error .frame { fill: var(--danger); stroke: var(--danger); }
+.diagram.playing-diagram .region.played .area { stroke: var(--accent); stroke-dasharray: none; }
+.diagram.playing-diagram .region.playing .area { stroke: var(--danger); stroke-width: 2.5; stroke-dasharray: none; }
+.diagram.playing-diagram .region-label.playing .hit { fill: var(--danger-soft); stroke: var(--danger); stroke-width: 1.5; }
+.diagram.playing-diagram .region-label.playing .region-text { stroke: var(--danger-soft); }
+.diagram .travel { pointer-events: none; }
+.diagram .travel .trail { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; opacity: 0; }
+.diagram .travel .token { opacity: 0; }
+.diagram .travel .token-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.diagram .travel .token-glow { fill: var(--accent); opacity: 0.25; }
+.diagram .travel.play-error .trail { stroke: var(--danger); }
+.diagram .travel.play-error .token-dot, .diagram .travel.play-error .token-glow { fill: var(--danger); }
+@media (prefers-reduced-motion: no-preference) {
+  /* The box the token travels to lights up when it arrives: until then it reads as a box the way has not reached. */
+  .diagram.playing-diagram .box.playing.arriving .frame { animation: arrive-frame var(--travel, 0ms) step-end both; }
+  .diagram.playing-diagram .box.playing.arriving .title, .diagram.playing-diagram .box.playing.arriving .box-tag { animation: arrive-text var(--travel, 0ms) step-end both; }
+  .diagram.playing-diagram .box.playing.arriving.play-error .frame { animation-name: arrive-frame-error; }
+}
+@keyframes arrive-frame { from { fill: var(--surface); stroke-width: 1.6; } to { fill: var(--accent); stroke-width: 2.4; } }
+@keyframes arrive-frame-error { from { fill: var(--surface); stroke-width: 1.6; } to { fill: var(--danger); stroke-width: 2.4; } }
+@keyframes arrive-text { from { fill: var(--fg); } to { fill: var(--accent-fg); } }
+
+@media (max-width: 899px) {
+  .work.flow-work { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 48dvh) auto; overflow: auto; }
+  .flow-stage { order: -1; border-bottom: 1px solid var(--line); }
+  .flow-player { border-right: 0; overflow: visible; }
+  .flow-scene { flex: none; max-height: none; overflow: visible; }
+  .flow-list { flex: none; overflow: visible; }
+  .flow-stage .crumbs { min-height: max(64px, calc(env(safe-area-inset-top, 0px) + 56px)); padding-left: max(64px, calc(env(safe-area-inset-left, 0px) + 60px)); }
+  .flow-stage .crumb-hint { display: none; }
+  .flow-buttons .icon, .flow-play, .flow-way select { height: 44px; }
+  .flow-buttons .icon { width: 44px; }
+  .flow-item button { min-height: 40px; }
+  .flow-max { display: none; }
+}

@@ -26,6 +26,8 @@ export interface TraceState {
   errors: boolean;
   /** The frame the diagram shows. */
   focus: string;
+  /** The trace shows as a playback (the flow view) instead of the outline. */
+  flow?: boolean;
 }
 
 export const EMPTY_TRACE: TraceState = { open: [], choices: [], errors: false, focus: '' };

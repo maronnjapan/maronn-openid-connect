@@ -1,7 +1,7 @@
 /**
  * The view in the URL hash, so a trace can be linked as it is:
  *
- *     #<framework>--<endpoint>[--<step>][/<frame>]...[;d=<decision>:<side>,...]...[;e][;f=<frame>]
+ *     #<framework>--<endpoint>[--<step>][/<frame>]...[;d=<decision>:<side>,...]...[;e][;f=<frame>][;p]
  *     #<framework>--fn--<name>[--<package>--<module>][/<frame>]...[;...]
  *     #<framework>--changes   (#changes too)
  *     #<framework>--wiring    (#wiring too)
@@ -11,7 +11,8 @@
  * way (`d=s0b8s0:nullish,s0b1s0.s1:true`), and each `;d=` is one choice (several
  * are their union). A call keyed the same way with the side `fails`
  * (`d=s0b1s0:fails`) fails there. `;e` shows where failures are caught;
- * `;f=` names the frame the diagram shows. Ids and names are letters,
+ * `;f=` names the frame the diagram shows; `;p` opens the trace as a
+ * playback (the flow view). Ids and names are letters,
  * digits and hyphens, so `--` separates them; a module is written
  * URI-encoded.
  */
@@ -62,6 +63,7 @@ export function traceHash(trace: TraceState): string {
   }
   if (trace.errors) hash += ';e';
   if (trace.focus !== '') hash += `;f=${trace.focus}`;
+  if (trace.flow === true) hash += ';p';
   return hash;
 }
 
@@ -72,8 +74,10 @@ export function parseTrace(part: string): TraceState {
   const choices: Decisions[] = [];
   let errors = false;
   let focus = '';
+  let flow = false;
   for (const option of options) {
     if (option === 'e') errors = true;
+    else if (option === 'p') flow = true;
     else if (option.startsWith('f=')) focus = option.slice(2);
     else if (option.startsWith('d=')) {
       const choice: Decisions = {};
@@ -86,7 +90,7 @@ export function parseTrace(part: string): TraceState {
       if (Object.keys(choice).length > 0) choices.push(choice);
     }
   }
-  return { open: [...new Set(open)], choices, errors, focus };
+  return { open: [...new Set(open)], choices, errors, focus, ...(flow ? { flow: true } : {}) };
 }
 
 export function buildHash(view: View, data: MapData): string {

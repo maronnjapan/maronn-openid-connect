@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardPlace, LEGIBLE_SCALE, openingCamera, revealCamera, type Camera, type Rect, type Size } from './camera';
+import { cardPlace, LEGIBLE_SCALE, openingCamera, revealCamera, STAGE_SCALE, type Camera, type Rect, type Size } from './camera';
 
 /** The diagram's gesture box in the 1440x900 pane and in the 1280x800 one, with the one-row toolbar. */
 const pane1440: Size = { width: 472, height: 631 };
@@ -16,6 +16,12 @@ const box = (x: number, y: number, width = 320, height = 48): Rect => ({ x, y, w
 describe('openingCamera', () => {
   it('should open a layout that fits at 100%, centred across with its top at the margin', () => {
     expect(openingCamera(pane1440, oneColumn, box(12, 12, 320, 36))).toEqual({ x: 64, y: 12, scale: 1 });
+  });
+
+  it('should open a narrow layout enlarged on a stage, up to the scale the stage allows and no wider than its area', () => {
+    const stage: Size = { width: 820, height: 700 };
+    expect(openingCamera(stage, oneColumn, box(12, 12, 320, 36), STAGE_SCALE)).toEqual({ x: expect.closeTo((820 - 344 * STAGE_SCALE) / 2, 9), y: 12, scale: STAGE_SCALE });
+    expect(openingCamera(stage, { width: 700, height: 900 }, box(12, 12, 320, 36), STAGE_SCALE)).toEqual({ x: expect.closeTo(12, 9), y: 12, scale: expect.closeTo(796 / 700, 9) });
   });
 
   it('should fit the width when titles still read at least 11px', () => {

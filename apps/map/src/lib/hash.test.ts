@@ -29,6 +29,14 @@ describe('the trace in a hash', () => {
     expect(traceHash(EMPTY_TRACE)).toBe('');
   });
 
+  it('should keep the flow view of a trace, and leave it out of the hash of a trace shown as its outline', () => {
+    const trace: TraceState = { open: ['s4'], choices: [{ s3: 'c1' }], errors: false, focus: 's4', flow: true };
+    expect(traceHash(trace)).toBe('/s4;d=s3:c1;f=s4;p');
+    expect(parseTrace('/s4;d=s3:c1;f=s4;p')).toEqual(trace);
+    expect(traceHash({ ...trace, flow: false })).toBe('/s4;d=s3:c1;f=s4');
+    expect(parseTrace(';p')).toEqual({ ...EMPTY_TRACE, flow: true });
+  });
+
   it('should read a side to its end, a colon in it kept, and drop what is not a frame', () => {
     expect(parseTrace("/s1/../x y;d=s0:case 'a:b'")).toEqual({ open: ['s1'], choices: [{ s0: "case 'a:b'" }], errors: false, focus: '' });
   });

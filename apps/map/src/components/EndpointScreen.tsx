@@ -3,7 +3,7 @@ import type { FlowEndpoint, MapData } from '../types';
 import { frameMark, waySelections, type ChangeIndex } from '../lib/changes';
 import { generatedWhen } from '../lib/model';
 import { endpointSources } from '../lib/source';
-import { entryOf, type TraceState } from '../lib/trace';
+import { entryOf, sourceOf, type TraceState } from '../lib/trace';
 import { Badge } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
 import { FeatureBadge } from './FeatureBadge';
@@ -56,6 +56,10 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
                 コードを見る
               </button>
             ) : null}
+            {/* The tests are a page of their own (apps/tests): the cases of this endpoint there say what the tests check on each way through it. */}
+            <a className="code-button" href={`./tests/#/endpoint/${sourceOf(framework)}/${encodeURIComponent(endpoint.id)}?cases=1`} title="このエンドポイントのテストを、リクエストの道筋（ケース）ごとに確かめる（テストの画面）">
+              テストを確かめる
+            </a>
           </>
         }
       >

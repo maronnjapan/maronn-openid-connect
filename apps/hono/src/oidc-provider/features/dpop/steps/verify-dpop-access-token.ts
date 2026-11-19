@@ -1,8 +1,9 @@
 import type { AccessTokenInfo } from '@maronn-openid-connect/core';
-import { readDpopJkt, validateDpopAccessTokenBinding } from '@maronn-openid-connect/dpop';
 import { step } from '../../../endpoints/step.js';
+import { readDpopJkt } from '../binding.js';
 import { dpopSigningAlgsOf } from '../config.js';
-import { userInfoEndpointErrorOf } from '../errors.js';
+import { userInfoEndpointErrorOf } from '../error-responses.js';
+import { validateDpopAccessTokenBinding } from '../resource.js';
 
 export const meta = step({
   id: 'verify-dpop-access-token',

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { generateDpopKey, signDpopProof } from '../../../../test-support/dpop';
 
-import { DpopError } from './errors.js';
-import { computeJwkThumbprint, validateDpopProofJwk, SUPPORTED_DPOP_SIGNING_ALGS } from './jwk.js';
+import { DpopError } from './errors';
+import { computeJwkThumbprint, validateDpopProofJwk, SUPPORTED_DPOP_SIGNING_ALGS } from './jwk';
 import {
   computeDpopAccessTokenHash,
   consumeDpopProofJti,
@@ -12,8 +13,7 @@ import {
   validateDpopProofClaims,
   verifyDpopProofSignature,
   type DpopProofJtiStore,
-} from './proof.js';
-import { generateDpopKey, signDpopProof } from './test-helpers.js';
+} from './proof';
 
 const NOW = 1_767_225_600;
 const TOKEN_URI = 'https://op.example.com/token';

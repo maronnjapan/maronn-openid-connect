@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, posix, relative } from 'node:path';
 
 export interface AnalysisRoot {
-  /** The first part of every id of the root (core, experimental, google-login, dpop, hono, nextjs). */
+  /** The first part of every id of the root (core, experimental, google-login, hono, nextjs). */
   name: string;
   /** The directory of its files, from the root of the repository (packages/core/src, apps/hono/src). */
   directory: string;

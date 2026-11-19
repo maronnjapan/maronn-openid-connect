@@ -1,9 +1,0 @@
----
-'@maronn-openid-connect/dpop': patch
----
-
-`@maronn-openid-connect/dpop` を新設し、OAuth 2.0 Demonstrating Proof of Possession（DPoP、RFC 9449）を CLI 生成コードの OP に加えられるようにする。DPoP proof の検査（RFC 9449 §4.3）を段階ごとの関数に分けて提供する。`DPoP` ヘッダーが一つであること（`readDpopProofHeader`）、`typ` が `dpop+jwt` の JWS であること（`decodeDpopProof`）、受け付ける非対称の `alg` であること（`validateDpopProofAlg`。`none` と HS 系は常に拒否）、`jwk` が `alg` の公開鍵でその鍵で署名を検証できること（`validateDpopProofJwk`、`verifyDpopProofSignature`）、`jti` / `htm` / `htu` / `iat` を満たすこと（`validateDpopProofClaims`。`htu` は RFC 3986 §6.2.2 / §6.2.3 の正規化をして比べる）、保護されたリソースでの `ath`（`validateDpopProofAccessTokenHash`）、`jti` の再利用の拒否（`consumeDpopProofJti`。キーは `["dpop", jkt, jti]` で、private_key_jwt の `jti` のストアと共有できる）。あわせて、JWK Thumbprint（RFC 7638、`computeJwkThumbprint`）、トークンと認可コードの鍵への束縛（`buildDpopConfirmation` / `readDpopJkt` の `cnf.jkt`、`dpop_jkt` の `parseDpopJkt`、PAR の `resolvePushedDpopJkt`、`dpop_bound_access_tokens` の `requireDpopProofForClient`、束縛した認可コードとリフレッシュトークンの `validateDpopBoundGrant`、パブリッククライアントのリフレッシュトークンの `selectDpopRefreshTokenJkt`）、保護されたリソースの `DPoP` スキーム（`readDpopAuthorization`、`validateDpopAccessTokenBinding`、`buildDpopChallenge`）を提供する。
-
-対応する alg は ES256 / ES384 / ES512、PS256 / PS384 / PS512、RS256 / RS384 / RS512、EdDSA（Ed25519）で、検証は Web Crypto だけで行うので、エッジランタイムでも動く（テストは Edge Runtime 環境で行う）。core には依存しない（`dependencies` / `peerDependencies` とも空）。失敗は core のエラー型ではなく、OAuth のエラーコード（`invalid_dpop_proof` / `invalid_token` / `invalid_grant` / `invalid_request`）を持つ `DpopError` で投げ、生成コードがエンドポイントごとのエラーレスポンスにする。core を peer 参照しないので、リリース契約（peer range の下限、core の minor / major との同時リリース）の対象外である。サーバーが発行する nonce（RFC 9449 §8 / §9）には対応していない。CLI の `--enable dpop`（拡張機能。既定では無効）から生成コードに組み込まれる（CLI 側の changeset を参照）。
-
-初回リリースは `0.0.0` から patch で `0.0.1` になる。`0.0.0` は Trusted Publisher を設定するための手動ブートストラップ用のプレースホルダーで、RELEASE.md「後から追加したパッケージのブートストラップ（google-login・dpop の例）」に従って先に publish しておく。

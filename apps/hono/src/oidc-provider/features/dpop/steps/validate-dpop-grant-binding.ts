@@ -1,7 +1,7 @@
-import { readDpopJkt, validateDpopBoundGrant } from '@maronn-openid-connect/dpop';
 import type { TokenRequestBody } from '../../../endpoints/token/response.js';
 import { step } from '../../../endpoints/step.js';
-import { tokenEndpointErrorOf } from '../errors.js';
+import { readDpopJkt, validateDpopBoundGrant } from '../binding.js';
+import { tokenEndpointErrorOf } from '../error-responses.js';
 
 export const meta = step({
   id: 'validate-dpop-grant-binding',

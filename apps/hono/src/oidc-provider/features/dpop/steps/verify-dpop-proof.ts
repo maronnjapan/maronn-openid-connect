@@ -1,17 +1,11 @@
 import { isPublicTokenClient, type TokenClientInfo } from '@maronn-openid-connect/core';
-import {
-  DPOP_TOKEN_TYPE,
-  buildDpopConfirmation,
-  readDpopProofHeader,
-  requireDpopProofForClient,
-  selectDpopRefreshTokenJkt,
-} from '@maronn-openid-connect/dpop';
 import type { RegisteredClient } from '../../../config.js';
 import type { TokenBinding } from '../../../token-binding.js';
 import { step } from '../../../endpoints/step.js';
+import { DPOP_TOKEN_TYPE, buildDpopConfirmation, requireDpopProofForClient, selectDpopRefreshTokenJkt } from '../binding.js';
 import '../config.js';
-import { tokenEndpointErrorOf } from '../errors.js';
-import { verifyDpopRequestProof } from '../proof.js';
+import { tokenEndpointErrorOf } from '../error-responses.js';
+import { readDpopProofHeader, verifyDpopRequestProof } from '../proof.js';
 
 export const meta = step({
   id: 'verify-dpop-proof',

@@ -1,51 +1,58 @@
 /**
- * EXTENSION (dpop): the responses of the failures of the DPoP checks
- * (@maronn-openid-connect/dpop's DpopError) at each endpoint.
+ * EXTENSION (dpop): the failures of the DPoP checks (DpopError). The responses
+ * of each endpoint to them are in error-responses.ts.
+ *
+ * DPoP（RFC 9449）の検査が失敗したときのエラー。
+ *
+ * `error` は OAuth のエラーレスポンスにそのまま載せるエラーコードで、
+ * トークンエンドポイントは RFC 6749 §5.2 のエラーレスポンスに、保護されたリソースは
+ * `WWW-Authenticate: DPoP` のチャレンジ（RFC 9449 §7.1）に載せる。
+ * `errorDescription` は、このディレクトリの検査が決めた固定の文言だけを入れる。
+ * クライアントが送った値を含めないので、`error_description` に使えない文字（RFC 6749 §5.2）や
+ * `WWW-Authenticate` の値を壊す引用符が入ることはない。
  */
-import { buildDpopChallenge, isDpopError, type DpopError } from '@maronn-openid-connect/dpop';
-import { UserInfoEndpointError } from '../../../userinfo/response';
-import { oauthError } from '../../http';
+
+/** DPoP の検査の失敗を表す OAuth のエラーコード。 */
+export type DpopErrorCode =
+  /** DPoP proof が無い、形式が正しくない、または検証できない（RFC 9449 §5 / §7.1）。 */
+  | 'invalid_dpop_proof'
+  /** 保護されたリソースに提示されたアクセストークンが、DPoP proof の鍵に束縛されていない（RFC 9449 §7.1 / §7.2）。 */
+  | 'invalid_token'
+  /** 認可コードかリフレッシュトークンが、DPoP proof と別の鍵に束縛されている（RFC 9449 §5 / §10）。 */
+  | 'invalid_grant'
+  /** リクエストのパラメータが正しくない（`dpop_jkt` の形式など。RFC 9449 §10）。 */
+  | 'invalid_request';
 
 /**
- * トークンエンドポイントでの DPoP の検査の失敗を、キャッシュさせない 400 の OAuth のエラーレスポンスにして返す。
+ * DPoP の検査の失敗。
  *
- * `invalid_dpop_proof`（DPoP proof の不備）、`invalid_grant`（認可コードかリフレッシュトークンが別の鍵に束縛されている）、`invalid_request` は、どれも 400 で応答する（RFC 6749 §5.2）。
- * DPoP の失敗でないエラーには `undefined` を返し、呼び出し側がそのまま投げ直す。
- *
- * @spec RFC 9449 §5
- * @spec RFC 6749 §5.2
+ * `error` と `errorDescription` は、`error-responses.ts` の `tokenEndpointRejectionOf()` と `userInfoEndpointErrorOf()` がエンドポイントに合ったエラーレスポンスにする。
  */
-export function tokenEndpointRejectionOf(error: unknown): Response | undefined {
-  if (!isDpopError(error)) return undefined;
-  return oauthError(error.error, error.errorDescription, 400);
+export class DpopError extends Error {
+  public readonly error: DpopErrorCode;
+  public readonly errorDescription: string;
+
+  constructor(error: DpopErrorCode, errorDescription: string) {
+    super(errorDescription);
+    this.name = 'DpopError';
+    this.error = error;
+    this.errorDescription = errorDescription;
+  }
 }
 
 /**
- * 保護されたリソース（UserInfo エンドポイント）での DPoP の検査の失敗を、DPoP のチャレンジ付きのエラーレスポンスにして返す。
+ * 形に合う値を `DpopError` として返す。
  *
- * `invalid_dpop_proof` と `invalid_token` は 401 で、`WWW-Authenticate: DPoP` のチャレンジに `error`、`error_description`、受け付ける alg（`algs`）を入れる（RFC 9449 §7.1）。
- * `invalid_request`（`Authorization: DPoP` にトークンがない、複数の方法でトークンを送った）は 400 で応答する（RFC 6750 §3.1）。
- * DPoP の失敗でないエラーは、そのまま返す。
- *
- * @spec RFC 9449 §7.1
- * @spec RFC 6750 §3.1
+ * 形で見分けるのは、別に読み込まれた（バンドルで複製された）このモジュールのエラーも同じに扱うためである。
+ * `name` が `DpopError` で、文字列の `error` と `errorDescription` を持つ値を、DPoP の検査の失敗とみなす。
  */
-export function userInfoEndpointErrorOf(error: unknown, algs: readonly string[]): unknown {
-  if (!isDpopError(error)) return error;
-  return userInfoDpopError(error, algs);
-}
-
-/**
- * DPoP の検査の失敗から、UserInfo エンドポイントの DPoP のチャレンジ付きのエラーレスポンスを作って返す。
- *
- * @spec RFC 9449 §7.1
- */
-function userInfoDpopError(error: DpopError, algs: readonly string[]): UserInfoEndpointError {
-  return new UserInfoEndpointError({
-    status: error.error === 'invalid_request' ? 400 : 401,
-    body: { error: error.error, error_description: error.errorDescription },
-    headers: {
-      'WWW-Authenticate': buildDpopChallenge({ algs, error: error.error, errorDescription: error.errorDescription }),
-    },
-  });
+export function isDpopError(value: unknown): value is DpopError {
+  if (value instanceof DpopError) return true;
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { name?: unknown; error?: unknown; errorDescription?: unknown };
+  return (
+    candidate.name === 'DpopError' &&
+    typeof candidate.error === 'string' &&
+    typeof candidate.errorDescription === 'string'
+  );
 }

@@ -1633,7 +1633,7 @@ flowchart LR
 |---|---|
 | 関数 | `testedFunctions(entry)`（[⑥-10-a](#-10-a-確かめる関数)）。<br>到達だけの関数は入れない。<br>テストは、確かめる関数ごとにその組に入る |
 | 場所 | アウトラインの関数の `package` と `module`。<br>アウトラインに無ければ id から読む（`core:jwt.ts#sign` → `core` と `jwt.ts`）。<br>パッケージが空なら、テストの `root` |
-| パッケージの順 | `core`、`experimental`、`google-login`、`dpop`、`hono`、`nextjs`（`PACKAGE_ORDER`）、ほかは名前の `localeCompare` の順 |
+| パッケージの順 | `core`、`experimental`、`google-login`、`hono`、`nextjs`（`PACKAGE_ORDER`）、ほかは名前の `localeCompare` の順 |
 | パッケージの数 | 入ったテストの id の数（重なりを除き、削除したテストは数えない） |
 | モジュールの順 | パスの `localeCompare` |
 | 関数の順 | アウトラインの関数のコードの始まりの行、無ければ最後。<br>同じなら `name` の `localeCompare` の順 |
@@ -1880,7 +1880,7 @@ flowchart LR
 | 組 | ファイルの最初のテスト（コードの行の順）の `root` |
 | ツールの組 | 組を初めて作ったファイルの、最初のテストの種類が `tool` の組 |
 | 削除だけのファイル | PR がテストをすべて削除したファイルも、数 0 で並べる。<br>組は `rootOfFile`（[⑥-13-b](#-13-b-削除したテストの置き場所)）、ツールかは削除したテストの種類で決める |
-| 組の順 | ツールでない組が先。<br>次に `core`、`experimental`、`google-login`、`dpop`、`hono`、`nextjs`、`e2e`、`features` の順（`ROOT_ORDER`）、ほかはその後ろ。<br>同じなら `root` の `localeCompare` の順 |
+| 組の順 | ツールでない組が先。<br>次に `core`、`experimental`、`google-login`、`hono`、`nextjs`、`e2e`、`features` の順（`ROOT_ORDER`）、ほかはその後ろ。<br>同じなら `root` の `localeCompare` の順 |
 | ファイルの順 | パスの `localeCompare` |
 | 数 | 組とファイルのテストの数。<br>削除したテストは数えない |
 | 共通のディレクトリ | `commonDirectory(組のパスの列)` |

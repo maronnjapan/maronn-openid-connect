@@ -6,8 +6,9 @@
  * feature (packages/cli/src/registry.ts), so it uses no error type of the par
  * feature: a rejection is a ready-made Response the block returns.
  */
-import { isDpopError, parseDpopJkt, readDpopProofHeader, resolvePushedDpopJkt } from '@maronn-openid-connect/dpop';
-import { verifyDpopRequestProof } from './proof';
+import { parseDpopJkt, resolvePushedDpopJkt } from './binding';
+import { isDpopError } from './errors';
+import { readDpopProofHeader, verifyDpopRequestProof } from './proof';
 
 /** What bindPushedDpopKey() decided. */
 export interface PushedDpopBinding {

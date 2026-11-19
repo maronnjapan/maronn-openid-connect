@@ -3,11 +3,13 @@ title: DPoP（拡張）
 description: CLI の --enable dpop で、アクセストークンをクライアントの鍵に束縛する DPoP（RFC 9449）を OP に足す。
 ---
 
-`--enable dpop` は、生成される OP に OAuth 2.0 Demonstrating Proof of Possession（DPoP、[RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)）を足す**拡張機能**です。既定では無効です。実装は別 package の `@maronn-openid-connect/dpop` にあり、有効にしたときだけ生成コードから import されます。
+`--enable dpop` は、生成される OP に OAuth 2.0 Demonstrating Proof of Possession（DPoP、[RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)）を足す**拡張機能**です。既定では無効です。
 
-拡張機能は、OP に足す任意の機能をそれぞれ専用の package で提供するカテゴリです。Experimental（API が不安定で、リリースは常に patch）と違い、API は安定していて、package は通常の semver でリリースされます。`google-login` がログイン手段を足すのに対し、`dpop` は送信者制約付きのトークン（sender-constrained tokens）を足します。
+DPoP のコードは、検査も配線もすべて生成コードの `features/dpop/`（Hono / Express / Fastify は `oidc-provider/features/dpop/`、Next.js は `app/_oidc-provider/features/dpop/`）に入ります。専用の package は無く、core のほかにインストールするものは増えません。生成した OP の利用者は、DPoP の検査をすべて読んで、方針を変えたいときはそのファイルを直接直せます（[生成されるもの](#生成されるもの)）。
 
-`@maronn-openid-connect/dpop` は core に依存せず、DPoP proof の検査を Web Crypto だけで行います。Node.js の API を使わないので、Cloudflare Workers などのエッジランタイムでも動きます。
+拡張機能は、`--enable` で名前を挙げたときだけ生成する任意の機能のカテゴリです。API が不安定なことを理由に分けた Experimental とは別のカテゴリです。`google-login` はログイン手段を足し、上流の ID プロバイダーとその公式クライアントライブラリを取り込むので専用の package を使います。`dpop` は送信者制約付きのトークン（sender-constrained tokens）を足し、コードがすべて生成コードに入ります。
+
+DPoP proof の検査は Web Crypto だけで行います。Node.js の API を使わないので、Cloudflare Workers などのエッジランタイムでも動きます。
 
 ## DPoP とは
 
@@ -19,7 +21,7 @@ DPoP では、クライアントが自分の鍵の組を持ち、リクエスト
 
 ```bash
 maronn-oidc generate hono --enable dpop
-pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/dpop
+pnpm add hono @maronn-openid-connect/core
 ```
 
 `express` / `fastify` / `nextjs` でも同じです。他の機能と組み合わせられます（例: `--enable dpop --enable par`）。
@@ -108,7 +110,7 @@ Experimental 機能の PAR も有効にすると、プッシュした認可リ�
 
 | 項目 | 既定値 | 説明 |
 |---|---|---|
-| `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg。Discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。`@maronn-openid-connect/dpop` が検証できない alg は、挙げても受け付けない（`EdDSA` は Ed25519 の鍵だけ） |
+| `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg。Discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。`features/dpop/jwk.ts` の `SUPPORTED_DPOP_SIGNING_ALGS` に無い alg は、挙げても受け付けない（`EdDSA` は Ed25519 の鍵だけ） |
 | `dpopProofMaxAgeSeconds` | `60` | DPoP proof を、その `iat` から何秒まで受け付けるか（RFC 9449 §11.1）。時計のずれの `dpopProofLeewaySeconds` は別に足すので、`iat` が「今 − `dpopProofMaxAgeSeconds` − `dpopProofLeewaySeconds`」以上の DPoP proof を受け付ける（既定では `iat` から 120 秒まで）。`jti` は、受け付ける最後の秒まで覚える |
 | `dpopProofLeewaySeconds` | `60` | DPoP proof の `iat` に許す時計のずれ（秒）。未来の `iat` は「今 + この値」まで受け付け、古い側の範囲にもこの値を足す |
 
@@ -150,19 +152,34 @@ await registerClient(db, {
 
 ## 生成されるもの
 
-Hono / Express / Fastify では、この機能のコードは `features/dpop/` にあります。
+DPoP のコードは、Hono / Express / Fastify では `oidc-provider/features/dpop/`、Next.js では `app/_oidc-provider/features/dpop/` に生成されます。検査の関数はどちらも同じファイルにあります。
 
-| 生成物 | 内容 |
+| ファイル | 内容 |
 |---|---|
-| `features/dpop/config.ts` | `ProviderConfig` に足す `dpopSigningAlgValuesSupported` / `dpopProofMaxAgeSeconds` / `dpopProofLeewaySeconds`、`RegisteredClient` に足す `dpopBoundAccessTokens` と、その既定値 |
-| `features/dpop/feature.ts` | Discovery の `dpop_signing_alg_values_supported` と、CORS に加えるヘッダー |
-| `features/dpop/proof.ts` | トークン、UserInfo、PAR のエンドポイントが共有する DPoP proof の検査 |
-| `features/dpop/errors.ts` | DPoP の検査の失敗（`DpopError`）を、トークンエンドポイントの OAuth のエラーと、UserInfo エンドポイントの DPoP のチャレンジにする |
-| `features/dpop/steps/` | パイプラインのステップ。トークンエンドポイントの `verify-dpop-proof` と `validate-dpop-grant-binding`、UserInfo エンドポイントの `read-dpop-access-token` と `verify-dpop-access-token`、認可エンドポイントの `validate-dpop-jkt`、PAR の `bind-pushed-dpop-key` |
+| `proof.ts` | DPoP proof の検査（RFC 9449 §4.3）。`DPoP` ヘッダーの読み取り（`readDpopProofHeader()`）、JWS の分解と `typ` の確認（`decodeDpopProof()`）、`alg`（`validateDpopProofAlg()`）、署名（`verifyDpopProofSignature()`）、`jti` / `htm` / `htu` / `iat`（`validateDpopProofClaims()`）、保護されたリソースでの `ath`（`validateDpopProofAccessTokenHash()`）、`jti` の消費（`consumeDpopProofJti()`）。トークン、UserInfo、PAR のエンドポイントは、これらを `verifyDpopRequestProof()` から順に呼ぶ |
+| `jwk.ts` | `jwk` ヘッダーの公開鍵の検査（`validateDpopProofJwk()`。秘密鍵のメンバーを含む鍵、`alg` に合わない鍵、2048 ビットより短い RSA の鍵を拒否する）、署名の検証、JWK Thumbprint（RFC 7638、`computeJwkThumbprint()`）、検証できる alg（`SUPPORTED_DPOP_SIGNING_ALGS`） |
+| `htu.ts` | `htu` とリクエストの URI を比べる前の正規化（`normalizeDpopHtu()`。RFC 3986 §6.2.2 / §6.2.3） |
+| `binding.ts` | トークンと認可コードの鍵への束縛（RFC 9449 §5 / §6 / §10）。`cnf` の組み立てと読み取り（`buildDpopConfirmation()` / `readDpopJkt()`）、`dpop_jkt` の形（`parseDpopJkt()`）、PAR の鍵の決め方（`resolvePushedDpopJkt()`）、`dpopBoundAccessTokens` の要求（`requireDpopProofForClient()`）、束縛した認可コードとリフレッシュトークンの確認（`validateDpopBoundGrant()`）、リフレッシュトークンを束縛するか（`selectDpopRefreshTokenJkt()`） |
+| `resource.ts` | 保護されたリソースの `DPoP` スキーム（RFC 9449 §7）。`Authorization: DPoP` の読み取り（`readDpopAuthorization()`）、トークンと DPoP proof の鍵の照合（`validateDpopAccessTokenBinding()`）、`WWW-Authenticate: DPoP` のチャレンジ（`buildDpopChallenge()`） |
+| `base64url.ts` | JWS と JWK Thumbprint が使う base64url（RFC 4648 §5） |
+| `errors.ts` | 検査の失敗（`DpopError`。`error` は OAuth のエラーコード、`errorDescription` は固定の文言） |
+| `error-responses.ts` | `DpopError` を、トークンエンドポイントの OAuth のエラーと UserInfo エンドポイントの DPoP のチャレンジにする関数 |
+| `config.ts` | `ProviderConfig` に足す `dpopSigningAlgValuesSupported` / `dpopProofMaxAgeSeconds` / `dpopProofLeewaySeconds`、`RegisteredClient` に足す `dpopBoundAccessTokens` と、その既定値 |
+| `feature.ts` | 機能の登録。Discovery の `dpop_signing_alg_values_supported` と、CORS に加えるヘッダー |
+| `steps/`（Hono / Express / Fastify） | パイプラインのステップ。トークンエンドポイントの `verify-dpop-proof` と `validate-dpop-grant-binding`、UserInfo エンドポイントの `read-dpop-access-token` と `verify-dpop-access-token`、認可エンドポイントの `validate-dpop-jkt`、PAR の `bind-pushed-dpop-key` |
+| `token.ts`、`userinfo.ts`、`authorize.ts`、`par.ts`（Next.js） | Route Handler の同じ名前のブロックから呼ぶ関数（`steps/` の代わり） |
 
-ステップは、各エンドポイントのパイプラインの `(feature: dpop)` の印が付いたブロックから呼ばれます。`maronn-oidc graph --enable dpop --detail steps` で、どのステップがどこに入るかを確かめられます。dpop を無効にして生成すると、`features/dpop/` とこれらのブロックは消えます。トークンを鍵に束縛する口（`token-binding.ts` の `TokenBinding`）は機能を知らない形で本体にあり、束縛が無ければ Bearer トークンを発行します。
+ステップは、各エンドポイントのパイプライン（Next.js は Route Handler）の `(feature: dpop)` の印が付いたブロックから呼ばれます。`maronn-oidc graph --enable dpop --detail steps` で、どのステップがどこに入るかを確かめられます。dpop を無効にして生成すると、`features/dpop/` とこれらのブロックは消えます。トークンを鍵に束縛する口（`token-binding.ts` の `TokenBinding`）は機能を知らない形で本体にあり、束縛が無ければ Bearer トークンを発行します。
 
-Next.js では、この機能のコードは `_oidc-provider/features/dpop/` にあり、標準の処理の中の `(feature: dpop)` の印が付いたブロックから呼ばれます。
+### 方針を変える
+
+[設定](#設定)で変えられない方針は、`features/dpop/` のファイルを直して変えます。`--force` を付けて生成し直すと直したファイルも上書きされるので、直したファイルは自分のコードとして管理してください。
+
+- 受け付ける alg や鍵の形を変える: `jwk.ts` の `SUPPORTED_DPOP_SIGNING_ALGS` と `validateDpopProofJwk()`
+- `iat` の範囲や `htu` の比べ方を変える: `proof.ts` の `validateDpopProofClaims()` と、`htu.ts` の `normalizeDpopHtu()`
+- DPoP proof の鍵を、クライアントが登録した鍵に限る: `proof.ts` の `verifyDpopRequestProof()` で、`ClientKeyResolver` の `dpop` の用途の鍵と照らし合わせる
+- リフレッシュトークンを束縛するクライアントを変える: `binding.ts` の `selectDpopRefreshTokenJkt()`
+- エラーの応答を変える: `error-responses.ts`
 
 ## 制限と注意点
 
@@ -170,4 +187,4 @@ Next.js では、この機能のコードは `_oidc-provider/features/dpop/` に
 - **Implicit Flow と Hybrid Flow の認可エンドポイントが返すアクセストークンは Bearer のまま。** フロントチャネルには DPoP proof を送る場所が無いため。Hybrid Flow の認可コードは、`dpop_jkt` があればトークンエンドポイントで交換するときに束縛を確かめる
 - **DPoP proof の `jti` は、private_key_jwt のクライアントアサーションの `jti` と同じストア（`clientAssertionJtiStore`）に覚える。** キーの形が違う（DPoP は `["dpop", jkt, jti]`）ので重ならない。ストアの実装を差し替えるときは、DPoP の `jti` も入ることを前提にする。`jti` は署名とクレームを確かめた後で消費するので、検証できない DPoP proof が正しいクライアントの `jti` を先に使ってしまうことは無い
 - **登録した鍵に限ることはしない。** DPoP proof の `jwk` ヘッダーの鍵で署名を検証し、その鍵にトークンを束縛する。クライアントが事前に鍵を登録する必要は無く、`ClientKeyResolver` の `dpop` の用途の鍵も読まない
-- 保護されたリソースとして DPoP を検査するのは、生成 OP の UserInfo エンドポイントだけ。自分のリソースサーバーで束縛したトークンを受け付けるには、`@maronn-openid-connect/dpop` の `readDpopAuthorization()`、DPoP proof の検査の関数、`validateDpopAccessTokenBinding()`、`buildDpopChallenge()` を同じ順で呼ぶか、イントロスペクションの `cnf` を使う
+- 保護されたリソースとして DPoP を検査するのは、生成 OP の UserInfo エンドポイントだけ。自分のリソースサーバーで束縛したトークンを受け付けるには、UserInfo エンドポイントのステップ（`read-dpop-access-token` と `verify-dpop-access-token`）と同じく、`resource.ts` の `readDpopAuthorization()`、`proof.ts` の DPoP proof の検査、`resource.ts` の `validateDpopAccessTokenBinding()` と `buildDpopChallenge()` を順に呼ぶか、イントロスペクションの `cnf` を使う

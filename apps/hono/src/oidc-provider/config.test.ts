@@ -51,8 +51,8 @@ describe('createProviderConfig', () => {
       // The client-credentials feature lets no audience be requested until the
       // resources are listed (RFC 8707 §2).
       clientCredentialsAllowedAudiences: [],
-      // The dpop extension accepts DPoP proofs of every asymmetric alg the package
-      // verifies (RFC 9449 §5.1), within 60 seconds of their iat plus 60 seconds
+      // The dpop extension accepts DPoP proofs of every asymmetric alg its checks
+      // verify (RFC 9449 §5.1), within 60 seconds of their iat plus 60 seconds
       // of clock skew (RFC 9449 §11.1).
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,

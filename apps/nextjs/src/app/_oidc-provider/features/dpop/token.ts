@@ -9,20 +9,19 @@
  * of this feature.
  */
 import { isPublicTokenClient, type TokenClientInfo } from '@maronn-openid-connect/core';
+import type { RegisteredClient } from '../../config';
+import { stores } from '../../provider';
+import type { TokenBinding } from '../../token-binding';
 import {
   DPOP_TOKEN_TYPE,
   buildDpopConfirmation,
   readDpopJkt,
-  readDpopProofHeader,
   requireDpopProofForClient,
   selectDpopRefreshTokenJkt,
   validateDpopBoundGrant,
-} from '@maronn-openid-connect/dpop';
-import type { RegisteredClient } from '../../config';
-import { stores } from '../../provider';
-import type { TokenBinding } from '../../token-binding';
-import { tokenEndpointRejectionOf } from './errors';
-import { verifyDpopRequestProof } from './proof';
+} from './binding';
+import { tokenEndpointRejectionOf } from './error-responses';
+import { readDpopProofHeader, verifyDpopRequestProof } from './proof';
 
 /** What verifyDpopTokenRequest() decided. */
 export interface DpopTokenRequest {

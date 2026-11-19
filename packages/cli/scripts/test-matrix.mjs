@@ -125,7 +125,6 @@ const workspacePaths = {
   '@maronn-openid-connect/experimental/*': [dist('experimental/dist/*/index.d.ts')],
   '@maronn-openid-connect/google-login': [dist('google-login/dist/index.d.ts')],
   '@maronn-openid-connect/google-login/sign-in': [dist('google-login/dist/sign-in.d.ts')],
-  '@maronn-openid-connect/dpop': [dist('dpop/dist/index.d.ts')],
 };
 const compilerOptions = {
   target: 'ES2022',

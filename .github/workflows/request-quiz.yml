@@ -10,7 +10,7 @@ on:
         description: 対象仕様 ID (例 rfc-6749。空なら PR の変更内容だけを出題)
       focus_paths:
         description: 対象ファイル・ディレクトリ (カンマ区切り。ディレクトリは末尾 /)
-        default: apps/hono/,apps/nextjs/,packages/core/,packages/experimental/,packages/google-login/,packages/dpop/,tests/,docs/
+        default: apps/hono/,apps/nextjs/,packages/core/,packages/experimental/,packages/google-login/,tests/,docs/
       question_count:
         description: 作問する人・ツールへの任意のメモとして保存する問題数 (空なら未指定)
       question_categories:

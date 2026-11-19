@@ -8,12 +8,15 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * endpoint takes `Authorization: DPoP <token>` with a proof; /authorize binds
  * the authorization code to dpop_jkt (§10), and PAR to the key of its DPoP
  * header (§10.1). The steps are the blocks of the route.ts files that name
- * this feature, and they call the modules of this directory. See
- * @maronn-openid-connect/dpop.
+ * this feature, and they call the modules of this directory; the checks are
+ * proof.ts, jwk.ts, binding.ts and resource.ts, to be changed here when the
+ * policy changes.
  *
  * This file and config.ts are loaded with the feature list (features.ts),
  * which provider.ts, config.ts and http.ts import, so they import neither
- * provider.ts nor http.ts; the modules the blocks call do.
+ * provider.ts nor http.ts; the modules the blocks call do. The same holds for
+ * the modules config.ts imports (jwk.ts, base64url.ts and errors.ts), which is
+ * why the endpoint responses of a DpopError are in error-responses.ts.
  */
 export const dpop = defineFeature({
   id: 'dpop',

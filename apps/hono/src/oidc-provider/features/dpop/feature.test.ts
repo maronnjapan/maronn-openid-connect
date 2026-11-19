@@ -13,7 +13,7 @@ describe('dpop', () => {
     expect(metadata).toEqual({ dpop_signing_alg_values_supported: ['ES256', 'PS256'] });
   });
 
-  it('should default to every asymmetric alg the package verifies, a proof window of 60 seconds and 60 seconds of skew', () => {
+  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew', () => {
     expect(configOf([dpop])).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,

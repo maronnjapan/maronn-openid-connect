@@ -355,7 +355,7 @@ maronn-oidc explain nextjs token/authenticate-client
 # 関数 1 つ: 役割、呼ぶ関数、--callers で呼び元とそれを使うステップ・エンドポイント・--enable
 maronn-oidc explain fn verifyClientSecret --callers
 
-# 同名の関数が複数の root にあるときは <root>:<name>（root は core / experimental / google-login / dpop / hono / nextjs）
+# 同名の関数が複数の root にあるときは <root>:<name>（root は core / experimental / google-login / hono / nextjs）
 maronn-oidc explain fn hono:issueImplicitTokens
 
 # UI 向けの JSON（地図）
@@ -366,7 +366,7 @@ maronn-oidc explain hono --format json -o map.json
 
 ### 関数カタログ
 
-explain が表示する関数の情報は**関数カタログ**から来る。CLI のビルド（`pnpm run build`）が `packages/core`、`packages/experimental`、`packages/google-login`、`packages/dpop` の `src` と、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` の関数宣言を読み、1 関数 1 枚のカードにして `templates/functions.catalog.json` に焼く（リポジトリの中では生のソースから読む）。カードには、名前と所在（root、ファイル、行）、kind、JSDoc の 1 行目（要約）と残りの本文、`@spec`、`@throws` と本体が `new` するエラー、本体が呼ぶカタログの関数（import を解決した id、最初に呼ぶ順）、呼び元が入る。ステップの meta と同じく、読み方はテキスト解析で、TypeScript のコンパイラも、モジュールの import も使わない。
+explain が表示する関数の情報は**関数カタログ**から来る。CLI のビルド（`pnpm run build`）が `packages/core`、`packages/experimental`、`packages/google-login` の `src` と、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` の関数宣言を読み、1 関数 1 枚のカードにして `templates/functions.catalog.json` に焼く（リポジトリの中では生のソースから読む）。カードには、名前と所在（root、ファイル、行）、kind、JSDoc の 1 行目（要約）と残りの本文、`@spec`、`@throws` と本体が `new` するエラー、本体が呼ぶカタログの関数（import を解決した id、最初に呼ぶ順）、呼び元が入る。ステップの meta と同じく、読み方はテキスト解析で、TypeScript のコンパイラも、モジュールの import も使わない。
 
 カタログは関数の中の処理の流れ（分岐、`return` と `throw`）を読まない。
 地図（`apps/map`）は、ビルド時に非公開のパッケージ `packages/map-analysis` が TypeScript のコンパイラで関数とエンドポイントの処理を木に読み、resolver や store のメソッドの呼び出しをそのインターフェースのメンバーの JSDoc で説明する。
@@ -571,9 +571,9 @@ OpenID Connect のリクエストだけを受け付ける OP に戻すには、`
 
 ### 拡張機能（--enable google-login / dpop）
 
-拡張機能は、OP に足す任意の機能を、それぞれ専用の package で提供するカテゴリで、既定では無効。実装は別 package にあり、有効にしたときだけ import される。
-実験的機能（`@maronn-openid-connect/experimental`。API が不安定で、リリースは常に patch）と違い、API は安定していて、package は通常の semver でリリースする。
-`google-login` はログイン手段を、`dpop` は送信者制約付きのトークン（DPoP）を足す。
+拡張機能は、OP に任意で足す機能のカテゴリで、既定では無効。`--enable` で名前を挙げたときだけ生成する。実験的機能（`@maronn-openid-connect/experimental`）と違い、API が不安定なことを理由に分けたものではない。
+`google-login` はログイン手段を足す。core が意図して持たないもの（上流の ID プロバイダーと、その公式クライアントライブラリ）を取り込むので、実装は専用の package にあり、有効にしたときだけ import される。
+`dpop` は送信者制約付きのトークン（DPoP）を足す。package を持たず、DPoP のコードはすべて生成コードの `features/dpop/`（Next.js は `_oidc-provider/features/dpop/`）に入る。生成した OP の DPoP の検査は、そのディレクトリのファイルを読んでそのまま変えられる。
 
 ```bash
 maronn-oidc generate express --enable google-login
@@ -581,17 +581,35 @@ pnpm add express hono @maronn-openid-connect/core @maronn-openid-connect/google-
 pnpm add -D @types/express
 
 maronn-oidc generate hono --enable dpop
-pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/dpop
+pnpm add hono @maronn-openid-connect/core
 ```
 
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Google Identity Services の redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。ID トークンの検証は Google 公式の `google-auth-library` に委ね、CSRF（`g_csrf_token` の Double Submit Cookie）、nonce による認証トランザクションへの束縛、Google ユーザーの JIT 登録を生成コードが行う（初めてのログインでランダムな ID のユーザーを作り、Google の sub を Federated_identity として記録する。`--db` 無しは `db/` のメモリ、`--db sql` は `federated_identities` テーブル、`--db kv` は `federated_identity:` のキーに入る） | `@maronn-openid-connect/google-login`（Node.js 22 以上限定。Cloudflare Workers などのエッジでは動かない） |
-| `dpop` | 無効 | OAuth 2.0 Demonstrating Proof of Possession（DPoP、RFC 9449）。トークンエンドポイントが `DPoP` ヘッダーの DPoP proof を検査し、アクセストークンをその鍵に束縛する（`token_type` は `DPoP`、アクセストークンと保存するレコードに `cnf.jkt`）。パブリッククライアントのリフレッシュトークンも同じ鍵に束縛する。UserInfo エンドポイントは `Authorization: DPoP <token>` と `ath` 入りの DPoP proof を受け付け、束縛したトークンの Bearer での提示を拒否する。`/authorize` の `dpop_jkt`（PAR では `DPoP` ヘッダーの鍵）は認可コードを鍵に束縛する。イントロスペクションは `cnf` と `token_type` を返し、Discovery は `dpop_signing_alg_values_supported` を広告する | `@maronn-openid-connect/dpop`（Web Crypto だけで動くので、エッジランタイムでも動く。core には依存しない） |
+| `dpop` | 無効 | OAuth 2.0 Demonstrating Proof of Possession（DPoP、RFC 9449）。トークンエンドポイントが `DPoP` ヘッダーの DPoP proof を検査し、アクセストークンをその鍵に束縛する（`token_type` は `DPoP`、アクセストークンと保存するレコードに `cnf.jkt`）。パブリッククライアントのリフレッシュトークンも同じ鍵に束縛する。UserInfo エンドポイントは `Authorization: DPoP <token>` と `ath` 入りの DPoP proof を受け付け、束縛したトークンの Bearer での提示を拒否する。`/authorize` の `dpop_jkt`（PAR では `DPoP` ヘッダーの鍵）は認可コードを鍵に束縛する。イントロスペクションは `cnf` と `token_type` を返し、Discovery は `dpop_signing_alg_values_supported` を広告する | なし。生成コードの `features/dpop/` にすべて入る（Web Crypto だけで動くので、エッジランタイムでも動く） |
 
 有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js では `_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()` が、本リポジトリの Express と Fastify の samples では `src/app.ts` が、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
 
-`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには従来どおり Bearer トークンを発行する。DPoP を使うかはクライアントが DPoP proof を送るかで決まり、`RegisteredClient.dpopBoundAccessTokens: true`（RFC 9449 §5.2 の `dpop_bound_access_tokens`）を登録したクライアントだけは、DPoP proof のないトークンリクエストを `invalid_dpop_proof` で拒否する。`dpopBoundAccessTokens` を保存するのはメモリの `db/` と自前の `clientResolver` で、`--db sql` と `--db kv` のクライアントには保存する場所が無い。受け付ける alg は `ProviderConfig.dpopSigningAlgValuesSupported`（既定は package が検証できるすべての非対称 alg）、DPoP proof の有効期間と時計のずれは `dpopProofMaxAgeSeconds` と `dpopProofLeewaySeconds`（どちらも既定 60 秒）で変えられる。サーバーが発行する nonce（RFC 9449 §8 / §9）には対応していない。詳細は [`@maronn-openid-connect/dpop` の README](../dpop/README.md) を参照。
+`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには従来どおり Bearer トークンを発行する。DPoP を使うかはクライアントが DPoP proof を送るかで決まり、`RegisteredClient.dpopBoundAccessTokens: true`（RFC 9449 §5.2 の `dpop_bound_access_tokens`）を登録したクライアントだけは、DPoP proof のないトークンリクエストを `invalid_dpop_proof` で拒否する。`dpopBoundAccessTokens` を保存するのはメモリの `db/` と自前の `clientResolver` で、`--db sql` と `--db kv` のクライアントには保存する場所が無い。受け付ける alg は `ProviderConfig.dpopSigningAlgValuesSupported`（既定は `features/dpop/jwk.ts` が検証できるすべての非対称 alg）、DPoP proof の有効期間と時計のずれは `dpopProofMaxAgeSeconds` と `dpopProofLeewaySeconds`（どちらも既定 60 秒）で変えられる。サーバーが発行する nonce（RFC 9449 §8 / §9）には対応していない。
+
+設定で変えられない方針（受け付ける alg と鍵の形、`htu` の比べ方、束縛の規則など）は、`features/dpop/` のファイルを直して変える。
+
+| ファイル | 内容 |
+|---|---|
+| `proof.ts` | DPoP proof の検査（RFC 9449 §4.3）。`DPoP` ヘッダーの読み取り、JWS の分解、`alg`、署名、`jti` / `htm` / `htu` / `iat`、`ath` の検査と、`jti` の消費 |
+| `jwk.ts` | `jwk` ヘッダーの公開鍵の検査、署名の検証、JWK Thumbprint（RFC 7638）。検証できる alg（`SUPPORTED_DPOP_SIGNING_ALGS`） |
+| `htu.ts` | `htu` とリクエストの URI を比べる前の正規化（RFC 3986 §6.2.2 / §6.2.3） |
+| `binding.ts` | トークンと認可コードの鍵への束縛（`cnf.jkt`、`dpop_jkt`、`dpop_bound_access_tokens`、パブリッククライアントのリフレッシュトークン） |
+| `resource.ts` | UserInfo エンドポイントの `Authorization: DPoP` の読み取り、束縛の検査、`WWW-Authenticate: DPoP` のチャレンジ |
+| `base64url.ts` | JWS と JWK Thumbprint が使う base64url |
+| `errors.ts` | 検査の失敗（`DpopError`） |
+| `error-responses.ts` | `DpopError` から作るエンドポイントごとのエラーレスポンス |
+| `config.ts` | `ProviderConfig` と `RegisteredClient` に足す設定と既定値 |
+| `feature.ts` | 機能の登録（Discovery の `dpop_signing_alg_values_supported`、CORS の `DPoP` と `WWW-Authenticate`） |
+| `steps/`（Next.js は `token.ts`、`userinfo.ts`、`authorize.ts`、`par.ts`） | トークン、UserInfo、認可、PAR の各エンドポイントで、上のファイルの検査を呼ぶステップ |
+
+詳細は [DPoP（拡張）のガイド](../../docs/library-document/src/content/docs/guides/dpop.md) を参照。
 
 ## カスタムスコープ（--scope）
 

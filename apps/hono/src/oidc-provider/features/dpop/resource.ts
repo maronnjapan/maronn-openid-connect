@@ -68,7 +68,7 @@ export function validateDpopAccessTokenBinding(boundJkt: string | undefined, pro
  * `WWW-Authenticate` ヘッダーの DPoP のチャレンジを返す。
  *
  * `algs` に受け付ける alg を並べ、エラーがあれば `error` と `error_description` を付ける。
- * 値はこのパッケージが決めた固定の文言と alg の名前だけなので、引用符を含まない。
+ * 値はこのディレクトリの検査が決めた固定の文言と alg の名前だけなので、引用符を含まない。
  *
  * @spec RFC 9449 §7.1
  * @spec RFC 6750 §3

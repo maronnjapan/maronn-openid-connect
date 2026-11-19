@@ -1,9 +1,10 @@
-import { DpopError, readDpopAuthorization, readDpopProofHeader } from '@maronn-openid-connect/dpop';
 import type { UserInfoChallenge } from '../../../endpoints/userinfo/response.js';
 import { step } from '../../../endpoints/step.js';
 import { dpopSigningAlgsOf } from '../config.js';
-import { userInfoEndpointErrorOf } from '../errors.js';
-import { verifyDpopRequestProof } from '../proof.js';
+import { userInfoEndpointErrorOf } from '../error-responses.js';
+import { DpopError } from '../errors.js';
+import { readDpopProofHeader, verifyDpopRequestProof } from '../proof.js';
+import { readDpopAuthorization } from '../resource.js';
 
 export const meta = step({
   id: 'read-dpop-access-token',

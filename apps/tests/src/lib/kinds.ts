@@ -234,7 +234,7 @@ export interface UnitPackage {
 }
 
 /** The packages in the order of the files page: the provider's core first, then its features and the apps. */
-const PACKAGE_ORDER = ['core', 'experimental', 'google-login', 'dpop', 'hono', 'nextjs'];
+const PACKAGE_ORDER = ['core', 'experimental', 'google-login', 'hono', 'nextjs'];
 
 function packageRank(name: string): number {
   const index = PACKAGE_ORDER.indexOf(name);

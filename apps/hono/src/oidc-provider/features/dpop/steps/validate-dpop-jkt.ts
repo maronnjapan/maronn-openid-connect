@@ -4,8 +4,9 @@ import {
   type AuthorizationRequestParams,
   type ValidatedAuthorizationRequest,
 } from '@maronn-openid-connect/core';
-import { buildDpopConfirmation, isDpopError, parseDpopJkt } from '@maronn-openid-connect/dpop';
 import { step } from '../../../endpoints/step.js';
+import { buildDpopConfirmation, parseDpopJkt } from '../binding.js';
+import { isDpopError } from '../errors.js';
 
 export const meta = step({
   id: 'validate-dpop-jkt',

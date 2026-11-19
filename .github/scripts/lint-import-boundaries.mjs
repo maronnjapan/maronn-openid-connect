@@ -8,9 +8,9 @@
  * the disabled features from the pipelines. That only yields code that
  * compiles when the files keep to these rules:
  *
- *   - the base imports no feature directory, and none of the experimental,
- *     google-login and dpop packages; it reaches the features through the
- *     hooks of features/feature.ts and the list of features/enabled.ts
+ *   - the base imports no feature directory, and neither the experimental nor
+ *     the google-login package; it reaches the features through the hooks of
+ *     features/feature.ts and the list of features/enabled.ts
  *   - the base imports the database through db/index.ts, never one db kind
  *   - a db kind imports no feature and no other db kind
  *   - features/<a>/ imports features/<b>/ only when the registry entry of a
@@ -41,11 +41,7 @@ export const EXTRACTION_ROOTS = [
 ];
 
 const REGISTRY_PATH = 'packages/cli/src/registry.ts';
-const RESTRICTED_PACKAGES = [
-  '@maronn-openid-connect/experimental',
-  '@maronn-openid-connect/google-login',
-  '@maronn-openid-connect/dpop',
-];
+const RESTRICTED_PACKAGES = ['@maronn-openid-connect/experimental', '@maronn-openid-connect/google-login'];
 /** The frameworks a pipeline may import (its app, its request types). */
 const FRAMEWORK_PACKAGES = ['hono', 'next', 'next/server', 'next/headers', 'next/navigation'];
 

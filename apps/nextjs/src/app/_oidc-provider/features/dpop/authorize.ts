@@ -12,7 +12,8 @@ import {
   AuthorizationErrorCode,
   type AuthorizationRequestParams,
 } from '@maronn-openid-connect/core';
-import { buildDpopConfirmation, isDpopError, parseDpopJkt } from '@maronn-openid-connect/dpop';
+import { buildDpopConfirmation, parseDpopJkt } from './binding';
+import { isDpopError } from './errors';
 
 /**
  * 認可リクエストの `dpop_jkt` を確かめ、認可コードを束縛する鍵の確認（`cnf`）を返す。

@@ -182,12 +182,6 @@ describe('lintSource', () => {
       assert.deepEqual(rulesOf(lint('views.tsx', source)), ['base-imports-experimental']);
     });
 
-    it('should reject a base file that imports the dpop package', () => {
-      const source = "import { computeJwkThumbprint } from '@maronn-openid-connect/dpop';\n";
-
-      assert.deepEqual(rulesOf(lint('token-binding.ts', source)), ['base-imports-experimental']);
-    });
-
     it('should reject a base file that imports one db kind instead of db/index', () => {
       const source = "import { createDatabase } from './db/memory/index.js';\n";
 

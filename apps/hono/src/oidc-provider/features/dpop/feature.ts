@@ -8,7 +8,8 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * endpoint takes `Authorization: DPoP <token>` with a proof; /authorize binds
  * the authorization code to dpop_jkt (§10), and PAR to the key of its DPoP
  * header (§10.1). The steps are the blocks of the pipelines that name this
- * feature. See @maronn-openid-connect/dpop.
+ * feature; the checks they call are the modules of this directory (proof.ts,
+ * jwk.ts, binding.ts, resource.ts), to be changed here when the policy changes.
  */
 export const dpop = defineFeature({
   id: 'dpop',

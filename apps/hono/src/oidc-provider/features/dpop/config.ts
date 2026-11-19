@@ -1,10 +1,9 @@
 /**
  * EXTENSION (dpop): the settings of OAuth 2.0 Demonstrating Proof of
- * Possession (RFC 9449) and the client metadata it reads. See
- * @maronn-openid-connect/dpop.
+ * Possession (RFC 9449) and the client metadata it reads.
  */
-import { SUPPORTED_DPOP_SIGNING_ALGS } from '@maronn-openid-connect/dpop';
 import type { ProviderConfig } from '../../config.js';
+import { SUPPORTED_DPOP_SIGNING_ALGS } from './jwk.js';
 
 declare module '../../config.js' {
   interface ProviderConfig {
@@ -12,8 +11,8 @@ declare module '../../config.js' {
      * EXTENSION (dpop): the JWS algorithms the OP accepts for DPoP proofs,
      * advertised as dpop_signing_alg_values_supported (RFC 9449 §5.1) and in
      * the algs of the DPoP challenge of the UserInfo endpoint (§7.1).
-     * Asymmetric algorithms only; an alg @maronn-openid-connect/dpop does not
-     * verify is never accepted, even when listed.
+     * Asymmetric algorithms only; an alg the checks of features/dpop/ do not
+     * verify (SUPPORTED_DPOP_SIGNING_ALGS) is never accepted, even when listed.
      */
     dpopSigningAlgValuesSupported?: readonly string[];
     /** EXTENSION (dpop): seconds after its iat a DPoP proof is still accepted (RFC 9449 §11.1). */
@@ -43,7 +42,7 @@ export const dpopConfigDefaults: Partial<ProviderConfig> = {
 /**
  * OP が DPoP proof に受け付ける alg を返す。
  *
- * 設定の `dpopSigningAlgValuesSupported` を返し、設定がなければ `@maronn-openid-connect/dpop` が検証できるすべての alg を返す。
+ * 設定の `dpopSigningAlgValuesSupported` を返し、設定がなければこのディレクトリの検査が検証できるすべての alg（`SUPPORTED_DPOP_SIGNING_ALGS`）を返す。
  *
  * @spec RFC 9449 §5.1
  */

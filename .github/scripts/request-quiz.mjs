@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 export const quizRepository = 'maronnjapan/readRFCInMobile';
 export const quizWorkflow = 'quiz-authoring.yml';
 const categories = ['vocabulary', 'knowledge', 'flow', 'design', 'debugging', 'comparison', 'implementation'];
-const defaultFocusPaths = 'apps/hono/,apps/nextjs/,packages/core/,packages/experimental/,packages/google-login/,packages/dpop/,tests/,docs/';
+const defaultFocusPaths = 'apps/hono/,apps/nextjs/,packages/core/,packages/experimental/,packages/google-login/,tests/,docs/';
 
 /** Send PR information for material preparation; authoring is a separate operation. */
 export function quizRequest({ prNumber, specId = '', focusPaths = defaultFocusPaths, questionCount = '', questionCategories = categories.join(',') }) {

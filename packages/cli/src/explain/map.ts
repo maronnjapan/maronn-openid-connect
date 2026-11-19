@@ -190,7 +190,7 @@ export function functionOf(catalog: FunctionCatalog, name: string): FunctionCard
   const found = findFunctions(catalog, name);
   if (found.length === 1) return found[0] as FunctionCard;
   if (found.length === 0) {
-    throw new Error(`Unknown function "${name}". Name an exported function of core, experimental, google-login, dpop or of the apps (fn <name>, fn <root>:<name>)`);
+    throw new Error(`Unknown function "${name}". Name an exported function of core, experimental, google-login or of the apps (fn <name>, fn <root>:<name>)`);
   }
   throw new Error(
     `"${name}" names ${found.length} functions: ${found.map((card) => card.id).join(', ')}. Name one with fn <root>:<name> or its id`,

@@ -184,7 +184,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `requestUriTimeoutMs` / `requestUriMaxBytes` / `requestUriMaxLength` | `3000` / `65536` / `512` | `request_uri` の取得のタイムアウト（ミリ秒）、Request Object の上限（バイト）、`request_uri` の長さの上限（文字。request-object 機能） |
 | `allowInsecureClientDisplayUris` | `false` | ログイン・同意画面に http の `logo_uri` などを入れる（開発用） |
 | `requireClientDisplayUriHostMatch` | `false` | `logo_uri` と `policy_uri` を、`redirect_uris` のホストと同じときだけ画面に入れる |
-| `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg（dpop 機能）。discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。非対称の alg だけで、`@maronn-openid-connect/dpop` が検証できない alg は挙げても受け付けない |
+| `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg（dpop 機能）。discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。非対称の alg だけで、生成コードの `features/dpop/jwk.ts` の `SUPPORTED_DPOP_SIGNING_ALGS` に無い alg は挙げても受け付けない |
 | `dpopProofMaxAgeSeconds` | `60` | DPoP proof を `iat` から何秒まで受け付けるか（dpop 機能。RFC 9449 §11.1）。時計のずれの `dpopProofLeewaySeconds` は別に足すので、既定では `iat` から 120 秒まで受け付ける |
 | `dpopProofLeewaySeconds` | `60` | DPoP proof の `iat` に許す時計のずれ（秒。dpop 機能） |
 
@@ -194,12 +194,12 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credenti
 
 ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`__Host-oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します。`POST /login`・`POST /consent` は、ブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたことも確かめます（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 
-さらに、**拡張機能**があります。OP に足す任意の機能を、それぞれ専用の package で提供するもので、既定では無効です（`--enable` で有効にします）。Experimental（API が不安定で、リリースは常に patch）とは別カテゴリで、API は安定していて、package は通常の semver でリリースします。
+さらに、**拡張機能**があります。OP に任意で足す機能で、既定では無効です（`--enable` で有効にします）。API が不安定なことを理由に分けた Experimental とは別カテゴリです。`google-login` は上流の ID プロバイダーとその公式クライアントライブラリを取り込むので別 package に、`dpop` は package を持たず、コードがすべて生成コードの `features/dpop/` にあります。
 
 | 機能名 | 内容 | 実装 |
 |---|---|---|
 | `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | DPoP（RFC 9449）でアクセストークンをクライアントの鍵に束縛する。トークンエンドポイントが DPoP proof を検査して `token_type: DPoP` のトークンを発行し、UserInfo エンドポイントが `Authorization: DPoP` を受け付け、`dpop_jkt` と PAR の `DPoP` ヘッダーが認可コードを鍵に束縛する。詳細は [DPoP（拡張）](../../guides/dpop/) | `@maronn-openid-connect/dpop`（Web Crypto だけで動き、エッジランタイムでも動く） |
+| `dpop` | DPoP（RFC 9449）でアクセストークンをクライアントの鍵に束縛する。トークンエンドポイントが DPoP proof を検査して `token_type: DPoP` のトークンを発行し、UserInfo エンドポイントが `Authorization: DPoP` を受け付け、`dpop_jkt` と PAR の `DPoP` ヘッダーが認可コードを鍵に束縛する。詳細は [DPoP（拡張）](../../guides/dpop/) | 生成コードの `features/dpop/`（package なし。Web Crypto だけで動き、エッジランタイムでも動く） |
 
 ## Custom Scopes
 

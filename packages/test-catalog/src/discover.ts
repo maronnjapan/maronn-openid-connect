@@ -2,8 +2,8 @@
  * The test files of the repository and the root each belongs to.
  *
  * - The tests of the roots of the function catalog (packages/core,
- *   packages/experimental, packages/google-login, packages/dpop,
- *   apps/hono/src, apps/nextjs/src) belong to that root, whether or not the CLI extracts the
+ *   packages/experimental, packages/google-login, apps/hono/src,
+ *   apps/nextjs/src) belong to that root, whether or not the CLI extracts the
  *   directory they are in: a test of apps/hono/src/app.ts is a test of hono.
  * - tests/e2e/specs belongs to e2e, and the feature files of tests/features
  *   to features.

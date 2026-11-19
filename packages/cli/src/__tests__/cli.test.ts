@@ -262,8 +262,8 @@ describe('run', () => {
     process.exitCode = undefined;
   });
 
-  // An extension feature names its own package in the steps of setup.
-  it('should tell setup to install the DPoP extension when dpop is enabled', () => {
+  // All the code of dpop is generated into features/dpop/: setup has no package to install for it.
+  it('should print no install step in setup when only dpop is enabled', () => {
     const outputDir = join(testDir, 'oidc-provider');
     const srcDir = join(testDir, 'src');
     const entryFile = join(srcDir, 'index.ts');
@@ -275,23 +275,7 @@ describe('run', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     run(['setup', 'hono', '-o', outputDir, '-e', entryFile, '--enable', 'dpop']);
     const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(output).toContain('Install the DPoP extension: pnpm add @maronn-openid-connect/dpop\n');
-    vi.restoreAllMocks();
-  });
-
-  it('should not tell setup to install the Google login extension when only dpop is enabled', () => {
-    const outputDir = join(testDir, 'oidc-provider');
-    const srcDir = join(testDir, 'src');
-    const entryFile = join(srcDir, 'index.ts');
-    mkdirSync(srcDir, { recursive: true });
-    writeFileSync(
-      entryFile,
-      "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\n",
-    );
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    run(['setup', 'hono', '-o', outputDir, '-e', entryFile, '--enable', 'dpop']);
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(output).not.toContain('Google login');
+    expect([output.includes('Start the server'), output.includes('pnpm add')]).toEqual([true, false]);
     vi.restoreAllMocks();
   });
 
@@ -523,9 +507,16 @@ describe('run', () => {
       );
     });
 
-    it('should add the package of dpop to the install guidance', () => {
+    // The generated dpop feature imports nothing beside core.
+    it('should add no package to the install guidance for dpop', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop'])).toContain(
-        'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/dpop\n',
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core\n',
+      );
+    });
+
+    it('should tell that the DPoP checks are generated into features/dpop/', () => {
+      expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
+        'dpop: every DPoP check is generated into features/dpop/ (no package to install), so change the policy there.',
       );
     });
 
@@ -543,7 +534,7 @@ describe('run', () => {
 
     it('should print the guidance of each enabled extension', () => {
       const output = guidanceOf(['hono', '--enable', 'google-login', '--enable', 'dpop']);
-      expect([output.includes('config.googleLogin.clientId'), output.includes('dpop: the generated code imports')]).toEqual([
+      expect([output.includes('config.googleLogin.clientId'), output.includes('dpop: every DPoP check is generated')]).toEqual([
         true,
         true,
       ]);
@@ -598,7 +589,14 @@ describe('run', () => {
     }
 
     it('should describe the dpop extension and how to enable it', () => {
-      expect(helpText()).toContain('dpop (@maronn-openid-connect/dpop): OAuth 2.0 DPoP (RFC 9449).');
+      expect(helpText()).toContain('  dpop: OAuth 2.0 DPoP (RFC 9449).');
+    });
+
+    // dpop has no package of its own: the help points at the generated code instead.
+    it('should say that the dpop checks are generated into features/dpop/ with no package beside core', () => {
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'Every check is generated into features/dpop/ with no package beside core, so change the policy there.',
+      );
     });
 
     it('should list dpop among the extension features', () => {

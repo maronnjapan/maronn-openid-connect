@@ -5,16 +5,13 @@
  */
 import type { FeatureRange } from './model.js';
 
-/** The sources of the extension packages, each the implementation of the feature of its name. */
-const EXTENSION_PACKAGE_SOURCE = /(?:^|\/)packages\/(google-login|dpop)\/src\//;
-
 /** The registered feature that owns a provider file or a dedicated library directory. */
 export function featureOfPath(path: string, features: readonly { id: string }[]): string | undefined {
   const normalized = path.replaceAll('\\', '/');
   const id = /(?:^|\/)features\/([^/]+)\//.exec(normalized)?.[1]
     ?? /(?:^|\/)app\/\(([^/]+)\)\//.exec(normalized)?.[1]
     ?? /(?:^|\/)packages\/(?:core|experimental)\/src\/([^/]+)\//.exec(normalized)?.[1]
-    ?? EXTENSION_PACKAGE_SOURCE.exec(normalized)?.[1];
+    ?? (/(?:^|\/)packages\/google-login\/src\//.test(normalized) ? 'google-login' : undefined);
   return features.find((feature) => feature.id === id)?.id;
 }
 

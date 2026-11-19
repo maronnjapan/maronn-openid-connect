@@ -8,12 +8,14 @@
  * challenge, which the [respond-error] block answers with as it is.
  */
 import type { AccessTokenInfo } from '@maronn-openid-connect/core';
-import { DpopError, readDpopAuthorization, readDpopJkt, readDpopProofHeader, validateDpopAccessTokenBinding } from '@maronn-openid-connect/dpop';
 import type { UserInfoChallenge } from '../../../userinfo/response';
 import { config } from '../../provider';
+import { readDpopJkt } from './binding';
 import { dpopSigningAlgsOf } from './config';
-import { userInfoEndpointErrorOf } from './errors';
-import { verifyDpopRequestProof } from './proof';
+import { userInfoEndpointErrorOf } from './error-responses';
+import { DpopError } from './errors';
+import { readDpopProofHeader, verifyDpopRequestProof } from './proof';
+import { readDpopAuthorization, validateDpopAccessTokenBinding } from './resource';
 
 /** What readDpopUserInfoRequest() read: all undefined when the token is not presented with the DPoP scheme. */
 export interface DpopUserInfoRequest {

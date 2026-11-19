@@ -1,6 +1,7 @@
-import { isDpopError, parseDpopJkt, readDpopProofHeader, resolvePushedDpopJkt } from '@maronn-openid-connect/dpop';
 import { step } from '../../../endpoints/step.js';
-import { verifyDpopRequestProof } from '../proof.js';
+import { parseDpopJkt, resolvePushedDpopJkt } from '../binding.js';
+import { isDpopError } from '../errors.js';
+import { readDpopProofHeader, verifyDpopRequestProof } from '../proof.js';
 
 export const meta = step({
   id: 'bind-pushed-dpop-key',

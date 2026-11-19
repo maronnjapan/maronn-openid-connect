@@ -35,6 +35,9 @@ export interface Camera {
 /** The smallest scale a diagram opens at: box titles, drawn at 12.5px, read 11px. */
 export const LEGIBLE_SCALE = 11 / 12.5;
 
+/** The largest scale a diagram opens at when it is the stage of the page (the flow view): a narrow layout fills more of a wide area, its titles still short of a heading. */
+export const STAGE_SCALE = 1.4;
+
 /** The room kept between the view's edges and the layout's, in screen pixels. */
 const MARGIN = 12;
 
@@ -49,8 +52,9 @@ function thirdDown(view: Size, box: Rect, scale: number): number {
 }
 
 /**
- * The view a diagram opens at. It fits the layout's width, never above 100%,
- * unless titles would then read under 11px: it opens at LEGIBLE_SCALE
+ * The view a diagram opens at. It fits the layout's width, never above 100%
+ * (`most`, which a stage raises), unless titles would then read under 11px:
+ * it opens at LEGIBLE_SCALE
  * instead. A layout that fits across at that scale is centred. A wider one is
  * centred on the anchor, the box to show first (the selected box, else the
  * start box), but never so far that more than the margin shows beside the
@@ -59,8 +63,8 @@ function thirdDown(view: Size, box: Rect, scale: number): number {
  * the anchor's top then sits one third of the way down, and the layout's top
  * is never lower than the margin.
  */
-export function openingCamera(view: Size, layout: Size, anchor?: Rect): Camera {
-  const fit = layout.width > 0 ? Math.min(1, (view.width - 2 * MARGIN) / layout.width) : 1;
+export function openingCamera(view: Size, layout: Size, anchor?: Rect, most = 1): Camera {
+  const fit = layout.width > 0 ? Math.min(most, (view.width - 2 * MARGIN) / layout.width) : 1;
   const scale = Math.max(LEGIBLE_SCALE, fit);
   const width = layout.width * scale;
   const x = anchor === undefined || width <= view.width

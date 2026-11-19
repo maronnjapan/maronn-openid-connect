@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import type { DiffHunk, MapData, Selection, StepMark, TreeNode } from '../types';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import type { DiffHunk, FrameChange, MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
-import { activeOf, frameDiagram, markOfBox, type DiagramGroup, type DiagramNode } from '../lib/diagram';
+import { activeOf, boxOf, frameDiagram, markOfBox, type Diagram, type DiagramGroup, type DiagramNode } from '../lib/diagram';
+import { callsToEnter, sceneDuration, scenesOf, walkTrace, withoutDeepest, type Scene } from '../lib/playback';
 import {
   changedIdsOf,
   childFrame,
@@ -23,9 +24,11 @@ import {
   type TraceState,
 } from '../lib/trace';
 import { locationOf } from '../lib/model';
+import { nodeWords } from '../lib/words';
 import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
-import { FlowDiagram } from './FlowDiagram';
+import { FlowDiagram, type Playing } from './FlowDiagram';
+import { FlowPlayer, usePlayback, type StepFacts } from './FlowPlayer';
 import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
 import { SelectionBar } from './SelectionBar';
@@ -57,6 +60,8 @@ export interface TraceProps {
   step?: string | null;
   /** A node a link names, keyed like a decision (`<frame>.<node>`, the root's by the node alone): selected and shown once its frame loads. */
   target?: string | null;
+  /** The facts of a step of the root frame (an endpoint's), for the scene of the flow view that runs it. */
+  stepFacts?: (step: string) => StepFacts | undefined;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -144,7 +149,7 @@ interface PathDiff {
  * always speaks of a frame the outline shows. A narrow screen shows the
  * outline alone and opens the others over it.
  */
-export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null }: TraceProps) {
+export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null, stepFacts }: TraceProps) {
   const { mobile } = useMobileMenu();
   const source = sourceOf(framework);
   const tabsId = useId();
@@ -223,9 +228,56 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
       return { id, name: rootedName(data, id), hunks: within.length === 0 ? all : within, loading: tree === undefined && frames.failed.get(id) === undefined };
     });
 
-  // The frame in focus for the diagram: the one the trace asks for (the frame of the row selected last, a call opened from
+  // How the diagram of a frame folds, by the outline's rules (see lib/trace.ts): a step open when it holds a change, an opened frame or a choice, flipped by the reader;
+  // a step of one call drawn as that call; a guard on one line unless its true side calls a function with a frame.
+  const diagramOptions = useCallback(
+    (key: string, change: FrameChange | undefined) => {
+      const changedIds = changedIdsOf(change);
+      return {
+        changed: (id: string) => change?.marks[id] !== undefined,
+        hasFrame,
+        words: data,
+        toggled: new Set([...toggled].filter((item) => item.startsWith(`${key}|`)).map((item) => item.slice(key.length + 1))),
+        stepOpen: (node: TreeNode) => toggled.has(`${key}|${node.id}`) !== stepHolds(key, node, state, changedIds),
+        stepCall: (node: TreeNode) => stepCall(node, enabled, hasFrame),
+        foldsGuard: (node: TreeNode) => foldsGuard(node, enabled, hasFrame, (id: string) => changedIds.includes(id)),
+      };
+    },
+    [hasFrame, data, toggled, state, enabled],
+  );
+
+  // The flow view: one request walked through the frames the trace has open (lib/playback.ts), a scene a box of the diagram of its frame.
+  const flowOn = state.flow === true;
+  const [maximized, setMaximized] = useState(false);
+  const walked = useMemo(
+    () => (flowOn && root !== undefined ? walkTrace(root, state.choices[0] ?? {}, { open: state.open, trees: frames.trees, enabled }) : undefined),
+    [flowOn, root, state.choices, state.open, frames.trees, enabled],
+  );
+  const flowDiagrams = useMemo(() => {
+    const byFrame = new Map<string, Diagram>();
+    for (const stop of walked?.stops ?? []) {
+      if (byFrame.has(stop.frame)) continue;
+      const tree = frames.trees.get(stop.tree);
+      if (tree !== undefined) byFrame.set(stop.frame, frameDiagram(tree, stop.frame, enabled, diagramOptions(stop.frame, frames.changes.get(stop.tree))));
+    }
+    return byFrame;
+  }, [walked, frames.trees, frames.changes, enabled, diagramOptions]);
+  const scenes = useMemo(
+    () =>
+      walked === undefined
+        ? []
+        : scenesOf(walked, (stop) => {
+            const shown = flowDiagrams.get(stop.frame);
+            return shown === undefined ? undefined : boxOf(shown, stop.node.id)?.id;
+          }),
+    [walked, flowDiagrams],
+  );
+  const playback = usePlayback(scenes);
+  const scene: Scene | undefined = flowOn ? scenes[playback.at] : undefined;
+
+  // The frame in focus for the diagram: in the flow view, the frame of the scene shown; else the one the trace asks for (the frame of the row selected last, a call opened from
   // the diagram, the end of a ready-made choice) when the outline shows it, else the nearest frame above it that the outline shows.
-  const focusKey = known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order);
+  const focusKey = scene !== undefined && known.has(scene.frame) ? scene.frame : known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order);
   // Once every frame has loaded, a frame the outline no longer shows (a feature turned off took its call out) gives the focus to the frame above it, in the hash too.
   useEffect(() => {
     if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey });
@@ -233,23 +285,10 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const focusId = known.get(focusKey) ?? rootId;
   const focusTree = frames.trees.get(focusId);
   const focusChange = frames.changes.get(focusId);
-  const focusChangedIds = useMemo(() => changedIdsOf(focusChange), [focusChange]);
-  const diagram = useMemo(() => {
-    if (focusTree === undefined) return undefined;
-    // The diagram folds by the outline's rules (see lib/trace.ts): a step open when it holds a change, an opened frame or a choice, flipped by the reader;
-    // a step of one call drawn as that call; a guard on one line unless its true side calls a function with a frame.
-    const options = {
-      changed: (id: string) => focusChange?.marks[id] !== undefined,
-      hasFrame,
-      words: data,
-      toggled: new Set([...toggled].filter((key) => key.startsWith(`${focusKey}|`)).map((key) => key.slice(focusKey.length + 1))),
-      stepOpen: (node: TreeNode) => toggled.has(`${focusKey}|${node.id}`) !== stepHolds(focusKey, node, state, focusChangedIds),
-      stepCall: (node: TreeNode) => stepCall(node, enabled, hasFrame),
-      foldsGuard: (node: TreeNode) => foldsGuard(node, enabled, hasFrame, (id) => focusChangedIds.includes(id)),
-    };
-    return frameDiagram(focusTree, focusKey, enabled, options);
-  }, [focusTree, focusKey, enabled, focusChange, data, toggled, hasFrame, state, focusChangedIds]);
-  const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, state.choices, enabled)), [diagram, focusTree, focusKey, state.choices, enabled]);
+  const diagram = useMemo(() => (focusTree === undefined ? undefined : frameDiagram(focusTree, focusKey, enabled, diagramOptions(focusKey, focusChange))), [focusTree, focusKey, enabled, focusChange, diagramOptions]);
+  // The flow view colors the way the request takes, the sides it assumed included; the outline's diagram colors the union of the choices.
+  const coloredBy = useMemo(() => (walked === undefined ? state.choices : [walked.resolved]), [walked, state.choices]);
+  const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, coloredBy, enabled)), [diagram, focusTree, focusKey, coloredBy, enabled]);
   const marks = useMemo(() => {
     const byBox = new Map<string, Mark>();
     for (const box of [...(diagram?.nodes ?? []), ...(diagram?.groups ?? [])]) {
@@ -382,6 +421,13 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const more = useRef<HTMLDetailsElement>(null);
   const goTo = (key: string) => {
     if (more.current !== null) more.current.open = false;
+    if (scene !== undefined) {
+      // The flow view shows the frame of its scene: going up to a frame goes back to the last scene the request was in it.
+      const back = [...scenes].reverse().find((item) => item.index <= scene.index && item.frame === key);
+      playback.play(false);
+      if (back !== undefined) playback.go(back.index);
+      return;
+    }
     onState({ ...state, focus: key });
   };
   const crumb = (item: { key: string; label: string }, index: number, last: boolean) => (
@@ -402,6 +448,36 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
       )}
     </span>
   );
+
+  // The crumbs as they are drawn: all of them, or the root, `…` for the frames between, and the last ones.
+  const crumbTrail =
+    folded.length === 0 ? (
+      crumbs.map((item, index) => crumb(item, index, index === crumbs.length - 1))
+    ) : (
+      <>
+        {crumb(crumbs[0] as { key: string; label: string }, 0, false)}
+        <span className="crumb crumb-folded">
+          <span className="crumb-sep" aria-hidden="true">
+            ›
+          </span>
+          <details className="crumb-more" ref={more}>
+            <summary title={folded.map((item) => item.label).join(' › ')} aria-label={`間のフレーム ${folded.length} 個: ${folded.map((item) => item.label).join('、')}`}>
+              …
+            </summary>
+            <ul className="crumb-menu">
+              {folded.map((item) => (
+                <li key={item.key}>
+                  <button type="button" className="link" onClick={() => goTo(item.key)}>
+                    {item.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </span>
+        {crumbs.slice(1 + folded.length).map((item, index, rest) => crumb(item, 1 + folded.length + index, index === rest.length - 1))}
+      </>
+    );
 
   // The diff of the frame the diagram shows and of the frames the outline shows below it, in the order the trace runs them,
   // with the parts of the changed frames the calls of members lead to at the row of each call.
@@ -575,33 +651,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
         diagram !== undefined && active !== undefined ? (
           <div className="pane-diagram">
             <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
-              {folded.length === 0 ? (
-                crumbs.map((item, index) => crumb(item, index, index === crumbs.length - 1))
-              ) : (
-                <>
-                  {crumb(crumbs[0] as { key: string; label: string }, 0, false)}
-                  <span className="crumb crumb-folded">
-                    <span className="crumb-sep" aria-hidden="true">
-                      ›
-                    </span>
-                    <details className="crumb-more" ref={more}>
-                      <summary title={folded.map((item) => item.label).join(' › ')} aria-label={`間のフレーム ${folded.length} 個: ${folded.map((item) => item.label).join('、')}`}>
-                        …
-                      </summary>
-                      <ul className="crumb-menu">
-                        {folded.map((item) => (
-                          <li key={item.key}>
-                            <button type="button" className="link" onClick={() => goTo(item.key)}>
-                              {item.label}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  </span>
-                  {crumbs.slice(1 + folded.length).map((item, index, rest) => crumb(item, 1 + folded.length + index, index === rest.length - 1))}
-                </>
-              )}
+              {crumbTrail}
               {crumbs.length <= 2 ? <span className="note crumb-hint">青が選んだ道筋。箱に重ねる（タップする）と詳しく見られ、そこから中へ潜れます。</span> : null}
             </nav>
             <FlowDiagram
@@ -690,6 +740,124 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     </div>
   );
 
+  // ---- the flow view
+
+  // The ways the flow view offers: those whose way starts at a node the features that are on leave in the root frame.
+  const flowSelections = useMemo(() => {
+    if (root === undefined) return selections;
+    const on = new Set(nodesBelow(root.nodes, enabled).map((node) => node.id));
+    return selections.filter((selection) => on.has(selection.target.split('.')[0] ?? ''));
+  }, [selections, root, enabled]);
+  // Where the playback is on the diagram of the frame shown: the box of the scene, the boxes the request has been through in this frame, and the box it came from.
+  const play = useMemo((): Playing | undefined => {
+    if (scene === undefined) return undefined;
+    const visited = new Set<string>();
+    for (const item of scenes) {
+      if (item.index > scene.index) break;
+      if (item.frame === scene.frame && item.shape !== undefined) visited.add(item.shape);
+    }
+    const before = playback.from === undefined ? undefined : scenes[playback.from];
+    return { at: scene.shape, from: before !== undefined && before.frame === scene.frame ? before.shape : undefined, visited, tone: scene.tone, key: scene.index, duration: sceneDuration(playback.speed) * 0.6 };
+  }, [scene, scenes, playback.from, playback.speed]);
+  /** The words a scene is named by: those of the box that shows it (the label of a catch for a region), else those of its node. */
+  const sceneTitle = (item: Scene): { text: string; code: boolean } => {
+    const shown = flowDiagrams.get(item.frame);
+    const box = item.shape === undefined ? undefined : shown?.nodes.find((candidate) => candidate.id === item.shape);
+    if (box !== undefined) return { text: box.title.replace(/^[▸▾] /, ''), code: box.titleCode };
+    const group = item.shape === undefined ? undefined : shown?.groups.find((candidate) => candidate.id === item.shape);
+    if (group !== undefined) return { text: group.rows[0]?.full ?? '例外が起きたとき', code: false };
+    const said = nodeWords(item.node, data);
+    return { text: said.text, code: said.code };
+  };
+  // The calls on the way the playback could still go into: those of functions with a frame that the trace has not opened.
+  const enterable = useMemo(() => (walked === undefined ? [] : callsToEnter(walked, hasFrame).filter((key) => !state.open.includes(key))), [walked, hasFrame, state.open]);
+  // Escape gives the page back from a flow view that fills the screen.
+  useEffect(() => {
+    if (!maximized || !flowOn) return undefined;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setMaximized(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [maximized, flowOn]);
+  /** Leave the flow view for the outline, selecting the row of a scene when one is given. */
+  const leaveFlow = (item?: Scene) => {
+    setMaximized(false);
+    playback.play(false);
+    onState({ ...state, flow: false });
+    if (item !== undefined) select({ frame: item.frame, node: item.node, frameId: item.tree, from: 'diagram' });
+  };
+
+  if (flowOn) {
+    return (
+      <div className={`trace-area flow-area${maximized ? ' maximized' : ''}`}>
+        <div className="work flow-work">
+          {root === undefined || walked === undefined ? (
+            <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
+          ) : (
+            <FlowPlayer
+              data={data}
+              selections={flowSelections}
+              state={state}
+              onState={onState}
+              enabled={enabled}
+              walked={walked}
+              scenes={scenes}
+              playback={playback}
+              titleOf={sceneTitle}
+              stepFacts={stepFacts}
+              hasFrame={hasFrame}
+              loading={loading}
+              deeper={enterable.length}
+              canFold={state.open.length > 0}
+              onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}
+              onFold={() => onState({ ...state, open: withoutDeepest(state.open) })}
+              onEnter={(key) => onState({ ...state, open: [...new Set([...state.open, key])] })}
+              onLeave={(key) => onState({ ...state, open: state.open.filter((candidate) => !withinFrame(candidate, key)) })}
+              onOpenCode={onOpenCode}
+              onOutline={leaveFlow}
+            />
+          )}
+          <div className="flow-stage">
+            <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
+              {crumbTrail}
+              {crumbs.length <= 2 ? <span className="note crumb-hint">青い線がこのリクエストの通る道筋、濃い箱がいまの場所です。</span> : null}
+              <button type="button" className="code-button flow-max" aria-pressed={maximized} onClick={() => setMaximized(!maximized)} title={maximized ? '元の大きさに戻す（Esc）' : '図と再生を画面いっぱいに広げる'}>
+                {maximized ? '元の大きさ' : '画面いっぱい'}
+              </button>
+            </nav>
+            {diagram !== undefined && active !== undefined ? (
+              <FlowDiagram
+                diagram={diagram}
+                active={active}
+                selected={null}
+                openOn={scene?.node.id ?? null}
+                roomy
+                reveal={scene === undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
+                label="リクエストの流れの図"
+                marks={marks}
+                play={play}
+                onSelect={(box) => {
+                  // A box picked on the stage moves the playback to the scene that shows it, when the request goes through it.
+                  const found = scenes.find((item) => item.frame === focusKey && item.shape === box.id);
+                  if (found === undefined) return;
+                  playback.play(false);
+                  playback.go(found.index);
+                }}
+                onOpen={(box) => {
+                  if (box.opens !== undefined) onState({ ...state, open: [...new Set([...state.open, childFrame(focusKey, box.opens.node)])] });
+                }}
+                onToggleStep={toggleStep}
+              />
+            ) : (
+              <p className="note pad">読み込んでいます…</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="trace-area">
       <div className={`work${paneVisible ? ' with-pane' : ' outline-only'}`} ref={work} style={paneVisible ? { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(0, ${paneWidth}%)` } : undefined}>
@@ -729,6 +897,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               tools={
                 <>
                   <SelectionBar selections={selections} state={state} onState={onState} onExpandChanges={expand} changesBelow={below} onPick={(selection) => setPending({ target: selection.target })} />
+                  <button type="button" className="code-button flow-open" onClick={() => onState({ ...state, flow: true })} title="リクエストがどこを通るかを、大きな図の上で順に再生する">
+                    ▶ フローで見る
+                  </button>
                   <button ref={paneToggle} type="button" className="code-button pane-toggle" aria-expanded={mobile ? overlay : paneOpen} aria-controls={`${tabsId}-pane`} onClick={togglePane}>
                     図・詳細
                   </button>

@@ -82,6 +82,10 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
           enabled={enabled}
           onOpenFunction={onOpenFunction}
           onOpenCode={setCode}
+          stepFacts={(id) => {
+            const step = endpoint.steps.find((candidate) => candidate.id === id);
+            return step === undefined ? undefined : { kind: step.kind, consumes: step.consumes, produces: step.produces, ...(step.spec === undefined ? {} : { spec: step.spec }) };
+          }}
           renderStep={(mark) => {
             const step = endpoint.steps.find((candidate) => candidate.id === mark.id);
             if (step === undefined) return <p className="note">{mark.label}（このフレームワークの構成には無いステップです）</p>;

@@ -21,6 +21,8 @@ export { any, endLine, is, nameOf, startLine, stringOf, textOf, unwrap, walk } f
 export { Resolver, type ResolverOptions } from './resolve.js';
 export { isTestPath, moduleOf, overlayConfigs, overlayOf, pathOf, readRoots, type AnalysisRoot } from './roots.js';
 export { Compiler, getLeadingCommentRanges, isAlias, SyntaxKind, type Node, type Overlay, type Project, type SourceFile } from './ts.js';
-export { frameSelections, inFrame, wayTo } from './selections.js';
+export { failureSelections, frameSelections, inFrame, wayTo } from './selections.js';
 export { buildTree, ends, nodesOf } from './tree.js';
+// The walk of one request through a tree: plain data, shared with the page (`@maronn-openid-connect/map-analysis/walk`).
+export { assumedSide, FAILS, stepsOf, walkFlow, type FlowWalk, type WalkEvent, type WalkOptions, type WalkStop } from './walk.js';
 export type * from './model.js';

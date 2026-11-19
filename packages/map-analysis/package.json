@@ -11,6 +11,10 @@
     },
     "./model": {
       "types": "./src/model.ts"
+    },
+    "./walk": {
+      "types": "./src/walk.ts",
+      "import": "./src/walk.ts"
     }
   },
   "scripts": {

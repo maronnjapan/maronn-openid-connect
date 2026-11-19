@@ -21,6 +21,18 @@ describe('parseHash', () => {
     });
   });
 
+  it('should read the cases of an endpoint, and a case chosen among them', () => {
+    expect(parseHash('#/endpoint/hono/token?cases=1')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', cases: true });
+    expect(parseHash('#/endpoint/hono/token?case=9c9b78675348&step=parse-request')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', cases: true, case: '9c9b78675348', step: 'parse-request' });
+    expect(parseHash('#/kind/unit?cases=1&case=abc')).toEqual({ page: 'kind', testKind: 'unit' });
+  });
+
+  it('should write the cases of an endpoint back, a case chosen standing for them', () => {
+    expect(formatHash({ page: 'endpoint', source: 'hono', endpoint: 'token', cases: true })).toBe('#/endpoint/hono/token?cases=1');
+    expect(formatHash({ page: 'endpoint', source: 'hono', endpoint: 'token', cases: true, case: 'abc' })).toBe('#/endpoint/hono/token?case=abc');
+    expect(formatHash({ page: 'files', cases: true, case: 'abc' })).toBe('#/files');
+  });
+
   it('should keep a function filter only when no step is named', () => {
     expect(parseHash('#/endpoint/nextjs/token?fn=core%3Ajwt.ts%23sign')).toMatchObject({ fn: 'core:jwt.ts#sign' });
     expect(parseHash('#/endpoint/nextjs/token?step=a&fn=b')).not.toHaveProperty('fn');

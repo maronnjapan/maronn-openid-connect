@@ -391,6 +391,61 @@ export interface TestsIndex {
   aspectLabels: Record<string, string>;
   /** Whether tests/diff.json is there (a build of a pull request). */
   diff?: boolean;
+  /**
+   * The url of the cases of each endpoint that has any (EndpointCases), by
+   * `<source>:<endpoint>`: the ways a request takes through it, read when
+   * its page opens. Absent in data older than the cases.
+   */
+  cases?: Record<string, string>;
+}
+
+/**
+ * The tests that speak for a failure of a case, by how surely:
+ *
+ * - `direct`: the tests of the function that throws it (they name it, call
+ *   it, or reached it in a measured run) that expect this error;
+ * - `byCode`: the other tests of the endpoint that expect this error: the
+ *   same code can come from another cause;
+ * - `nearby`: when neither has any, the tests of the function that throws it
+ *   that expect a failure whose error the catalog could not read.
+ *
+ * Each is a list of test ids, sorted.
+ */
+export interface FailureTests {
+  direct: string[];
+  byCode: string[];
+  nearby: string[];
+}
+
+/**
+ * A case of an endpoint: one way a request takes through it, as the map
+ * offers it ready-made (よく使う選択): the way into a step, a way it ends,
+ * or a failure that ends it.
+ */
+export interface EndpointCase {
+  /** A hash of its kind, its name and where it leads: the same case has the same id in two builds. */
+  id: string;
+  kind: 'step' | 'exit' | 'failure';
+  /** Its name in words, as the map says it (`refresh_token グラントを検証する`); code is between backticks. */
+  name: string;
+  /** Where it leads (`→ return respondToken(…)`), when the map says. */
+  note?: string;
+  /** The steps of the endpoint it runs, in the order it reaches them. */
+  steps: string[];
+  /** How it ends: the endpoint answers, a failure is caught and answered with an error, or a failure leaves the endpoint. */
+  end: 'response' | 'error-response' | 'escapes';
+  /** For a failure: the error, its OAuth code when it has one, the function that throws it (frame id and name), and the step it comes up in. */
+  failure?: { error: string; code?: string; from: string; name: string; step?: string };
+  /** For a failure: the tests that expect it (FailureTests). */
+  tests?: FailureTests;
+}
+
+/** tests/cases/<hash>.json: the cases of one endpoint of a source (the url is TestsIndex.cases). */
+export interface EndpointCases {
+  version: 1;
+  /** `<source>:<endpoint>`. */
+  key: string;
+  cases: EndpointCase[];
 }
 
 /** tests/sources/<hash>.json: the text of a file the viewer shows (TestsIndex.sources): a test file, or the file of a helper, a step definition, a function or an endpoint body. */

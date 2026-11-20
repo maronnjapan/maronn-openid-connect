@@ -732,8 +732,8 @@ export interface ExampleCounts {
 /**
  * Give the cases of an endpoint the requests that took them (see the module
  * comment): each case its examples, the tests of the endpoint's own first,
- * then the smaller requests, one of each method, path and body, at most
- * EXAMPLES, and how many requests took it in all.
+ * then the smaller requests, one of each method, path, Authorization header
+ * and body, at most EXAMPLES, and how many requests took it in all.
  */
 export function attachExamples(ways: readonly CaseWay[], requests: readonly SentRequest[], endpoint: EndpointExamples, sources: CaseSources): ExampleCounts {
   const found = new Map<CaseWay, Array<{ sent: SentRequest; example: CaseExample; order: number }>>();
@@ -760,7 +760,9 @@ export function attachExamples(ways: readonly CaseWay[], requests: readonly Sent
     const kept = new Set<string>();
     const examples: CaseExample[] = [];
     for (const { example } of ranked) {
-      const key = [example.request.method, example.request.path, example.request.body ?? ''].join('\u0000');
+      // The Authorization header is input as much as the body (a bearer token, a client's Basic credentials).
+      const authorization = example.request.headers.find(([name]) => name.toLowerCase() === 'authorization')?.[1] ?? '';
+      const key = [example.request.method, example.request.path, authorization, example.request.body ?? ''].join('\u0000');
       if (kept.has(key)) continue;
       kept.add(key);
       examples.push(example);

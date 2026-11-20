@@ -749,7 +749,7 @@ describe('exampleOf', () => {
 });
 
 describe('attachExamples', () => {
-  it('should keep the tests of the endpoint first, then the smaller requests, one of a method, path and body, three at most, and count every request', () => {
+  it('should keep the tests of the endpoint first, then the smaller requests, one of a method, path, Authorization header and body, three at most, and count every request', () => {
     const ways = tokenWays();
     const refreshing = (body: string): RawExchange => ({ ...answered(false), request: { ...answered(false).request, body } });
     const { response: _response, ...unanswered } = answered(false);
@@ -767,6 +767,19 @@ describe('attachExamples', () => {
     expect(counts).toEqual({ read: 5, took: 5 });
     expect([refresh?.examples?.map((example) => example.test), refresh?.exampleCount]).toEqual([['own', 'a-other', 'b-other'], 5]);
     expect(ways.find((way) => way.made.name === 'dispatch')?.made.examples).toBeUndefined();
+  });
+
+  it('should keep requests of the same method, path and body apart by their Authorization header, its name in any case', () => {
+    const ways = tokenWays();
+    const authorized = (name: string, value: string): RawExchange => ({ ...answered(false), request: { ...answered(false).request, headers: [...answered(false).request.headers, [name, value]] } });
+    const sent: SentRequest[] = [
+      { test: card('basic-a'), exchange: authorized('authorization', 'Basic YTpz') },
+      { test: card('basic-a-again'), exchange: authorized('Authorization', 'Basic YTpz') },
+      { test: card('basic-b'), exchange: authorized('authorization', 'Basic Yjpz') },
+    ];
+    attachExamples(ways, sent, ENDPOINT, SOURCES);
+    const refresh = ways.find((way) => way.made.name === 'validate-refresh')?.made;
+    expect([refresh?.examples?.map((example) => example.test), refresh?.exampleCount]).toEqual([['basic-a', 'basic-b'], 3]);
   });
 });
 

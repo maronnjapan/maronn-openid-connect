@@ -45,8 +45,8 @@ const DATA = {
           group: API_GROUP,
           layer: 'api',
           steps: [
-            { id: 'authenticate-client', label: 'クライアントを認証する', functionId: AUTH },
-            { id: 'respond', label: '応答する' },
+            { id: 'authenticate-client', label: 'クライアントを認証する', kind: 'validate', consumes: ['params', 'authorization'], produces: ['tokenClient'], functionId: AUTH },
+            { id: 'respond', label: '応答する', kind: 'respond', consumes: [], produces: [] },
           ],
         },
       ],
@@ -64,7 +64,7 @@ const DATA = {
           layer: 'api',
           // A block of the Route Handler that calls core (a function with unit tests) and one that calls a function without one.
           steps: [
-            { id: 'authenticate-client', label: 'クライアントを認証する', calls: [VERIFY, CLAIMS, VERIFY] },
+            { id: 'authenticate-client', label: 'クライアントを認証する', kind: 'validate', produces: ['client'], calls: [VERIFY, CLAIMS, VERIFY] },
             { id: 'respond', label: '応答する', calls: [CLAIMS] },
           ],
         },
@@ -170,7 +170,7 @@ describe('outlineOf', () => {
     expect(outline.endpoints.map((endpoint) => endpoint.key)).toEqual(['hono:userinfo', 'hono:token', 'nextjs:token']);
   });
 
-  it('should give an endpoint its words, route, group, layer and root, and its steps with the function of a step that has one', () => {
+  it('should give an endpoint its words, route, group, layer and root, and its steps with what each does, reads and hands on, and the function of a step that has one', () => {
     expect(outline.endpoints[1]).toEqual({
       key: 'hono:token',
       source: 'hono',
@@ -183,8 +183,8 @@ describe('outlineOf', () => {
       layer: 'api',
       root: 'endpoint:token',
       steps: [
-        { id: 'authenticate-client', label: 'クライアントを認証する', function: AUTH },
-        { id: 'respond', label: '応答する' },
+        { id: 'authenticate-client', label: 'クライアントを認証する', kind: 'validate', consumes: ['params', 'authorization'], produces: ['tokenClient'], function: AUTH },
+        { id: 'respond', label: '応答する', kind: 'respond' },
       ],
     });
     expect(outline.endpoints[2]).toMatchObject({ key: 'nextjs:token', root: NEXT });
@@ -193,7 +193,7 @@ describe('outlineOf', () => {
 
   it('should give a step of Next.js the frames its block calls that have unit tests of the endpoint, each once', () => {
     expect(outline.endpoints[2]?.steps).toEqual([
-      { id: 'authenticate-client', label: 'クライアントを認証する', calls: [VERIFY], codeCalls: [VERIFY, CLAIMS] },
+      { id: 'authenticate-client', label: 'クライアントを認証する', kind: 'validate', produces: ['client'], calls: [VERIFY], codeCalls: [VERIFY, CLAIMS] },
       { id: 'respond', label: '応答する', codeCalls: [CLAIMS] },
     ]);
   });

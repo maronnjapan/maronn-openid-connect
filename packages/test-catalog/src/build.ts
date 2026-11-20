@@ -231,17 +231,19 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
       named.add(root);
       const units = refs[key]?.units ?? {};
       const steps = endpoint.steps.map((step): OutlineStep => {
+        // What the step does and the values it reads and hands on, as the flow of the map says.
+        const flow = { ...(step.kind === undefined ? {} : { kind: step.kind }), ...((step.consumes ?? []).length === 0 ? {} : { consumes: step.consumes }), ...((step.produces ?? []).length === 0 ? {} : { produces: step.produces }) };
         if (step.functionId !== undefined) {
           named.add(step.functionId);
           const code = codeOfFrame(data, step.functionId);
-          return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), function: step.functionId, ...(code === undefined ? {} : { code }) };
+          return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...flow, function: step.functionId, ...(code === undefined ? {} : { code }) };
         }
         const candidates = [...new Set(step.calls ?? [])];
         const calls = candidates.filter((id) => units[id] !== undefined);
         const codeCalls = candidates.filter((id) => data.functions[id] !== undefined || data.bodies[id] !== undefined);
         for (const id of [...calls, ...codeCalls]) named.add(id);
         const code = blocks.get(`${source}:${endpoint.id}:${step.id}`);
-        return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
+        return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...flow, ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
       });
       const code = codeOfFrame(data, root);
       endpoints.push({

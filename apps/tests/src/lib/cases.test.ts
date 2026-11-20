@@ -1,7 +1,7 @@
 import type { CaseCondition, EndpointCase, OutlineStep } from '@maronn-openid-connect/test-catalog/model';
 import { describe, expect, it } from 'vitest';
 import type { CaseExample } from '@maronn-openid-connect/test-catalog/model';
-import { caseGroups, caseName, caseTests, countVerdicts, endWords, failureName, looseConditions, noExampleReason, pathChecks, requestTests, resultWords, stepChecks, summarize, unitCounts, verdictOf, waySteps } from './cases';
+import { caseGroups, caseName, caseTests, countVerdicts, endWords, failureName, looseConditions, noExampleReason, pathChecks, requestTests, resultWords, ruledSteps, stepChecks, summarize, unitCounts, verdictOf, waySteps } from './cases';
 import { buildDb } from './data';
 import { endpoint, entry, index, outline } from './fixture';
 
@@ -256,6 +256,11 @@ describe('waySteps', () => {
       ['authenticate-client', 'answered'],
     ]);
     expect(looseConditions(token, normal, signed)).toEqual([{ text: 'alg', code: true, side: 'RS256', step: 'sign-response' }]);
+  });
+
+  it('should give the number of steps a case rules only when its example request went through a different number', () => {
+    const caught: EndpointCase = { id: 'catch', kind: 'exit', name: '例外が起きたとき', steps: ['respond-error'], end: 'error-response' };
+    expect([ruledSteps(token, direct, waySteps(token, direct)), ruledSteps(token, direct, waySteps(token, direct, example)), ruledSteps(token, caught, waySteps(token, caught, example))]).toEqual([undefined, undefined, 1]);
   });
 
   it('should say why a case has no example: no measured run, no request recorded for the endpoint, or none took its way', () => {

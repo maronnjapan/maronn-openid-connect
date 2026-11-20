@@ -313,6 +313,17 @@ export function waySteps(endpoint: OutlineEndpoint, chosen: EndpointCase, exampl
 }
 
 /**
+ * Returns how many steps the way of a case rules when the flow shows a
+ * different number: an example request that went through more steps than
+ * its case has (a catch of an error raised anywhere, whose case has only
+ * the step that answers it). The playback and the checks count the case's.
+ */
+export function ruledSteps(endpoint: OutlineEndpoint, chosen: EndpointCase, way: readonly WayStep[]): number | undefined {
+  const ruled = onOutline(endpoint, chosen.steps).length;
+  return ruled === way.length ? undefined : ruled;
+}
+
+/**
  * The decisions of a case that are in no step its flow shows: shown before
  * its steps. With an example, those the request met in a step the outline
  * does not have. Without, the conditions of the way that are in no step of

@@ -16,7 +16,7 @@
  */
 import type { CaseCondition, CaseExample, EndpointCase, OutlineEndpoint } from '@maronn-openid-connect/test-catalog/model';
 import { Fragment, useState } from 'react';
-import { HOW_LABELS, looseConditions, NO_EXAMPLE_NOTES, noExampleReason, resultWords, STEP_KIND_LABELS, waySteps, type WayStep } from '../lib/cases';
+import { HOW_LABELS, looseConditions, NO_EXAMPLE_NOTES, noExampleReason, resultWords, ruledSteps, STEP_KIND_LABELS, waySteps, type WayStep } from '../lib/cases';
 import { KIND_LABELS } from '../lib/data';
 import { errorCodeOf, jsonLines, reasonPhrase, requestBlock, responseBlock, statusTone, type HttpBlock, type HttpLine, type Piece } from '../lib/exchange';
 import { titleOf } from '../lib/filter';
@@ -381,12 +381,17 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
 }
 
 /** ② The steps the request went through, as a vertical flow, the decisions that are in no step it shows above them. */
-function StepsPart({ endpoint, way, loose, playing }: { endpoint: OutlineEndpoint; way: readonly WayStep[]; loose: readonly CaseCondition[]; playing: string | undefined }) {
+function StepsPart({ endpoint, way, measured, ruled, loose, playing }: { endpoint: OutlineEndpoint; way: readonly WayStep[]; measured: boolean; ruled: number | undefined; loose: readonly CaseCondition[]; playing: string | undefined }) {
   return (
     <li className="flow-part">
       <PartTitle no={2}>ステップ</PartTitle>
       <p className="flow-part-note">
-        通るステップ <strong className="num">{formatCount(way.length)}</strong> 個を、リクエストが届く順に並べています。
+        {measured ? 'このリクエストが通ったステップ' : '通るステップ'} <strong className="num">{formatCount(way.length)}</strong> 個を、{measured ? '届いた順' : 'リクエストが届く順'}に並べています。
+        {ruled !== undefined && (
+          <>
+            左の再生と「通るステップのテスト」は、このケースの道筋が決める <strong className="num">{formatCount(ruled)}</strong> 個を数えます。
+          </>
+        )}
       </p>
       {loose.length > 0 && (
         <div className="way-loose">
@@ -472,7 +477,7 @@ export function CaseFlow({ endpoint, cases, chosen, playing }: { endpoint: Outli
       </h2>
       <ol className="flow-parts">
         <RequestPart chosen={chosen} example={example} index={at} onIndex={setIndex} reason={reason} />
-        <StepsPart endpoint={endpoint} way={way} loose={loose} playing={playing} />
+        <StepsPart endpoint={endpoint} way={way} measured={example !== undefined} ruled={ruledSteps(endpoint, chosen, way)} loose={loose} playing={playing} />
         <ResultPart chosen={chosen} example={example} index={at} />
       </ol>
     </section>

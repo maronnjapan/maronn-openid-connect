@@ -8,6 +8,11 @@ export interface TestReportsOptions {
   name?: string;
   /** The repository paths of the function catalog roots the package's tests reach; none for the tools (reports only). */
   roots?: string[];
+  /**
+   * The setup file that installs the recorder of the HTTP exchanges of the package's framework (relative to the
+   * package): added after the setup file of the reach when the reach is measured, with exchanges/vitest-<name>.jsonl.
+   */
+  exchanges?: string;
   /** The environment to read MARONN_REACH and MARONN_TEST_REPORTS from; process.env by default. */
   env?: Record<string, string | undefined>;
 }

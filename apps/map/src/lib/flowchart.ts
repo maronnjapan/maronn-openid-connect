@@ -516,7 +516,8 @@ function exitArrow(from: Area, exit: Area, direction: LayoutDirection): [LayoutP
 /**
  * Lay out a chart. The flow without its exits is laid out by Dagre (see
  * layoutGraph), every node at its own size, every region with the room of its
- * title, and an arrow that meets a rhombus meets it at a corner. Then each
+ * title, and an arrow that meets a rhombus meets it at a corner (leaving it,
+ * the corner of the side Dagre routes it from). Then each
  * exit is put beside the box it leaves (to its right in a top-to-bottom
  * flow, below it in a left-to-right one; on the other side, or further out,
  * where that place is taken), at the box's height, so the main flow stays
@@ -543,7 +544,8 @@ export function layoutChart(chart: Chart, direction: LayoutDirection = 'TB'): Ch
     const points = arrow.points.map((point) => ({ ...point }));
     const source = byId.get(edge.from)?.shape === 'decision' ? boxes.get(edge.from) : undefined;
     const target = byId.get(edge.to)?.shape === 'decision' ? boxes.get(edge.to) : undefined;
-    if (source !== undefined && points.length >= 2) points[0] = corner(source, points[1] as LayoutPoint, direction);
+    // The route leaves a rhombus at the corner of the side Dagre leaves it from (its first point), so the first leg keeps Dagre's room.
+    if (source !== undefined && points.length >= 2) points[0] = corner(source, points[0] as LayoutPoint, direction);
     if (target !== undefined && points.length >= 2) points[points.length - 1] = corner(target, points[points.length - 2] as LayoutPoint, direction);
     return { ...arrow, points, d: pathOf(points), ...(arrow.label === undefined ? {} : { label: { ...arrow.label } }) };
   });

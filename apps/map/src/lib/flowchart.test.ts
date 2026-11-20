@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowTree, TreeNode } from '../types';
 import { boxOf, frameDiagram, type Diagram } from './diagram';
-import { chartWay, decisionLines, DECISION_WIDTH, flowChart, layoutChart, stepDetail, stepValues, wayAt, type Chart, type ChartStep } from './flowchart';
+import { chartWay, decisionLines, DECISION_WIDTH, flowChart, layoutChart, stepDetail, stepValues, wayAt, type Chart, type ChartNode, type ChartStep } from './flowchart';
+import type { LayoutBox, LayoutPoint } from './graph';
 import { scenesOf, walkTrace } from './playback';
 import type { WordSource } from './words';
 
@@ -80,6 +81,42 @@ function nodesOf(chart: Chart): string[] {
 /** The arrows of a chart as `from → to label (kind)`. */
 function edgesOf(chart: Chart): string[] {
   return chart.edges.map((edge) => `${edge.from} → ${edge.to}${edge.label === undefined ? '' : ` ${edge.label}`} (${edge.kind})`);
+}
+
+/** The chart of two guards in a row whose answers Dagre lays out beside the flow: the answer of the first stands level with the second guard. */
+function twoGuards(): Chart {
+  const node = (id: string, shape: ChartNode['shape'], width: number, height: number): ChartNode => ({ id, shape, title: id, lines: [id], code: false, of: id, width, height });
+  return {
+    key: 'guards',
+    nodes: [node('start', 'start', 132, 34), node('n:a', 'decision', DECISION_WIDTH, 80), node('n:at', 'end', 300, 48), node('n:b', 'decision', DECISION_WIDTH, 80), node('n:bt', 'end', 300, 48), node('n:c', 'process', 300, 36)],
+    edges: [
+      { from: 'start', to: 'n:a', kind: 'flow' },
+      { from: 'n:a', to: 'n:at', kind: 'branch', label: '成立' },
+      { from: 'n:a', to: 'n:b', kind: 'flow', label: '不成立' },
+      { from: 'n:b', to: 'n:bt', kind: 'branch', label: '成立' },
+      { from: 'n:b', to: 'n:c', kind: 'flow', label: '不成立' },
+    ],
+    groups: [],
+  };
+}
+
+/** Whether a leg of an arrow runs through a rectangle, more than 2px inside its border: the share of the leg inside it (clipped as Liang–Barsky does) is not empty. */
+function legCrosses(a: LayoutPoint, b: LayoutPoint, box: LayoutBox): boolean {
+  let enter = 0;
+  let leave = 1;
+  const sides: Array<[number, number]> = [
+    [a.x - b.x, a.x - (box.x + 2)],
+    [b.x - a.x, box.x + box.width - 2 - a.x],
+    [a.y - b.y, a.y - (box.y + 2)],
+    [b.y - a.y, box.y + box.height - 2 - a.y],
+  ];
+  for (const [p, q] of sides) {
+    if (p === 0) {
+      if (q <= 0) return false;
+    } else if (p < 0) enter = Math.max(enter, q / p);
+    else leave = Math.min(leave, q / p);
+  }
+  return leave - enter > 1e-6;
 }
 
 describe('flowChart', () => {
@@ -182,6 +219,22 @@ describe('layoutChart', () => {
     const overlapping = placed.boxes.flatMap((a, index) => placed.boxes.slice(index + 1).filter((b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height).map((b) => `${a.id}×${b.id}`));
     expect(overlapping).toEqual([]);
     expect(placed.arrows.map((arrow) => arrow.index)).toEqual(chart.edges.map((_, index) => index));
+  });
+
+  it('should leave a rhombus at the corner of the side Dagre leaves it from, so the first leg passes the answer of the guard before', () => {
+    const chart = twoGuards();
+    const placed = layoutChart(chart);
+    const at = new Map(placed.boxes.map((box) => [box.id, box]));
+    const guard = at.get('n:b') as LayoutBox;
+    const before = at.get('n:at') as LayoutBox;
+    const arrow = placed.arrows.find((candidate) => chart.edges[candidate.index]?.to === 'n:bt');
+    const points = arrow?.points ?? [];
+    // Dagre leaves the guard downward: the arrow starts at its bottom corner, not at the corner of the side the answer stands on.
+    expect(points[0]).toEqual({ x: guard.x + guard.width / 2, y: guard.y + guard.height });
+    // The answer of the guard before stands level with this guard on that side, and no leg runs through it.
+    expect(before.x).toBeGreaterThan(guard.x + guard.width);
+    expect(before.y).toBeLessThan(guard.y + guard.height);
+    expect(points.some((point, index) => index > 0 && legCrosses(points[index - 1] as LayoutPoint, point, before))).toBe(false);
   });
 
   it('should meet a rhombus at its corners', () => {

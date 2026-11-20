@@ -39,7 +39,9 @@
  * endpoint's frame it fails at), and the end of the case ran: the node its
  * way leads to, or for a failure the throw of its error in the function
  * that throws it, with an error status (or, for a case answered by a catch,
- * that catch) and no other OAuth error code in the response. These are
+ * that catch) and no other OAuth error code in the response; a failure from
+ * below is not taken when a `try` of a frame on its way up was seen catching
+ * and no rethrow of that catch ran (it threw another error, or none). These are
  * rules, not guesses: what they cannot tell is left unseen, and a case no
  * request took has no example.
  */
@@ -460,6 +462,48 @@ export interface SentRequest {
   exchange: RawExchange;
 }
 
+/** The `try` nodes of a tree whose body holds a node, from the innermost out. */
+function triesAround(tree: FlowTree, id: string): TreeNode[] {
+  const places = placesOf(tree);
+  const tries: TreeNode[] = [];
+  let at = places.get(id);
+  while (at?.owner !== undefined) {
+    const { owner } = at;
+    if (owner.kind === 'try' && !at.pre && owner.branches?.find((branch) => branch.key === 'try')?.nodes === at.list) tries.push(owner);
+    at = places.get(owner.id);
+  }
+  return tries;
+}
+
+/**
+ * Whether a failure from below got up through the frames between the
+ * endpoint's and the one that throws it: no `try` of those frames whose body
+ * holds the way on (the next call, or the throw) was seen catching without a
+ * rethrow of its catch running. The map leaves those tries undecided (their
+ * catch can throw what it caught), but one that caught the error and threw
+ * another, or none, ended the failure there.
+ */
+function getsUp(way: CaseWay, tree: FlowTree, run: RequestRun, sources: CaseSources): boolean {
+  const frames = way.selection.frames ?? [];
+  const keys = [...frames, way.selection.target];
+  return frames.every((frame, index) => {
+    const call = locate(frame, tree, sources.treeOf)?.place.node;
+    const callee = call?.target?.kind === 'function' ? sources.treeOf(call.target.id) : undefined;
+    const next = keys[index + 1]?.slice(frame.length + 1).split('.')[0];
+    if (callee === undefined || next === undefined) return true;
+    return triesAround(callee, next).every((attempt) => {
+      const located = locate(`${frame}.${attempt.id}`, tree, sources.treeOf);
+      if (located === undefined || seenSide(located, run) !== 'catch') return true;
+      const handler = attempt.branches?.find((branch) => branch.key === 'catch')?.nodes ?? [];
+      return [...nodesOf(handler)].some((node) => {
+        if (node.kind !== 'throw' || node.rethrow !== true) return false;
+        const thrown = locate(`${frame}.${node.id}`, tree, sources.treeOf);
+        return thrown !== undefined && nodeRan(thrown, run);
+      });
+    });
+  });
+}
+
 /** Whether the catch the walk of a case runs at the endpoint's own frame ran. */
 function caught(way: CaseWay, tree: FlowTree, run: RequestRun, sources: CaseSources): boolean {
   const stop = way.walked.stops.find((candidate) => candidate.depth === 0 && candidate.event === 'catches');
@@ -502,7 +546,9 @@ export function responseError(response: NonNullable<RawExchange['response']>): s
  * side it takes past the way to its block (the use of the step's value
  * that tells the step apart), and for a failure from below the call of the
  * endpoint's frame it fails at; and the end of the case ran. For a failure
- * with an OAuth code, the response names that code when it names one.
+ * from below, no frame on its way up caught it without rethrowing it
+ * (getsUp); for a failure with an OAuth code, the response names that code
+ * when it names one.
  */
 export function takes(way: CaseWay, tree: FlowTree, run: RequestRun, response: NonNullable<RawExchange['response']>, sources: CaseSources): boolean {
   const toBlock = way.made.kind === 'step' ? (wayTo(tree.nodes, way.selection.target)?.decisions ?? {}) : undefined;
@@ -529,6 +575,7 @@ export function takes(way: CaseWay, tree: FlowTree, run: RequestRun, response: N
   if (way.made.kind !== 'failure' || failure === undefined) return nodeRan(target, run);
   const thrown = target.place.node;
   if (target.tree.id !== failure.from || thrown.kind !== 'throw' || (thrown.error ?? 'Error') !== failure.error || !nodeRan(target, run)) return false;
+  if (!getsUp(way, tree, run, sources)) return false;
   const named = responseError(response);
   if (failure.code !== undefined && named !== undefined && named !== failure.code) return false;
   return response.status >= 400 || (way.made.end === 'error-response' && caught(way, tree, run, sources));

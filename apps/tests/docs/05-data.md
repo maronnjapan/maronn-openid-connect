@@ -1288,6 +1288,7 @@ flowchart LR
 | 分ける決定は読める | ステップへ進む道筋：行き先のブロックへの道（`wayTo`）に無い決定（ステップの値を使う決定、`refreshTokenRequest ?? …`）は、読めている。<br>下から上がる失敗：処理本体の、失敗する呼び出し（鍵の最初の呼び出し）が `fails` と読めている |
 | 終わりが走った | ステップと終わり方：選択の行き先（`target`）のノードが走った。<br>ブロックは行の文、`return` は `return` と読める文（アロー関数の本体なら、返す値と読める文）、`throw` は `throw` と読める文。<br>本体の終わり（`end`）は文が無いので、走ったとは言わない |
 | 失敗が投げられた | 失敗：行き先が、`failure.from` の木の、`failure.error` を投げる `throw` で、それが走った。<br>応答の状態が 400 以上か、ケースの終わり方が `error-response` で処理本体の `catch` が走った（エラーをリダイレクトで返すエンドポイント）。<br>応答が OAuth のエラーコード（JSON の本文の `error`、リダイレクト先のクエリかフラグメントの `error`）を持つなら、それが `failure.code` と同じ |
+| 途中で止まっていない | 下から上がる失敗：処理本体と `throw` の間のフレームで、道筋（次の呼び出しか `throw`）を本体に持つ `try` が `catch` と読めたなら、その `catch` の投げ直し（`throw error`）が走った。<br>走っていなければ、失敗はそのフレームで別のエラーになったか止まったので、通らない |
 
 一つのやり取りは、いくつものケースを通る（ステップへ進む道筋と、その後の終わり方、失敗と、それを答える `catch` の終わり方）。
 通ったケースのすべてに付ける。
@@ -1297,6 +1298,9 @@ hono の `authorize` の `response_mode=query.jwt を解釈する` は、`respon
 hono の `token` の `refresh_token グラントを検証する` の行き先のブロックは、どのグラントでも走る。
 `refreshTokenRequest ?? …` が「値あり」と読めたリクエストだけが、このケースを通る。
 下から上がる失敗は、同じ `throw` に別の呼び出しから届くことがあるので、地図の道筋の呼び出しで失敗したと読めたものだけを付ける。
+地図は、捕まえたものを投げ直す `catch` の `try` の向きを決めない（投げ直せば失敗は上がる）ので、「途中で止まっていない」でそのフレームを確かめる。
+hono の `authorize` の `resolvePushedAuthorizationRequest` は、`resolvePushedRequestUri` が投げた `PushedRequestUriError` を `catch` で `AuthorizationError` にして投げ、ほかのエラーだけを投げ直す。
+使用済みの `request_uri` のリクエストは、`AuthorizationError` で終わる（`resolvePushedAuthorizationRequest` から）に付き、`PushedRequestUriError(invalid_request_uri)` で終わる（`resolvePushedRequestUri` から）には付かない（応答のコードはどちらも `invalid_request_uri` である）。
 
 #### 例の中身
 

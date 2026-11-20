@@ -341,6 +341,7 @@ sequenceDiagram
 |---|---|
 | 読みの警告 | `tests: <警告>`。<br>警告の形は [①-2-f](01-read.md#-2-f-警告) |
 | PR の差分（PR のビルドだけ） | `tests: <前> → <後> cases, <n> added, <n> removed, <n> renamed, <n> changed; <n> changes need a test or a reason` |
+| ケースの例（報告が HTTP のやり取りを持つときだけ） | `tests: <n> requests of <n> tests (unmatched: <n> lines), <n> to an endpoint, <n> to one with cases (<n> answered and not overlapped), <n> took a case; <n> of <n> cases with examples`。<br>規則は [⑤-11-b](05-data.md#-11-b-ケースの例) |
 | 全体 | `tests: <件数> cases (<種類> <数>, ...) in <n> files, <n> with helpers, the code of <n> files, <n> frames and <n> endpoints with tests, <n> gaps, <実行>, <n> phrases without Japanese (<秒>s)` |
 
 - `(<種類> <数>, ...)` は `counts.kinds` の鍵の順で、カタログの順に初めて出た種類の順である（[③-9](03-join.md#-9-テストの数え方)）

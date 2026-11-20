@@ -82,7 +82,7 @@ flowchart LR
 | ② 実行して計る | [02-measure.md](02-measure.md) | テストを走らせ、結果と到達と HTTP のやり取りを報告のディレクトリに書く | `packages/test-reach/src`、各パッケージの `vitest.config.ts`、`apps/hono/src/test-support/record-exchanges.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach`、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs` | [5](#5-計測と-http-の実行先) |
 | ③ 結果と関数に結ぶ | [03-join.md](03-join.md) | 結果と到達をカードに足し、フレームとエンドポイントに結ぶ | `packages/test-catalog/src/run.ts`、`build.ts`（`withRun`）、`join.ts` | [6](#6-結果と関数の結び付け) |
 | ④ PR の差分と検査 | [04-pull-request.md](04-pull-request.md) | 変更前後のカードを比べ、関連するテストの変わらない変更を落とす | `packages/test-catalog/src`（`diff.ts`、`markdown.ts`、`draft.ts`、`build.ts` の `readBaseCatalog`）、`packages/map-analysis/src`（`changes.ts`、`notes.ts`、`check.ts`、`draft.ts`）、`apps/map/scripts/draft-notes.mjs`、`check-map.mjs` | [7](#7-pr-の差分と検査) |
-| ⑤ データを書き出す | [05-data.md](05-data.md) | テストのページが読むファイルを書く | `packages/test-catalog/src/build.ts`、`model.ts` | [4](#4-データの段への接続-2)、[8](#8-データの仕上げ) |
+| ⑤ データを書き出す | [05-data.md](05-data.md) | テストのページが読むファイルを書く（ケースと、計測した実行のリクエストの例を含む） | `packages/test-catalog/src/build.ts`、`cases.ts`、`examples.ts`、`model.ts` | [4](#4-データの段への接続-2)、[8](#8-データの仕上げ) |
 | ⑥ テストのページ | [06-viewer.md](06-viewer.md) | データを読んで画面を出す | `apps/tests` | [9](#9-テストのページ) |
 | ⑦ ビルドと CI | [07-build-ci.md](07-build-ci.md) | 部を順に動かし、配り、検査する | 各 `package.json` の `scripts`、`apps/map/scripts/build-data.mjs`、`copy-tests-viewer.mjs`、`check-map.mjs`、`.github/workflows/ci.yml`、`map-preview.yml`、`codecov.yml`、`.github/scripts/` の `lint-e2e-fixtures.mjs`、`lint-features.mjs`、`lint-steps.mjs`、`lint-tests.mjs`、`verify-ci-gate.mjs` | [4](#4-データの段への接続-2)、[10](#10-ビルドと-ci) |
 

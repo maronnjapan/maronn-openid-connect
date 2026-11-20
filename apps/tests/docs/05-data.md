@@ -691,6 +691,9 @@ interface OutlineEndpoint {
 interface OutlineStep {
   id: string;
   label: string; // 日本語の名前
+  kind?: StepKind; // 何をするステップか（parse、resolve、validate、decide、dispatch、issue、persist、transform、respond）
+  consumes?: string[]; // 前のステップから読む値
+  produces?: string[]; // 次のステップへ渡す値
   function?: string; // ステップの関数のフレームの id
   calls?: string[]; // 関数の無いステップだけ（下の規則）
   codeCalls?: string[]; // テストの有無を問わない、コードを辿るための呼び出し先
@@ -714,6 +717,7 @@ interface OutlineFunction {
 - `Joined.endpoints` に無いエンドポイントは入れない
 - `root` は `Joined` のものを使い、無ければ地図のものを使う
 - `summary` は、地図のエンドポイントにあるときだけ入れる
+- ステップは、地図のステップ（`FlowStep`）の `kind` と、空でなければ `consumes` と `produces` を持つ。<br>ページが、ステップが何をし、何を読んで何を渡すかを言うためにある
 - 関数のあるステップ（`functionId`）は、`function` とその関数のコードを持つ
 - 関数の無いステップは、あれば `calls` とブロックのコードを持つ
 
@@ -1169,7 +1173,7 @@ function expectsFailure(test, error) {
 
 - 三つとも、テストの id を重複なく昇順に並べる
 - テストの名前や、リクエストのパラメータからは結ばない
-- E2E と API のテストがどの道筋を通るかは読み取れないので、失敗でないケースにテストの欄は無い
+- E2E と API のテストがどの道筋を通るかは、テストのコードからは読み取れないので、失敗でないケースにテストの欄は無い。<br>計測した実行が記録したリクエストは、通った道筋が計数で分かるので、ケースの例として結ぶ（[⑤-11-b](#-11-b-ケースの例)）
 
 ```ts
 interface EndpointCases { version: 1; key: string; cases: EndpointCase[] }
@@ -1182,6 +1186,15 @@ interface EndpointCase {
   end: 'response' | 'error-response' | 'escapes';
   failure?: { error: string; code?: string; from: string; name: string; step?: string };
   tests?: { direct: string[]; byCode: string[]; nearby: string[] };
+  conditions?: CaseCondition[]; // 選択が決める向き（⑤-11-a）。いつも書く
+  examples?: CaseExample[];     // 通ったリクエスト（⑤-11-b）。三つまで。無ければ置かない
+  exampleCount?: number;        // 通ったリクエストの数（examples の数以上）
+}
+interface CaseCondition {
+  step?: string; // 決定のあるステップの id
+  text: string;  // 決定の言葉（最初の文）、無ければコード
+  code: boolean; // text がコードか
+  side: string;  // 選んだ向きの名前（成立、不成立、null または undefined、例外が起きたとき など）。失敗する呼び出しは「失敗する」
 }
 ```
 
@@ -1193,9 +1206,145 @@ interface EndpointCase {
 
 実装：
 
-- `packages/test-catalog/src/cases.ts`：`endpointCases`、`casesOf`、`failureTests`、`expectsFailure`、`errorClassOf`、`caseId`
-- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段
-- `packages/map-analysis/src/walk.ts`：`walkFlow`、`stepsOf`
+- `packages/test-catalog/src/cases.ts`：`endpointCases`、`waysOf`、`casesOf`、`conditionsOf`、`failureTests`、`expectsFailure`、`errorClassOf`、`caseId`
+- `packages/test-catalog/src/examples.ts`：`requestsByEndpoint`、`attachExamples`、`takes`、`seenSide`、`nodeRan`、`exampleOf`、`responseError`
+- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`
+- `packages/map-analysis/src/walk.ts`：`walkFlow`、`stepsOf`、`assumedSide`
+
+### ⑤-11-a ケースの条件
+
+ケースの条件（`conditions`）は、選択が決める向きを、言葉で、たどる順に並べたものである。
+リクエストがそのケースを通るために満たすことを言う。
+例があってもなくても、いつも書く。
+
+| 手順 | 規則 |
+|---|---|
+| たどる | `walkFlow(tree, selection.decisions, { enter })`。<br>`enter` は、選択の `frames`（下から上がる失敗が通るフレーム）の呼び出しの中へ入る |
+| 拾う | 止まりの決定の鍵（`<frame>.<node>`）が選択の `decisions` にあるものを、初めて届いた順に一度ずつ |
+| 文 | ノードの言葉（`TreeNode.text`）の最初の文（`。` まで）。<br>言葉が無ければコード（`code: true`） |
+| 向き | 選んだ向きの名前（`Branch.label`）。<br>`fails` と決めた呼び出しは `失敗する` |
+| ステップ | 処理本体の止まりは、そのステップ。<br>呼び出しの中のフレームの止まりは、そのフレームを開いた処理本体の呼び出しのステップ |
+| 除く | `try` の `try`（例外なし）の向き。<br>ほかの道筋もみな通る向きで、名前（`nameOf`）も同じく除く |
+
+例：hono の `token` の `refresh_token グラントを検証する` の条件は、六つの dispatch の `if`（`clientCredentialsResponse が真として評価されるか` など）が「不成立」で、`refreshTokenRequest ?? …` が「値あり」である。
+`TokenError(invalid_client)` で終わる（`verifyClientSecretHash` から）の条件は、`authenticateTokenClient` から `verifyClientSecretHash` までの呼び出しが「失敗する」と、その間のフレームの決定（`client.clientSecretHash が あるか`：成立、`secretMatches が偽として評価されるか`：成立 など）である。
+
+### ⑤-11-b ケースの例
+
+計測した実行の報告が HTTP のやり取り（[②-3-d](02-measure.md#-3-d-http-のやり取り)）を持つとき、ケースに、そのケースを通ったリクエストを例として付ける。
+アプリが答える間に走った文、分岐、関数の計数（`RawExchange.ran`）から、木の決定がどちらへ進んだかを読み、ケースの選択と比べる。
+規則が読めないことは読まないままにし、確かな証拠のあるケースにだけ付ける。
+
+```mermaid
+flowchart LR
+  E["やり取り<br/>（JoinedRun.exchanges）"] --> P["エンドポイント<br/>（URL のパス）"]
+  P --> R["向きを読む<br/>（計数と文の位置）"]
+  R --> T["通ったケース<br/>（takes）"]
+  T --> X["例<br/>（exampleOf）"]
+  X --> K["並べて三つ残す<br/>（attachExamples）"]
+```
+
+#### エンドポイントを決める
+
+| 手順 | 規則 |
+|---|---|
+| 送ったテスト | `JoinedRun.exchanges`（[③-1-b](03-join.md#-1-b-返す形)）のテストの id のカード |
+| ソース | テストの `root` が `hono` なら hono、`nextjs` なら nextjs。<br>ほかのルートのテストのリクエストは結ばない |
+| エンドポイント | URL のパスを `EndpointIndex.endpointOfPath` で引いたもののうち、そのソースのエンドポイントにあるもの |
+| 読まないやり取り | `overlapped`（同じテストのほかのリクエストと計数が混ざる）と、`error`（応答が無い）のもの |
+
+#### 向きを読む
+
+決定は、それがあるフレームのファイルで読む。
+ノードの木は、決定の鍵の呼び出しのノードを処理本体から順にたどって求める（呼び出しの `target.kind` が `function` の木）。
+木の `file` を `MapData.sources` でリポジトリのパスにし、そのパスの `ran` と、作業ツリーのそのファイルの文を使う。
+木のノードは行しか持たないので、計数の位置（行と、0 からの列）でその文を読み、ノードの計数を見つける。
+
+| ノード | 読む計数 | 向き |
+|---|---|---|
+| `if` | ノードの行で始まり、文が `if` と読める位置の `if` の分岐の、最初のもの | 一つ目の数が増えれば `true`、二つ目なら `false` |
+| `switch` | ノードの行で、文が `switch` と読める位置の `switch` の分岐 | 数の増えた最初の節と同じ位置の向き。<br>その節が続けて落ちる節も同じ数だけ増える。<br>コードに無い `default`（地図が足す向き）は数えない |
+| ハンドラーの選択 | 地図が複数のハンドラーから作る選択（コードに `switch` が無い、`どのリクエストか`） | 行で文が走った、ただ一つのハンドラー |
+| `??`、`\|\|`、`&&` | 文が左の値（`subject`）と読める位置で始まる、値が二つの `binary-expr` の分岐 | 右が走らなければ、`??` は `defined`、`\|\|` は `true`、`&&` は `false`。<br>走れば、`nullish`、`false`、`true` |
+| `?:` | 文が条件（`subject`）と読める位置で始まる `cond-expr` の分岐 | `if` と同じ |
+| `try` | `catch` の側のノードの行の文 | 走れば `catch`。<br>走らず、本体の側のノードの行の文が走れば `try` |
+| ループ | 本体のノードの、頭と別の行の文 | 走れば `body`。<br>`for` と `while` の頭の文だけが走れば `skip` |
+| 呼び出し | 呼び出しの行の文と、呼ぶ関数の計数（`f` をフレームに引く）。<br>戻ったときに次に走るノード：並びの次、並びの最後ならそれを囲むブロック、`if`、cond-expr の次 | 呼び出しが走り、次のノードが走らなければ `fails`。<br>次のノードが走れば、失敗しなかった（`fails` と食い違う） |
+
+- 一つのリクエストの間にフレームが何度も走り、両方の向きに進んだ決定は「両方」とし、どの向きとも食い違わない。<br>`if` の二つの数がどちらも増えた、`try` の文が `catch` の最初の文より多く走った、二つの節に別々に入った、など
+- 文の位置は Istanbul のものである。<br>`const x = expr` の文は `expr` の位置にある
+- 位置の文は、二つの語の間の空白を一つにし、ほかの空白と、先頭の括弧を除いて比べる。<br>ビルドが要らない括弧を落とすので（`(await f()) ?? g` → `await f() ?? g`）、計数は括弧の後ろから始まる
+- 次のことは読まない：値が三つ以上の `binary-expr`（`a && b && f()`。右の値がどの葉から始まるかが計数に無い）、論理代入（`??=` など。Istanbul は分岐を数えない）、空の `catch`、頭と同じ行にある本体、呼び出しの行に置かれたローカル関数の本体（行が自分のものでない）、次のノードが分からない呼び出し（ループ、`try`、`switch` の側の最後、ノードの前に評価される呼び出し）
+
+#### ケースを通ったか
+
+やり取りは、次をすべて満たすケースを通った（`takes`）。
+
+| 条件 | 規則 |
+|---|---|
+| 食い違わない | 選択の決定のうち、読めた向きが選んだ向きと違うものが無い |
+| 一つは読める | 読めた決定が一つはある。<br>決定の無い選択（枝の無いパイプラインのただ一つの道筋）は、終わりが走ればよい |
+| 外れた向きは読める | 選択がたどるときに仮定される向き（`assumedSide`：抜けるガード、例外なし、ループを回る）と違う向きを選ぶ決定は、読めている。<br>`fails` の呼び出しは除く（失敗は `throw` で確かめる） |
+| 分ける決定は読める | ステップへ進む道筋：行き先のブロックへの道（`wayTo`）に無い決定（ステップの値を使う決定、`refreshTokenRequest ?? …`）は、読めている。<br>下から上がる失敗：処理本体の、失敗する呼び出し（鍵の最初の呼び出し）が `fails` と読めている |
+| 終わりが走った | ステップと終わり方：選択の行き先（`target`）のノードが走った。<br>ブロックは行の文、`return` は `return` と読める文（アロー関数の本体なら、返す値と読める文）、`throw` は `throw` と読める文。<br>本体の終わり（`end`）は文が無いので、走ったとは言わない |
+| 失敗が投げられた | 失敗：行き先が、`failure.from` の木の、`failure.error` を投げる `throw` で、それが走った。<br>応答の状態が 400 以上か、ケースの終わり方が `error-response` で処理本体の `catch` が走った（エラーをリダイレクトで返すエンドポイント）。<br>応答が OAuth のエラーコード（JSON の本文の `error`、リダイレクト先のクエリかフラグメントの `error`）を持つなら、それが `failure.code` と同じ |
+
+一つのやり取りは、いくつものケースを通る（ステップへ進む道筋と、その後の終わり方、失敗と、それを答える `catch` の終わり方）。
+通ったケースのすべてに付ける。
+
+「外れた向きは読める」と「分ける決定は読める」は、読めない決定の向きで別のケースと分かれる道筋を、行き先が走ったことだけで付けないための規則である。
+hono の `authorize` の `response_mode=query.jwt を解釈する` は、`responseMode ??= …` が `null または undefined` に進む道筋で、`??=` は読めないので、例を持たない（行き先のブロックは、どちらに進んでも走る）。
+hono の `token` の `refresh_token グラントを検証する` の行き先のブロックは、どのグラントでも走る。
+`refreshTokenRequest ?? …` が「値あり」と読めたリクエストだけが、このケースを通る。
+下から上がる失敗は、同じ `throw` に別の呼び出しから届くことがあるので、地図の道筋の呼び出しで失敗したと読めたものだけを付ける。
+
+#### 例の中身
+
+```ts
+interface CaseExample {
+  test: string; // 送ったテストの id
+  request: { method: string; path: string; host: string; headers: Array<[string, string]>; body?: string; truncated?: true };
+  response: { status: number; statusText?: string; headers: Array<[string, string]>; body?: string; truncated?: true };
+  steps: ExampleStep[];
+}
+interface ExampleStep {
+  id: string;
+  how: 'ran' | 'answered' | 'failed' | 'caught';
+  decisions?: CaseCondition[]; // このステップの、読めた決定
+  calls?: string[];            // このステップが直に呼び、走った関数（フレームの id）
+  error?: string;              // failed のときのエラー
+}
+```
+
+| 欄 | 規則 |
+|---|---|
+| `request` | 方法、URL のパスとクエリ（`path`）、ホスト（`host`）、ヘッダー、本文 |
+| `response` | 状態、状態の文（空なら置かない）、ヘッダー、本文 |
+| `steps` | 処理本体の木を、読めた向き（読めなければケースの選択の向き）で `walkFlow` でたどり、`stepsOf` の順に並べる。<br>`catch` と読めた `try` は、本体に `fails` の呼び出しがあれば向きを決めず、その失敗まで本体をたどる。<br>たどってケースの終わり（失敗なら失敗する呼び出しか `throw`）に届かなければ、例にしない |
+| `steps[].how` | `ran`。<br>`fails` か `throws` の止まりのステップは `failed`。<br>`catches` の止まりがステップにあればそのステップ、無ければその後に初めて届くステップは `caught`。<br>`returns` の止まりのステップは `answered`。<br>ステップの外の `return` は、それが評価する呼び出しのステップが答える（`return respond(c, await processEndSessionRequest(c, params))`） |
+| `steps[].error` | `failed` のステップのエラー：止まりのエラー、無ければこのケースの失敗（そのステップのもの）、無ければやり取りが通った失敗のケースのうち、そのステップのもののエラー（一つに決まるとき） |
+| `steps[].decisions` | ステップの止まりの決定のうち、読めた向きのもの（呼び出しは除く）。<br>文は条件と同じ |
+| `steps[].calls` | 関数のあるステップ（hono の `FlowStep.functionId`）は、その関数が呼ぶ関数（`MapData.functions[id].calls` の順）。<br>無いステップは、そのステップの止まりの呼び出しの関数。<br>どちらも、やり取りの間に走ったもの（`f` を [③-4-b](03-join.md#-4-b-位置を含むフレーム) と同じくフレームに引く）だけ |
+
+#### 並べ方と数
+
+- 送ったテストがエンドポイントのもの（そのエンドポイントを、`how` が `coverage` でない対象に持つ）を先にする
+- 次に、リクエストのヘッダーと本文のバイト数が少ないもの、テストの id、読んだ順
+- 方法、パスとクエリ、本文が同じものは、一つ目だけ残す
+- 三つまで残す（`EXAMPLES`）
+- `exampleCount` は、そのケースを通ったやり取りの数（同じものも数える）
+
+地図のビルドのログに、次の一行を出す。
+
+```
+tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (208 answered and not overlapped), 151 took a case; 65 of 631 cases with examples
+```
+
+例：hono の `token` で、例を持つケースは 135 のうち 10 である。
+`refresh_token グラントを検証する` には `grant_type=refresh_token` のリクエストが、`authorization_code グラントを検証する` には `grant_type=authorization_code` のものが、`client_credentials グラントに応答する` には `grant_type=client_credentials` で `dispatch-client-credentials` が答えたものが付く。
+`TokenError(invalid_client)` で終わる（`verifyClientSecretHash` から）には、401 で `invalid_client` を返したものが付き、その例のステップは `parse-request`（ran）、`authenticate-client`（failed、`TokenError(invalid_client)`）、`respond-error`（caught）である。
+refresh_token の `invalid_grant` のリクエストは、`TokenError(invalid_grant)` で終わる（`validateRefreshTokenNotUsed` から）に付かない。
+地図のこの失敗の道筋は ID-JAG の発行（`dispatch-id-jag-issuance`）を通り、リクエストはそこで失敗しなかったからである（`例外が起きたとき` には付く）。
 
 ## この章の出力
 

@@ -1949,7 +1949,7 @@ flowchart TB
 | `Location` | クエリとフラグメントがあれば、一つずつ字下げして並べる |
 | ボディ | 空行の後。<br>`application/x-www-form-urlencoded` は一行に一つ（`grant_type=…`、`&code=…`）。<br>JSON は二つ空けで整形し、短い値の配列は一行。<br>`application/jwt` は JWT を一つ。<br>Content-Type が無ければ、JSON、JWT、フォームの順に読めるかで決め、どれでもなければそのままの行 |
 | デコード | フォームとクエリの名前と値はパーセントデコードして見せ（`+` は空白）、デコードで変わった値があれば、ブロックの下に「フォームとクエリの値は、読みやすいようにパーセントデコードしています。」 |
-| 長い値 | 空白の無い 64 文字以上の値（URL は除く）と JWT は、先頭 20 文字と末尾 8 文字の間を `…` で縮める。<br>行の終わりに、JWT なら `JWT` の札と「中身を見る」、ほかは「全体を見る」のボタン。縮めた値を押しても開く。<br>開くと行の下に全体（見えている幅で折り返す）と、JWT なら、ヘッダーとペイロードをデコードした JSON（署名は検証しない。`iat`、`exp`、`nbf`、`auth_time` には UTC の日時を添える） |
+| 長い値 | 空白の無い 64 文字以上の値（URL は除く）と JWT は、先頭 20 文字と末尾 8 文字の間を `…` で縮める。<br>行の終わりに、JWT なら `JWT` の札と「中身を見る」、ほかは「全体を見る」のボタン。縮めた値を押しても開く。<br>ボタンの名前（`aria-label`）は、読み上げで見分けられるよう、その行の JSON のキー、ヘッダー、パラメータの名前を見える言葉の前に足したものにする（「access_token」の中身を見る、「id_token」を畳む）。見える言葉は変えない。キーの無い行（配列の要素、JWT だけのボディ）は見える言葉のまま。<br>開くと行の下に全体（見えている幅で折り返す）と、JWT なら、ヘッダーとペイロードをデコードした JSON（署名は検証しない。`iat`、`exp`、`nbf`、`auth_time` には UTC の日時を添える） |
 | 切れたボディ | `truncated` なら、ブロックの下に「ボディは 16 KiB で切っています。」 |
 | 幅 | ブロックは折り返さず、狭い画面ではブロックの中で横に送る。ページは横に送らない |
 
@@ -1957,7 +1957,7 @@ flowchart TB
 
 実装：
 
-- `apps/tests/src/components/CaseFlow.tsx`：`CaseFlow`、`RequestPart`、`StepsPart`、`WayStepBox`、`ResultPart`、`HttpView`、`Lines`、`LongValue`、`LongControls`、`Expanded`、`SentBy`、`FunctionRef`
+- `apps/tests/src/components/CaseFlow.tsx`：`CaseFlow`、`RequestPart`、`StepsPart`、`WayStepBox`、`ResultPart`、`HttpView`、`Lines`、`lineName`、`LongValue`、`LongControls`、`Expanded`、`SentBy`、`FunctionRef`
 - `apps/tests/src/lib/exchange.ts`：`requestBlock`、`responseBlock`、`formLines`、`jsonLines`、`valuePieces`、`shorten`、`decodeJwt`、`basicCredentials`、`headerName`、`reasonPhrase`、`bodyKind`、`errorCodeOf`、`statusTone`、`previewOf`
 - `apps/tests/src/lib/cases.ts`：`waySteps`、`looseConditions`、`noExampleReason`、`resultWords`、`STEP_KIND_LABELS`、`HOW_LABELS`
 

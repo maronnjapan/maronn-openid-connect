@@ -52,17 +52,32 @@ function LongValue({ piece, opened }: { piece: Extract<Piece, { kind: 'long' }>;
   );
 }
 
-/** At the end of the line of a long value: a `JWT` tag on a JWT, and a button that opens the value under the line. */
-function LongControls({ piece, opened }: { piece: Extract<Piece, { kind: 'long' }>; opened: Opened }) {
+/**
+ * At the end of the line of a long value: a `JWT` tag on a JWT, and a button
+ * that opens the value under the line, named after the key, header or
+ * parameter of the line for a screen reader (「access_token」の中身を見る),
+ * its visible words unchanged.
+ */
+function LongControls({ piece, opened, name }: { piece: Extract<Piece, { kind: 'long' }>; opened: Opened; name: string | undefined }) {
   const open = opened.open.has(piece.id);
+  const words = open ? '畳む' : piece.jwt !== undefined ? '中身を見る' : '全体を見る';
+  // The name keeps the visible words, so a voice command by them still reaches the button.
+  const label = name === undefined ? undefined : `「${name}」${open ? 'を' : 'の'}${words}`;
   return (
     <span className="http-controls">
       {piece.jwt !== undefined && <span className="jwt-tag">JWT</span>}
-      <button type="button" className="http-toggle" aria-expanded={open} onClick={() => opened.toggle(piece.id)}>
-        {open ? '畳む' : piece.jwt !== undefined ? '中身を見る' : '全体を見る'}
+      <button type="button" className="http-toggle" aria-expanded={open} aria-label={label} onClick={() => opened.toggle(piece.id)}>
+        {words}
       </button>
     </span>
   );
+}
+
+/** What a line of a block is about, for the buttons of its long values: its JSON key, header or parameter name; nothing for a line without one (a JSON array element, a bare body). */
+function lineName(line: HttpLine): string | undefined {
+  const piece = line.pieces.find((candidate) => candidate.kind === 'text' && (candidate.tone === 'key' || candidate.tone === 'name'));
+  // A JSON key is shown in its quotes.
+  return piece?.text.replace(/^"|"$/g, '');
 }
 
 /** What an open long value shows under its line: its whole text, and for a JWT its decoded header and payload. */
@@ -98,6 +113,7 @@ function Lines({ lines, opened }: { lines: readonly HttpLine[]; opened: Opened }
       {lines.map((line, index) => {
         const longs = line.pieces.filter((piece): piece is Extract<Piece, { kind: 'long' }> => piece.kind === 'long');
         const open = longs.filter((piece) => opened.open.has(piece.id));
+        const name = longs.length === 0 ? undefined : lineName(line);
         return (
           <Fragment key={index}>
             <div className="http-line">
@@ -111,7 +127,7 @@ function Lines({ lines, opened }: { lines: readonly HttpLine[]; opened: Opened }
                 ),
               )}
               {longs.map((piece) => (
-                <LongControls key={piece.id} piece={piece} opened={opened} />
+                <LongControls key={piece.id} piece={piece} opened={opened} name={name} />
               ))}
             </div>
             {line.note !== undefined && <div className="http-note">↳ {line.note}</div>}

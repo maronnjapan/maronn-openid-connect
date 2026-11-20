@@ -40,6 +40,8 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
   const extra = useMemo(() => waySelections(data, changes, framework, endpoint.id, enabled), [data, changes, framework, endpoint.id, enabled]);
   const root = entryOf(data, endpoint.root);
   const mark = frameMark(changes, endpoint.root);
+  // What the trace's flow view says of the endpoint: kept while the endpoint stays, so the chart drawn from it is not drawn again.
+  const named = useMemo(() => ({ name: `${endpoint.methods.join(' | ')} ${endpoint.path}`, steps: endpoint.steps }), [endpoint]);
   return (
     <section className="screen" aria-label={endpoint.label}>
       <ScreenHeader
@@ -86,10 +88,7 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
           enabled={enabled}
           onOpenFunction={onOpenFunction}
           onOpenCode={setCode}
-          stepFacts={(id) => {
-            const step = endpoint.steps.find((candidate) => candidate.id === id);
-            return step === undefined ? undefined : { kind: step.kind, consumes: step.consumes, produces: step.produces, ...(step.spec === undefined ? {} : { spec: step.spec }) };
-          }}
+          endpoint={named}
           renderStep={(mark) => {
             const step = endpoint.steps.find((candidate) => candidate.id === mark.id);
             if (step === undefined) return <p className="note">{mark.label}（このフレームワークの構成には無いステップです）</p>;

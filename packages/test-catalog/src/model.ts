@@ -9,7 +9,7 @@
  * `@maronn-openid-connect/test-catalog/model`, so this module has no code and
  * has only type imports.
  */
-import type { FeatureRange, MapFeature } from '@maronn-openid-connect/map-analysis';
+import type { FeatureRange, MapFeature, StepKind } from '@maronn-openid-connect/map-analysis';
 
 /**
  * What kind of test a case is, by where it is and what it does:
@@ -438,6 +438,81 @@ export interface EndpointCase {
   failure?: { error: string; code?: string; from: string; name: string; step?: string };
   /** For a failure: the tests that expect it (FailureTests). */
   tests?: FailureTests;
+  /**
+   * The sides this way takes, in words, in the order the walk meets them:
+   * what a request must do to take it. Written from the decisions of its
+   * selection, so a case without an example still says what makes a request
+   * take it.
+   */
+  conditions?: CaseCondition[];
+  /** Requests measured API tests sent that took this way, best first (at most 3); absent when none, or without a measured run. */
+  examples?: CaseExample[];
+  /** How many recorded requests took this way in all (at least examples.length). */
+  exampleCount?: number;
+}
+
+/** A decision and the side a way takes at it, in words. */
+export interface CaseCondition {
+  /** The step the decision is in, by id, when it is in one. */
+  step?: string;
+  /** The decision as the outline says it: its words when it has some, else its code. */
+  text: string;
+  /** Whether text is code. */
+  code: boolean;
+  /** The side taken, in words (成立, 不成立, null または undefined, case 'x', 例外が起きたとき, …); 失敗する for a call that fails. */
+  side: string;
+}
+
+/** A request as a measured API test sent it. */
+export interface ExampleRequest {
+  method: string;
+  /** The path and the query of the URL (`/token`, `/authorize?client_id=…`). */
+  path: string;
+  /** The host of the URL (`op.example.com`). */
+  host: string;
+  /** The headers, lower-case names, in the order they were sent. */
+  headers: Array<[string, string]>;
+  body?: string;
+  /** The body was cut (at 16 KiB). */
+  truncated?: true;
+}
+
+/** The response the endpoint gave to an ExampleRequest. */
+export interface ExampleResponse {
+  status: number;
+  statusText?: string;
+  headers: Array<[string, string]>;
+  body?: string;
+  /** The body was cut (at 16 KiB). */
+  truncated?: true;
+}
+
+/** A step of the endpoint a recorded request ran, with what happened in it. */
+export interface ExampleStep {
+  /** The step id (as in EndpointCase.steps). */
+  id: string;
+  /**
+   * ran: the step ran and the request went on; answered: the endpoint's
+   * answer was returned from here; failed: a failure came up here; caught:
+   * the step that turned a failure into the error response (a catch).
+   */
+  how: 'ran' | 'answered' | 'failed' | 'caught';
+  /** The decisions of the endpoint's own frame inside this step that the request met, with the side it took (measured). */
+  decisions?: CaseCondition[];
+  /** Functions of the catalog the request ran that this step's own code calls directly (frame ids, in the order the step calls them). */
+  calls?: string[];
+  /** For how = failed: the error (`TokenError(invalid_grant)`). */
+  error?: string;
+}
+
+/** A request a measured API test sent that took a case's way: what was sent, the steps it ran and what came back. */
+export interface CaseExample {
+  /** The test that sent it, by id. */
+  test: string;
+  request: ExampleRequest;
+  response: ExampleResponse;
+  /** The steps of the endpoint the request ran, in order. */
+  steps: ExampleStep[];
 }
 
 /** tests/cases/<hash>.json: the cases of one endpoint of a source (the url is TestsIndex.cases). */
@@ -470,6 +545,12 @@ export interface OutlineStep {
   id: string;
   /** Its name in Japanese (`クライアントを認証する`). */
   label: string;
+  /** What the step does, by its kind (the map's FlowStep.kind). */
+  kind?: StepKind;
+  /** The values it reads from the steps before it (FlowStep.consumes). */
+  consumes?: string[];
+  /** The values it hands on (FlowStep.produces). */
+  produces?: string[];
   /** The frame id of the function of the step; absent for a step of Next.js, a block of its Route Handler. */
   function?: string;
   /**

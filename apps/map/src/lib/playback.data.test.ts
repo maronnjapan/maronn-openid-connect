@@ -10,8 +10,10 @@
  * a node for every scene, a terminal for every way a box ends the frame, and
  * every scene that returns or throws ends at one; every chart (each frame the
  * playback goes through, and every endpoint's root as the flow view opens
- * it) lays out with no node over another and every exit beside its box.
- * Without the built map (the unit tests of CI) it is skipped.
+ * it) lays out, top to bottom and left to right, with no node over another,
+ * no arrow through a node but its two ends, no label over a node or another
+ * label, and every exit beside its box. Without the built map (the unit tests
+ * of CI) it is skipped.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,6 +22,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { FlowEndpoint, FlowTree, FrameFile, MapData, TreeNode } from '../types';
 import { boxOf, frameDiagram, type Diagram } from './diagram';
 import { chartWay, flowChart, layoutChart, type Chart } from './flowchart';
+import type { LayoutBox, LayoutPoint } from './graph';
 import { scenesOf, stopKey, walkTrace } from './playback';
 import { entryOf, foldsGuard, frameIds, nodesRun, stepCall, stepHolds } from './trace';
 
@@ -60,27 +63,76 @@ interface Placed {
   seen: Set<string>;
   /** Two nodes over one another. */
   overlapping: string[];
-  /** An exit not beside its box: not at its height, or over it. */
+  /** An exit not beside its box: not wholly on one side of it across the flow, or further from it along the flow than its own size. */
   astray: string[];
+  /** An arrow through a node that is not one of its two ends. */
+  crossing: string[];
+  /** The label of an arrow over a node or over another label. */
+  covered: string[];
 }
 
-/** Lay out a chart once and check it (see Placed). */
+/** A rectangle of the layout. */
+type Area = Pick<LayoutBox, 'x' | 'y' | 'width' | 'height'>;
+
+/** Whether two rectangles overlap by more than `inset`. */
+function overlap(a: Area, b: Area, inset = 0): boolean {
+  return a.x < b.x + b.width - inset && b.x < a.x + a.width - inset && a.y < b.y + b.height - inset && b.y < a.y + a.height - inset;
+}
+
+/** Whether the segment from `a` to `b` runs through a rectangle shrunk by `inset` on every side (Liang–Barsky clipping), so an arrow that only meets its border does not count. */
+function crosses(a: LayoutPoint, b: LayoutPoint, area: Area, inset = 2): boolean {
+  const sides: Array<[number, number]> = [
+    [a.x - b.x, a.x - (area.x + inset)],
+    [b.x - a.x, area.x + area.width - inset - a.x],
+    [a.y - b.y, a.y - (area.y + inset)],
+    [b.y - a.y, area.y + area.height - inset - a.y],
+  ];
+  let enter = 0;
+  let leave = 1;
+  for (const [p, q] of sides) {
+    if (p === 0) {
+      if (q <= 0) return false;
+    } else if (p < 0) enter = Math.max(enter, q / p);
+    else leave = Math.min(leave, q / p);
+  }
+  return leave - enter > 1e-6;
+}
+
+/** Lay out a chart once in each direction and check it (see Placed). */
 function checkLayout(chart: Chart, name: string, into: Placed): void {
   const signature = `${chart.key} ${chart.nodes.map((node) => node.id).join(',')}`;
   if (into.seen.has(signature)) return;
   into.seen.add(signature);
-  const boxes = layoutChart(chart).boxes;
-  boxes.forEach((a, index) => {
-    for (const b of boxes.slice(index + 1)) if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) into.overlapping.push(`${name}: ${a.id} × ${b.id}`);
-  });
-  const at = new Map(boxes.map((box) => [box.id, box]));
-  for (const node of chart.nodes) {
-    const exit = at.get(node.id);
-    const box = at.get(node.of);
-    if (node.row === undefined || !node.of.startsWith('n:') || exit === undefined || box === undefined) continue;
-    const level = Math.abs(exit.y + exit.height / 2 - (box.y + box.height / 2)) < 1;
-    const beside = exit.x >= box.x + box.width || exit.x + exit.width <= box.x;
-    if (!level || !beside) into.astray.push(`${name}: ${node.id}`);
+  for (const direction of ['TB', 'LR'] as const) {
+    const placed = layoutChart(chart, direction);
+    const where = `${name} (${direction})`;
+    const boxes = placed.boxes;
+    boxes.forEach((a, index) => {
+      for (const b of boxes.slice(index + 1)) if (overlap(a, b)) into.overlapping.push(`${where}: ${a.id} × ${b.id}`);
+    });
+    for (const arrow of placed.arrows) {
+      const edge = chart.edges[arrow.index];
+      if (edge === undefined) continue;
+      for (const box of boxes) {
+        if (box.id === edge.from || box.id === edge.to) continue;
+        if (arrow.points.some((point, index) => index > 0 && crosses(arrow.points[index - 1] as LayoutPoint, point, box))) into.crossing.push(`${where}: ${edge.from} → ${edge.to} × ${box.id}`);
+      }
+    }
+    const labels = placed.arrows.flatMap((arrow) => (arrow.label === undefined ? [] : [{ text: arrow.label.text, area: { x: arrow.label.x - arrow.label.width / 2, y: arrow.label.y - arrow.label.height / 2, width: arrow.label.width, height: arrow.label.height } }]));
+    labels.forEach((label, index) => {
+      for (const box of boxes) if (overlap(label.area, box, 1)) into.covered.push(`${where}: 「${label.text}」 × ${box.id}`);
+      for (const other of labels.slice(index + 1)) if (overlap(label.area, other.area, 1)) into.covered.push(`${where}: 「${label.text}」 × 「${other.text}」`);
+    });
+    const at = new Map(boxes.map((box) => [box.id, box]));
+    for (const node of chart.nodes) {
+      const exit = at.get(node.id);
+      const box = at.get(node.of);
+      if (node.row === undefined || !node.of.startsWith('n:') || exit === undefined || box === undefined) continue;
+      const tb = direction === 'TB';
+      const beside = tb ? exit.x >= box.x + box.width || exit.x + exit.width <= box.x : exit.y >= box.y + box.height || exit.y + exit.height <= box.y;
+      const apart = tb ? Math.max(0, exit.y - (box.y + box.height), box.y - (exit.y + exit.height)) : Math.max(0, exit.x - (box.x + box.width), box.x - (exit.x + exit.width));
+      if (!beside || apart > (tb ? exit.height : exit.width)) into.astray.push(`${where}: ${node.id}`);
+    }
   }
 }
 
@@ -164,7 +216,7 @@ function play(root: string, file: FrameFile, data: MapData, treeOf: (id: string)
 
 describe.skipIf(!existsSync(join(DATA, 'map.json')))('the playback of every ready-made choice of the endpoints of the built map', () => {
   const played: Played = { choices: 0, scenes: 0, astray: [], homeless: [], grey: [], unplayable: [], exitless: [], unended: [] };
-  const placed: Placed = { seen: new Set(), overlapping: [], astray: [] };
+  const placed: Placed = { seen: new Set(), overlapping: [], astray: [], crossing: [], covered: [] };
 
   beforeAll(() => {
     const data = JSON.parse(readFileSync(join(DATA, 'map.json'), 'utf8')) as MapData;
@@ -190,7 +242,7 @@ describe.skipIf(!existsSync(join(DATA, 'map.json')))('the playback of every read
     }
     console.log(
       `The playback of ${played.choices} ready-made choices of ${roots.length} endpoint roots: ${played.scenes} scenes; ${played.astray.length} astray, ${played.homeless.length} stops without a box, ${played.grey.length} stops the diagram leaves grey; ` +
-        `the chart: ${played.unplayable.length} scenes without a node, ${played.exitless.length} exits without a terminal, ${played.unended.length} endings without one; ${placed.seen.size} charts laid out, ${placed.overlapping.length} overlaps, ${placed.astray.length} exits not beside their box`,
+        `the chart: ${played.unplayable.length} scenes without a node, ${played.exitless.length} exits without a terminal, ${played.unended.length} endings without one; ${placed.seen.size} charts laid out in both directions, ${placed.overlapping.length} overlaps, ${placed.astray.length} exits not beside their box, ${placed.crossing.length} arrows through a node, ${placed.covered.length} labels over a node or a label`,
     );
   }, 300_000);
 
@@ -219,9 +271,14 @@ describe.skipIf(!existsSync(join(DATA, 'map.json')))('the playback of every read
     expect(played.unended).toEqual([]);
   });
 
-  it('should lay out every chart with no node over another and every exit beside its box', () => {
+  it('should lay out every chart in both directions with no node over another and every exit beside its box', () => {
     expect(placed.seen.size).toBeGreaterThan(0);
     expect(placed.overlapping).toEqual([]);
     expect(placed.astray).toEqual([]);
+  });
+
+  it('should lay out every chart in both directions with no arrow through a node but its two ends, and no label over a node or another label', () => {
+    expect(placed.crossing).toEqual([]);
+    expect(placed.covered).toEqual([]);
   });
 });

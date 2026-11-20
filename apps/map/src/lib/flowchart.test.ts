@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { FlowTree, TreeNode } from '../types';
 import { boxOf, frameDiagram, type Diagram } from './diagram';
 import { chartWay, decisionLines, DECISION_WIDTH, flowChart, layoutChart, stepDetail, stepValues, wayAt, type Chart, type ChartNode, type ChartStep } from './flowchart';
-import type { LayoutBox, LayoutPoint } from './graph';
+import { LABEL_HEIGHT, labelWidth, type LayoutBox, type LayoutPoint } from './graph';
 import { scenesOf, walkTrace } from './playback';
 import type { WordSource } from './words';
 
@@ -83,6 +83,22 @@ function edgesOf(chart: Chart): string[] {
   return chart.edges.map((edge) => `${edge.from} → ${edge.to}${edge.label === undefined ? '' : ` ${edge.label}`} (${edge.kind})`);
 }
 
+/** The chart of a decision with four labeled exits, as a switch over the requests of an endpoint reads: the start, the rhombus, and an end for each case. */
+function fourExits(): Chart {
+  const cases = ['GET /device', 'POST /device', 'POST /device/login', 'POST /device/approve'];
+  const exit = (row: number): ChartNode => ({ id: `x:n:d|${row}`, shape: 'end', title: '応答して終わる', lines: ['応答して終わる'], code: false, detail: `respond${row}(c) を返す`, of: 'n:d', row, ends: [`s0c${row}`], width: 276, height: 48 });
+  return {
+    key: 'four',
+    nodes: [
+      { id: 'start', shape: 'start', title: 'GET | POST /device', lines: ['GET | POST /device'], code: false, of: 'start', width: 172, height: 34 },
+      { id: 'n:d', shape: 'decision', title: 'どのリクエストか', lines: ['どのリクエストか'], code: false, of: 'n:d', width: DECISION_WIDTH, height: 62 },
+      ...cases.map((_, row) => exit(row)),
+    ],
+    edges: [{ from: 'start', to: 'n:d', kind: 'flow' }, ...cases.map((label, row) => ({ from: 'n:d', to: `x:n:d|${row}`, kind: 'branch' as const, label, side: { node: 's0', side: `case${row}` }, exit: true }))],
+    groups: [],
+  };
+}
+
 /** The chart of two guards in a row whose answers Dagre lays out beside the flow: the answer of the first stands level with the second guard. */
 function twoGuards(): Chart {
   const node = (id: string, shape: ChartNode['shape'], width: number, height: number): ChartNode => ({ id, shape, title: id, lines: [id], code: false, of: id, width, height });
@@ -117,6 +133,11 @@ function legCrosses(a: LayoutPoint, b: LayoutPoint, box: LayoutBox): boolean {
     else leave = Math.min(leave, q / p);
   }
   return leave - enter > 1e-6;
+}
+
+/** Whether two rectangles overlap by more than 1px. */
+function rectsOverlap(a: Pick<LayoutBox, 'x' | 'y' | 'width' | 'height'>, b: Pick<LayoutBox, 'x' | 'y' | 'width' | 'height'>): boolean {
+  return a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1;
 }
 
 describe('flowChart', () => {
@@ -220,6 +241,47 @@ describe('layoutChart', () => {
     expect(overlapping).toEqual([]);
     expect(placed.arrows.map((arrow) => arrow.index)).toEqual(chart.edges.map((_, index) => index));
   });
+
+  for (const direction of ['TB', 'LR'] as const) {
+    it(`should stack the exits of a decision with four of them beside it, reached by turning arrows that pass no node and labels that cover none (${direction})`, () => {
+      const chart = fourExits();
+      const placed = layoutChart(chart, direction);
+      const at = new Map(placed.boxes.map((box) => [box.id, box]));
+      const rhombus = at.get('n:d') as LayoutBox;
+      const tb = direction === 'TB';
+      // No leg of an arrow runs through a node but its two ends, and no label covers a node or another label.
+      const crossing = placed.arrows.flatMap((arrow) => {
+        const edge = chart.edges[arrow.index];
+        return placed.boxes.filter((box) => box.id !== edge?.from && box.id !== edge?.to && arrow.points.some((point, index) => index > 0 && legCrosses(arrow.points[index - 1] as LayoutPoint, point, box))).map((box) => `${edge?.to} × ${box.id}`);
+      });
+      expect(crossing).toEqual([]);
+      const labels = placed.arrows.flatMap((arrow) => (arrow.label === undefined ? [] : [{ text: arrow.label.text, x: arrow.label.x - arrow.label.width / 2, y: arrow.label.y - arrow.label.height / 2, width: arrow.label.width, height: arrow.label.height }]));
+      const covered = labels.flatMap((label, index) => [...placed.boxes, ...labels.slice(index + 1)].filter((other) => rectsOverlap(label, other)).map((other) => `${label.text} × ${'id' in other ? other.id : other.text}`));
+      expect(covered).toEqual([]);
+      // Two exits stand level with the rhombus on either side, reached from its side corners; the other two are stacked after them along the flow, one on each side, and reached by an arrow that turns, its label level with the exit.
+      const middle = (box: LayoutBox) => (tb ? box.y + box.height / 2 : box.x + box.width / 2);
+      const exits = [0, 1, 2, 3].map((row) => at.get(`x:n:d|${row}`) as LayoutBox);
+      const level = exits.filter((exit) => Math.abs(middle(exit) - middle(rhombus)) < 1);
+      expect(level).toHaveLength(2);
+      expect(exits.filter((exit) => middle(exit) > middle(rhombus) + 1)).toHaveLength(2);
+      for (const exit of exits) {
+        const near = tb ? Math.max(exit.x - (rhombus.x + rhombus.width), rhombus.x - (exit.x + exit.width)) : Math.max(exit.y - (rhombus.y + rhombus.height), rhombus.y - (exit.y + exit.height));
+        const arrow = placed.arrows.find((candidate) => chart.edges[candidate.index]?.to === exit.id);
+        const label = arrow?.label;
+        // Beside the rhombus across the flow, no further out than its arrow needs to hold the label (with the little way out of an arrow that turns).
+        expect(near).toBeGreaterThan(0);
+        expect(near).toBeLessThanOrEqual(Math.max(40, (tb ? labelWidth(label?.text ?? '') : LABEL_HEIGHT) + 2 * 12 + 8));
+        if (level.includes(exit)) {
+          expect(arrow?.points).toHaveLength(2);
+          expect(arrow?.points[0]).toEqual(tb ? { x: exit.x > rhombus.x ? rhombus.x + rhombus.width : rhombus.x, y: middle(rhombus) } : { x: middle(rhombus), y: exit.y > rhombus.y ? rhombus.y + rhombus.height : rhombus.y });
+        } else {
+          expect(arrow?.points).toHaveLength(4);
+          expect(tb ? label?.y : label?.x).toBe(middle(exit));
+        }
+      }
+      expect(new Set(exits.map((exit) => (tb ? exit.x > rhombus.x : exit.y > rhombus.y))).size).toBe(2);
+    });
+  }
 
   it('should leave a rhombus at the corner of the side Dagre leaves it from, so the first leg passes the answer of the guard before', () => {
     const chart = twoGuards();

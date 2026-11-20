@@ -492,6 +492,17 @@ const EXIT_PAD = 10;
 /** The least length of the arrow to an exit, and the room kept on each side of its label. */
 const EXIT_ARROW = 40;
 const EXIT_LABEL_ROOM = 12;
+/**
+ * How far the arrow to an exit stacked beside its box goes out of the box
+ * before it turns along the flow: less than the room before the label of the
+ * straight arrow beside it, so it passes that label by.
+ */
+const EXIT_STUB = 8;
+/** The room kept between the arrow to an exit and a node it passes, and around an exit that an arrow passes. */
+const EXIT_CLEAR = 4;
+/** The least step by which an exit stacked beside its box moves along the flow, and how many exits' worth it may move from level with the box. */
+const STACK_STEP = 4;
+const STACK_EXITS = 3;
 /** The margin of the canvas. */
 const CANVAS_MARGIN = 12;
 
@@ -500,31 +511,101 @@ function pathOf(points: readonly LayoutPoint[]): string {
   return points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`).join(' ');
 }
 
-/** The ends of the straight arrow from a box or a region to an exit placed beside it or after it: from the side that faces the exit, in line with the exit's middle. */
-function exitArrow(from: Area, exit: Area, direction: LayoutDirection): [LayoutPoint, LayoutPoint] {
-  const middle = { x: exit.x + exit.width / 2, y: exit.y + exit.height / 2 };
-  if (direction === 'TB') {
-    if (exit.y >= from.y + from.height) return [{ x: middle.x, y: from.y + from.height }, { x: middle.x, y: exit.y }];
-    const right = middle.x >= from.x + from.width / 2;
-    return [{ x: right ? from.x + from.width : from.x, y: middle.y }, { x: right ? exit.x : exit.x + exit.width, y: middle.y }];
+/** Whether the segment from `a` to `b` runs through a rectangle grown by `pad` on every side (shrunk when it is negative), more than touching its border. */
+function crosses(a: LayoutPoint, b: LayoutPoint, area: Area, pad = 0): boolean {
+  const left = area.x - pad;
+  const right = area.x + area.width + pad;
+  const top = area.y - pad;
+  const bottom = area.y + area.height + pad;
+  if (right <= left || bottom <= top) return false;
+  // Clip the segment to the rectangle (Liang–Barsky): the share of it between `enter` and `leave` lies inside.
+  let enter = 0;
+  let leave = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const sides: Array<[number, number]> = [
+    [-dx, a.x - left],
+    [dx, right - a.x],
+    [-dy, a.y - top],
+    [dy, bottom - a.y],
+  ];
+  for (const [p, q] of sides) {
+    if (p === 0) {
+      if (q <= 0) return false;
+      continue;
+    }
+    if (p < 0) enter = Math.max(enter, q / p);
+    else leave = Math.min(leave, q / p);
   }
-  if (exit.x >= from.x + from.width) return [{ x: from.x + from.width, y: middle.y }, { x: exit.x, y: middle.y }];
-  const down = middle.y >= from.y + from.height / 2;
-  return [{ x: middle.x, y: down ? from.y + from.height : from.y }, { x: middle.x, y: down ? exit.y : exit.y + exit.height }];
+  return leave - enter > 1e-6;
+}
+
+/** Whether a polyline runs through a rectangle (see crosses). */
+function pathCrosses(points: readonly LayoutPoint[], area: Area, pad = 0): boolean {
+  return points.some((point, index) => index > 0 && crosses(points[index - 1] as LayoutPoint, point, area, pad));
+}
+
+/** The arrow to an exit: its points and the middle of its label. */
+interface ExitRoute {
+  points: LayoutPoint[];
+  label: LayoutPoint;
+}
+
+/**
+ * The arrow from a box or a region to an exit placed beside it or after it,
+ * and where its label stands. An exit after a region is reached straight from
+ * the region's end. An exit beside is reached from the side that faces it: a
+ * rhombus from its corner, a box or a region level with the exit's middle as
+ * far as the side reaches. When that is not level with the exit (an exit
+ * stacked beside its box), the arrow goes a little way out, turns along the
+ * side to the exit's middle and goes in, its label on that last leg.
+ */
+function exitRoute(from: Area, exit: Area, direction: LayoutDirection, rhombus: boolean): ExitRoute {
+  const tb = direction === 'TB';
+  // In a left-to-right flow every x is a y: `across` is the axis the exits stand beside the flow on, `along` the flow's.
+  const point = (across: number, along: number): LayoutPoint => (tb ? { x: across, y: along } : { x: along, y: across });
+  const fromAcross = tb ? from.x : from.y;
+  const fromAcrossSize = tb ? from.width : from.height;
+  const fromAlong = tb ? from.y : from.x;
+  const fromAlongSize = tb ? from.height : from.width;
+  const exitAcross = tb ? exit.x : exit.y;
+  const exitAcrossSize = tb ? exit.width : exit.height;
+  const exitAlong = tb ? exit.y : exit.x;
+  const middle = exitAlong + (tb ? exit.height : exit.width) / 2;
+  const centre = exitAcross + exitAcrossSize / 2;
+  const besideIt = exitAcross >= fromAcross + fromAcrossSize || exitAcross + exitAcrossSize <= fromAcross;
+  if (!besideIt && exitAlong >= fromAlong + fromAlongSize) {
+    const start = point(centre, fromAlong + fromAlongSize);
+    const end = point(centre, exitAlong);
+    return { points: [start, end], label: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 } };
+  }
+  const side = centre >= fromAcross + fromAcrossSize / 2 ? 1 : -1;
+  const out = side === 1 ? fromAcross + fromAcrossSize : fromAcross;
+  const into = side === 1 ? exitAcross : exitAcross + exitAcrossSize;
+  const inset = Math.min(10, fromAlongSize / 2);
+  const level = rhombus ? fromAlong + fromAlongSize / 2 : Math.max(fromAlong + inset, Math.min(fromAlong + fromAlongSize - inset, middle));
+  if (Math.abs(level - middle) < 0.5) {
+    return { points: [point(out, middle), point(into, middle)], label: point((out + into) / 2, middle) };
+  }
+  const turn = out + side * EXIT_STUB;
+  return { points: [point(out, level), point(turn, level), point(turn, middle), point(into, middle)], label: point((turn + into) / 2, middle) };
 }
 
 /**
  * Lay out a chart. The flow without its exits is laid out by Dagre (see
  * layoutGraph), every node at its own size, every region with the room of its
- * title, and an arrow that meets a rhombus meets it at a corner (leaving it,
- * the corner of the side Dagre routes it from). Then each
- * exit is put beside the box it leaves (to its right in a top-to-bottom
- * flow, below it in a left-to-right one; on the other side, or further out,
- * where that place is taken), at the box's height, so the main flow stays
- * one straight column and every way out reads next to where it leaves; the
- * exit of a region goes after it, in line with its last box, else beside its
- * end. A region grows to hold the exits of its boxes, never over a box that
- * is not its own. The arrow to an exit is straight, its label in the middle.
+ * title, and an arrow that meets a rhombus meets it at a corner, the corner
+ * of the side Dagre routes it from. Then each exit is put beside the box it
+ * leaves (to its right in a top-to-bottom flow, below it in a left-to-right
+ * one; else on the other side), at the box's height, so the main flow stays
+ * one straight column and every way out reads next to where it leaves; where
+ * both sides are taken, the exit is stacked along the flow beside its box,
+ * nearest first, and its arrow turns to reach it. The exit of a region goes
+ * after it, in line with its last box, else beside its end. An exit stands
+ * where it covers no node, no label and no arrow, its arrow runs through no
+ * node but its two ends and its label covers no node and no other label. A
+ * region grows to hold the exits of its boxes, never over a box that is not
+ * its own.
  */
 export function layoutChart(chart: Chart, direction: LayoutDirection = 'TB'): ChartLayout {
   const byId = new Map(chart.nodes.map((node) => [node.id, node]));
@@ -560,22 +641,66 @@ export function layoutChart(chart: Chart, direction: LayoutDirection = 'TB'): Ch
   const regionOf = new Map(chart.nodes.map((node) => [node.id, node.group]));
   const tb = direction === 'TB';
   const exits: LayoutBox[] = [];
-  /**
-   * Whether an exit may stand at a place: it covers no box but its own, no
-   * region it is not in, no label and no exit, and the regions it is in can
-   * grow to hold it without covering a box or a region that is not theirs.
-   */
-  const free = (area: Area, exit: ChartNode): boolean => {
-    const chain = chainOf(exit.group);
-    for (const box of boxes.values()) if (box.id !== exit.of && overlaps(area, box, EXIT_PAD)) return false;
-    for (const group of groups.values()) if (!chain.includes(group.id) && group.id !== exit.of && overlaps(area, group, EXIT_PAD)) return false;
-    for (const arrow of arrows) if (arrow.label !== undefined && overlaps(area, labelArea(arrow.label), 4)) return false;
-    for (const id of chain) {
+  /** The band at the top of a region its title takes. */
+  const titleOf = (group: Area): Area => ({ x: group.x, y: group.y, width: group.width, height: GROUP_HEADER });
+  /** A region grown to hold a rectangle with `pad` of room around it, and the room of its title above it. */
+  const hold = (region: Area, inner: Area, pad: number): Area => {
+    const grown = union(region, inner, pad);
+    const top = Math.min(grown.y, inner.y - GROUP_HEADER);
+    return { x: grown.x, y: top, width: grown.width, height: grown.y + grown.height - top };
+  };
+  /** The regions an exit is in, by id, each grown to hold the exit at a place and the regions inside it. */
+  const grownFor = (exit: ChartNode, area: Area): Map<string, Area> => {
+    const grown = new Map<string, Area>();
+    for (const id of chainOf(exit.group)) {
       const region = groups.get(id);
       if (region === undefined) continue;
-      const grown = union(region, area, EXIT_PAD + 2);
-      for (const box of boxes.values()) if (!chainOf(regionOf.get(box.id)).includes(id) && overlaps(grown, box, 4)) return false;
-      for (const group of groups.values()) if (!chainOf(group.id).includes(id) && !chain.includes(group.id) && overlaps(grown, group, 4)) return false;
+      let rect = hold(region, area, EXIT_PAD + 2);
+      for (const inner of chart.groups.filter((group) => group.parent === id)) {
+        const child = grown.get(inner.id) ?? groups.get(inner.id);
+        if (child !== undefined) rect = hold(rect, child, 8);
+      }
+      grown.set(id, rect);
+    }
+    return grown;
+  };
+  /**
+   * Whether an exit may stand at a place, reached from the box or the region
+   * it leaves along a route, its label (of a size) on it. The exit covers no
+   * box but its own, no region it is not in, no label, no exit and no arrow,
+   * and the regions it is in can grow to hold it (their titles above it)
+   * without covering a box or a region that is not theirs. The arrow runs
+   * through no node but its two ends and no region the exit is not in; the
+   * label covers no node, no other label and no region's title. `strict` also
+   * keeps the arrow from passing under a label and the label from covering an
+   * arrow.
+   */
+  const free = (area: Area, route: ExitRoute, size: { width: number; height: number } | undefined, exit: ChartNode, strict: boolean): boolean => {
+    const chain = chainOf(exit.group);
+    const label = size === undefined ? undefined : labelArea({ ...route.label, ...size });
+    for (const box of boxes.values()) {
+      if (box.id !== exit.of && overlaps(area, box, EXIT_PAD)) return false;
+      if (box.id !== exit.of && pathCrosses(route.points, box, EXIT_CLEAR)) return false;
+      if (label !== undefined && overlaps(label, box, 2)) return false;
+    }
+    const grown = grownFor(exit, area);
+    for (const group of groups.values()) {
+      if (!chain.includes(group.id) && group.id !== exit.of && (overlaps(area, group, EXIT_PAD) || pathCrosses(route.points, group))) return false;
+      if (label !== undefined && overlaps(label, titleOf(grown.get(group.id) ?? group))) return false;
+    }
+    for (const arrow of arrows) {
+      const placedLabel = arrow.label === undefined ? undefined : labelArea(arrow.label);
+      if (placedLabel !== undefined && overlaps(area, placedLabel, 4)) return false;
+      if (pathCrosses(arrow.points, area, EXIT_CLEAR)) return false;
+      if (placedLabel !== undefined && label !== undefined && overlaps(label, placedLabel, 2)) return false;
+      if (strict && placedLabel !== undefined && pathCrosses(route.points, placedLabel, 1)) return false;
+      if (strict && label !== undefined && pathCrosses(arrow.points, label, 1)) return false;
+    }
+    for (const [id, rect] of grown) {
+      for (const box of boxes.values()) if (!chainOf(regionOf.get(box.id)).includes(id) && overlaps(rect, box, 4)) return false;
+      for (const group of groups.values()) if (!chainOf(group.id).includes(id) && !chain.includes(group.id) && overlaps(rect, group, 4)) return false;
+      // A region that grows past its top takes its title up with it, clear of the labels.
+      if (rect.y < (groups.get(id)?.y ?? rect.y)) for (const arrow of arrows) if (arrow.label !== undefined && overlaps(titleOf(rect), labelArea(arrow.label))) return false;
     }
     return true;
   };
@@ -585,14 +710,18 @@ export function layoutChart(chart: Chart, direction: LayoutDirection = 'TB'): Ch
     const from = boxes.get(edge.from) ?? groups.get(edge.from);
     if (from === undefined) return;
     const box = boxes.get(edge.from);
-    // The arrow is long enough for its label: across it in a top-to-bottom flow, along it in a left-to-right one.
-    const label = edge.label === undefined ? 0 : tb ? labelWidth(edge.label) : LABEL_HEIGHT;
+    const rhombus = box !== undefined && byId.get(edge.from)?.shape === 'decision';
+    const size = edge.label === undefined ? undefined : { width: labelWidth(edge.label), height: LABEL_HEIGHT };
+    // The arrow is long enough for its label: across it in a top-to-bottom flow, along it in a left-to-right one. An arrow that turns holds it on its last leg.
+    const label = size === undefined ? 0 : tb ? size.width : size.height;
     const gap = Math.max(EXIT_ARROW, label + 2 * EXIT_LABEL_ROOM);
-    /** The place beside the box (or the end of the region) on a side (1: right or below, -1: left or above), `further` past the room the arrow needs. */
-    const beside = (side: 1 | -1, further = 0): Area => {
-      const middle = box !== undefined ? (tb ? from.y + from.height / 2 : from.x + from.width / 2) : tb ? from.y + from.height - exit.height / 2 - EXIT_PAD : from.x + from.width - exit.width / 2 - EXIT_PAD;
-      if (tb) return { width: exit.width, height: exit.height, x: side === 1 ? from.x + from.width + gap + further : from.x - gap - further - exit.width, y: middle - exit.height / 2 };
-      return { width: exit.width, height: exit.height, x: middle - exit.width / 2, y: side === 1 ? from.y + from.height + gap + further : from.y - gap - further - exit.height };
+    const turning = Math.max(EXIT_ARROW, EXIT_STUB + label + 2 * EXIT_LABEL_ROOM);
+    /** The place beside the box (or the end of the region) on a side (1: right or below, -1: left or above), `further` past the room the arrow needs, `shift` along the flow from level with it. */
+    const beside = (side: 1 | -1, further = 0, shift = 0): Area => {
+      const room = (shift === 0 ? gap : turning) + further;
+      const middle = (box !== undefined ? (tb ? from.y + from.height / 2 : from.x + from.width / 2) : tb ? from.y + from.height - exit.height / 2 - EXIT_PAD : from.x + from.width - exit.width / 2 - EXIT_PAD) + shift;
+      if (tb) return { width: exit.width, height: exit.height, x: side === 1 ? from.x + from.width + room : from.x - room - exit.width, y: middle - exit.height / 2 };
+      return { width: exit.width, height: exit.height, x: middle - exit.width / 2, y: side === 1 ? from.y + from.height + room : from.y - room - exit.height };
     };
     /** The place after a region along the flow, in line with its last box. */
     const after = (): Area => {
@@ -601,30 +730,32 @@ export function layoutChart(chart: Chart, direction: LayoutDirection = 'TB'): Ch
       if (tb) return { width: exit.width, height: exit.height, x: (last === undefined ? from.x + from.width / 2 : last.x + last.width / 2) - exit.width / 2, y: from.y + from.height + gap };
       return { width: exit.width, height: exit.height, x: from.x + from.width + gap, y: (last === undefined ? from.y + from.height / 2 : last.y + last.height / 2) - exit.height / 2 };
     };
-    const candidates: Area[] = [...(box === undefined ? [after()] : []), beside(1), beside(-1), ...Array.from({ length: 24 }, (_, step) => beside(step % 2 === 0 ? 1 : -1, 48 * (1 + Math.floor(step / 2))))];
-    const area = candidates.find((candidate) => free(candidate, exit)) ?? (candidates[0] as Area);
+    // Level with the box on either side; else stacked along the flow beside it, the nearest place first (after the box before before it); else further out.
+    const along = tb ? exit.height : exit.width;
+    const step = Math.max(STACK_STEP, Math.ceil(along / 10));
+    const shifts = Array.from({ length: Math.ceil((STACK_EXITS * (along + EXIT_PAD)) / step) }, (_, at) => (at + 1) * step);
+    const candidates: Area[] = [
+      ...(box === undefined ? [after()] : []),
+      beside(1),
+      beside(-1),
+      ...shifts.flatMap((shift) => [beside(1, 0, shift), beside(-1, 0, shift), beside(1, 0, -shift), beside(-1, 0, -shift)]),
+      ...Array.from({ length: 24 }, (_, at) => beside(at % 2 === 0 ? 1 : -1, 48 * (1 + Math.floor(at / 2)))),
+    ];
+    const routeOf = (area: Area): ExitRoute => exitRoute(from, area, direction, rhombus);
+    const fits = (strict: boolean): Area | undefined => candidates.find((candidate) => free(candidate, routeOf(candidate), size, exit, strict));
+    const area = fits(true) ?? fits(false) ?? (candidates[0] as Area);
     const made: LayoutBox = { id: exit.id, ...area };
     exits.push(made);
     boxes.set(exit.id, made);
-    // The regions it is in grow to hold it, each with the regions inside it.
-    for (const id of chainOf(exit.group)) {
-      const region = groups.get(id);
-      if (region === undefined) continue;
-      let grown: Area = union(region, made, EXIT_PAD + 2);
-      for (const inner of chart.groups.filter((group) => group.parent === id)) {
-        const rect = groups.get(inner.id);
-        if (rect !== undefined) grown = union(grown, rect, 8);
-      }
-      groups.set(id, { ...grown, id });
-    }
-    const [start, end] = exitArrow(from, made, direction);
-    const points = [byId.get(edge.from)?.shape === 'decision' && box !== undefined ? corner(box, end, direction) : start, end];
+    // The regions it is in grow to hold it, each with the regions inside it and the room of its title.
+    for (const [id, grown] of grownFor(exit, made)) groups.set(id, { ...grown, id });
+    const route = routeOf(made);
     arrows.push({
       index,
       kind: edge.kind,
-      d: pathOf(points),
-      points,
-      ...(edge.label === undefined ? {} : { label: { text: edge.label, x: (start.x + end.x) / 2, y: (start.y + end.y) / 2, width: labelWidth(edge.label), height: LABEL_HEIGHT } }),
+      d: pathOf(route.points),
+      points: route.points,
+      ...(edge.label === undefined || size === undefined ? {} : { label: { text: edge.label, ...route.label, ...size } }),
     });
   });
 

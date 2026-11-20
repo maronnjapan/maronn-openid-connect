@@ -35,7 +35,7 @@ export interface FlowChartProps {
   label: string;
   /** The badges of the boxes and regions the pull request changed, by their id. */
   marks?: ReadonlyMap<string, Mark> | undefined;
-  /** A node on the way is clicked or tapped, or Enter or Space is pressed on it: go to the scene that reaches it. */
+  /** A node on the way is clicked or tapped, or Enter or Space is pressed on it: go to the scene that reaches it (a node off the way stays where it is, its card pinned all the same). */
   onScene: (index: number) => void;
   /** The card's 中の流れを見る: look inside a function the box calls (`box.opens` names it). */
   onOpen: (box: DiagramNode, keyboard: boolean) => void;
@@ -109,7 +109,9 @@ const STATE_WORDS: Record<WayNodeState, string> = { visited: 'このリクエス
  *
  * Pressing a node on the way goes to its scene. The card of a node (on
  * hover, focus or tap, see useDiagramCards) says what its box says in the
- * side pane's diagram, and offers the same buttons.
+ * side pane's diagram, and offers the same buttons: every node and every
+ * region's title takes a press, so a tap pins the card and Tab goes into its
+ * buttons whether the request takes the node or not.
  */
 export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, onScene, onOpen, onToggleStep }: FlowChartProps) {
   const [direction, setDirection] = useState<LayoutDirection>('TB');
@@ -342,7 +344,9 @@ export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, 
         role="button"
         aria-label={spoken(node)}
         aria-describedby={cards.shown === node.id ? cards.cardId : undefined}
-        {...cards.handlersOf(node.id, scene === undefined ? undefined : () => onScene(scene))}
+        {...cards.handlersOf(node.id, () => {
+          if (scene !== undefined) onScene(scene);
+        })}
       >
         {node.shape === 'decision' ? (
           <>
@@ -418,7 +422,10 @@ export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, 
                   role="button"
                   aria-label={spokenLabel([`${title}（try）`, group.rows[0]?.full ?? group.outcome, mark?.title ?? ''].filter((line) => line !== ''))}
                   aria-describedby={cards.shown === rect.id ? cards.cardId : undefined}
-                  {...cards.handlersOf(rect.id, sceneOf(rect.id) === undefined ? undefined : () => onScene(sceneOf(rect.id) as number))}
+                  {...cards.handlersOf(rect.id, () => {
+                    const at = sceneOf(rect.id);
+                    if (at !== undefined) onScene(at);
+                  })}
                 >
                   <rect className="hit" x={rect.x} y={rect.y} width={rect.width} height={GROUP_HEADER - 4} rx={6} />
                   <text className="group-text" x={rect.x + 12} y={rect.y + GROUP_HEADER / 2 - 1} dominantBaseline="central" data-room={rect.width - 24 - (mark === undefined ? 0 : badgeWidth(mark) + 8)}>

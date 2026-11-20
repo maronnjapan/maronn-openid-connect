@@ -303,6 +303,8 @@ function PartTitle({ no, children }: { no: number; children: string }) {
 function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: EndpointCase; example: CaseExample | undefined; index: number; onIndex: (index: number) => void; reason: string }) {
   const examples = chosen.examples ?? [];
   const count = chosen.exampleCount ?? examples.length;
+  const first = index === 0;
+  const last = index >= examples.length - 1;
   return (
     <li className="flow-part">
       <PartTitle no={1}>リクエスト</PartTitle>
@@ -323,13 +325,30 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
               <span className="example-nav" role="group" aria-label="リクエストの例">
                 {examples.length > 1 && (
                   <>
-                    <button type="button" className="example-step" aria-label="前の例" disabled={index === 0} onClick={() => onIndex(index - 1)}>
+                    {/* aria-disabled, not disabled: a button that turns disabled under the keyboard drops its focus to the page. */}
+                    <button
+                      type="button"
+                      className="example-step"
+                      aria-label="前の例"
+                      aria-disabled={first}
+                      onClick={() => {
+                        if (!first) onIndex(index - 1);
+                      }}
+                    >
                       ‹
                     </button>
                     <span className="example-count num" aria-live="polite">
                       例 {index + 1} / {examples.length}
                     </span>
-                    <button type="button" className="example-step" aria-label="次の例" disabled={index >= examples.length - 1} onClick={() => onIndex(index + 1)}>
+                    <button
+                      type="button"
+                      className="example-step"
+                      aria-label="次の例"
+                      aria-disabled={last}
+                      onClick={() => {
+                        if (!last) onIndex(index + 1);
+                      }}
+                    >
                       ›
                     </button>
                   </>

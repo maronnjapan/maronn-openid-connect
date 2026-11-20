@@ -4566,12 +4566,13 @@ button.code-item-head:hover,
   cursor: pointer;
 }
 
-.example-step:hover:not(:disabled) {
+.example-step:hover:not([aria-disabled='true']) {
   border-color: var(--accent);
   color: var(--accent-text);
 }
 
-.example-step:disabled {
+/* aria-disabled, not disabled: the button keeps the focus at the first and the last example. */
+.example-step[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }

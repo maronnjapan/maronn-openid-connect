@@ -2667,10 +2667,19 @@ button.pr-row:hover,
   font-family: var(--font);
 }
 
-/* A route breaks between its endpoints, not inside a path. */
+/*
+ * A route breaks between its endpoints, not inside a path: each endpoint is
+ * one box that moves to the next line whole. Only a path wider than the line
+ * (`DELETE /operator/clients/e2e-client/keys` on a phone) breaks inside it,
+ * rather than push the page sideways.
+ */
 .target-step {
+  display: inline-block;
+  max-width: 100%;
+  /* The line keeps the baseline of its first line, so the label beside a step that breaks stays at its start. */
+  vertical-align: top;
   color: var(--text);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .target-current {
@@ -3895,6 +3904,11 @@ button.code-item-head:hover,
   line-height: 1.55;
 }
 
+/* A long error (`BackchannelAuthenticationError(unknown_user_id)`) breaks inside the line, not past the card on a phone. */
+.check-text {
+  overflow-wrap: anywhere;
+}
+
 .check-mark {
   display: inline-flex;
   align-items: center;
@@ -4243,6 +4257,8 @@ button.code-item-head:hover,
   color: var(--text);
   font-size: 13px;
   line-height: 1.55;
+  /* How a case ends names its error (`BackchannelAuthenticationError(invalid_binding_message)`): it breaks inside on a phone. */
+  overflow-wrap: anywhere;
 }
 
 .way-now-tests {
@@ -4341,6 +4357,8 @@ button.code-item-head:hover,
   background: var(--surface-2);
   color: var(--text-2);
   font-size: 13px;
+  /* The end of a failure case names its error: it breaks inside on a phone. */
+  overflow-wrap: anywhere;
 }
 
 .way-end-reached {

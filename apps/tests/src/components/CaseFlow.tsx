@@ -52,17 +52,32 @@ function LongValue({ piece, opened }: { piece: Extract<Piece, { kind: 'long' }>;
   );
 }
 
-/** At the end of the line of a long value: a `JWT` tag on a JWT, and a button that opens the value under the line. */
-function LongControls({ piece, opened }: { piece: Extract<Piece, { kind: 'long' }>; opened: Opened }) {
+/**
+ * At the end of the line of a long value: a `JWT` tag on a JWT, and a button
+ * that opens the value under the line, named after the key, header or
+ * parameter of the line for a screen reader (「access_token」の中身を見る),
+ * its visible words unchanged.
+ */
+function LongControls({ piece, opened, name }: { piece: Extract<Piece, { kind: 'long' }>; opened: Opened; name: string | undefined }) {
   const open = opened.open.has(piece.id);
+  const words = open ? '畳む' : piece.jwt !== undefined ? '中身を見る' : '全体を見る';
+  // The name keeps the visible words, so a voice command by them still reaches the button.
+  const label = name === undefined ? undefined : `「${name}」${open ? 'を' : 'の'}${words}`;
   return (
     <span className="http-controls">
       {piece.jwt !== undefined && <span className="jwt-tag">JWT</span>}
-      <button type="button" className="http-toggle" aria-expanded={open} onClick={() => opened.toggle(piece.id)}>
-        {open ? '畳む' : piece.jwt !== undefined ? '中身を見る' : '全体を見る'}
+      <button type="button" className="http-toggle" aria-expanded={open} aria-label={label} onClick={() => opened.toggle(piece.id)}>
+        {words}
       </button>
     </span>
   );
+}
+
+/** What a line of a block is about, for the buttons of its long values: its JSON key, header or parameter name; nothing for a line without one (a JSON array element, a bare body). */
+function lineName(line: HttpLine): string | undefined {
+  const piece = line.pieces.find((candidate) => candidate.kind === 'text' && (candidate.tone === 'key' || candidate.tone === 'name'));
+  // A JSON key is shown in its quotes.
+  return piece?.text.replace(/^"|"$/g, '');
 }
 
 /** What an open long value shows under its line: its whole text, and for a JWT its decoded header and payload. */
@@ -98,6 +113,7 @@ function Lines({ lines, opened }: { lines: readonly HttpLine[]; opened: Opened }
       {lines.map((line, index) => {
         const longs = line.pieces.filter((piece): piece is Extract<Piece, { kind: 'long' }> => piece.kind === 'long');
         const open = longs.filter((piece) => opened.open.has(piece.id));
+        const name = longs.length === 0 ? undefined : lineName(line);
         return (
           <Fragment key={index}>
             <div className="http-line">
@@ -111,7 +127,7 @@ function Lines({ lines, opened }: { lines: readonly HttpLine[]; opened: Opened }
                 ),
               )}
               {longs.map((piece) => (
-                <LongControls key={piece.id} piece={piece} opened={opened} />
+                <LongControls key={piece.id} piece={piece} opened={opened} name={name} />
               ))}
             </div>
             {line.note !== undefined && <div className="http-note">↳ {line.note}</div>}
@@ -221,10 +237,10 @@ function Values({ label, values }: { label: string; values: readonly string[] })
 /** One box of the steps: its number, label and kind, what it reads and hands on, what happened in it, and the decisions and functions of it. */
 function WayStepBox({ item, index, next, playing, endpointKey }: { item: WayStep; index: number; next: WayStep | undefined; playing: boolean; endpointKey: string }) {
   const { db } = useApp();
-  const kind = item.step?.kind;
-  const consumes = item.step?.consumes ?? [];
+  const { kind, label } = item.step;
+  const consumes = item.step.consumes ?? [];
   // A step that failed hands nothing on.
-  const produces = item.how === 'failed' ? [] : (item.step?.produces ?? []);
+  const produces = item.how === 'failed' ? [] : (item.step.produces ?? []);
   // The arrow to the next box is the way of a failure when this box failed (or hands a failure on), as an error edge of a flowchart.
   const errorEdge = next !== undefined && (item.how === 'failed' || next.how === 'caught');
   return (
@@ -236,10 +252,10 @@ function WayStepBox({ item, index, next, playing, endpointKey }: { item: WayStep
           </span>
           <span className="way-step-label">
             <span className="visually-hidden">ステップ {index + 1}: </span>
-            {item.label}
+            {label}
           </span>
           {kind !== undefined && <span className={`kind-tag kind-${kind}`}>{STEP_KIND_LABELS[kind]}</span>}
-          {item.step !== undefined && stepHasCode(db, item.step) && <CodeButton target={{ kind: 'step', key: endpointKey, step: item.id }} label={`「${item.label}」のコードを見る`} className="way-step-code" />}
+          {stepHasCode(db, item.step) && <CodeButton target={{ kind: 'step', key: endpointKey, step: item.id }} label={`「${label}」のコードを見る`} className="way-step-code" />}
         </div>
         {item.how !== 'ran' && (
           <p className={`way-how way-how-${item.how}`}>
@@ -303,6 +319,8 @@ function PartTitle({ no, children }: { no: number; children: string }) {
 function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: EndpointCase; example: CaseExample | undefined; index: number; onIndex: (index: number) => void; reason: string }) {
   const examples = chosen.examples ?? [];
   const count = chosen.exampleCount ?? examples.length;
+  const first = index === 0;
+  const last = index >= examples.length - 1;
   return (
     <li className="flow-part">
       <PartTitle no={1}>リクエスト</PartTitle>
@@ -323,13 +341,30 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
               <span className="example-nav" role="group" aria-label="リクエストの例">
                 {examples.length > 1 && (
                   <>
-                    <button type="button" className="example-step" aria-label="前の例" disabled={index === 0} onClick={() => onIndex(index - 1)}>
+                    {/* aria-disabled, not disabled: a button that turns disabled under the keyboard drops its focus to the page. */}
+                    <button
+                      type="button"
+                      className="example-step"
+                      aria-label="前の例"
+                      aria-disabled={first}
+                      onClick={() => {
+                        if (!first) onIndex(index - 1);
+                      }}
+                    >
                       ‹
                     </button>
                     <span className="example-count num" aria-live="polite">
                       例 {index + 1} / {examples.length}
                     </span>
-                    <button type="button" className="example-step" aria-label="次の例" disabled={index >= examples.length - 1} onClick={() => onIndex(index + 1)}>
+                    <button
+                      type="button"
+                      className="example-step"
+                      aria-label="次の例"
+                      aria-disabled={last}
+                      onClick={() => {
+                        if (!last) onIndex(index + 1);
+                      }}
+                    >
                       ›
                     </button>
                   </>
@@ -345,10 +380,8 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
   );
 }
 
-/** ② The steps the request went through, as a vertical flow; without an example, the conditions of the way that are in no step above them. */
-function StepsPart({ endpoint, chosen, way, measured, playing }: { endpoint: OutlineEndpoint; chosen: EndpointCase; way: readonly WayStep[]; measured: boolean; playing: string | undefined }) {
-  // A request's steps say the decisions it met; the case's own conditions stand in for them only without one.
-  const loose = measured ? [] : looseConditions(chosen);
+/** ② The steps the request went through, as a vertical flow, the decisions that are in no step it shows above them. */
+function StepsPart({ endpoint, way, loose, playing }: { endpoint: OutlineEndpoint; way: readonly WayStep[]; loose: readonly CaseCondition[]; playing: string | undefined }) {
   return (
     <li className="flow-part">
       <PartTitle no={2}>ステップ</PartTitle>
@@ -426,6 +459,8 @@ export function CaseFlow({ endpoint, cases, chosen, playing }: { endpoint: Outli
   const at = Math.min(index, Math.max(0, examples.length - 1));
   const example = examples[at];
   const way = waySteps(endpoint, chosen, example);
+  // The decisions in no step the flow shows: a request's own (measured) with an example, else the case's conditions.
+  const loose = looseConditions(endpoint, chosen, example);
   const reason = NO_EXAMPLE_NOTES[noExampleReason(db.index.measured === true, cases)];
   return (
     <section className="case-flow" aria-labelledby="case-flow-title">
@@ -437,7 +472,7 @@ export function CaseFlow({ endpoint, cases, chosen, playing }: { endpoint: Outli
       </h2>
       <ol className="flow-parts">
         <RequestPart chosen={chosen} example={example} index={at} onIndex={setIndex} reason={reason} />
-        <StepsPart endpoint={endpoint} chosen={chosen} way={way} measured={example !== undefined} playing={playing} />
+        <StepsPart endpoint={endpoint} way={way} loose={loose} playing={playing} />
         <ResultPart chosen={chosen} example={example} index={at} />
       </ol>
     </section>

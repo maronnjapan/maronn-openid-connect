@@ -1341,7 +1341,7 @@ interface ExampleStep {
 地図のビルドのログに、次の一行を出す。
 
 ```
-tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (208 answered and not overlapped), 151 took a case; 65 of 631 cases with examples
+tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (208 answered and not overlapped), 151 took a case; 64 of 631 cases with examples
 ```
 
 例：hono の `token` で、例を持つケースは 135 のうち 10 である。

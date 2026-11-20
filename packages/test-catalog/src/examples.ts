@@ -166,6 +166,25 @@ export class RequestRun {
     }
     return this.files.get(path);
   }
+
+  /**
+   * Whether a call of a tree ran in this request: the function it calls ran
+   * and a statement on the call's lines ran. The function counter alone is
+   * not enough: it goes up wherever the function is called, so a step that
+   * did not call it (a dispatch that let the grant pass) would seem to.
+   */
+  callRan(tree: FlowTree, node: TreeNode): boolean {
+    if (node.target?.kind !== 'function' || !this.frames.has(node.target.id)) return false;
+    const file = this.fileOf(tree);
+    return file !== undefined && statements(file, node.lines[0], node.lines[1]).length > 0;
+  }
+
+  /** The functions a frame called in this request, in the order of its tree: the targets of its calls that ran (callRan); none when its tree is not there. */
+  calledBy(frame: string): string[] {
+    const tree = this.sources.treeOf(frame);
+    if (tree === undefined) return [];
+    return [...nodesOf(tree.nodes)].flatMap((node) => (node.kind === 'call' && node.target?.kind === 'function' && this.callRan(tree, node) ? [node.target.id] : []));
+  }
 }
 
 /** The order of two places of a file. */
@@ -570,7 +589,7 @@ function requestOf(exchange: RawExchange): CaseExample['request'] | undefined {
  * along the sides seen at every decision of the root frame and the case's
  * own where none was seen (a `try` seen to catch whose body has the call
  * that failed runs its body up to it), each step with how it went, the
- * decisions seen in it and the functions it called that ran. Undefined when
+ * decisions seen in it and the functions whose calls in it ran (RequestRun.callRan). Undefined when
  * that walk does not reach the end of the case. `taken` are all the cases
  * the request took: a failure of one names the error of a step that failed.
  */
@@ -632,8 +651,12 @@ export function exampleOf(way: CaseWay, taken: readonly CaseWay[], sent: SentReq
   for (const step of steps) {
     if (step.how !== 'failed') delete step.error;
     const fn = endpoint.stepFunctions.get(step.id);
-    const candidates = fn !== undefined ? endpoint.callsOf(fn) : walked.stops.flatMap((stop) => (stop.step === step.id && stop.node.kind === 'call' && stop.node.target?.kind === 'function' ? [stop.node.target.id] : []));
-    const calls = [...new Set(candidates)].filter((frame) => run.frames.has(frame));
+    const catalog = fn === undefined ? undefined : new Set(endpoint.callsOf(fn));
+    const ran =
+      fn !== undefined
+        ? run.calledBy(fn).filter((frame) => catalog?.has(frame) === true)
+        : walked.stops.flatMap((stop) => (stop.depth === 0 && stop.step === step.id && stop.node.kind === 'call' && stop.node.target?.kind === 'function' && run.callRan(tree, stop.node) ? [stop.node.target.id] : []));
+    const calls = [...new Set(ran)];
     if (calls.length > 0) step.calls = calls;
   }
   const { status, statusText, headers, body, truncated } = response;

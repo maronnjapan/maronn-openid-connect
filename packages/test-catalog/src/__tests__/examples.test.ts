@@ -93,14 +93,23 @@ const PAGE_FILE = [
   '}',
 ];
 
+const DISPATCH_FILE = [
+  'export async function dispatch(c, params) {',
+  "  if (params.grant_type !== 'client_credentials') return undefined;",
+  '  return respond(c, params);',
+  '}',
+];
+
 const PATHS: Record<string, string> = {
   'hono:pipeline.ts': 'apps/hono/src/pipeline.ts',
+  'hono:dispatch.ts': 'apps/hono/src/dispatch.ts',
   'hono:parse.ts': 'apps/hono/src/parse.ts',
   'core:decide.ts': 'packages/core/src/decide.ts',
   'hono:page.tsx': 'apps/hono/src/page.tsx',
 };
 const TEXTS: Record<string, string[]> = {
   'apps/hono/src/pipeline.ts': PIPELINE,
+  'apps/hono/src/dispatch.ts': DISPATCH_FILE,
   'apps/hono/src/parse.ts': PARSE_FILE,
   'packages/core/src/decide.ts': DECISIONS_FILE,
   'apps/hono/src/page.tsx': PAGE_FILE,
@@ -239,13 +248,18 @@ const PAGE_TREE = tree('endpoint:page', 'hono:page.tsx', [1, 8], [
   },
 ]);
 
+const DISPATCH_TREE = tree(DISPATCH, 'hono:dispatch.ts', [1, 4], [
+  { id: 's0', kind: 'if', lines: [2, 2], code: "if (params.grant_type !== 'client_credentials')", subject: "params.grant_type !== 'client_credentials'", form: 'guard', branches: [side('true', '成立', [{ id: 's0t0', kind: 'return', lines: [2, 2], code: 'return undefined' }]), side('false', '不成立')] },
+  { id: 's1', kind: 'return', lines: [3, 3], code: 'return respond(c, params)', pre: [call('s1i0', [3, 3], RESPOND)] },
+]);
+
 const MODES_TREE = tree('hono:page.tsx#modes', 'hono:page.tsx', [10, 15], [
   { id: 's0', kind: 'action', lines: [11, 11], code: 'let mode' },
   step('s1', [12, 13], 'jarm', [{ id: 's1s0', kind: 'cond-expr', lines: [13, 13], code: 'mode ??= jarmMode(c)', subject: 'mode', operator: '??=', branches: [side('defined', '値あり'), side('nullish', 'null または undefined', [call('s1s0n0', [13, 13], 'hono:page.tsx#jarmMode')])] }]),
   { id: 's2', kind: 'return', lines: [14, 14], code: 'return mode' },
 ]);
 
-const TREES = new Map([ROOT, PARSE_TREE, READ_TREE, DECIDE_TREE, EACH_TREE, PAGE_TREE, MODES_TREE].map((item) => [item.id, item]));
+const TREES = new Map([ROOT, PARSE_TREE, READ_TREE, DISPATCH_TREE, DECIDE_TREE, EACH_TREE, PAGE_TREE, MODES_TREE].map((item) => [item.id, item]));
 
 const SOURCES: CaseSources = {
   treeOf: (id) => TREES.get(id),
@@ -549,6 +563,21 @@ describe('exampleOf', () => {
       { id: 'parse-request', how: 'failed', error: 'TokenEndpointError', calls: [READ] },
       { id: 'respond-error', how: 'caught', calls: [RESPOND_ERROR] },
     ]);
+  });
+
+  it('should give a step only the functions its own calls ran, not those the request ran elsewhere', () => {
+    const endpoint: EndpointExamples = { ...ENDPOINT, stepFunctions: new Map([['parse-request', PARSE], ['dispatch', DISPATCH]]), callsOf: (frame) => (frame === PARSE ? [READ] : frame === DISPATCH ? [RESPOND] : []) };
+    const ways = tokenWays();
+    const early = exchange(
+      { [PIPE]: { s: [...STATEMENTS_TO_DISPATCH, at(PIPE, 7, 'return')], b: [[at(PIPE, 7, 'if'), 'if', [1, 0]]], f: [1] }, [PARSING]: PARSED, 'apps/hono/src/dispatch.ts': { s: [[2, 2], [3, 2]], f: [1] }, 'apps/hono/src/respond.ts': { s: [[2, 2]], f: [1] } },
+      { status: 200, body: '{"access_token":"cc"}' },
+      { body: 'grant_type=client_credentials' },
+    );
+    const callsAt = (request: RawExchange, name: string) => {
+      const way = ways.find((item) => item.made.name === name) as CaseWay;
+      return exampleOf(way, [way], { test: card(name), exchange: request }, new RequestRun(request, SOURCES), endpoint)?.steps.find((item) => item.id === 'dispatch')?.calls;
+    };
+    expect([callsAt(answered(false), 'validate-refresh'), callsAt(early, 'dispatch')]).toEqual([undefined, [RESPOND]]);
   });
 
   it('should say the step of the call a return outside the steps returns the result of answered', () => {

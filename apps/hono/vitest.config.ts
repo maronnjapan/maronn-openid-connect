@@ -28,7 +28,13 @@ export default defineConfig({
     globals: false,
     include: ['src/**/*.test.{ts,tsx}'],
     // MARONN_REACH=1: the functions each test runs, kept to these roots of the
-    // function catalog. MARONN_TEST_REPORTS: the JSON and JUnit reports.
-    ...testReports({ root: import.meta.url, roots: ['apps/hono/src/oidc-provider', 'apps/hono/src/web', 'packages/core/src', 'packages/experimental/src', 'packages/google-login/src'] }),
+    // function catalog, and the requests the tests send to the app with what
+    // ran while it answered (the recorder of `exchanges`).
+    // MARONN_TEST_REPORTS: the JSON and JUnit reports.
+    ...testReports({
+      root: import.meta.url,
+      roots: ['apps/hono/src/oidc-provider', 'apps/hono/src/web', 'packages/core/src', 'packages/experimental/src', 'packages/google-login/src'],
+      exchanges: './src/test-support/record-exchanges.ts',
+    }),
   },
 });

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import type { DiffHunk, FrameChange, MapData, Selection, StepMark, TreeNode } from '../types';
+import type { DiffHunk, FlowStep, FrameChange, MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, boxOf, frameDiagram, markOfBox, type Diagram, type DiagramGroup, type DiagramNode } from '../lib/diagram';
+import { chartWay, flowChart } from '../lib/flowchart';
 import { callsToEnter, sceneDuration, scenesOf, walkTrace, withoutDeepest, type Scene } from '../lib/playback';
 import {
   changedIdsOf,
@@ -27,8 +28,9 @@ import { locationOf } from '../lib/model';
 import { nodeWords } from '../lib/words';
 import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
-import { FlowDiagram, type Playing } from './FlowDiagram';
-import { FlowPlayer, usePlayback, type StepFacts } from './FlowPlayer';
+import { FlowChart, type ChartPlay } from './FlowChart';
+import { FlowDiagram } from './FlowDiagram';
+import { FlowPlayer, usePlayback } from './FlowPlayer';
 import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
 import { SelectionBar } from './SelectionBar';
@@ -60,8 +62,13 @@ export interface TraceProps {
   step?: string | null;
   /** A node a link names, keyed like a decision (`<frame>.<node>`, the root's by the node alone): selected and shown once its frame loads. */
   target?: string | null;
-  /** The facts of a step of the root frame (an endpoint's), for the scene of the flow view that runs it. */
-  stepFacts?: (step: string) => StepFacts | undefined;
+  /**
+   * The endpoint whose root the trace starts from: its method and path
+   * (`POST /token`), where the flow view's chart starts and the summary of a
+   * way begins, and its steps in their order, whose kinds and values the
+   * scenes and the chart say. Absent for the trace of a function.
+   */
+  endpoint?: { name: string; steps: readonly FlowStep[] } | undefined;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -149,7 +156,7 @@ interface PathDiff {
  * always speaks of a frame the outline shows. A narrow screen shows the
  * outline alone and opens the others over it.
  */
-export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null, stepFacts }: TraceProps) {
+export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null, endpoint }: TraceProps) {
   const { mobile } = useMobileMenu();
   const source = sourceOf(framework);
   const tabsId = useId();
@@ -286,9 +293,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const focusTree = frames.trees.get(focusId);
   const focusChange = frames.changes.get(focusId);
   const diagram = useMemo(() => (focusTree === undefined ? undefined : frameDiagram(focusTree, focusKey, enabled, diagramOptions(focusKey, focusChange))), [focusTree, focusKey, enabled, focusChange, diagramOptions]);
-  // The flow view colors the way the request takes, the sides it assumed included; the outline's diagram colors the union of the choices.
-  const coloredBy = useMemo(() => (walked === undefined ? state.choices : [walked.resolved]), [walked, state.choices]);
-  const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, coloredBy, enabled)), [diagram, focusTree, focusKey, coloredBy, enabled]);
+  // The pane's diagram colors the union of the choices (the flow view's chart colors the way its playback takes instead, see chartWay).
+  const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, state.choices, enabled)), [diagram, focusTree, focusKey, state.choices, enabled]);
   const marks = useMemo(() => {
     const byBox = new Map<string, Mark>();
     for (const box of [...(diagram?.nodes ?? []), ...(diagram?.groups ?? [])]) {
@@ -748,17 +754,23 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     const on = new Set(nodesBelow(root.nodes, enabled).map((node) => node.id));
     return selections.filter((selection) => on.has(selection.target.split('.')[0] ?? ''));
   }, [selections, root, enabled]);
-  // Where the playback is on the diagram of the frame shown: the box of the scene, the boxes the request has been through in this frame, and the box it came from.
-  const play = useMemo((): Playing | undefined => {
-    if (scene === undefined) return undefined;
-    const visited = new Set<string>();
-    for (const item of scenes) {
-      if (item.index > scene.index) break;
-      if (item.frame === scene.frame && item.shape !== undefined) visited.add(item.shape);
-    }
-    const before = playback.from === undefined ? undefined : scenes[playback.from];
-    return { at: scene.shape, from: before !== undefined && before.frame === scene.frame ? before.shape : undefined, visited, tone: scene.tone, key: scene.index, duration: sceneDuration(playback.speed) * 0.6 };
-  }, [scene, scenes, playback.from, playback.speed]);
+  // The flow view's stage: the frame's diagram drawn as a flowchart (lib/flowchart.ts), the root of an endpoint starting at the endpoint and saying what its steps hand on.
+  const chart = useMemo(
+    () =>
+      !flowOn || diagram === undefined || focusTree === undefined
+        ? undefined
+        : flowChart(diagram, focusTree, { words: data, ...(focusKey === '' && endpoint !== undefined ? { steps: endpoint.steps, start: endpoint.name, answers: true } : {}) }),
+    [flowOn, diagram, focusTree, focusKey, endpoint, data],
+  );
+  const way = useMemo(() => (chart === undefined ? undefined : chartWay(chart, scenes, focusKey)), [chart, scenes, focusKey]);
+  // Where the playback is on the chart: the node of the scene, and, when it just moved one scene forward, the node the token comes from:
+  // the scene before in this frame (the call it came back up from included), else the start of the frame it came into.
+  const play = useMemo((): ChartPlay | undefined => {
+    if (scene === undefined || way === undefined) return undefined;
+    const before = playback.from === undefined ? undefined : [...scenes.slice(0, scene.index)].reverse().find((item) => item.frame === scene.frame);
+    const from = playback.from === undefined ? undefined : (before?.shape ?? ((way.nodes.get('start') ?? []).includes(scene.index) ? 'start' : undefined));
+    return { way, at: scene.index, shape: scene.shape, from, tone: scene.tone, duration: sceneDuration(playback.speed) * 0.7 };
+  }, [scene, scenes, way, playback.from, playback.speed]);
   /** The words a scene is named by: those of the box that shows it (the label of a catch for a region), else those of its node. */
   const sceneTitle = (item: Scene): { text: string; code: boolean } => {
     const shown = flowDiagrams.get(item.frame);
@@ -805,7 +817,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               scenes={scenes}
               playback={playback}
               titleOf={sceneTitle}
-              stepFacts={stepFacts}
+              endpoint={endpoint}
               hasFrame={hasFrame}
               loading={loading}
               deeper={enterable.length}
@@ -821,28 +833,24 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
           <div className="flow-stage">
             <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
               {crumbTrail}
-              {crumbs.length <= 2 ? <span className="note crumb-hint">青い線がこのリクエストの通る道筋、濃い箱がいまの場所です。</span> : null}
+              {crumbs.length <= 2 ? <span className="note crumb-hint">流れる線がこのリクエストの通った道、濃い箱がいまの場所、破線がこの先です。</span> : null}
               <button type="button" className="code-button flow-max" aria-pressed={maximized} onClick={() => setMaximized(!maximized)} title={maximized ? '元の大きさに戻す（Esc）' : '図と再生を画面いっぱいに広げる'}>
                 {maximized ? '元の大きさ' : '画面いっぱい'}
               </button>
             </nav>
-            {diagram !== undefined && active !== undefined ? (
-              <FlowDiagram
+            {diagram !== undefined && chart !== undefined ? (
+              <FlowChart
+                chart={chart}
                 diagram={diagram}
-                active={active}
-                selected={null}
-                openOn={scene?.node.id ?? null}
-                roomy
-                reveal={scene === undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
-                label="リクエストの流れの図"
-                marks={marks}
                 play={play}
-                onSelect={(box) => {
-                  // A box picked on the stage moves the playback to the scene that shows it, when the request goes through it.
-                  const found = scenes.find((item) => item.frame === focusKey && item.shape === box.id);
-                  if (found === undefined) return;
+                openOn={scene?.node.id ?? null}
+                reveal={scene === undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
+                label="リクエストの流れのフローチャート"
+                marks={marks}
+                onScene={(index) => {
+                  // A node picked on the stage moves the playback to the scene that reaches it.
                   playback.play(false);
-                  playback.go(found.index);
+                  playback.go(index);
                 }}
                 onOpen={(box) => {
                   if (box.opens !== undefined) onState({ ...state, open: [...new Set([...state.open, childFrame(focusKey, box.opens.node)])] });

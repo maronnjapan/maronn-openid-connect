@@ -15,6 +15,10 @@
       "import": "./src/vitest.js"
     },
     "./vitest-setup": "./src/vitest-setup.js",
+    "./exchanges": {
+      "types": "./src/exchanges.d.ts",
+      "import": "./src/exchanges.js"
+    },
     "./vitest-reporter": "./src/vitest-reporter.js",
     "./op": {
       "types": "./src/op.d.ts",

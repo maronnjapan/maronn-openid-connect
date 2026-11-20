@@ -2667,10 +2667,19 @@ button.pr-row:hover,
   font-family: var(--font);
 }
 
-/* A route breaks between its endpoints, not inside a path. */
+/*
+ * A route breaks between its endpoints, not inside a path: each endpoint is
+ * one box that moves to the next line whole. Only a path wider than the line
+ * (`DELETE /operator/clients/e2e-client/keys` on a phone) breaks inside it,
+ * rather than push the page sideways.
+ */
 .target-step {
+  display: inline-block;
+  max-width: 100%;
+  /* The line keeps the baseline of its first line, so the label beside a step that breaks stays at its start. */
+  vertical-align: top;
   color: var(--text);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .target-current {
@@ -3895,6 +3904,11 @@ button.code-item-head:hover,
   line-height: 1.55;
 }
 
+/* A long error (`BackchannelAuthenticationError(unknown_user_id)`) breaks inside the line, not past the card on a phone. */
+.check-text {
+  overflow-wrap: anywhere;
+}
+
 .check-mark {
   display: inline-flex;
   align-items: center;
@@ -3985,7 +3999,9 @@ button.code-item-head:hover,
   gap: 8px;
 }
 
+/* Positioned, so the words for a screen reader in it (absolute) scroll with the table instead of widening the page. */
 .check-table-wrap {
+  position: relative;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -4241,6 +4257,8 @@ button.code-item-head:hover,
   color: var(--text);
   font-size: 13px;
   line-height: 1.55;
+  /* How a case ends names its error (`BackchannelAuthenticationError(invalid_binding_message)`): it breaks inside on a phone. */
+  overflow-wrap: anywhere;
 }
 
 .way-now-tests {
@@ -4339,6 +4357,8 @@ button.code-item-head:hover,
   background: var(--surface-2);
   color: var(--text-2);
   font-size: 13px;
+  /* The end of a failure case names its error: it breaks inside on a phone. */
+  overflow-wrap: anywhere;
 }
 
 .way-end-reached {
@@ -4390,4 +4410,723 @@ button.code-item-head:hover,
   font-family: var(--font);
   font-size: 13px;
   white-space: nowrap;
+}
+
+/*
+ * A case as a request going through the endpoint (CaseFlow): ① the
+ * request, ② the steps as a vertical flowchart (numbered boxes joined by
+ * arrows, the way of a failure a dashed red edge), ③ the response. The
+ * request and the response are blocks of code in the style of the RFCs'
+ * examples, scrolling sideways inside themselves on a phone.
+ */
+
+.case-flow {
+  min-width: 0;
+}
+
+.flow-parts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-part {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 36px;
+}
+
+.flow-part:last-child {
+  padding-bottom: 0;
+}
+
+/* The arrow from one part to the next: a short line down with a head, under the part. */
+.flow-part:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 13px;
+  bottom: 6px;
+  width: 2px;
+  height: 22px;
+  background: var(--border-strong);
+}
+
+.flow-part:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  bottom: 2px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--border-strong);
+}
+
+.flow-part-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.flow-part-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.flow-part-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.flow-empty {
+  padding: 12px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13.5px;
+}
+
+.flow-empty p {
+  margin: 0;
+}
+
+.flow-empty-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* ① The test that sent the request and 例 n / m. */
+
+.example-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  font-size: 13px;
+}
+
+.example-from {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.example-test {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.example-test:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.example-test-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.example-nav {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: var(--text-2);
+}
+
+.example-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.example-step:hover:not([aria-disabled='true']) {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* aria-disabled, not disabled: the button keeps the focus at the first and the last example. */
+.example-step[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.example-count {
+  font-weight: 600;
+}
+
+.example-total {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* A request or a response: a block of code that scrolls sideways inside itself. */
+
+.http {
+  margin: 0;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+}
+
+/* Positioned, so the words for a screen reader in it (absolute) scroll with it instead of widening the page. */
+.http-scroll {
+  position: relative;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.http-code {
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.http-line {
+  white-space: pre;
+}
+
+.http-blank {
+  height: 0.8em;
+}
+
+.http .tok-start {
+  font-weight: 700;
+}
+
+.http .tok-name {
+  color: var(--tok-tag);
+}
+
+.http .tok-key {
+  color: var(--tok-keyword);
+}
+
+.http .tok-literal {
+  color: var(--tok-number);
+}
+
+.http .tok-muted {
+  color: var(--tok-comment);
+}
+
+.http-long {
+  border-bottom: 1px dotted var(--border-strong);
+  cursor: pointer;
+}
+
+.http-ellipsis {
+  margin: 0 1px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.http-controls {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.jwt-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-family: var(--font);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+.http-toggle {
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-family: var(--font);
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+  vertical-align: 1px;
+}
+
+.http-toggle:hover,
+.http-toggle[aria-expanded='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* The decoded credentials of Basic under their line, in words. */
+.http-note {
+  padding-left: 2ch;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 12px;
+  white-space: normal;
+}
+
+/* An open long value: its whole text, wrapped to the width one sees, and for a JWT its header and payload. */
+.http-expand {
+  position: sticky;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: calc(100cqw - 28px);
+  margin: 4px 0 8px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface);
+}
+
+.http-expand-label {
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.http-full {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--tok-string);
+}
+
+.http-json {
+  display: flex;
+  flex-direction: column;
+}
+
+.http-expand .http-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.http-notes {
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ② The steps: numbered boxes joined by arrows, as a flowchart reads top to bottom. */
+
+.way-steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.way-step {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.way-step-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: background-color 200ms, box-shadow 200ms;
+}
+
+.way-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.way-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.way-step-label {
+  flex: 1 1 12em;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.kind-tag {
+  flex: none;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.way-step-code {
+  flex: none;
+  width: 28px;
+  height: 26px;
+}
+
+.way-how {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.way-how-answered {
+  color: var(--accent-text);
+}
+
+.way-how-failed {
+  color: var(--failed);
+}
+
+.way-how-caught {
+  color: var(--failure-text);
+}
+
+.way-io,
+.way-calls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.way-io-part {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.way-io-label {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.way-io-arrow {
+  color: var(--muted);
+}
+
+.way-value {
+  font-size: 11.5px;
+}
+
+.way-decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.way-decision {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.way-decision::before {
+  content: '◇';
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.way-decision-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.way-decision-arrow {
+  color: var(--muted);
+}
+
+.way-decision-side {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.way-decision-fails {
+  background: var(--failed-soft);
+  color: var(--failed);
+}
+
+.way-call {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--accent-text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.way-call:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.way-call-static {
+  color: var(--text-2);
+  cursor: default;
+}
+
+.way-loose {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* The arrow down to the next box; the way of a failure a dashed red one, labelled. */
+.way-edge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 22px;
+  margin-left: 23px;
+  border-left: 2px solid var(--border-strong);
+}
+
+.way-edge::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  bottom: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--border-strong);
+}
+
+.way-edge-error {
+  border-left: 2px dashed var(--failed);
+}
+
+.way-edge-error::after {
+  border-top-color: var(--failed);
+}
+
+.way-edge-label {
+  margin-left: 8px;
+  color: var(--failed);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.way-step-answered .way-step-box {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.way-step-failed .way-step-box {
+  border-color: var(--failed);
+  background: var(--failed-soft);
+  box-shadow: inset 3px 0 0 var(--failed);
+}
+
+.way-step-failed .way-step-no {
+  border-color: var(--failed);
+  color: var(--failed);
+}
+
+.way-step-caught .way-step-box {
+  border-color: var(--failure);
+  box-shadow: inset 3px 0 0 var(--failure);
+}
+
+.way-step-caught .way-step-no {
+  border-color: var(--failure);
+  color: var(--failure-text);
+}
+
+/* The step the playback of the case is at (the timeline on the left). */
+.way-step-playing .way-step-box {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.way-step-playing .way-step-no {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* A failure keeps its red while the playback is on it. */
+.way-step-failed.way-step-playing .way-step-box {
+  background: var(--failed-soft);
+  box-shadow: 0 0 0 2px var(--failed);
+}
+
+.way-step-failed.way-step-playing .way-step-no {
+  background: var(--failed);
+}
+
+/* ③ The result: the status and what it says, then the response. */
+
+.result-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.result-ok {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.result-redirect {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.result-error {
+  background: var(--failed-soft);
+  color: var(--failed);
+}
+
+.result-status {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.result-detail {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* The preview of the first request that took a case, under its name in the list. */
+.case-preview {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.case-preview-request {
+  font-family: var(--mono);
+}
+
+.case-preview-count {
+  margin-left: 4px;
+  color: var(--muted);
+  font-family: var(--font);
+}
+
+@media (max-width: 768px) {
+  .way-step-box {
+    padding: 8px 10px;
+  }
+
+  .http-code {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .http-expand {
+    width: calc(100cqw - 20px);
+  }
 }

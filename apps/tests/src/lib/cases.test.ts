@@ -1,6 +1,7 @@
-import type { EndpointCase, OutlineStep } from '@maronn-openid-connect/test-catalog/model';
+import type { CaseCondition, EndpointCase, OutlineStep } from '@maronn-openid-connect/test-catalog/model';
 import { describe, expect, it } from 'vitest';
-import { caseGroups, caseName, caseTests, countVerdicts, endWords, failureName, pathChecks, requestTests, stepChecks, summarize, unitCounts, verdictOf } from './cases';
+import type { CaseExample } from '@maronn-openid-connect/test-catalog/model';
+import { caseGroups, caseName, caseTests, countVerdicts, endWords, failureName, looseConditions, noExampleReason, pathChecks, requestTests, resultWords, ruledSteps, stepChecks, summarize, unitCounts, verdictOf, waySteps } from './cases';
 import { buildDb } from './data';
 import { endpoint, entry, index, outline } from './fixture';
 
@@ -103,6 +104,13 @@ describe('stepChecks', () => {
     expect(pathChecks(checks, direct).map((check) => check.step.id)).toEqual(['parse-request', 'authenticate-client', 'respond-error']);
     expect(pathChecks(checks, { ...direct, steps: ['gone', 'respond'] }).map((check) => check.step.id)).toEqual(['respond']);
   });
+
+  it('should count the places on a way over the steps the outline has, as the timeline numbers them', () => {
+    const keys: EndpointCase = { ...normal, steps: ['load-keys', 'parse-request', 'authenticate-client', 'respond'] };
+    const checks = stepChecks(db, token, cases, keys);
+    expect(checks.map((check) => check.order)).toEqual([1, 2, 3, undefined]);
+    expect(pathChecks(checks, keys).map((check) => check.order)).toEqual([1, 2, 3]);
+  });
 });
 
 describe('summarize', () => {
@@ -149,5 +157,124 @@ describe('the tests of a case', () => {
 describe('unitCounts', () => {
   it('should count nothing for no test', () => {
     expect(unitCounts([])).toEqual({ total: 0, success: 0, failure: 0, boundary: 0 });
+  });
+});
+
+describe('waySteps', () => {
+  const example: CaseExample = {
+    test: 'api-401',
+    request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [] },
+    response: { status: 401, headers: [] },
+    steps: [
+      { id: 'parse-request', how: 'ran', decisions: [{ text: 'grant_type', code: true, side: '値あり', step: 'parse-request' }] },
+      { id: 'authenticate-client', how: 'failed', calls: ['core:client-auth.ts#verify'], error: 'TokenError(invalid_client)' },
+      { id: 'respond-error', how: 'caught' },
+    ],
+  };
+
+  it('should follow the steps an example request ran, with what it met in each', () => {
+    const way = waySteps(token, direct, example);
+    expect(way.map((step) => [step.id, step.step.label, step.how, step.error])).toEqual([
+      ['parse-request', 'リクエストを解析する', 'ran', undefined],
+      ['authenticate-client', 'クライアントを認証する', 'failed', 'TokenError(invalid_client)'],
+      ['respond-error', 'エラーで応答する', 'caught', undefined],
+    ]);
+    expect(way[0]?.decisions).toEqual([{ text: 'grant_type', code: true, side: '値あり', step: 'parse-request' }]);
+    expect(way[1]?.calls).toEqual(['core:client-auth.ts#verify']);
+    expect(way[1]?.step.function).toBe(AUTH);
+    expect(looseConditions(token, direct, example)).toEqual([]);
+  });
+
+  it('should play a failure case without an example: the failure where it comes up, the catch at the end', () => {
+    const conditions = [
+      { step: 'authenticate-client', text: 'client_secret が一致しない', code: false, side: '失敗する' },
+      { text: 'try', code: true, side: '例外が起きたとき' },
+    ];
+    const way = waySteps(token, { ...direct, conditions });
+    expect(way.map((step) => [step.id, step.how, step.error, step.decisions.map((item) => item.side)])).toEqual([
+      ['parse-request', 'ran', undefined, []],
+      ['authenticate-client', 'failed', 'TokenError(invalid_client)', ['失敗する']],
+      ['respond-error', 'caught', undefined, []],
+    ]);
+    expect(looseConditions(token, { ...direct, conditions })).toEqual([{ text: 'try', code: true, side: '例外が起きたとき' }]);
+  });
+
+  it('should answer at the last step of a way that ends in a response, and leave a failure that escapes uncaught', () => {
+    expect(waySteps(token, early).map((step) => step.how)).toEqual(['ran', 'answered']);
+    const escapes: EndpointCase = { ...direct, end: 'escapes', steps: ['parse-request', 'authenticate-client'] };
+    expect(waySteps(token, escapes).map((step) => step.how)).toEqual(['ran', 'failed']);
+    expect(looseConditions(token, early)).toEqual([]);
+  });
+
+  it('should show only the steps the outline has, as the timeline and the check of the steps do, the conditions of the others above them', () => {
+    const conditions: CaseCondition[] = [
+      { step: 'load-keys', text: 'keys', code: true, side: '値あり' },
+      { step: 'authenticate-client', text: 'client_secret が一致する', code: false, side: '成立' },
+    ];
+    const keys: EndpointCase = { ...normal, steps: ['load-keys', 'parse-request', 'authenticate-client', 'respond'], conditions };
+    const way = waySteps(token, keys);
+    expect(way.map((step) => [step.id, step.how])).toEqual([
+      ['parse-request', 'ran'],
+      ['authenticate-client', 'ran'],
+      ['respond', 'answered'],
+    ]);
+    expect(way.map((step) => step.id)).toEqual(pathChecks(stepChecks(db, token, cases, keys), keys).map((check) => check.step.id));
+    expect(way[1]?.decisions).toEqual([conditions[1]]);
+    expect(looseConditions(token, keys)).toEqual([conditions[0]]);
+  });
+
+  it('should answer at the last step shown when a step after it that the outline does not have answered, and keep a failure there', () => {
+    expect(waySteps(token, { ...normal, steps: ['parse-request', 'authenticate-client', 'sign-response'] }).map((step) => [step.id, step.how])).toEqual([
+      ['parse-request', 'ran'],
+      ['authenticate-client', 'answered'],
+    ]);
+    expect(waySteps(token, { ...direct, steps: ['parse-request', 'authenticate-client', 'catch-error'] }).map((step) => step.how)).toEqual(['ran', 'failed']);
+  });
+
+  it('should leave a failure in a step the outline does not have out of the steps, the catch after it kept', () => {
+    const keys: EndpointCase = { ...direct, steps: ['parse-request', 'load-keys', 'respond-error'], failure: { ...(direct.failure as NonNullable<EndpointCase['failure']>), step: 'load-keys' } };
+    expect(waySteps(token, keys).map((step) => [step.id, step.how, step.error])).toEqual([
+      ['parse-request', 'ran', undefined],
+      ['respond-error', 'caught', undefined],
+    ]);
+    expect(waySteps(token, { ...keys, steps: ['parse-request', 'authenticate-client', 'load-keys'] }).map((step) => step.how)).toEqual(['ran', 'ran']);
+    expect(waySteps(token, { ...keys, steps: ['load-keys'] })).toEqual([]);
+  });
+
+  it('should leave out the steps of an example the outline does not have, the decisions met in them above the steps', () => {
+    const signed: CaseExample = {
+      ...example,
+      response: { status: 200, headers: [] },
+      steps: [
+        { id: 'parse-request', how: 'ran' },
+        { id: 'authenticate-client', how: 'ran' },
+        { id: 'sign-response', how: 'answered', decisions: [{ text: 'alg', code: true, side: 'RS256', step: 'sign-response' }] },
+      ],
+    };
+    expect(waySteps(token, normal, signed).map((step) => [step.id, step.how])).toEqual([
+      ['parse-request', 'ran'],
+      ['authenticate-client', 'answered'],
+    ]);
+    expect(looseConditions(token, normal, signed)).toEqual([{ text: 'alg', code: true, side: 'RS256', step: 'sign-response' }]);
+  });
+
+  it('should give the number of steps a case rules only when its example request went through a different number', () => {
+    const caught: EndpointCase = { id: 'catch', kind: 'exit', name: '例外が起きたとき', steps: ['respond-error'], end: 'error-response' };
+    expect([ruledSteps(token, direct, waySteps(token, direct)), ruledSteps(token, direct, waySteps(token, direct, example)), ruledSteps(token, caught, waySteps(token, caught, example))]).toEqual([undefined, undefined, 1]);
+  });
+
+  it('should say why a case has no example: no measured run, no request recorded for the endpoint, or none took its way', () => {
+    expect(noExampleReason(false, cases)).toBe('unmeasured');
+    expect(noExampleReason(true, cases)).toBe('unrecorded');
+    expect(noExampleReason(true, [...cases, { ...normal, examples: [example], exampleCount: 1 }])).toBe('untaken');
+  });
+
+  it('should say how a case ends, with the error code of a failure', () => {
+    expect([resultWords(normal), resultWords(direct), resultWords({ end: 'error-response' }), resultWords({ end: 'escapes' })]).toEqual([
+      '応答して終わる',
+      '失敗を受け取り、エラーで応答する（invalid_client）',
+      '失敗を受け取り、エラーで応答する',
+      '失敗がエンドポイントの外へ出る',
+    ]);
   });
 });

@@ -17,7 +17,8 @@
  *     an endpoint body, or of the app a test sends requests to routes that
  *     are no endpoint of (TestsIndex.sources);
  *   - tests/cases/<hash>.json: the cases of an endpoint (the ways a request
- *     takes through it, cases.ts), read when its page opens;
+ *     takes through it, cases.ts), with the requests of the measured run
+ *     that took each (examples.ts), read when its page opens;
  *   - tests/diff.json: in the build of a pull request, the diff of the tests.
  *
  * The run (MAP_TEST_REPORTS: the directory a run with MARONN_TEST_REPORTS
@@ -30,15 +31,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { git, nodesOf, removeStale, writeHashed, type BuildContext, type BuildExtension } from '@maronn-openid-connect/map-analysis';
 import { ASPECTS_FILE, readAspects, type AspectTable } from './aspects.js';
-import { endpointCases } from './cases.js';
+import { endpointCases, type CaseRequests } from './cases.js';
 import { EndpointIndex, readCatalog } from './catalog.js';
 import { diffCatalogs } from './diff.js';
 import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from './discover.js';
+import { requestsByEndpoint } from './examples.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown } from './markdown.js';
 import type { FlowTree, MapData } from '@maronn-openid-connect/map-analysis';
 import type { CodeRef, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
-import { readRun } from './run.js';
+import { FrameLocator, readRun, type JoinedRun } from './run.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
 export interface TestBuildOptions {
@@ -231,17 +233,19 @@ export function outlineOf(data: MapData, joined: Joined, frames: Iterable<string
       named.add(root);
       const units = refs[key]?.units ?? {};
       const steps = endpoint.steps.map((step): OutlineStep => {
+        // What the step does and the values it reads and hands on, as the flow of the map says.
+        const flow = { ...(step.kind === undefined ? {} : { kind: step.kind }), ...((step.consumes ?? []).length === 0 ? {} : { consumes: step.consumes }), ...((step.produces ?? []).length === 0 ? {} : { produces: step.produces }) };
         if (step.functionId !== undefined) {
           named.add(step.functionId);
           const code = codeOfFrame(data, step.functionId);
-          return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), function: step.functionId, ...(code === undefined ? {} : { code }) };
+          return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...flow, function: step.functionId, ...(code === undefined ? {} : { code }) };
         }
         const candidates = [...new Set(step.calls ?? [])];
         const calls = candidates.filter((id) => units[id] !== undefined);
         const codeCalls = candidates.filter((id) => data.functions[id] !== undefined || data.bodies[id] !== undefined);
         for (const id of [...calls, ...codeCalls]) named.add(id);
         const code = blocks.get(`${source}:${endpoint.id}:${step.id}`);
-        return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
+        return { id: step.id, label: step.label, ...(step.feature === undefined ? {} : { feature: featureId(data, step.feature) }), ...flow, ...(calls.length === 0 ? {} : { calls }), ...(codeCalls.length === 0 ? {} : { codeCalls }), ...(code === undefined ? {} : { code }) };
       });
       const code = codeOfFrame(data, root);
       endpoints.push({
@@ -312,6 +316,38 @@ export function shownFiles(files: readonly TestFile[], tests: readonly TestCase[
   }
   for (const fn of Object.values(outline.functions)) if (fn.code !== undefined) shown.add(fn.code.file);
   return [...shown].sort();
+}
+
+/**
+ * The requests of a measured run for the examples of the cases: those of
+ * each test of hono or Next.js by the endpoint of its source whose path the
+ * URL has, the lines of the files read once each, and the frames found by
+ * the lines of the functions of the map.
+ */
+export function caseRequests(data: MapData, run: Pick<JoinedRun, 'exchanges'>, tests: readonly TestCase[], endpoints: EndpointIndex, read: (path: string) => string): CaseRequests {
+  const byId = new Map(tests.map((test) => [test.id, test]));
+  const endpointOf = (source: 'hono' | 'nextjs', path: string): string | undefined => {
+    const id = endpoints.endpointOfPath(path);
+    return id !== undefined && (data.flows[source]?.endpoints ?? []).some((endpoint) => endpoint.id === id) ? id : undefined;
+  };
+  const texts = new Map<string, readonly string[] | undefined>();
+  const frames = new FrameLocator(data);
+  return {
+    byEndpoint: requestsByEndpoint(run.exchanges, byId, endpointOf),
+    linesOf: (path) => {
+      if (!texts.has(path)) {
+        let lines: string[] | undefined;
+        try {
+          lines = read(path).split('\n');
+        } catch {
+          lines = undefined;
+        }
+        texts.set(path, lines);
+      }
+      return texts.get(path);
+    },
+    frameAt: (path, line) => frames.frameAt(path, line),
+  };
 }
 
 /** What reading a catalog needs besides the revision: the tables of the repository. */
@@ -419,14 +455,27 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     }
     removeStale(join(out, 'tests', 'sources'), writtenSources);
   }
-  // The cases of each endpoint (the ways a request takes through it, and the tests that speak for each failure), a file an endpoint.
+  // The cases of each endpoint (the ways a request takes through it, the tests that speak for each failure, the requests of the measured run that took it), a file an endpoint.
   const cases: NonNullable<TestsIndex['cases']> = {};
   if (out !== undefined) {
     const writtenCases = new Set<string>();
-    for (const [key, endpoint] of [...endpointCases(data, repository.head.trees, context.failures, joined)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const requests = run === undefined || run.exchanges.size === 0 ? undefined : caseRequests(data, run, tests, endpoints, read);
+    const counts = { read: 0, took: 0 };
+    const found = [...endpointCases(data, repository.head.trees, context.failures, joined, requests, counts)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    for (const [key, endpoint] of found) {
       cases[key] = `./data/tests/cases/${writeHashed(join(out, 'tests', 'cases'), key, JSON.stringify(endpoint), writtenCases)}`;
     }
     removeStale(join(out, 'tests', 'cases'), writtenCases);
+    if (run !== undefined && requests !== undefined) {
+      const all = found.flatMap(([, endpoint]) => endpoint.cases);
+      const sent = [...run.exchanges.values()].reduce((sum, list) => sum + list.length, 0);
+      const toEndpoints = [...requests.byEndpoint.values()].reduce((sum, list) => sum + list.length, 0);
+      const toCases = found.reduce((sum, [key]) => sum + (requests.byEndpoint.get(key)?.length ?? 0), 0);
+      context.log.push(
+        `tests: ${sent} requests of ${run.exchanges.size} tests (unmatched: ${run.unmatched.exchanges} lines), ${toEndpoints} to an endpoint, ${toCases} to one with cases (${counts.read} answered and not overlapped), ${counts.took} took a case; ` +
+          `${all.filter((item) => (item.examples ?? []).length > 0).length} of ${all.length} cases with examples`,
+      );
+    }
   }
   const index: TestsIndex = {
     version: 1,

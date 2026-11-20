@@ -15,13 +15,21 @@
  *   tests of the endpoint that expect the same error speak for the code
  *   alone, which another cause may give too (FailureTests).
  *
+ * - The conditions of a case are the sides its choice names, in words, in
+ *   the order a walk along it meets them (into the frames a failure comes up
+ *   through): what a request must do to take it, whether a request did or
+ *   not.
+ * - With the requests of a measured run (examples.ts), a case gets the
+ *   requests that took it as its examples.
+ *
  * These are rules, not guesses: a case with no test under them is shown as
  * having none, and nothing is inferred from the title of a test.
  */
 import { createHash } from 'node:crypto';
-import { failureSelections, frameSelections, stepsOf, walkFlow, type Failure, type FlowTree, type MapData, type Selection, type TreeNode } from '@maronn-openid-connect/map-analysis';
+import { FAILS, failureSelections, frameSelections, stepsOf, walkFlow, type Failure, type FlowTree, type MapData, type Selection, type TreeNode } from '@maronn-openid-connect/map-analysis';
+import { attachExamples, conditionOf, type CaseSources, type CaseWay, type ExampleCounts, type SentRequest } from './examples.js';
 import { errorCodeOf, type Joined } from './join.js';
-import type { EndpointCase, EndpointCases, FailureTests, TestCase } from './model.js';
+import type { CaseCondition, EndpointCase, EndpointCases, FailureTests, TestCase } from './model.js';
 
 /** A tree with the uses of the values its steps make, as the analysis builds it (map-analysis BuiltTree). */
 export interface CaseTree {
@@ -60,12 +68,40 @@ export function failureTests(error: string, ofFunction: readonly TestCase[], ofE
 }
 
 /**
- * The cases of an endpoint from the choices of its root frame: each walked
- * for its steps and its end; a failure with the step it comes up in and the
- * tests that expect it (`testsOf` gives the tests of a frame).
+ * The sides a choice names, in words, in the order a walk along it meets
+ * them: the walk goes into the frames the choice opens (a failure from
+ * below), and a decision of such a frame is in the step of the call of the
+ * root that opened it. A call the choice makes fail says 失敗する; the plain
+ * run of a `try` (no exception) is what every other way does too, and is
+ * left out.
  */
-export function casesOf(tree: FlowTree, selections: readonly Selection[], ofEndpoint: readonly TestCase[], testsOf: (frame: string) => readonly TestCase[]): EndpointCase[] {
-  const cases: EndpointCase[] = [];
+export function conditionsOf(tree: FlowTree, selection: Pick<Selection, 'decisions' | 'frames'>, treeOf: (id: string) => FlowTree | undefined = () => undefined): CaseCondition[] {
+  const open = new Set(selection.frames ?? []);
+  const walked = walkFlow(tree, selection.decisions, { enter: (key, call) => (open.has(key) && call.target?.kind === 'function' ? treeOf(call.target.id) : undefined) });
+  const conditions: CaseCondition[] = [];
+  const met = new Set<string>();
+  let step: string | undefined;
+  for (const stop of walked.stops) {
+    if (stop.depth === 0) step = stop.step;
+    const key = stop.frame === '' ? stop.node.id : `${stop.frame}.${stop.node.id}`;
+    const chosen = selection.decisions[key];
+    if (chosen === undefined || met.has(key)) continue;
+    met.add(key);
+    if (chosen === FAILS) conditions.push(conditionOf(stop.node, '失敗する', step));
+    else if (stop.side !== undefined && stop.side.key === chosen && !(stop.node.kind === 'try' && chosen === 'try')) conditions.push(conditionOf(stop.node, stop.side.label, step));
+  }
+  return conditions;
+}
+
+/**
+ * The cases of an endpoint from the choices of its root frame, each with
+ * the choice and the walk it is made from: walked for its steps and its
+ * end; a failure with the step it comes up in and the tests that expect it
+ * (`testsOf` gives the tests of a frame); its conditions read into the
+ * frames `treeOf` gives.
+ */
+export function waysOf(tree: FlowTree, selections: readonly Selection[], ofEndpoint: readonly TestCase[], testsOf: (frame: string) => readonly TestCase[], treeOf?: (id: string) => FlowTree | undefined): CaseWay[] {
+  const ways: CaseWay[] = [];
   const seen = new Set<string>();
   for (const selection of selections) {
     if (selection.kind === 'change') continue;
@@ -87,9 +123,15 @@ export function casesOf(tree: FlowTree, selections: readonly Selection[], ofEndp
       made.failure = { error, ...(code === undefined ? {} : { code }), from, name: selection.failure?.name ?? tree.name, ...(failed?.step === undefined ? {} : { step: failed.step }) };
       made.tests = failureTests(error, from === tree.id ? [] : testsOf(from), ofEndpoint);
     }
-    cases.push(made);
+    made.conditions = conditionsOf(tree, selection, treeOf);
+    ways.push({ made, selection, walked });
   }
-  return cases;
+  return ways;
+}
+
+/** The cases of an endpoint from the choices of its root frame (see waysOf). */
+export function casesOf(tree: FlowTree, selections: readonly Selection[], ofEndpoint: readonly TestCase[], testsOf: (frame: string) => readonly TestCase[], treeOf?: (id: string) => FlowTree | undefined): EndpointCase[] {
+  return waysOf(tree, selections, ofEndpoint, testsOf, treeOf).map((way) => way.made);
 }
 
 /** Whether a node or one below it carries a step mark: a tree with none has no step to tell a case by. */
@@ -97,15 +139,30 @@ function hasSteps(nodes: readonly TreeNode[]): boolean {
   return nodes.some((node) => node.step !== undefined || hasSteps(node.pre ?? []) || (node.branches ?? []).some((branch) => hasSteps(branch.nodes)));
 }
 
+/** The requests of a measured run, for the examples of the cases (examples.ts). */
+export interface CaseRequests {
+  /** The requests sent to each endpoint, by `<source>:<endpoint>` (requestsByEndpoint). */
+  byEndpoint: ReadonlyMap<string, readonly SentRequest[]>;
+  /** The lines of a file of the repository, by its path. */
+  linesOf(path: string): readonly string[] | undefined;
+  /** The frame a line of a file is in (run.ts FrameLocator). */
+  frameAt(path: string, line: number): string | undefined;
+}
+
 /**
  * The cases of every endpoint of hono and Next.js whose root frame has a
  * tree with steps, by `<source>:<endpoint>`. `trees` are the trees of the
  * working tree (with the value uses the step choices read), `failures` the
- * failures that leave each frame.
+ * failures that leave each frame; with `requests`, the cases get the
+ * requests of the measured run that took them, and `counts` adds up what
+ * that join saw.
  */
-export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined): Map<string, EndpointCases> {
+export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0 }): Map<string, EndpointCases> {
   const plain = new Map([...trees].map(([id, built]) => [id, built.tree]));
+  const treeOf = (id: string) => plain.get(id);
   const nameOf = (id: string) => data.functions[id]?.name ?? plain.get(id)?.name ?? id;
+  const sources: CaseSources | undefined =
+    requests === undefined ? undefined : { treeOf, pathOf: (file) => data.sources[file]?.path, linesOf: (path) => requests.linesOf(path), frameAt: (path, line) => requests.frameAt(path, line) };
   const found = new Map<string, EndpointCases>();
   for (const source of ['hono', 'nextjs'] as const) {
     for (const endpoint of data.flows[source]?.endpoints ?? []) {
@@ -113,8 +170,16 @@ export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree
       if (built === undefined || !hasSteps(built.tree.nodes)) continue;
       const key = `${source}:${endpoint.id}`;
       const selections = [...frameSelections(built.tree, built.uses), ...failureSelections(endpoint.root, plain, failures, nameOf)];
-      const cases = casesOf(built.tree, selections, joined.endpoints.get(key)?.tests ?? [], (frame) => joined.frames.get(frame)?.tests ?? []);
-      if (cases.length > 0) found.set(key, { version: 1, key, cases });
+      const ways = waysOf(built.tree, selections, joined.endpoints.get(key)?.tests ?? [], (frame) => joined.frames.get(frame)?.tests ?? [], treeOf);
+      const sent = requests?.byEndpoint.get(key) ?? [];
+      if (sources !== undefined && sent.length > 0) {
+        const stepFunctions = new Map(endpoint.steps.flatMap((step) => (step.functionId === undefined ? [] : [[step.id, step.functionId] as const])));
+        const own = (test: TestCase) => test.subjects.some((subject) => subject.kind === 'endpoint' && subject.id === endpoint.id && subject.source === source && subject.how !== 'coverage');
+        const seen = attachExamples(ways, sent, { tree: built.tree, stepFunctions, callsOf: (frame) => data.functions[frame]?.calls ?? data.bodies[frame]?.calls ?? [], own }, sources);
+        counts.read += seen.read;
+        counts.took += seen.took;
+      }
+      if (ways.length > 0) found.set(key, { version: 1, key, cases: ways.map((way) => way.made) });
     }
   }
   return found;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, Failure, FlowTree, MapData, Selection, TreeNode } from '@maronn-openid-connect/map-analysis';
-import { caseId, casesOf, endpointCases, errorClassOf, expectsFailure, failureTests } from '../cases.js';
+import { caseId, casesOf, conditionsOf, endpointCases, errorClassOf, expectsFailure, failureTests } from '../cases.js';
 import type { Joined } from '../join.js';
 import type { TestCase } from '../model.js';
 
@@ -149,5 +149,66 @@ describe('endpointCases', () => {
     expect(failure?.failure).toMatchObject({ error: 'TokenError(invalid_client)', from: VERIFY, name: 'verifyClientSecret', step: 'authenticate-client' });
     expect(failure?.steps).toEqual(['parse-request', 'authenticate-client', 'respond-error']);
     expect(failure?.tests?.direct).toEqual(['verify-rejects']);
+  });
+
+  it('should say the sides of a failure from below in the frames it comes up through, each in the step of the call that opened it', () => {
+    const failure = endpointCases(data, trees, failures, joined).get('hono:token')?.cases.find((item) => item.kind === 'failure');
+    expect(failure?.conditions).toEqual([
+      { step: 'authenticate-client', text: 'core:client-auth.ts#verifyClientSecret()', code: true, side: '失敗する' },
+      { step: 'authenticate-client', text: 'if (!ok)', code: true, side: '成立' },
+    ]);
+  });
+
+  it('should give the cases the requests of the measured run that took them, and add up what the join saw', () => {
+    // The pipeline and verifyClientSecret, each in a file of its own on the lines the trees name.
+    const pipeline = ["tokenApp.post('/', async (c) => {", '  try {', '    // [authenticate-client] authenticate', '    await verifyClientSecret(ok);', '    // [respond] respond', '    return respond(c);', '  } catch (error) {', '    return respondError(c, error);', '  }', '});'];
+    const clientAuth = ['export function verifyClientSecret(ok) {', '  if (!ok)', '    throw new TokenError();', '  return true;', '}'];
+    const root = { ...tree('endpoint:token', [
+      { id: 's0', kind: 'try', lines: [2, 9], code: 'try … catch', branches: [
+        side('try', '例外なし', [
+          { ...step('s0b0', 'authenticate-client', [call('s0b0s0', VERIFY, { lines: [4, 4] })]), lines: [3, 4] },
+          { ...step('s0b1', 'respond', [returned('s0b1s0', { lines: [6, 6], code: 'return respond(c)' })]), lines: [5, 6] },
+        ]),
+        side('catch', '例外が起きたとき', [returned('s0h0', { lines: [8, 8], code: 'return respondError(c, error)', pre: [call('s0h0i0', 'hono:steps/respond-error.ts#respondTokenError', { lines: [8, 8], step: { id: 'respond-error', label: 'respond-error' } })] })]),
+      ] },
+    ] as TreeNode[]), file: 'hono:pipeline.ts' };
+    const texts: Record<string, string[]> = { 'apps/hono/src/pipeline.ts': pipeline, 'packages/core/src/client-auth.ts': clientAuth };
+    const rejected = {
+      request: { method: 'POST', url: 'https://op.example.com/token', headers: [], body: 'grant_type=client_credentials' },
+      response: { status: 401, headers: [], body: '{"error":"invalid_client"}' },
+      ran: {
+        'apps/hono/src/pipeline.ts': { s: [[2, 2, 1], [4, 4, 1], [8, 4, 1]] as Array<[number, number, number]>, b: [], f: [] },
+        'packages/core/src/client-auth.ts': { s: [[2, 2, 1], [3, 4, 1]] as Array<[number, number, number]>, b: [[2, 2, 'if', [1, 0]]] as Array<[number, number, string, number[]]>, f: [[1]] as Array<[number]> },
+      },
+    };
+    const own = new Map([...trees, ['endpoint:token', { tree: root }], [VERIFY, { tree: { ...verify, file: 'core:client-auth.ts' } }]]);
+    const sourced = { ...data, sources: { 'hono:pipeline.ts': { path: 'apps/hono/src/pipeline.ts', url: '' }, 'core:client-auth.ts': { path: 'packages/core/src/client-auth.ts', url: '' } } } as unknown as MapData;
+    const counts = { read: 0, took: 0 };
+    const requests = { byEndpoint: new Map([['hono:token', [{ test: card('api-401', { kind: 'api', root: 'hono' }), exchange: rejected }]]]), linesOf: (path: string) => texts[path], frameAt: (path: string) => (path === 'packages/core/src/client-auth.ts' ? VERIFY : undefined) };
+    const found = endpointCases(sourced, own, failures, joined, requests, counts);
+    const failure = found.get('hono:token')?.cases.find((item) => item.kind === 'failure');
+    expect([failure?.exampleCount, failure?.examples?.[0]?.test, failure?.examples?.[0]?.response.status, failure?.examples?.[0]?.steps.map((item) => [item.id, item.how, item.error]), counts]).toEqual([
+      1,
+      'api-401',
+      401,
+      [['authenticate-client', 'failed', 'TokenError(invalid_client)'], ['respond-error', 'caught', undefined]],
+      { read: 1, took: 1 },
+    ]);
+  });
+});
+
+describe('conditionsOf', () => {
+  it('should say each side a choice names in the order of the walk, with its step, the plain run of a try left out', () => {
+    const [dispatch, , catching] = SELECTIONS;
+    expect([conditionsOf(ROOT, dispatch as Selection), conditionsOf(ROOT, catching as Selection)]).toEqual([
+      [{ step: 'dispatch', text: 'if (early)', code: true, side: '成立' }],
+      [{ text: 'try … catch', code: true, side: '例外が起きたとき' }],
+    ]);
+  });
+
+  it('should say a decision by the first sentence of its words when it has some, and a call the choice makes fail as failing where the frame is not open', () => {
+    const worded = tree('endpoint:keys', [step('s0', 'load', [call('s0s0', 'core:keys.ts#load', { text: '鍵を読む。ファイルから読む。', from: 'doc' })]), { id: 's1', kind: 'if', lines: [5, 5], code: 'if (!key)', subject: '!key', text: 'key が偽として評価されるか', from: 'code', branches: [side('true', '成立', [returned('s1t0')]), side('false', '不成立', [])] }]);
+    expect(conditionsOf(worded, { decisions: { s0s0: 'fails' } })).toEqual([{ step: 'load', text: '鍵を読む。', code: false, side: '失敗する' }]);
+    expect(conditionsOf(worded, { decisions: { s1: 'true' } })).toEqual([{ text: 'key が偽として評価されるか', code: false, side: '成立' }]);
   });
 });

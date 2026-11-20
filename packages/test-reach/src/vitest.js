@@ -9,6 +9,10 @@
  *   the Istanbul coverage of those roots, its lcov (coverage/vitest/<name>/lcov.info),
  *   and a setup file that takes the functions each test ran from the counters,
  *   which the reporter writes as reach/vitest-<name>.jsonl.
+ * - Exchanges (with the reach, for a package that names the setup file of its
+ *   recorder): that setup file after the one of the reach, and the HTTP
+ *   exchanges of each test (exchanges.js), which the reporter writes as
+ *   exchanges/vitest-<name>.jsonl.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -65,20 +69,23 @@ function packageName(directory) {
  * The reporters, coverage and setup files a package's tests run with when
  * the reports or the reach are on (see the module comment); an empty object
  * otherwise.
- * @param {{ root: string | URL, name?: string, roots?: string[], env?: Record<string, string | undefined> }} options
+ * @param {{ root: string | URL, name?: string, roots?: string[], exchanges?: string, env?: Record<string, string | undefined> }} options
  *   root: the URL of the vitest.config (import.meta.url) or the package
  *   directory; name: the name of the report files, by default the package
  *   name without its scope; roots: the repository paths of the function
- *   catalog roots its tests reach (none for the tools: reports only).
+ *   catalog roots its tests reach (none for the tools: reports only);
+ *   exchanges: the setup file that installs the recorder of the package's
+ *   framework, relative to the package (none: no exchanges).
  * @returns {import('./vitest.d.ts').TestReportsConfig}
  */
-export function testReports({ root, name, roots = [], env = process.env }) {
+export function testReports({ root, name, roots = [], exchanges, env = process.env }) {
   const directory = reportsDirectory(env);
   if (directory === undefined) return {};
   const packageRoot = packageDirectory(root);
   const repository = workspaceRoot(packageRoot);
   const report = name ?? packageName(packageRoot);
   const reach = reachEnabled(env) && roots.length > 0;
+  const recorder = reach && exchanges !== undefined ? resolve(packageRoot, exchanges) : undefined;
   const reporter = fileURLToPath(new URL('./vitest-reporter.js', import.meta.url));
   return {
     includeTaskLocation: true,
@@ -88,12 +95,15 @@ export function testReports({ root, name, roots = [], env = process.env }) {
         outputFile: join(directory, 'vitest', `${report}.json`),
         repositoryRoot: repository,
         ...(reach ? { reachFile: join(directory, 'reach', `vitest-${report}.jsonl`) } : {}),
+        ...(recorder ? { exchangesFile: join(directory, 'exchanges', `vitest-${report}.jsonl`) } : {}),
       }],
       ['junit', { outputFile: join(directory, 'junit', `vitest-${report}.xml`) }],
     ],
     ...(reach
       ? {
-          setupFiles: [fileURLToPath(new URL('./vitest-setup.js', import.meta.url))],
+          // The reach's setup file starts the list of the exchanges of each test and puts it on the meta; the
+          // recorder's only installs what adds to it.
+          setupFiles: [fileURLToPath(new URL('./vitest-setup.js', import.meta.url)), ...(recorder ? [recorder] : [])],
           coverage: {
             enabled: true,
             provider: 'istanbul',

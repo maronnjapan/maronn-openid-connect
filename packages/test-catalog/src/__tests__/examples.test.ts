@@ -131,6 +131,16 @@ const RESOLVE_FILE = [
   '}',
 ];
 
+const SESSION_FILE = [
+  "sessionApp.get('/', async (c) => {",
+  '  // [reuse-session] reuse',
+  '  const sso = await reuseSession(c);',
+  '  if (sso) return issueCode(c, sso);',
+  '  // [continue-to-login] login',
+  '  return continueToLogin(c);',
+  '});',
+];
+
 const PATHS: Record<string, string> = {
   'hono:pipeline.ts': 'apps/hono/src/pipeline.ts',
   'hono:dispatch.ts': 'apps/hono/src/dispatch.ts',
@@ -139,6 +149,7 @@ const PATHS: Record<string, string> = {
   'hono:page.tsx': 'apps/hono/src/page.tsx',
   'hono:authorize.ts': 'apps/hono/src/authorize.ts',
   'hono:resolve.ts': 'apps/hono/src/resolve.ts',
+  'hono:session.ts': 'apps/hono/src/session.ts',
 };
 const TEXTS: Record<string, string[]> = {
   'apps/hono/src/pipeline.ts': PIPELINE,
@@ -148,6 +159,7 @@ const TEXTS: Record<string, string[]> = {
   'apps/hono/src/page.tsx': PAGE_FILE,
   'apps/hono/src/authorize.ts': AUTHORIZE_FILE,
   'apps/hono/src/resolve.ts': RESOLVE_FILE,
+  'apps/hono/src/session.ts': SESSION_FILE,
 };
 
 const PARSE = 'hono:parse.ts#parseTokenRequest';
@@ -160,9 +172,14 @@ const RESPOND_ERROR = 'hono:respond.ts#respondError';
 const SUBMIT = 'hono:submit.ts#submit';
 const RESOLVE = 'hono:resolve.ts#resolveRequest';
 const LOAD = 'hono:resolve.ts#loadPushed';
+const REUSE = 'hono:reuse.ts#reuseSession';
+const ISSUE = 'hono:issue.ts#issueCode';
 
 /** The frames by file and lines, as the map has them: the frame a line of a file is in. */
 const FRAMES: Array<{ id: string; path: string; lines: [number, number] }> = [
+  { id: 'endpoint:session', path: 'apps/hono/src/session.ts', lines: [1, 7] },
+  { id: REUSE, path: 'apps/hono/src/reuse.ts', lines: [1, 9] },
+  { id: ISSUE, path: 'apps/hono/src/issue.ts', lines: [1, 9] },
   { id: 'endpoint:authorize', path: 'apps/hono/src/authorize.ts', lines: [1, 8] },
   { id: RESOLVE, path: 'apps/hono/src/resolve.ts', lines: [1, 11] },
   { id: LOAD, path: 'apps/hono/src/resolve.ts', lines: [13, 17] },
@@ -337,7 +354,16 @@ const LOAD_TREE = tree(LOAD, 'hono:resolve.ts', [13, 17], [
   { id: 's2', kind: 'return', lines: [16, 16], code: 'return c.pushed' },
 ]);
 
-const TREES = new Map([ROOT, PARSE_TREE, READ_TREE, DISPATCH_TREE, DECIDE_TREE, EACH_TREE, PAGE_TREE, MODES_TREE, AUTHORIZE_TREE, RESOLVE_TREE, LOAD_TREE].map((item) => [item.id, item]));
+/** An endpoint whose step returns the result of a call marked with the next step. */
+const SESSION_TREE = tree('endpoint:session', 'hono:session.ts', [1, 7], [
+  step('s0', [2, 4], 'reuse-session', [
+    call('s0s0', [3, 3], REUSE),
+    { id: 's0s1', kind: 'if', lines: [4, 4], code: 'if (sso)', subject: 'sso', form: 'guard', branches: [side('true', '成立', [{ id: 's0s1t0', kind: 'return', lines: [4, 4], code: 'return issueCode(c, sso)', pre: [call('s0s1t0i0', [4, 4], ISSUE, { step: { id: 'issue-authorization-code', label: 'issue-authorization-code' } })] }]), side('false', '不成立')] },
+  ]),
+  step('s1', [5, 6], 'continue-to-login', [{ id: 's1s0', kind: 'return', lines: [6, 6], code: 'return continueToLogin(c)' }]),
+]);
+
+const TREES = new Map([ROOT, PARSE_TREE, READ_TREE, DISPATCH_TREE, DECIDE_TREE, EACH_TREE, PAGE_TREE, MODES_TREE, AUTHORIZE_TREE, RESOLVE_TREE, LOAD_TREE, SESSION_TREE].map((item) => [item.id, item]));
 
 const SOURCES: CaseSources = {
   treeOf: (id) => TREES.get(id),
@@ -357,6 +383,7 @@ const PIPE = 'apps/hono/src/pipeline.ts';
 const PARSING = 'apps/hono/src/parse.ts';
 const DECIDING = 'packages/core/src/decide.ts';
 const PAGE = 'apps/hono/src/page.tsx';
+const SESSIONS = 'apps/hono/src/session.ts';
 
 /** What ran in a file: statements by their place (once each unless a count is given), branches, and the lines of the functions. */
 interface Ran {
@@ -704,6 +731,20 @@ describe('exampleOf', () => {
     const post = exchange({ [PAGE]: { s: [at(PAGE, 6, 'await'), at(PAGE, 7, 'return')] }, 'apps/hono/src/submit.ts': { s: [[2, 2]], f: [1] } }, { status: 200 }, { url: 'https://op.example.com/page' });
     const example = way === undefined ? undefined : exampleOf(way, [way], { test: card('post'), exchange: post }, new RequestRun(post, SOURCES), { ...ENDPOINT, tree: PAGE_TREE, stepFunctions: new Map() });
     expect(example?.steps).toEqual([{ id: 'submit', how: 'answered', calls: [SUBMIT] }]);
+  });
+
+  it('should say the step of the call a return inside another step returns the result of answered, and the step the return is in ran', () => {
+    const [way] = waysOf(SESSION_TREE, [{ kind: 'exit', name: 'sso: 成立', decisions: { s0s1: 'true' }, target: 's0s1t0' }], [], () => []);
+    const reused = exchange(
+      { [SESSIONS]: { s: [at(SESSIONS, 3, 'await reuseSession'), at(SESSIONS, 4, 'if'), at(SESSIONS, 4, 'return')], b: [[at(SESSIONS, 4, 'if'), 'if', [1, 0]]], f: [1] }, 'apps/hono/src/reuse.ts': { s: [[2, 2]], f: [1] }, 'apps/hono/src/issue.ts': { s: [[2, 2]], f: [1] } },
+      { status: 302, headers: [['location', 'https://rp.example.com/cb?code=c']] },
+      { url: 'https://op.example.com/session' },
+    );
+    const example = way === undefined ? undefined : exampleOf(way, [way], { test: card('sso'), exchange: reused }, new RequestRun(reused, SOURCES), { ...ENDPOINT, tree: SESSION_TREE, stepFunctions: new Map() });
+    expect(example?.steps.map((item) => [item.id, item.how])).toEqual([
+      ['reuse-session', 'ran'],
+      ['issue-authorization-code', 'answered'],
+    ]);
   });
 });
 

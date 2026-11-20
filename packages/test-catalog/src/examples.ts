@@ -673,9 +673,9 @@ export function exampleOf(way: CaseWay, taken: readonly CaseWay[], sent: SentReq
   const byId = new Map(steps.map((step) => [step.id, step]));
   let catching = false;
   for (const stop of walked.stops) {
-    // A return outside the steps answers from the step of the call it returns the result of (`return respond(c, await process(c))`).
-    const answering = stop.step === undefined && stop.event === 'returns' ? [...nodesOf(stop.node.pre ?? [])].reverse().find((node) => node.step !== undefined && byId.has(node.step.id))?.step?.id : undefined;
-    const step = byId.get(stop.step ?? answering ?? '');
+    // A return answers from the step of the last stepped call it returns the result of (`return respond(c, await process(c))` outside the steps, a step's `return issueAuthorizationCodeResponse(…)`), else from its own step.
+    const answering = stop.event === 'returns' ? [...nodesOf(stop.node.pre ?? [])].reverse().find((node) => node.step !== undefined && byId.has(node.step.id))?.step?.id : undefined;
+    const step = byId.get(answering ?? stop.step ?? '');
     if (stop.event === 'catches') {
       if (step === undefined) catching = true;
       else step.how = 'caught';

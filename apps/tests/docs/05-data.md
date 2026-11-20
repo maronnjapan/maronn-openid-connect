@@ -1325,7 +1325,7 @@ interface ExampleStep {
 | `request` | 方法、URL のパスとクエリ（`path`）、ホスト（`host`）、ヘッダー、本文 |
 | `response` | 状態、状態の文（空なら置かない）、ヘッダー、本文 |
 | `steps` | 処理本体の木を、読めた向き（読めなければケースの選択の向き）で `walkFlow` でたどり、`stepsOf` の順に並べる。<br>`catch` と読めた `try` は、本体に `fails` の呼び出しがあれば向きを決めず、その失敗まで本体をたどる。<br>たどってケースの終わり（失敗なら失敗する呼び出しか `throw`）に届かなければ、例にしない |
-| `steps[].how` | `ran`。<br>`fails` か `throws` の止まりのステップは `failed`。<br>`catches` の止まりがステップにあればそのステップ、無ければその後に初めて届くステップは `caught`。<br>`returns` の止まりのステップは `answered`。<br>ステップの外の `return` は、それが評価する呼び出しのステップが答える（`return respond(c, await processEndSessionRequest(c, params))`） |
+| `steps[].how` | `ran`。<br>`fails` か `throws` の止まりのステップは `failed`。<br>`catches` の止まりがステップにあればそのステップ、無ければその後に初めて届くステップは `caught`。<br>`returns` の止まりは、それが評価する呼び出しのうち、ステップの印を持つ最後のもののステップが `answered`。<br>ステップの外の `return respond(c, await processEndSessionRequest(c, params))` も、ステップの中の `return issueAuthorizationCodeResponse(…)`（hono の `authorize` の `reuse-session` の中で、呼び出しの印は `issue-authorization-code`）も、その呼び出しのステップが答える（後者の `reuse-session` は `ran` のまま）。<br>そういう呼び出しが無ければ、`return` のあるステップが `answered` |
 | `steps[].error` | `failed` のステップのエラー：止まりのエラー、無ければこのケースの失敗（そのステップのもの）、無ければやり取りが通った失敗のケースのうち、そのステップのもののエラー（一つに決まるとき） |
 | `steps[].decisions` | ステップの止まりの決定のうち、読めた向きのもの（呼び出しは除く）。<br>文は条件と同じ |
 | `steps[].calls` | 関数のあるステップ（hono の `FlowStep.functionId`）は、その関数の木の呼び出しが呼ぶ関数（木の順。`MapData.functions[id].calls` にあるものだけ）。<br>無いステップは、そのステップの止まりの呼び出しの関数。<br>どちらも、呼び出しが走ったものだけ：呼ぶ関数がやり取りの間に走り（`f` を [③-4-b](03-join.md#-4-b-位置を含むフレーム) と同じくフレームに引く）、その呼び出しの行の文も走った。<br>関数の計数は、どこから呼ばれても上がるので、それだけでは数えない（振り分けで通り過ぎたステップが、後のステップの呼ぶ `respondToken` を呼んだように見える） |

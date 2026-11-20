@@ -8,7 +8,10 @@
  *   the setup file put the reach there, is read as a reach too);
  * - `playwright/<target>.json`: Playwright's JSON reporter, the target (hono,
  *   nextjs) in the file name;
- * - `reach/*.jsonl`: one RawReach a line (model.ts).
+ * - `reach/*.jsonl`: one RawReach a line (model.ts);
+ * - `exchanges/*.jsonl`: one RawExchanges a line, the requests a test sent
+ *   with what ran while each was answered (the examples of the cases,
+ *   examples.ts).
  *
  * A report names a test by its file, the describe blocks it is in and its
  * title, which is how the catalog reads it: a test of the code is found by
@@ -19,7 +22,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { MapData } from '@maronn-openid-connect/map-analysis';
-import type { RawReach, TestCase, TestReach, TestResult, TestRun, TestStatus } from './model.js';
+import type { RawExchange, RawExchanges, RawReach, TestCase, TestReach, TestResult, TestRun, TestStatus } from './model.js';
 
 /**
  * The path of a file a report names, from the root of the repository. A report
@@ -130,8 +133,10 @@ export interface JoinedRun {
   run: TestRun;
   /** By test id: what each test reached, by target. */
   reach: Map<string, TestReach[]>;
-  /** How many results and reach lines named no test of the catalog. */
-  unmatched: { results: number; reach: number };
+  /** By test id: the requests each test sent, in the order they were answered (the rows of an `it.each` one after another). */
+  exchanges: Map<string, RawExchange[]>;
+  /** How many results, reach lines and lines of requests named no test of the catalog (or could not be read). */
+  unmatched: { results: number; reach: number; exchanges: number };
   /** Whether any reach was read (the run was measured). */
   measured: boolean;
 }
@@ -185,7 +190,7 @@ export function readRun(directory: string, repository: string, tests: readonly T
   const frames = new FrameLocator(data);
   const results: Record<string, TestResult> = {};
   const reach = new Map<string, TestReach[]>();
-  const unmatched = { results: 0, reach: 0 };
+  const unmatched = { results: 0, reach: 0, exchanges: 0 };
   let measured = false;
   let startedAt: string | undefined;
   const record = (test: TestCase, target: string, status: TestStatus, duration: number, attempts: number) => {
@@ -303,5 +308,26 @@ export function readRun(directory: string, repository: string, tests: readonly T
     }
     addReach(test, reachOf(raw, frames, endpointOf));
   }
-  return { run: { run: startedAt === undefined ? {} : { at: startedAt }, results }, reach, unmatched, measured };
+
+  // The requests of the tests, named like the reach.
+  const exchanges = new Map<string, RawExchange[]>();
+  for (const path of jsonFiles(join(directory, 'exchanges'), '.jsonl')) {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (line.trim() === '') continue;
+      let raw: RawExchanges;
+      try {
+        raw = JSON.parse(line) as RawExchanges;
+      } catch {
+        unmatched.exchanges += 1;
+        continue;
+      }
+      const test = Array.isArray(raw.exchanges) ? finder.code(raw.file, raw.path ?? [], raw.title) : undefined;
+      if (test === undefined) {
+        unmatched.exchanges += 1;
+        continue;
+      }
+      exchanges.set(test.id, [...(exchanges.get(test.id) ?? []), ...raw.exchanges]);
+    }
+  }
+  return { run: { run: startedAt === undefined ? {} : { at: startedAt }, results }, reach, exchanges, unmatched, measured };
 }

@@ -257,6 +257,66 @@ export interface RawReach {
   tags?: string[];
 }
 
+/**
+ * What packages/test-reach writes for a test of a measured run that sent
+ * requests (exchanges/vitest-<package>.jsonl, one a line): the test named as
+ * in RawReach, and each request it sent with the response and what ran while
+ * it was answered.
+ */
+export interface RawExchanges {
+  file: string;
+  path: string[];
+  title: string;
+  exchanges: RawExchange[];
+}
+
+/** One request a test sent, as the measured run recorded it (packages/test-reach exchanges.js). */
+export interface RawExchange {
+  request: {
+    method: string;
+    /** The absolute URL as sent. */
+    url: string;
+    /** Lower-case names, in the order the headers were iterated. */
+    headers: Array<[string, string]>;
+    body?: string;
+    /** The body was cut at 16 KiB. */
+    truncated?: true;
+  };
+  /** Absent when the request threw instead of answering (`error`). */
+  response?: {
+    status: number;
+    statusText?: string;
+    headers: Array<[string, string]>;
+    body?: string;
+    truncated?: true;
+  };
+  /** Another request of the same test was in flight while this one ran: their counts are mixed. */
+  overlapped?: true;
+  /** What the request threw instead of answering. */
+  error?: string;
+  /**
+   * What ran while the request was answered: the Istanbul counters that went
+   * up, by repository path of the original source (files of the function
+   * catalog only), at their places in it (lines from 1, columns from 0).
+   */
+  ran: Record<string, ExchangeRun>;
+}
+
+/** What ran in one file while a request was answered (RawExchange.ran). */
+export interface ExchangeRun {
+  /** The statements whose counter went up: [line, column, increment], the place where the statement starts. */
+  s: Array<[number, number, number]>;
+  /**
+   * The branches whose counter went up: [line, column, type, increments],
+   * the place where the branch starts (the `if` or `switch` keyword, the
+   * first operand of a `binary-expr`, the test of a `cond-expr`), the type
+   * as Istanbul names it, an increment a location in Istanbul's order.
+   */
+  b: Array<[number, number, string, number[]]>;
+  /** The functions whose counter went up: [line, name?], the line of the declaration's name (else its start), as the reach has it. */
+  f: Array<[number, string] | [number]>;
+}
+
 /** Something the tests do not check that the map can tell (the 不足 rules of the design). */
 export interface Gap {
   kind: 'no-unit-test' | 'failure-untested' | 'step-unreached' | 'aspect-missing' | 'feature-without-e2e';

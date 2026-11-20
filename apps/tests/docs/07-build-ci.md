@@ -212,7 +212,7 @@ redirect URI は何も配らず、ステップがブラウザの行き着いた 
 |---|---|---|
 | `packages/test-catalog` | `.` | `dist/index.js`（型は `dist/index.d.ts`） |
 | | `./model` | 型だけ（`src/model.ts`、[⑤-1](05-data.md#-1-ファイルの一覧)） |
-| `packages/test-reach` | `./env`、`./source-map`、`./vitest`、`./vitest-setup`、`./vitest-reporter`、`./op` | `src` の同じ名前の `.js`。<br>`./env`、`./vitest`、`./op` には `.d.ts` を添える |
+| `packages/test-reach` | `./env`、`./source-map`、`./vitest`、`./vitest-setup`、`./vitest-reporter`、`./exchanges`、`./op` | `src` の同じ名前の `.js`。<br>`./env`、`./vitest`、`./exchanges`、`./op` には `.d.ts` を添える |
 
 ### ⑦-1-e 依存
 
@@ -610,7 +610,7 @@ flowchart LR
 
 | ステップ | 書くもの |
 |---|---|
-| `pnpm run test:ci` | Vitest のどのパッケージも `vitest/<名前>.json` と `junit/vitest-<名前>.xml`。<br>計測する 5 パッケージ（`core`、`experimental`、`google-login`、`app-hono`、`app-nextjs`）は、ほかに `reach/vitest-<名前>.jsonl` と `coverage/vitest/<名前>/lcov.info` |
+| `pnpm run test:ci` | Vitest のどのパッケージも `vitest/<名前>.json` と `junit/vitest-<名前>.xml`。<br>計測する 5 パッケージ（`core`、`experimental`、`google-login`、`app-hono`、`app-nextjs`）は、ほかに `reach/vitest-<名前>.jsonl` と `coverage/vitest/<名前>/lcov.info`。<br>`app-hono` は、ほかに `exchanges/vitest-app-hono.jsonl`（[②-3-d](02-measure.md#-3-d-http-のやり取り)） |
 | `pnpm run test:features` | `playwright/in-process.json`、`junit/features-in-process.junit.xml` |
 | `pnpm run test:e2e` | 実行先（`hono`、`nextjs`）ごとに `playwright/<実行先>.json`、`junit/e2e-<実行先>.junit.xml`、`reach/e2e-<実行先>.jsonl`、`coverage/e2e/<実行先>/lcov.info`。<br>途中のものとして `v8/<実行先>/` と `access/<実行先>-<役>.log` |
 

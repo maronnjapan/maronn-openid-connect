@@ -39,8 +39,8 @@ flowchart LR
 | 項目 | 内容 |
 |---|---|
 | 入力 | テストコード（Vitest のテスト、E2E の spec、機能ファイルから生成したテスト）、環境変数 `MARONN_REACH` と `MARONN_TEST_REPORTS` |
-| 出力 | 報告のディレクトリ（テストの結果の JSON と JUnit、テストごとの到達 `reach/*.jsonl`、行のカバレッジ `lcov.info`） |
-| 実装 | `packages/test-reach/src/`（`env.js`、`vitest.js`、`vitest-setup.js`、`vitest-reporter.js`、`source-map.js`、`op.js`）、`testReports` を呼ぶ各 `vitest.config.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach/`（`config.ts`、`global-setup.ts`、`global-teardown.ts`、`lcov.mjs`）、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`tests/steps/support/http.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs`<br>作る順：[再現の手順](README.md#再現の手順)の [5](README.md#5-計測と-http-の実行先) |
+| 出力 | 報告のディレクトリ（テストの結果の JSON と JUnit、テストごとの到達 `reach/*.jsonl`、テストごとの HTTP のやり取り `exchanges/*.jsonl`、行のカバレッジ `lcov.info`） |
+| 実装 | `packages/test-reach/src/`（`env.js`、`vitest.js`、`coverage.js`、`vitest-setup.js`、`exchanges.js`、`vitest-reporter.js`、`source-map.js`、`op.js`）、`testReports` を呼ぶ各 `vitest.config.ts`、`apps/hono/src/test-support/record-exchanges.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach/`（`config.ts`、`global-setup.ts`、`global-teardown.ts`、`lcov.mjs`）、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`tests/steps/support/http.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs`<br>作る順：[再現の手順](README.md#再現の手順)の [5](README.md#5-計測と-http-の実行先) |
 
 計り方は、テストが動く場所で二つに分かれる。
 Vitest は Istanbul の計数を、E2E は OP のプロセスの V8 の計数を、テストの前後で比べる。
@@ -136,6 +136,7 @@ flowchart LR
 | `junit/vitest-<名前>.xml` | Vitest の JUnit | [②-2](#-2-vitest-の設定) |
 | `coverage/vitest/<名前>/lcov.info` | Vitest の行のカバレッジ | [②-2](#-2-vitest-の設定) |
 | `reach/vitest-<名前>.jsonl` | Vitest のテストごとの到達 | [②-3](#-3-vitest-のテストごとの到達) |
+| `exchanges/vitest-<名前>.jsonl` | Vitest のテストごとの HTTP のやり取り（今は `app-hono` だけ） | [②-3-d](#-3-d-http-のやり取り) |
 | `playwright/<実行先>.json` | E2E の Playwright の JSON | [②-5](#-5-e2e-の実行の設定) |
 | `junit/e2e-<実行先>.junit.xml` | E2E の JUnit | [②-5](#-5-e2e-の実行の設定) |
 | `playwright/in-process.json` | プロセス内のシナリオの JSON | [②-5](#-5-e2e-の実行の設定) |
@@ -151,7 +152,7 @@ flowchart LR
 - `<役>` は OP のインスタンスで、`main`、`xaa`、`dcr`、`rotation` のどれか
 - `<pid>` は OP のプロセスの番号
 
-③ が読むのは、`vitest/`、`playwright/`、`reach/` である。
+③ が読むのは、`vitest/`、`playwright/`、`reach/`、`exchanges/` である。
 `v8/` と `access/` は lcov と到達の行を作る途中のもので、③ は読まない。
 JUnit と lcov は、⑦ が Codecov へ上げる。
 
@@ -255,6 +256,7 @@ interface TestReportsOptions {
   root: string | URL; // vitest.config の import.meta.url か、パッケージのディレクトリ
   name?: string; // 報告の名前。既定はパッケージ名からスコープを除いたもの
   roots?: string[]; // テストが届く関数カタログのディレクトリ。無ければ報告だけ
+  exchanges?: string; // HTTP のやり取りを記録する setup ファイル。パッケージからのパス。無ければ記録しない
   env?: Record<string, string | undefined>; // 既定は process.env
 }
 ```
@@ -267,6 +269,8 @@ flowchart LR
   C --> D{"MARONN_REACH=1 で<br/>roots が一つ以上か"}
   D -->|"いいえ"| Y["報告だけ"]
   D -->|"はい"| E["計測を足す<br/>setup ファイル、Istanbul、<br/>到達の行のファイル"]
+  E --> F{"exchanges を<br/>渡したか"}
+  F -->|"はい"| G["記録を足す<br/>記録の setup ファイル、<br/>やり取りのファイル"]
 ```
 
 ### ②-2-a 返すもの
@@ -275,8 +279,10 @@ flowchart LR
 |---|---|---|
 | `includeTaskLocation` | `true` | 報告を書く |
 | `reporters` | 既定のレポーター（`configDefaults.reporters`）、`vitest-reporter.js`、`junit` の順 | 報告を書く |
-| `setupFiles` | `vitest-setup.js` の絶対パス一つ | 計る |
+| `setupFiles` | `vitest-setup.js` の絶対パス。<br>`exchanges` を渡したときは、その後ろに、`exchanges` をパッケージのディレクトリから解いた絶対パス | 計る |
 | `coverage` | 下の表 | 計る |
+
+やり取りの一覧をテストごとに空にし、`meta` に置くのは到達の setup ファイルで、記録の setup ファイルは一覧に足すものを入れるだけである（[②-3-d](#-3-d-http-のやり取り)）。
 
 `vitest-reporter.js` には、次のオプションを渡す。
 
@@ -285,6 +291,7 @@ flowchart LR
 | `outputFile` | `<報告>/vitest/<名前>.json` |
 | `repositoryRoot` | パッケージから上へたどり、最初に `pnpm-workspace.yaml` があるディレクトリ（無ければ投げる） |
 | `reachFile` | `<報告>/reach/vitest-<名前>.jsonl`（計るときだけ） |
+| `exchangesFile` | `<報告>/exchanges/vitest-<名前>.jsonl`（計り、`exchanges` を渡したときだけ） |
 
 `junit` には `{ outputFile: <報告>/junit/vitest-<名前>.xml }` を渡す。
 
@@ -316,6 +323,8 @@ flowchart LR
 | `apps/hono` | `apps/hono/src/oidc-provider`、`apps/hono/src/web`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src` |
 | `apps/nextjs` | `apps/nextjs/src/app`、`packages/core/src`、`packages/experimental/src`、`packages/google-login/src` |
 | `packages/cli`、`packages/map-analysis`、`packages/test-catalog`、`packages/test-reach`、`apps/map`、`apps/tests` | なし（報告だけを書く） |
+
+`exchanges` を渡すのは `apps/hono` だけで、値は `./src/test-support/record-exchanges.ts` である（[②-3-d](#-3-d-http-のやり取り)）。
 
 アプリとパッケージのテストは、エイリアスでほかのパッケージの `src` を読むので、そのディレクトリも計る。
 計る 5 パッケージは、devDependency に `@vitest/coverage-istanbul`（5.0.5）を持つ。
@@ -366,17 +375,20 @@ sequenceDiagram
   participant S as setup ファイル
   participant G as Istanbul の計数
   participant T as テスト
-  R->>R: onInit で到達の行のファイルを空にする
+  R->>R: onInit で到達の行のファイル（とやり取りのファイル）を空にする
   R->>W: テストファイルを渡す
   W->>G: 計測つきのコードを読み込む
-  S->>G: beforeEach で関数の計数を写す
+  S->>G: beforeEach で関数の計数を写し、やり取りの一覧を空にする
   W->>T: テストを走らせる
   T->>G: 走った関数の計数が増える
   S->>G: afterEach で写しと比べる
-  S->>W: 増えた関数を task.meta.reach に置く
+  S->>W: 増えた関数を task.meta.reach に、やり取りを task.meta.exchanges に置く
   W->>R: テストの結果と meta を送る
-  R->>R: onTestCaseResult で到達の行を一行足す
+  R->>R: onTestCaseResult で到達の行（とやり取りの行）を一行足す
 ```
+
+やり取りの一覧に足すのは、アプリの setup ファイルが入れる記録である（[②-3-d](#-3-d-http-のやり取り)）。
+記録を入れないパッケージでは一覧はいつも空で、`meta.exchanges` を置かない。
 
 差分がそのテストのものになるのは、次の理由による。
 
@@ -405,10 +417,13 @@ interface Position { line: number; column: number } // line は 1 から、colum
 ```ts
 beforeEach(() => {
   before = snapshot(); // ファイルごとに { coverage, counts: { ...coverage.f } }
+  resetExchanges(); // ②-3-d
 });
 
 afterEach(({ task }) => {
   task.meta.reach = reachedSince(before);
+  const exchanges = takeExchanges();
+  if (exchanges.length > 0) task.meta.exchanges = exchanges;
 });
 
 function reachedSince(earlier) {
@@ -420,9 +435,9 @@ function reachedSince(earlier) {
     for (const [key, count] of Object.entries(coverage.f)) {
       if (!(count > (counts[key] ?? 0))) continue;
       const entry = coverage.fnMap[key];
-      const start = entry && originalStart(coverage, entry); // ②-3-b
+      const start = entry && functionStart(coverage, entry); // ②-3-b
       if (!start || reached.has(`${start.file}:${start.line}`)) continue;
-      const name = entry.name && !/^\(anonymous_\d+\)$/.test(entry.name) ? entry.name : undefined;
+      const name = functionName(entry); // `(anonymous_5)` の形の名前は落とす
       reached.set(`${start.file}:${start.line}`, { ...start, ...(name ? { name } : {}) });
     }
   }
@@ -452,7 +467,17 @@ function reachedSince(earlier) {
 
 ソースマップは、計数のオブジェクトごとに一度だけ読む（`WeakMap`）。
 
-setup ファイルは `node:fs` も `node:path` も使わない。
+位置の引き方は `coverage.js` にあり、HTTP のやり取りの記録（[②-3-d](#-3-d-http-のやり取り)）も同じものを使う。
+
+| 関数 | すること |
+|---|---|
+| `originalPosition(coverage, start)` | 一つの位置を元の `{ file, line, column }` にする（マップが無ければそのまま、引けなければ無し） |
+| `functionStart(coverage, entry)` | 上の 1 から 4 で、関数の元の `{ file, line }` を求める |
+| `functionName(entry)` | `(anonymous_<数>)` の形を除いた関数の名前 |
+| `sourcePath(source, generated)` | 上の表の規則で、元の `source` を絶対パスにする |
+| `sourceMapOf(coverage)` | 計数のオブジェクトのソースマップを一度だけ読む |
+
+setup ファイルも `coverage.js` も `exchanges.js` も、`node:fs` と `node:path` を使わない。
 `core` と `experimental` のワーカーは、`edge-runtime` の環境で動くからである。
 ファイルを書くのは、本体のプロセスのレポーターである。
 
@@ -462,10 +487,10 @@ setup ファイルは `node:fs` も `node:path` も使わない。
 
 | 時 | すること |
 |---|---|
-| 作るとき | `super({ outputFile, filterMeta: (key) => key !== 'reach' })` で、JSON の報告に `meta.reach` を入れない |
-| `onInit` | `reachFile` があれば、親のディレクトリを作り、空のファイルにする |
+| 作るとき | `super({ outputFile, filterMeta })` の `filterMeta` で、JSON の報告に `meta.reach` と `meta.exchanges` を入れない |
+| `onInit` | `reachFile` と `exchangesFile` のあるものを、親のディレクトリを作って空のファイルにする |
 | `onCoverage` | 何もせず、JSON の報告に計数の表を入れない（lcov が持つ） |
-| `onTestCaseResult` | `reachFile` があり、`meta.reach` が配列なら、`rawReachOf` の一行を足す |
+| `onTestCaseResult` | `reachFile` があり、`meta.reach` が配列なら、`rawReachOf` の一行を足す。<br>`exchangesFile` があり、`meta.exchanges` が空でない配列なら、`rawExchangesOf` の一行を足す（[②-3-d](#-3-d-http-のやり取り)） |
 
 `rawReachOf(testCase, reached, root)` は、到達の行を次のように作る。
 
@@ -491,10 +516,182 @@ Istanbul は、オブジェクトやクラスのメソッドを `(anonymous_5)` 
 setup ファイルは、この形の名前を落とす。
 ③ は、その行を含む最も内側のフレームに引く。
 
+### ②-3-d HTTP のやり取り
+
+テストがアプリに送ったリクエストと、返った応答と、アプリが答える間に走ったコードを、テストごとに記録する。
+③ は、これをエンドポイントの道筋（ケース）に結び、ケースのリクエストの例にする。
+
+記録するのは、`testReports` に `exchanges` を渡したパッケージだけである（[②-2-a](#-2-a-返すもの)）。
+今は `apps/hono` だけで、API のテストが `app.request(url, init)` で送るものを記録する。
+Next.js の API のテストは、書き出したルートハンドラーを直に呼ぶので、まだ記録しない。
+記録するには、ハンドラーを `(request) => handler(request, context)` の形で `recordExchange` に渡す包み（`recordHandler(method, handler)`）を足す。
+
+```mermaid
+sequenceDiagram
+  participant T as テスト
+  participant H as 記録する Hono
+  participant X as recordExchange
+  participant G as Istanbul の計数
+  participant A as アプリの fetch
+  T->>H: app.request(url, init)
+  H->>H: 元の request に代わりの fetch を渡し、作る Request を受け取る
+  H->>X: Request と、本物の fetch で送る関数
+  X->>X: Request の写しから本文を読む
+  X->>G: 文、分岐、関数の計数を写す
+  X->>A: Request を送る
+  A->>G: 走ったコードの計数が増える
+  A-->>X: 応答
+  X->>X: 応答の写しから本文を読む
+  X->>G: 写しと比べる
+  X->>X: やり取りをテストの一覧に足す
+  X-->>T: 応答（本文はそのまま読める）
+```
+
+#### 差し替え
+
+`request` は `Hono` のインスタンスのフィールドなので、クラスを差し替える。
+アプリの setup ファイル `apps/hono/src/test-support/record-exchanges.ts` が、`vi.mock` で `Hono` を `recordingHono` の子クラスにする。
+
+```ts
+vi.mock('hono', async (importOriginal) => {
+  const { recordingHono } = await import('@maronn-openid-connect/test-reach/exchanges');
+  return recordingHono(await importOriginal<typeof import('hono')>());
+});
+```
+
+- `vi.mock` は、アプリの中の setup ファイルに置く。<br>`packages/` の下の setup ファイルの `vi.mock` を、Vitest はアプリのテストに当てない
+- 子クラスは、作られたときに `request` を包む（`recordRequests`）。<br>`basePath` が作るアプリ（Hono は親のクラスで作る）も包む
+- 包んだ `request` は、元の `request` を一度、引数を受け取るだけの `fetch` で呼ぶ（`sentBy`）。<br>Hono が作る Request（パスだけなら `http://localhost` に解いたもの）と、`fetch` への残りの引数を得る
+- その Request を、アプリの本物の `fetch` に同じ引数で渡す
+- 元の `request` が `fetch` を呼ばなければ投げる。<br>Hono の作りが変わったことを、計測した実行の失敗で知らせる
+- `src/test-support` は関数カタログの外で、CLI も写さない
+
+`express` と `fastify` に組み込むテスト（`web/*/apply.test.ts`）では、組み込みのコードが OP の Hono の `request` を呼ぶので、その分も記録される。
+`WebRouter`（`web/web-router.ts`）は Hono ではないので、その単体のテストは記録しない。
+
+#### 一つのやり取り
+
+`recordExchange(request, send)` は、一つの送信を次の順に記録する。
+
+1. 記録を足す一覧を、始めたときのテストのものに決める
+2. Request に本文があれば写し（`clone()`）を取り、その本文を読む（アプリは元の本文を全部読める）
+3. ほかのやり取りが送信中なら、自分とそのやり取りの両方に `overlapped` の印を付ける
+4. 計測されたどのファイルも、文（`s`）、分岐（`b`）、関数（`f`）の計数を写す（`countersNow`）
+5. `send(request)` で送る。投げたら、その値を持っておく
+6. 応答があれば、写しから本文を読む
+7. 計数を写しと比べ、増えたものを元の位置にする（`ranSince`）
+8. やり取りを一覧に足す
+9. 送信が投げていれば同じ値を投げ、そうでなければ応答を返す
+
+- 応答の本文を計数を比べる前に読むのは、ストリームの本文では、読む間にアプリのコードが走るからである
+- 本文は 16 KiB（16,384 バイト）で切り、`truncated: true` を付ける。<br>切り目にかかる多バイトの文字は入れない
+- 本文の無いものと空のものには、`body` を置かない。<br>本文を読めなかったとき（ストリームの失敗）も置かず、テストは同じ失敗に会う
+- 写しの読みを途中で止めても、テストとアプリが読む元の本文は止まらない
+- 終わる前にテストが終わったやり取りは、どのテストの行にも入らない（一覧はもう渡してある）
+- `beforeAll` で送ったものは、最初のテストの `beforeEach` で一覧が空になるので、どのテストにも入らない
+
+テストは一つずつ走るが、一つのテストが `Promise.all` で同時に送ることはある。
+そのときは計数が混ざるので、重なったやり取りの両方に印を付ける。
+③ は、印のあるやり取りを結ばない。
+
+#### 走ったもの
+
+`ranSince(before)` は、ファイルの計数のオブジェクトごとに比べる。
+写した後に置き換わったもの、新しく読み込まれたものは、0 から比べる。
+
+| 種類 | 増えたもの | 元の位置 | 形 |
+|---|---|---|---|
+| 文 `s` | `s[k]` | `statementMap[k].start` | `[行, 列, 増えた数]` |
+| 分岐 `b` | `b[k]` のどれか | `branchMap[k].loc.start`（`loc` の無いものは捨てる） | `[行, 列, 種類, 位置ごとの増えた数]` |
+| 関数 `f` | `f[k]` | `functionStart`（[②-3-b](#-3-b-元の位置)） | `[行, 名前]` か `[行]` |
+
+- 元の位置は `originalPosition` で引き、引けないものは捨てる。<br>行は 1 から、列は 0 から数える
+- 鍵は元のソースの絶対パスである。<br>レポーターがリポジトリからのパスにし、`isCatalogSource` の真のものだけを残す
+- 同じ元の位置の文は一つにし、増えた数の大きい方を採る（変換が一つの文を分けたとき）
+- 同じ位置、同じ種類、同じ数の位置を持つ分岐は一つにし、位置ごとに大きい方を採る
+- 関数は行ごとに一つにする
+- どれも位置の順に並べ、ファイルはパスの順に並べる
+
+分岐の種類と位置は、Istanbul のものそのままである。
+
+| 種類 | 位置 | 位置ごとの数 |
+|---|---|---|
+| `if` | `if` の字句 | `[成り立った, 成り立たない]`（`else` が無くても二つ） |
+| `switch` | `switch` の字句 | `case` ごと（`default` も、書いた位置に） |
+| `binary-expr` | 最初の項（`??`、`\|\|`、`&&`） | 項ごと。<br>右の項を評価したかで、どちらに進んだかが分かる |
+| `cond-expr` | 条件の式（`?:`） | `[成り立った, 成り立たない]` |
+| `default-arg` | 既定値を持つ引数 | 既定値を使った回数 |
+
+文の位置は Istanbul の文の始まりで、`const x = 式` では `式` の始まりである。
+
+#### やり取りの行
+
+レポーターは、やり取りのあったテストごとに、`exchanges/vitest-<名前>.jsonl` に一行を書く（`rawExchangesOf`）。
+テストの名前の付け方（`file`、`path`、`title`）は、到達の行と同じである。
+
+```ts
+interface RawExchanges {
+  file: string; // テストのファイル。リポジトリからのパス
+  path: string[]; // describe の名前。外から順
+  title: string; // テストの名前
+  exchanges: RawExchange[]; // 終わった順
+}
+
+interface RawExchange {
+  request: { method: string; url: string; headers: Array<[string, string]>; body?: string; truncated?: true };
+  response?: { status: number; statusText?: string; headers: Array<[string, string]>; body?: string; truncated?: true };
+  overlapped?: true; // ほかのやり取りと重なった
+  error?: string; // 送信が投げた値（`TypeError: …`）。このとき response は無い
+  ran: Record<string, { s: Array<[number, number, number]>; b: Array<[number, number, string, number[]]>; f: Array<[number, string] | [number]> }>;
+}
+```
+
+- `url` は、送った絶対 URL（クエリを含む）である
+- ヘッダーは、名前を小文字にし、`Headers` の並べる順（名前の順）で持つ
+- `statusText` は、空でないときだけ置く
+
+例（`exchanges/vitest-app-hono.jsonl` の一行を縮めたもの。`ran` は `pipeline.ts` の分岐と関数だけを残した）：
+
+```json
+{
+  "file": "apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts",
+  "path": ["tokenApp", "refresh_token grant"],
+  "title": "should rotate the refresh token and re-issue the tokens with the auth_time of the first authentication",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://op.example.com/token",
+        "headers": [["authorization", "Basic Y2xpZW50LTE6Y2xpZW50LTEtc2VjcmV0LXZhbHVl"], ["content-type", "application/x-www-form-urlencoded"]],
+        "body": "grant_type=refresh_token&refresh_token=7etWLC_R3TbqqcTgdt7UlCiCwi0r4U4ad2GqLa5m6NI"
+      },
+      "response": { "status": 200, "headers": [["cache-control", "no-store"], ["content-type", "application/json"]], "body": "{\"access_token\":\"eyJ…\"}" },
+      "ran": {
+        "apps/hono/src/oidc-provider/endpoints/token/pipeline.ts": {
+          "b": [[51, 4, "if", [0, 1]], [55, 4, "if", [0, 1]], [81, 6, "binary-expr", [1, 0]]],
+          "f": [[41]]
+        }
+      }
+    }
+  ]
+}
+```
+
+`[51, 4, "if", [0, 1]]` は、`if (clientCredentialsResponse) return clientCredentialsResponse;` が成り立たなかったことを表す。
+`[81, 6, "binary-expr", [1, 0]]` は、`refreshTokenRequest ?? (await validateAuthorizationCodeGrant(...))` の右の項を評価しなかったことを表す。
+authorization_code の要求では、同じ分岐が `[1, 1]` になる。
+`[41]` は、41 行の名前の無い関数（`tokenApp.post('/', async (c) => …)` のハンドラー）である。
+
+例：計測した実行では、`app-hono` の 1,827 テストのうち 211 テストが、246 のやり取りを送る（約 1.9 MB）。
+重なったもの、投げたもの、本文を切ったものは無い。
+
 実装：
 
-- `packages/test-reach/src/vitest-setup.js`：`snapshot`、`reachedSince`、`originalStart`、`sourcePath`、`sourceMapOf`
-- `packages/test-reach/src/vitest-reporter.js`：`TestReportsReporter`、`rawReachOf`、`describePath`
+- `packages/test-reach/src/vitest-setup.js`：`snapshot`、`reachedSince`
+- `packages/test-reach/src/coverage.js`：`coverageNow`、`originalPosition`、`functionStart`、`functionName`、`sourcePath`、`sourceMapOf`
+- `packages/test-reach/src/exchanges.js`：`recordExchange`、`countersNow`、`ranSince`、`bodyText`、`resetExchanges`、`takeExchanges`、`recordingHono`、`recordRequests`、`sentBy`
+- `packages/test-reach/src/vitest-reporter.js`：`TestReportsReporter`、`rawReachOf`、`rawExchangesOf`、`describePath`、`testKeyOf`、`catalogRan`
+- `apps/hono/src/test-support/record-exchanges.ts`
 
 ## ②-4 ソースマップの読み取り
 

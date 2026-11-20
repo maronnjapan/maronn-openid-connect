@@ -39,7 +39,9 @@
  * endpoint's frame it fails at), and the end of the case ran: the node its
  * way leads to, or for a failure the throw of its error in the function
  * that throws it, with an error status (or, for a case answered by a catch,
- * that catch) and no other OAuth error code in the response. These are
+ * that catch) and no other OAuth error code in the response; a failure from
+ * below is not taken when a `try` of a frame on its way up was seen catching
+ * and no rethrow of that catch ran (it threw another error, or none). These are
  * rules, not guesses: what they cannot tell is left unseen, and a case no
  * request took has no example.
  */
@@ -460,6 +462,48 @@ export interface SentRequest {
   exchange: RawExchange;
 }
 
+/** The `try` nodes of a tree whose body holds a node, from the innermost out. */
+function triesAround(tree: FlowTree, id: string): TreeNode[] {
+  const places = placesOf(tree);
+  const tries: TreeNode[] = [];
+  let at = places.get(id);
+  while (at?.owner !== undefined) {
+    const { owner } = at;
+    if (owner.kind === 'try' && !at.pre && owner.branches?.find((branch) => branch.key === 'try')?.nodes === at.list) tries.push(owner);
+    at = places.get(owner.id);
+  }
+  return tries;
+}
+
+/**
+ * Whether a failure from below got up through the frames between the
+ * endpoint's and the one that throws it: no `try` of those frames whose body
+ * holds the way on (the next call, or the throw) was seen catching without a
+ * rethrow of its catch running. The map leaves those tries undecided (their
+ * catch can throw what it caught), but one that caught the error and threw
+ * another, or none, ended the failure there.
+ */
+function getsUp(way: CaseWay, tree: FlowTree, run: RequestRun, sources: CaseSources): boolean {
+  const frames = way.selection.frames ?? [];
+  const keys = [...frames, way.selection.target];
+  return frames.every((frame, index) => {
+    const call = locate(frame, tree, sources.treeOf)?.place.node;
+    const callee = call?.target?.kind === 'function' ? sources.treeOf(call.target.id) : undefined;
+    const next = keys[index + 1]?.slice(frame.length + 1).split('.')[0];
+    if (callee === undefined || next === undefined) return true;
+    return triesAround(callee, next).every((attempt) => {
+      const located = locate(`${frame}.${attempt.id}`, tree, sources.treeOf);
+      if (located === undefined || seenSide(located, run) !== 'catch') return true;
+      const handler = attempt.branches?.find((branch) => branch.key === 'catch')?.nodes ?? [];
+      return [...nodesOf(handler)].some((node) => {
+        if (node.kind !== 'throw' || node.rethrow !== true) return false;
+        const thrown = locate(`${frame}.${node.id}`, tree, sources.treeOf);
+        return thrown !== undefined && nodeRan(thrown, run);
+      });
+    });
+  });
+}
+
 /** Whether the catch the walk of a case runs at the endpoint's own frame ran. */
 function caught(way: CaseWay, tree: FlowTree, run: RequestRun, sources: CaseSources): boolean {
   const stop = way.walked.stops.find((candidate) => candidate.depth === 0 && candidate.event === 'catches');
@@ -502,7 +546,9 @@ export function responseError(response: NonNullable<RawExchange['response']>): s
  * side it takes past the way to its block (the use of the step's value
  * that tells the step apart), and for a failure from below the call of the
  * endpoint's frame it fails at; and the end of the case ran. For a failure
- * with an OAuth code, the response names that code when it names one.
+ * from below, no frame on its way up caught it without rethrowing it
+ * (getsUp); for a failure with an OAuth code, the response names that code
+ * when it names one.
  */
 export function takes(way: CaseWay, tree: FlowTree, run: RequestRun, response: NonNullable<RawExchange['response']>, sources: CaseSources): boolean {
   const toBlock = way.made.kind === 'step' ? (wayTo(tree.nodes, way.selection.target)?.decisions ?? {}) : undefined;
@@ -529,6 +575,7 @@ export function takes(way: CaseWay, tree: FlowTree, run: RequestRun, response: N
   if (way.made.kind !== 'failure' || failure === undefined) return nodeRan(target, run);
   const thrown = target.place.node;
   if (target.tree.id !== failure.from || thrown.kind !== 'throw' || (thrown.error ?? 'Error') !== failure.error || !nodeRan(target, run)) return false;
+  if (!getsUp(way, tree, run, sources)) return false;
   const named = responseError(response);
   if (failure.code !== undefined && named !== undefined && named !== failure.code) return false;
   return response.status >= 400 || (way.made.end === 'error-response' && caught(way, tree, run, sources));
@@ -626,9 +673,9 @@ export function exampleOf(way: CaseWay, taken: readonly CaseWay[], sent: SentReq
   const byId = new Map(steps.map((step) => [step.id, step]));
   let catching = false;
   for (const stop of walked.stops) {
-    // A return outside the steps answers from the step of the call it returns the result of (`return respond(c, await process(c))`).
-    const answering = stop.step === undefined && stop.event === 'returns' ? [...nodesOf(stop.node.pre ?? [])].reverse().find((node) => node.step !== undefined && byId.has(node.step.id))?.step?.id : undefined;
-    const step = byId.get(stop.step ?? answering ?? '');
+    // A return answers from the step of the last stepped call it returns the result of (`return respond(c, await process(c))` outside the steps, a step's `return issueAuthorizationCodeResponse(…)`), else from its own step.
+    const answering = stop.event === 'returns' ? [...nodesOf(stop.node.pre ?? [])].reverse().find((node) => node.step !== undefined && byId.has(node.step.id))?.step?.id : undefined;
+    const step = byId.get(answering ?? stop.step ?? '');
     if (stop.event === 'catches') {
       if (step === undefined) catching = true;
       else step.how = 'caught';
@@ -685,8 +732,8 @@ export interface ExampleCounts {
 /**
  * Give the cases of an endpoint the requests that took them (see the module
  * comment): each case its examples, the tests of the endpoint's own first,
- * then the smaller requests, one of each method, path and body, at most
- * EXAMPLES, and how many requests took it in all.
+ * then the smaller requests, one of each method, path, Authorization header
+ * and body, at most EXAMPLES, and how many requests took it in all.
  */
 export function attachExamples(ways: readonly CaseWay[], requests: readonly SentRequest[], endpoint: EndpointExamples, sources: CaseSources): ExampleCounts {
   const found = new Map<CaseWay, Array<{ sent: SentRequest; example: CaseExample; order: number }>>();
@@ -713,7 +760,9 @@ export function attachExamples(ways: readonly CaseWay[], requests: readonly Sent
     const kept = new Set<string>();
     const examples: CaseExample[] = [];
     for (const { example } of ranked) {
-      const key = [example.request.method, example.request.path, example.request.body ?? ''].join('\u0000');
+      // The Authorization header is input as much as the body (a bearer token, a client's Basic credentials).
+      const authorization = example.request.headers.find(([name]) => name.toLowerCase() === 'authorization')?.[1] ?? '';
+      const key = [example.request.method, example.request.path, authorization, example.request.body ?? ''].join('\u0000');
       if (kept.has(key)) continue;
       kept.add(key);
       examples.push(example);

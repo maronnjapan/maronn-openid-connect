@@ -100,12 +100,56 @@ const DISPATCH_FILE = [
   '}',
 ];
 
+const AUTHORIZE_FILE = [
+  "authorizeApp.get('/', async (c) => {",
+  '  try {',
+  '    const params = await resolveRequest(c);',
+  '    return render(c, params);',
+  '  } catch (error) {',
+  '    return respondError(c, error);',
+  '  }',
+  '});',
+];
+
+const RESOLVE_FILE = [
+  'export async function resolveRequest(c) {',
+  '  try {',
+  '    const pushed = await loadPushed(c);',
+  '    return pushed;',
+  '  } catch (error) {',
+  "    if (error.code === 'invalid_request_uri') {",
+  "      throw new AuthorizationError('invalid_request_uri');",
+  '    }',
+  '    throw error;',
+  '  }',
+  '}',
+  '',
+  'export async function loadPushed(c) {',
+  "  if (!c.pushed) throw new PushedError('invalid_request_uri');",
+  "  if (!c.pushed.client_id) throw new PushedError('invalid_request');",
+  '  return c.pushed;',
+  '}',
+];
+
+const SESSION_FILE = [
+  "sessionApp.get('/', async (c) => {",
+  '  // [reuse-session] reuse',
+  '  const sso = await reuseSession(c);',
+  '  if (sso) return issueCode(c, sso);',
+  '  // [continue-to-login] login',
+  '  return continueToLogin(c);',
+  '});',
+];
+
 const PATHS: Record<string, string> = {
   'hono:pipeline.ts': 'apps/hono/src/pipeline.ts',
   'hono:dispatch.ts': 'apps/hono/src/dispatch.ts',
   'hono:parse.ts': 'apps/hono/src/parse.ts',
   'core:decide.ts': 'packages/core/src/decide.ts',
   'hono:page.tsx': 'apps/hono/src/page.tsx',
+  'hono:authorize.ts': 'apps/hono/src/authorize.ts',
+  'hono:resolve.ts': 'apps/hono/src/resolve.ts',
+  'hono:session.ts': 'apps/hono/src/session.ts',
 };
 const TEXTS: Record<string, string[]> = {
   'apps/hono/src/pipeline.ts': PIPELINE,
@@ -113,6 +157,9 @@ const TEXTS: Record<string, string[]> = {
   'apps/hono/src/parse.ts': PARSE_FILE,
   'packages/core/src/decide.ts': DECISIONS_FILE,
   'apps/hono/src/page.tsx': PAGE_FILE,
+  'apps/hono/src/authorize.ts': AUTHORIZE_FILE,
+  'apps/hono/src/resolve.ts': RESOLVE_FILE,
+  'apps/hono/src/session.ts': SESSION_FILE,
 };
 
 const PARSE = 'hono:parse.ts#parseTokenRequest';
@@ -123,9 +170,19 @@ const CODE = 'hono:code.ts#validateCode';
 const RESPOND = 'hono:respond.ts#respond';
 const RESPOND_ERROR = 'hono:respond.ts#respondError';
 const SUBMIT = 'hono:submit.ts#submit';
+const RESOLVE = 'hono:resolve.ts#resolveRequest';
+const LOAD = 'hono:resolve.ts#loadPushed';
+const REUSE = 'hono:reuse.ts#reuseSession';
+const ISSUE = 'hono:issue.ts#issueCode';
 
 /** The frames by file and lines, as the map has them: the frame a line of a file is in. */
 const FRAMES: Array<{ id: string; path: string; lines: [number, number] }> = [
+  { id: 'endpoint:session', path: 'apps/hono/src/session.ts', lines: [1, 7] },
+  { id: REUSE, path: 'apps/hono/src/reuse.ts', lines: [1, 9] },
+  { id: ISSUE, path: 'apps/hono/src/issue.ts', lines: [1, 9] },
+  { id: 'endpoint:authorize', path: 'apps/hono/src/authorize.ts', lines: [1, 8] },
+  { id: RESOLVE, path: 'apps/hono/src/resolve.ts', lines: [1, 11] },
+  { id: LOAD, path: 'apps/hono/src/resolve.ts', lines: [13, 17] },
   { id: 'endpoint:token', path: 'apps/hono/src/pipeline.ts', lines: [1, 18] },
   { id: PARSE, path: 'apps/hono/src/parse.ts', lines: [1, 5] },
   { id: READ, path: 'apps/hono/src/parse.ts', lines: [7, 12] },
@@ -259,7 +316,54 @@ const MODES_TREE = tree('hono:page.tsx#modes', 'hono:page.tsx', [10, 15], [
   { id: 's2', kind: 'return', lines: [14, 14], code: 'return mode' },
 ]);
 
-const TREES = new Map([ROOT, PARSE_TREE, READ_TREE, DISPATCH_TREE, DECIDE_TREE, EACH_TREE, PAGE_TREE, MODES_TREE].map((item) => [item.id, item]));
+const AUTHORIZE_TREE = tree('endpoint:authorize', 'hono:authorize.ts', [1, 8], [
+  {
+    id: 's0',
+    kind: 'try',
+    lines: [2, 7],
+    code: 'try … catch',
+    subject: '例外',
+    branches: [
+      side('try', '例外なし', [call('s0b0', [3, 3], RESOLVE), { id: 's0b1', kind: 'return', lines: [4, 4], code: 'return render(c, params)' }]),
+      side('catch', '例外が起きたとき', [{ id: 's0h0', kind: 'return', lines: [6, 6], code: 'return respondError(c, error)', pre: [call('s0h0i0', [6, 6], RESPOND_ERROR)] }]),
+    ],
+  },
+]);
+
+/** A frame between the endpoint and the throw: its catch throws another error for one code, and rethrows the rest. */
+const RESOLVE_TREE = tree(RESOLVE, 'hono:resolve.ts', [1, 11], [
+  {
+    id: 's0',
+    kind: 'try',
+    lines: [2, 10],
+    code: 'try … catch',
+    subject: '例外',
+    branches: [
+      side('try', '例外なし', [call('s0b0', [3, 3], LOAD), { id: 's0b1', kind: 'return', lines: [4, 4], code: 'return pushed' }]),
+      side('catch', '例外が起きたとき', [
+        { id: 's0h0', kind: 'if', lines: [6, 8], code: "if (error.code === 'invalid_request_uri')", subject: "error.code === 'invalid_request_uri'", form: 'guard', branches: [side('true', '成立', [{ id: 's0h0t0', kind: 'throw', lines: [7, 7], code: 'throw AuthorizationError(invalid_request_uri)', error: 'AuthorizationError(invalid_request_uri)' }]), side('false', '不成立')] },
+        { id: 's0h1', kind: 'throw', lines: [9, 9], code: 'throw error', error: 'rethrow', rethrow: true },
+      ]),
+    ],
+  },
+]);
+
+const LOAD_TREE = tree(LOAD, 'hono:resolve.ts', [13, 17], [
+  { id: 's0', kind: 'if', lines: [14, 14], code: 'if (!c.pushed)', subject: '!c.pushed', form: 'guard', branches: [side('true', '成立', [{ id: 's0t0', kind: 'throw', lines: [14, 14], code: 'throw PushedError(invalid_request_uri)', error: 'PushedError(invalid_request_uri)' }]), side('false', '不成立')] },
+  { id: 's1', kind: 'if', lines: [15, 15], code: 'if (!c.pushed.client_id)', subject: '!c.pushed.client_id', form: 'guard', branches: [side('true', '成立', [{ id: 's1t0', kind: 'throw', lines: [15, 15], code: 'throw PushedError(invalid_request)', error: 'PushedError(invalid_request)' }]), side('false', '不成立')] },
+  { id: 's2', kind: 'return', lines: [16, 16], code: 'return c.pushed' },
+]);
+
+/** An endpoint whose step returns the result of a call marked with the next step. */
+const SESSION_TREE = tree('endpoint:session', 'hono:session.ts', [1, 7], [
+  step('s0', [2, 4], 'reuse-session', [
+    call('s0s0', [3, 3], REUSE),
+    { id: 's0s1', kind: 'if', lines: [4, 4], code: 'if (sso)', subject: 'sso', form: 'guard', branches: [side('true', '成立', [{ id: 's0s1t0', kind: 'return', lines: [4, 4], code: 'return issueCode(c, sso)', pre: [call('s0s1t0i0', [4, 4], ISSUE, { step: { id: 'issue-authorization-code', label: 'issue-authorization-code' } })] }]), side('false', '不成立')] },
+  ]),
+  step('s1', [5, 6], 'continue-to-login', [{ id: 's1s0', kind: 'return', lines: [6, 6], code: 'return continueToLogin(c)' }]),
+]);
+
+const TREES = new Map([ROOT, PARSE_TREE, READ_TREE, DISPATCH_TREE, DECIDE_TREE, EACH_TREE, PAGE_TREE, MODES_TREE, AUTHORIZE_TREE, RESOLVE_TREE, LOAD_TREE, SESSION_TREE].map((item) => [item.id, item]));
 
 const SOURCES: CaseSources = {
   treeOf: (id) => TREES.get(id),
@@ -279,6 +383,7 @@ const PIPE = 'apps/hono/src/pipeline.ts';
 const PARSING = 'apps/hono/src/parse.ts';
 const DECIDING = 'packages/core/src/decide.ts';
 const PAGE = 'apps/hono/src/page.tsx';
+const SESSIONS = 'apps/hono/src/session.ts';
 
 /** What ran in a file: statements by their place (once each unless a count is given), branches, and the lines of the functions. */
 interface Ran {
@@ -396,6 +501,39 @@ const ENDPOINT: EndpointExamples = {
   callsOf: (frame) => (frame === PARSE ? [READ] : []),
   own: (test) => test.subjects.some((subject) => subject.kind === 'endpoint' && subject.id === 'token' && subject.how !== 'coverage'),
 };
+
+const AUTHORIZING = 'apps/hono/src/authorize.ts';
+const RESOLVING = 'apps/hono/src/resolve.ts';
+
+/** The ways of the authorize endpoint: its catch, and the failures that come up through resolveRequest (the try there undecided, as the map leaves it). */
+const AUTHORIZE_SELECTIONS: Selection[] = [
+  { kind: 'exit', name: '例外が起きたとき', decisions: { s0: 'catch' }, target: 's0h0' },
+  { kind: 'failure', name: '`AuthorizationError(invalid_request_uri)` で終わる（`resolveRequest` から）', decisions: { s0b0: 'fails', 's0b0.s0': 'catch', 's0b0.s0h0': 'true' }, frames: ['s0b0'], target: 's0b0.s0h0t0', failure: { error: 'AuthorizationError(invalid_request_uri)', from: RESOLVE, name: 'resolveRequest' } },
+  { kind: 'failure', name: '`PushedError(invalid_request_uri)` で終わる（`loadPushed` から）', decisions: { s0b0: 'fails', 's0b0.s0b0': 'fails', 's0b0.s0b0.s0': 'true' }, frames: ['s0b0', 's0b0.s0b0'], target: 's0b0.s0b0.s0t0', failure: { error: 'PushedError(invalid_request_uri)', from: LOAD, name: 'loadPushed' } },
+  { kind: 'failure', name: '`PushedError(invalid_request)` で終わる（`loadPushed` から）', decisions: { s0b0: 'fails', 's0b0.s0b0': 'fails', 's0b0.s0b0.s0': 'false', 's0b0.s0b0.s1': 'true' }, frames: ['s0b0', 's0b0.s0b0'], target: 's0b0.s0b0.s1t0', failure: { error: 'PushedError(invalid_request)', from: LOAD, name: 'loadPushed' } },
+];
+
+/**
+ * A request whose pushed request loadPushed rejects with a code: the catch of
+ * resolveRequest throws an AuthorizationError for `invalid_request_uri` and
+ * rethrows any other, and the endpoint's catch answers with the code.
+ */
+function pushedFails(code: 'invalid_request_uri' | 'invalid_request'): RawExchange {
+  const replaced = code === 'invalid_request_uri';
+  return exchange(
+    {
+      [AUTHORIZING]: { s: [at(AUTHORIZING, 2, 'try'), at(AUTHORIZING, 3, 'await resolveRequest'), at(AUTHORIZING, 6, 'return')], f: [1] },
+      [RESOLVING]: {
+        s: [at(RESOLVING, 2, 'try'), at(RESOLVING, 3, 'await loadPushed'), at(RESOLVING, 6, 'if'), replaced ? at(RESOLVING, 7, 'throw') : at(RESOLVING, 9, 'throw'), at(RESOLVING, 14, 'if'), ...(replaced ? [at(RESOLVING, 14, 'throw')] : [at(RESOLVING, 15, 'if'), at(RESOLVING, 15, 'throw')])],
+        b: [[at(RESOLVING, 6, 'if'), 'if', replaced ? [1, 0] : [0, 1]], [at(RESOLVING, 14, 'if'), 'if', replaced ? [1, 0] : [0, 1]], ...(replaced ? [] : [[at(RESOLVING, 15, 'if'), 'if', [1, 0]] as [[number, number], string, number[]]])],
+        f: [1, 13],
+      },
+      'apps/hono/src/respond.ts': { s: [[12, 2]], f: [11] },
+    },
+    { status: 400, body: JSON.stringify({ error: code }) },
+    { url: 'https://op.example.com/authorize?request_uri=urn:pushed' },
+  );
+}
 
 describe('seenSide', () => {
   it('should read an if by the Istanbul branch at its keyword: the consequent ran is true, the alternate false', () => {
@@ -517,6 +655,14 @@ describe('takes', () => {
     expect([taken(NOT_A_FORM).includes('`TokenEndpointError` で終わる（`readBody` から）'), taken(unseen).includes('`TokenEndpointError` で終わる（`readBody` から）')]).toEqual([true, false]);
   });
 
+  it('should not give a failure from below that a frame on its way up caught and threw another error for, and give the one that frame rethrew', () => {
+    const ways = waysOf(AUTHORIZE_TREE, AUTHORIZE_SELECTIONS, [], () => [], SOURCES.treeOf);
+    expect([taken(pushedFails('invalid_request_uri'), ways, AUTHORIZE_TREE), taken(pushedFails('invalid_request'), ways, AUTHORIZE_TREE)]).toEqual([
+      ['例外が起きたとき', '`AuthorizationError(invalid_request_uri)` で終わる（`resolveRequest` から）'],
+      ['例外が起きたとき', '`PushedError(invalid_request)` で終わる（`loadPushed` から）'],
+    ]);
+  });
+
   it('should not give a way whose side off the assumed way went unseen, and give the one way of a choice of no decision when its end ran', () => {
     const ways = waysOf(MODES_TREE, [{ kind: 'step', name: 'jarm', decisions: { s1s0: 'nullish' }, target: 's1' }, { kind: 'exit', name: 'return mode', decisions: {}, target: 's2' }], [], () => []);
     expect(taken(exchange({ [PAGE]: { s: [at(PAGE, 13, 'mode'), at(PAGE, 14, 'return')] } }, { status: 200 }), ways, MODES_TREE)).toEqual(['return mode']);
@@ -586,10 +732,24 @@ describe('exampleOf', () => {
     const example = way === undefined ? undefined : exampleOf(way, [way], { test: card('post'), exchange: post }, new RequestRun(post, SOURCES), { ...ENDPOINT, tree: PAGE_TREE, stepFunctions: new Map() });
     expect(example?.steps).toEqual([{ id: 'submit', how: 'answered', calls: [SUBMIT] }]);
   });
+
+  it('should say the step of the call a return inside another step returns the result of answered, and the step the return is in ran', () => {
+    const [way] = waysOf(SESSION_TREE, [{ kind: 'exit', name: 'sso: 成立', decisions: { s0s1: 'true' }, target: 's0s1t0' }], [], () => []);
+    const reused = exchange(
+      { [SESSIONS]: { s: [at(SESSIONS, 3, 'await reuseSession'), at(SESSIONS, 4, 'if'), at(SESSIONS, 4, 'return')], b: [[at(SESSIONS, 4, 'if'), 'if', [1, 0]]], f: [1] }, 'apps/hono/src/reuse.ts': { s: [[2, 2]], f: [1] }, 'apps/hono/src/issue.ts': { s: [[2, 2]], f: [1] } },
+      { status: 302, headers: [['location', 'https://rp.example.com/cb?code=c']] },
+      { url: 'https://op.example.com/session' },
+    );
+    const example = way === undefined ? undefined : exampleOf(way, [way], { test: card('sso'), exchange: reused }, new RequestRun(reused, SOURCES), { ...ENDPOINT, tree: SESSION_TREE, stepFunctions: new Map() });
+    expect(example?.steps.map((item) => [item.id, item.how])).toEqual([
+      ['reuse-session', 'ran'],
+      ['issue-authorization-code', 'answered'],
+    ]);
+  });
 });
 
 describe('attachExamples', () => {
-  it('should keep the tests of the endpoint first, then the smaller requests, one of a method, path and body, three at most, and count every request', () => {
+  it('should keep the tests of the endpoint first, then the smaller requests, one of a method, path, Authorization header and body, three at most, and count every request', () => {
     const ways = tokenWays();
     const refreshing = (body: string): RawExchange => ({ ...answered(false), request: { ...answered(false).request, body } });
     const { response: _response, ...unanswered } = answered(false);
@@ -607,6 +767,19 @@ describe('attachExamples', () => {
     expect(counts).toEqual({ read: 5, took: 5 });
     expect([refresh?.examples?.map((example) => example.test), refresh?.exampleCount]).toEqual([['own', 'a-other', 'b-other'], 5]);
     expect(ways.find((way) => way.made.name === 'dispatch')?.made.examples).toBeUndefined();
+  });
+
+  it('should keep requests of the same method, path and body apart by their Authorization header, its name in any case', () => {
+    const ways = tokenWays();
+    const authorized = (name: string, value: string): RawExchange => ({ ...answered(false), request: { ...answered(false).request, headers: [...answered(false).request.headers, [name, value]] } });
+    const sent: SentRequest[] = [
+      { test: card('basic-a'), exchange: authorized('authorization', 'Basic YTpz') },
+      { test: card('basic-a-again'), exchange: authorized('Authorization', 'Basic YTpz') },
+      { test: card('basic-b'), exchange: authorized('authorization', 'Basic Yjpz') },
+    ];
+    attachExamples(ways, sent, ENDPOINT, SOURCES);
+    const refresh = ways.find((way) => way.made.name === 'validate-refresh')?.made;
+    expect([refresh?.examples?.map((example) => example.test), refresh?.exampleCount]).toEqual([['basic-a', 'basic-b'], 3]);
   });
 });
 

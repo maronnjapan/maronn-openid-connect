@@ -1288,6 +1288,7 @@ flowchart LR
 | 分ける決定は読める | ステップへ進む道筋：行き先のブロックへの道（`wayTo`）に無い決定（ステップの値を使う決定、`refreshTokenRequest ?? …`）は、読めている。<br>下から上がる失敗：処理本体の、失敗する呼び出し（鍵の最初の呼び出し）が `fails` と読めている |
 | 終わりが走った | ステップと終わり方：選択の行き先（`target`）のノードが走った。<br>ブロックは行の文、`return` は `return` と読める文（アロー関数の本体なら、返す値と読める文）、`throw` は `throw` と読める文。<br>本体の終わり（`end`）は文が無いので、走ったとは言わない |
 | 失敗が投げられた | 失敗：行き先が、`failure.from` の木の、`failure.error` を投げる `throw` で、それが走った。<br>応答の状態が 400 以上か、ケースの終わり方が `error-response` で処理本体の `catch` が走った（エラーをリダイレクトで返すエンドポイント）。<br>応答が OAuth のエラーコード（JSON の本文の `error`、リダイレクト先のクエリかフラグメントの `error`）を持つなら、それが `failure.code` と同じ |
+| 途中で止まっていない | 下から上がる失敗：処理本体と `throw` の間のフレームで、道筋（次の呼び出しか `throw`）を本体に持つ `try` が `catch` と読めたなら、その `catch` の投げ直し（`throw error`）が走った。<br>走っていなければ、失敗はそのフレームで別のエラーになったか止まったので、通らない |
 
 一つのやり取りは、いくつものケースを通る（ステップへ進む道筋と、その後の終わり方、失敗と、それを答える `catch` の終わり方）。
 通ったケースのすべてに付ける。
@@ -1297,6 +1298,9 @@ hono の `authorize` の `response_mode=query.jwt を解釈する` は、`respon
 hono の `token` の `refresh_token グラントを検証する` の行き先のブロックは、どのグラントでも走る。
 `refreshTokenRequest ?? …` が「値あり」と読めたリクエストだけが、このケースを通る。
 下から上がる失敗は、同じ `throw` に別の呼び出しから届くことがあるので、地図の道筋の呼び出しで失敗したと読めたものだけを付ける。
+地図は、捕まえたものを投げ直す `catch` の `try` の向きを決めない（投げ直せば失敗は上がる）ので、「途中で止まっていない」でそのフレームを確かめる。
+hono の `authorize` の `resolvePushedAuthorizationRequest` は、`resolvePushedRequestUri` が投げた `PushedRequestUriError` を `catch` で `AuthorizationError` にして投げ、ほかのエラーだけを投げ直す。
+使用済みの `request_uri` のリクエストは、`AuthorizationError` で終わる（`resolvePushedAuthorizationRequest` から）に付き、`PushedRequestUriError(invalid_request_uri)` で終わる（`resolvePushedRequestUri` から）には付かない（応答のコードはどちらも `invalid_request_uri` である）。
 
 #### 例の中身
 
@@ -1321,7 +1325,7 @@ interface ExampleStep {
 | `request` | 方法、URL のパスとクエリ（`path`）、ホスト（`host`）、ヘッダー、本文 |
 | `response` | 状態、状態の文（空なら置かない）、ヘッダー、本文 |
 | `steps` | 処理本体の木を、読めた向き（読めなければケースの選択の向き）で `walkFlow` でたどり、`stepsOf` の順に並べる。<br>`catch` と読めた `try` は、本体に `fails` の呼び出しがあれば向きを決めず、その失敗まで本体をたどる。<br>たどってケースの終わり（失敗なら失敗する呼び出しか `throw`）に届かなければ、例にしない |
-| `steps[].how` | `ran`。<br>`fails` か `throws` の止まりのステップは `failed`。<br>`catches` の止まりがステップにあればそのステップ、無ければその後に初めて届くステップは `caught`。<br>`returns` の止まりのステップは `answered`。<br>ステップの外の `return` は、それが評価する呼び出しのステップが答える（`return respond(c, await processEndSessionRequest(c, params))`） |
+| `steps[].how` | `ran`。<br>`fails` か `throws` の止まりのステップは `failed`。<br>`catches` の止まりがステップにあればそのステップ、無ければその後に初めて届くステップは `caught`。<br>`returns` の止まりは、それが評価する呼び出しのうち、ステップの印を持つ最後のもののステップが `answered`。<br>ステップの外の `return respond(c, await processEndSessionRequest(c, params))` も、ステップの中の `return issueAuthorizationCodeResponse(…)`（hono の `authorize` の `reuse-session` の中で、呼び出しの印は `issue-authorization-code`）も、その呼び出しのステップが答える（後者の `reuse-session` は `ran` のまま）。<br>そういう呼び出しが無ければ、`return` のあるステップが `answered` |
 | `steps[].error` | `failed` のステップのエラー：止まりのエラー、無ければこのケースの失敗（そのステップのもの）、無ければやり取りが通った失敗のケースのうち、そのステップのもののエラー（一つに決まるとき） |
 | `steps[].decisions` | ステップの止まりの決定のうち、読めた向きのもの（呼び出しは除く）。<br>文は条件と同じ |
 | `steps[].calls` | 関数のあるステップ（hono の `FlowStep.functionId`）は、その関数の木の呼び出しが呼ぶ関数（木の順。`MapData.functions[id].calls` にあるものだけ）。<br>無いステップは、そのステップの止まりの呼び出しの関数。<br>どちらも、呼び出しが走ったものだけ：呼ぶ関数がやり取りの間に走り（`f` を [③-4-b](03-join.md#-4-b-位置を含むフレーム) と同じくフレームに引く）、その呼び出しの行の文も走った。<br>関数の計数は、どこから呼ばれても上がるので、それだけでは数えない（振り分けで通り過ぎたステップが、後のステップの呼ぶ `respondToken` を呼んだように見える） |
@@ -1330,14 +1334,14 @@ interface ExampleStep {
 
 - 送ったテストがエンドポイントのもの（そのエンドポイントを、`how` が `coverage` でない対象に持つ）を先にする
 - 次に、リクエストのヘッダーと本文のバイト数が少ないもの、テストの id、読んだ順
-- 方法、パスとクエリ、本文が同じものは、一つ目だけ残す
+- 方法、パスとクエリ、`Authorization` ヘッダー（名前の大文字小文字は問わない）、本文が同じものは、一つ目だけ残す。<br>`Authorization` ヘッダーも本文と同じく入力なので（Bearer のアクセストークン、クライアントの Basic 認証）、それだけが違うものは別のリクエストとして残す
 - 三つまで残す（`EXAMPLES`）
 - `exampleCount` は、そのケースを通ったやり取りの数（同じものも数える）
 
 地図のビルドのログに、次の一行を出す。
 
 ```
-tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (208 answered and not overlapped), 151 took a case; 65 of 631 cases with examples
+tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (208 answered and not overlapped), 151 took a case; 64 of 631 cases with examples
 ```
 
 例：hono の `token` で、例を持つケースは 135 のうち 10 である。

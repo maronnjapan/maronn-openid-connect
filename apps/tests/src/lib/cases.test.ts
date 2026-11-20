@@ -1,6 +1,7 @@
 import type { EndpointCase, OutlineStep } from '@maronn-openid-connect/test-catalog/model';
 import { describe, expect, it } from 'vitest';
-import { caseGroups, caseName, caseTests, countVerdicts, endWords, failureName, pathChecks, requestTests, stepChecks, summarize, unitCounts, verdictOf } from './cases';
+import type { CaseExample } from '@maronn-openid-connect/test-catalog/model';
+import { caseGroups, caseName, caseTests, countVerdicts, endWords, failureName, looseConditions, noExampleReason, pathChecks, requestTests, resultWords, stepChecks, summarize, unitCounts, verdictOf, waySteps } from './cases';
 import { buildDb } from './data';
 import { endpoint, entry, index, outline } from './fixture';
 
@@ -149,5 +150,69 @@ describe('the tests of a case', () => {
 describe('unitCounts', () => {
   it('should count nothing for no test', () => {
     expect(unitCounts([])).toEqual({ total: 0, success: 0, failure: 0, boundary: 0 });
+  });
+});
+
+describe('waySteps', () => {
+  const example: CaseExample = {
+    test: 'api-401',
+    request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [] },
+    response: { status: 401, headers: [] },
+    steps: [
+      { id: 'parse-request', how: 'ran', decisions: [{ text: 'grant_type', code: true, side: '値あり', step: 'parse-request' }] },
+      { id: 'authenticate-client', how: 'failed', calls: ['core:client-auth.ts#verify'], error: 'TokenError(invalid_client)' },
+      { id: 'respond-error', how: 'caught' },
+      { id: 'gone', how: 'ran' },
+    ],
+  };
+
+  it('should follow the steps an example request ran, with what it met in each', () => {
+    const way = waySteps(token, direct, example);
+    expect(way.map((step) => [step.id, step.label, step.how, step.error])).toEqual([
+      ['parse-request', 'リクエストを解析する', 'ran', undefined],
+      ['authenticate-client', 'クライアントを認証する', 'failed', 'TokenError(invalid_client)'],
+      ['respond-error', 'エラーで応答する', 'caught', undefined],
+      ['gone', 'gone', 'ran', undefined],
+    ]);
+    expect(way[0]?.decisions).toEqual([{ text: 'grant_type', code: true, side: '値あり', step: 'parse-request' }]);
+    expect(way[1]?.calls).toEqual(['core:client-auth.ts#verify']);
+    expect(way[1]?.step?.function).toBe(AUTH);
+    expect(way[3]?.step).toBeUndefined();
+  });
+
+  it('should play a failure case without an example: the failure where it comes up, the catch at the end', () => {
+    const conditions = [
+      { step: 'authenticate-client', text: 'client_secret が一致しない', code: false, side: '失敗する' },
+      { text: 'try', code: true, side: '例外が起きたとき' },
+    ];
+    const way = waySteps(token, { ...direct, conditions });
+    expect(way.map((step) => [step.id, step.how, step.error, step.decisions.map((item) => item.side)])).toEqual([
+      ['parse-request', 'ran', undefined, []],
+      ['authenticate-client', 'failed', 'TokenError(invalid_client)', ['失敗する']],
+      ['respond-error', 'caught', undefined, []],
+    ]);
+    expect(looseConditions({ ...direct, conditions })).toEqual([{ text: 'try', code: true, side: '例外が起きたとき' }]);
+  });
+
+  it('should answer at the last step of a way that ends in a response, and leave a failure that escapes uncaught', () => {
+    expect(waySteps(token, early).map((step) => step.how)).toEqual(['ran', 'answered']);
+    const escapes: EndpointCase = { ...direct, end: 'escapes', steps: ['parse-request', 'authenticate-client'] };
+    expect(waySteps(token, escapes).map((step) => step.how)).toEqual(['ran', 'failed']);
+    expect(looseConditions(early)).toEqual([]);
+  });
+
+  it('should say why a case has no example: no measured run, no request recorded for the endpoint, or none took its way', () => {
+    expect(noExampleReason(false, cases)).toBe('unmeasured');
+    expect(noExampleReason(true, cases)).toBe('unrecorded');
+    expect(noExampleReason(true, [...cases, { ...normal, examples: [example], exampleCount: 1 }])).toBe('untaken');
+  });
+
+  it('should say how a case ends, with the error code of a failure', () => {
+    expect([resultWords(normal), resultWords(direct), resultWords({ end: 'error-response' }), resultWords({ end: 'escapes' })]).toEqual([
+      '応答して終わる',
+      '失敗を受け取り、エラーで応答する（invalid_client）',
+      '失敗を受け取り、エラーで応答する',
+      '失敗がエンドポイントの外へ出る',
+    ]);
   });
 });

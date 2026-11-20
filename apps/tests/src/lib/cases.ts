@@ -7,10 +7,15 @@
  * A case names the steps it runs. For each of those steps the page counts
  * its unit tests (正常系, 異常系, 境界値) and the failures that can come up
  * in it, each with how surely a test expects it (Verdict). A failure case
- * also names the tests that expect its error. Nothing here touches the DOM
- * or fetches.
+ * also names the tests that expect its error.
+ *
+ * A case is also shown as a request going through it: the steps it runs,
+ * in order, with what happened in each (WayStep): from a request a measured
+ * API test sent that took it (CaseExample), or, without one, from the case
+ * itself and the conditions of its way. Nothing here touches the DOM or
+ * fetches.
  */
-import type { EndpointCase, FailureTests, OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
+import type { CaseCondition, CaseExample, EndpointCase, ExampleStep, FailureTests, OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
 import { endpointRef, entriesOf, sortForList, stepTests, type Db } from './data';
 
 /**
@@ -224,3 +229,105 @@ export function endWords(item: Pick<EndpointCase, 'end' | 'failure'>): string {
 
 /** How long the playback of a case stays on a step, in milliseconds. */
 export const STEP_MS = 1100;
+
+/** What a step of an endpoint does, by its kind: the words of the map (apps/map STEP_KIND_WORDS). */
+export const STEP_KIND_LABELS: Record<NonNullable<OutlineStep['kind']>, string> = {
+  parse: '読み取り',
+  resolve: '解決',
+  validate: '検証',
+  decide: '判断',
+  dispatch: '振り分け',
+  issue: '発行',
+  persist: '保存',
+  transform: '変換',
+  respond: '応答',
+};
+
+/** What happened to a request in a step (ExampleStep.how): it went on, the answer was returned, a failure came up, or a failure was turned into the error response. */
+export type StepHow = ExampleStep['how'];
+
+/** What the page says a step did with the request, in words; nothing for a step it went through. */
+export const HOW_LABELS: Record<StepHow, string> = {
+  ran: '',
+  answered: 'ここで応答',
+  failed: 'ここで失敗',
+  caught: '失敗を受け取ってエラーで応答',
+};
+
+/** A step of the way a request takes through a case, in order, with what happened in it. */
+export interface WayStep {
+  id: string;
+  /** The step of the outline; absent for a step the outline does not have (the label is then its id). */
+  step?: OutlineStep;
+  label: string;
+  how: StepHow;
+  /** The decisions in the step and the side taken: measured for an example, the case's conditions without one. */
+  decisions: CaseCondition[];
+  /** The functions of the catalog the request ran that the step calls directly (frame ids); only an example has them. */
+  calls: string[];
+  /** For a step where a failure came up: the error. */
+  error?: string;
+}
+
+/**
+ * The steps a request goes through in a case, in order. With an example,
+ * the steps the request ran as measured (ExampleStep). Without, the case's
+ * own steps: the step a failure comes up in fails with its error, and the
+ * last step answers (a way that ends in a response) or turns the failure
+ * into the error response (a way that ends in one); the conditions of the
+ * way are given to the steps they are in.
+ */
+export function waySteps(endpoint: OutlineEndpoint, chosen: EndpointCase, example?: CaseExample): WayStep[] {
+  const stepOf = (id: string) => endpoint.steps.find((step) => step.id === id);
+  const of = (id: string, how: StepHow, decisions: CaseCondition[], calls: string[], error: string | undefined): WayStep => {
+    const step = stepOf(id);
+    return { id, ...(step === undefined ? {} : { step }), label: step?.label ?? id, how, decisions, calls, ...(error === undefined ? {} : { error }) };
+  };
+  if (example !== undefined) return example.steps.map((item) => of(item.id, item.how, item.decisions ?? [], item.calls ?? [], item.error));
+  const conditions = chosen.conditions ?? [];
+  const last = chosen.steps.length - 1;
+  return chosen.steps.map((id, index) => {
+    const failed = chosen.failure !== undefined && chosen.failure.step === id;
+    const how: StepHow = failed ? 'failed' : index < last ? 'ran' : chosen.end === 'response' ? 'answered' : chosen.end === 'error-response' ? 'caught' : 'ran';
+    return of(
+      id,
+      how,
+      conditions.filter((condition) => condition.step === id),
+      [],
+      failed ? chosen.failure?.error : undefined,
+    );
+  });
+}
+
+/** The conditions of a case that are in no step of its way (a decision of the endpoint between two steps): shown before its steps. */
+export function looseConditions(chosen: EndpointCase): CaseCondition[] {
+  return (chosen.conditions ?? []).filter((condition) => condition.step === undefined || !chosen.steps.includes(condition.step));
+}
+
+/**
+ * Why a case shows no example request: the build has no measured run
+ * (`unmeasured`), the measured run recorded no request to this endpoint
+ * (`unrecorded`: no case of it has one), or no recorded request took this
+ * way (`untaken`).
+ */
+export type NoExample = 'unmeasured' | 'unrecorded' | 'untaken';
+
+/** Why a case shows no example request (see NoExample). */
+export function noExampleReason(measured: boolean, cases: readonly EndpointCase[]): NoExample {
+  if (!measured) return 'unmeasured';
+  return cases.some((item) => (item.examples?.length ?? 0) > 0) ? 'untaken' : 'unrecorded';
+}
+
+/** What the page says where a case has no example request, by why (NoExample). */
+export const NO_EXAMPLE_NOTES: Record<NoExample, string> = {
+  unmeasured: 'API テストを計測して実行したビルド（`MARONN_REACH=1`）では、この道筋を通った実際のリクエストと応答をここに出します。',
+  unrecorded: '計測した実行に、このエンドポイントへの API テストのリクエストの記録はありません。',
+  untaken: '計測した API テストのリクエストに、この道筋を通ったものはありませんでした。',
+};
+
+/** How a case ends, in words, for its result without an example: with the OAuth error code of a failure when it has one. */
+export function resultWords(item: Pick<EndpointCase, 'end' | 'failure'>): string {
+  if (item.end === 'escapes') return '失敗がエンドポイントの外へ出る';
+  if (item.end === 'error-response') return `失敗を受け取り、エラーで応答する${item.failure?.code === undefined ? '' : `（${item.failure.code}）`}`;
+  return '応答して終わる';
+}

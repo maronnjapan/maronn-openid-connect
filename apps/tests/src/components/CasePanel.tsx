@@ -7,11 +7,16 @@
  * - With no case chosen: what the tests say about the endpoint as a whole,
  *   and the cases to choose from, the failures grouped by what fails with a
  *   mark of how surely a test expects each.
- * - With a case: its verdicts (the unit tests of the steps it runs, the
- *   failures that can come up on its way, the API and E2E tests of the
- *   endpoint, how it ends), a table of its steps, and its tests. A failure
- *   lists the tests that expect its error, those of the function that
- *   throws it apart from the others.
+ * - With a case: first the case as a request going through the endpoint
+ *   (CaseFlow: an example request, the steps it goes through, the result),
+ *   then what the tests say about it (テストの確認状況): its verdicts (the
+ *   unit tests of the steps it runs, the failures that can come up on its
+ *   way, the API and E2E tests of the endpoint, how it ends), a table of
+ *   its steps, and its tests. A failure lists the tests that expect its
+ *   error, those of the function that throws it apart from the others.
+ *
+ * A case some recorded request took shows a one-line preview of the first
+ * in the list (`POST /token · grant_type=refresh_token → 200`).
  *
  * Every verdict is a mark and words, never a color alone, and says the rule
  * it comes from (lib/cases.ts).
@@ -37,8 +42,10 @@ import {
   type VerdictCounts,
 } from '../lib/cases';
 import { entriesOf, sortForList } from '../lib/data';
+import { previewOf } from '../lib/exchange';
 import { formatCount } from '../lib/format';
 import { useApp } from './app-context';
+import { CaseFlow } from './CaseFlow';
 import { FeatureBadge } from './FeatureBadge';
 import { Rows, rowOf, TestList } from './TestList';
 import { Words } from './ui';
@@ -188,6 +195,20 @@ function VerdictLegend({ counts }: { counts: VerdictCounts }) {
   );
 }
 
+/** The first request a recorded run sent that took a case, in one line, with how many did; nothing for a case none took. */
+function ExamplePreview({ item }: { item: EndpointCase }) {
+  const first = item.examples?.[0];
+  if (first === undefined) return null;
+  const count = item.exampleCount ?? item.examples?.length ?? 1;
+  return (
+    <span className="case-preview">
+      <span className="visually-hidden">リクエストの例: </span>
+      <span className="case-preview-request">{previewOf(first)}</span>
+      {count > 1 && <span className="case-preview-count">・この道筋を通ったリクエスト {formatCount(count)} 件</span>}
+    </span>
+  );
+}
+
 /** The failures that can come up in a step, each with its verdict; choosing one shows that case. */
 function StepFailures({ failures, onChoose }: { failures: readonly EndpointCase[]; onChoose: (id: string) => void }) {
   return (
@@ -201,6 +222,7 @@ function StepFailures({ failures, onChoose }: { failures: readonly EndpointCase[
               <code className="failure-error">{item.failure?.error ?? caseName(item)}</code>
               <span className="failure-from">{failureName(item)}</span>
               <span className="failure-verdict">{VERDICT_LABELS[verdict]}</span>
+              <ExamplePreview item={item} />
             </button>
           </li>
         );
@@ -311,6 +333,7 @@ function CaseList({ cases, onChoose }: { cases: readonly EndpointCase[]; onChoos
         <span className="case-meta">
           ステップ {formatCount(item.steps.length)}・{item.end === 'response' ? '応答' : item.end === 'escapes' ? '失敗が外へ' : 'エラー応答'}
         </span>
+        <ExamplePreview item={item} />
       </button>
     </li>
   );
@@ -425,19 +448,10 @@ export function CasePanel({ endpoint, cases, chosen, checks, playing, onChoose, 
         )}
       </div>
 
+      {chosen !== undefined && <CaseFlow key={chosen.id} endpoint={endpoint} cases={cases} chosen={chosen} playing={playing} />}
+
       <section className="check" aria-label="確認状況">
-        <h2 className="check-title">
-          {chosen === undefined ? (
-            'エンドポイント全体の確認状況'
-          ) : (
-            <>
-              <span className="check-title-label">このケースの確認状況</span>
-              <span className="check-title-name">
-                <Words text={chosen.name} />
-              </span>
-            </>
-          )}
-        </h2>
+        <h2 className="check-title">{chosen === undefined ? 'エンドポイント全体の確認状況' : 'テストの確認状況'}</h2>
         <Verdicts summary={summary} chosen={chosen} />
       </section>
 
@@ -445,7 +459,7 @@ export function CasePanel({ endpoint, cases, chosen, checks, playing, onChoose, 
         <>
           <section aria-label="ケースの一覧">
             <h2 className="check-title">ケースを選んで確かめる</h2>
-            <p className="evidence-note">リクエストが通る道筋ごとに、通るステップ・そのテスト・起こり得る失敗を確かめられます。左の「処理の流れ」で道筋を再生できます。</p>
+            <p className="evidence-note">リクエストが通る道筋ごとに、リクエストの例・通るステップ・結果と、そのテスト・起こり得る失敗を確かめられます。左の「処理の流れ」で道筋を再生できます。</p>
             <CaseList cases={cases} onChoose={onChoose} />
           </section>
           <section aria-label="ステップごとの確認">
@@ -456,8 +470,8 @@ export function CasePanel({ endpoint, cases, chosen, checks, playing, onChoose, 
         </>
       ) : (
         <>
-          <section aria-label="通るステップ">
-            <h2 className="check-title">通るステップ</h2>
+          <section aria-label="通るステップのテスト">
+            <h2 className="check-title">通るステップのテスト</h2>
             <StepTable endpoint={endpoint} rows={rows} playing={playing} onStep={onStep} onChoose={onChoose} />
           </section>
           {narrowed ??

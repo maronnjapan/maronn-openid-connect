@@ -247,6 +247,8 @@ flowchart TB
 | `lines.ts` | 見せるコードの行 | [⑥-12](#-12-コードの表示) |
 | `tokenize.ts` | 色づけ | [⑥-12](#-12-コードの表示) |
 | `format.ts` | 数、時間、日付、実行先の名前、棒の幅 | [⑥-1-d](#-1-d-小さな部品と数の書き方) |
+| `cases.ts` | ケースの印と集計、ケースが通るステップ（`waySteps`） | [⑥-7-d](#-7-d-ケースで確かめる)、[⑥-7-e](#-7-e-ケースの流れ) |
+| `exchange.ts` | リクエストと応答の例を、RFC の例の形の行にする | [⑥-7-e](#-7-e-ケースの流れ) |
 | `fixture.ts` | テストが使う小さな索引、アウトライン、カード、差分 | |
 
 | `src/components` | すること | 節 |
@@ -257,6 +259,7 @@ flowchart TB
 | `ErrorBoundary.tsx` | 描けない画面の表示 | [⑥-5](#-5-画面の骨組み) |
 | `Home.tsx`、`KindPage.tsx` | ホームと種類のページ | [⑥-6](#-6-ホームと種類のページ) |
 | `EndpointPage.tsx` | エンドポイントのページ | [⑥-7](#-7-エンドポイントのページ) |
+| `CasePanel.tsx`、`CaseFlow.tsx` | ケースで確かめる表示と、ケースの流れ（リクエスト → ステップ → 結果） | [⑥-7-d](#-7-d-ケースで確かめる)、[⑥-7-e](#-7-e-ケースの流れ) |
 | `FilesPage.tsx`、`SearchPage.tsx`、`PrPage.tsx` | ファイル、検索、PR のページ | [⑥-8](#-8-ファイルと検索と-pr-のページ) |
 | `TestList.tsx`、`Target.tsx` | 一覧と一覧の行、対象の一行 | [⑥-9](#-9-テストの一覧)、[⑥-10](#-10-テストの対象) |
 | `TestDetail.tsx`、`TestCode.tsx` | テストの詳細とコードのタブ | [⑥-11](#-11-テストの詳細) |
@@ -1835,9 +1838,10 @@ Next.js の `token` では、`parse-request` など 7 個のステップが「�
 | 部分 | 規則 |
 |---|---|
 | ケースの選択 | `<select>`。先頭は「エンドポイント全体（ケースを選ぶ）」。<br>続けて「ステップへ進む道筋」「終わり方」、失敗はエラーごとの `optgroup`（`失敗: <error>`）で、項目は印と「<投げる関数> から」 |
-| 確認状況 | 規則ごとに一行（下の表）。印と言葉で言い、色だけでは示さない |
-| ケースの一覧 | ケースを選んでいないときだけ。<br>ステップへ進む道筋と終わり方は一行ずつ（名前、ステップの数、終わり方）。<br>失敗はエラーごとに畳み、投げる場所の数と印ごとの数を添える。開くと投げる場所が並び、選ぶとそのケースになる |
-| ステップの表 | ケースが通るステップ（選んでいなければ全ステップ）を一行ずつ：番号、名前、ユニットテスト（合計、正常・異常・境界）、出る失敗（数と印ごとの数）。<br>ユニットテストの数を選ぶと `step` を書いて一覧をそのステップに絞る。<br>失敗の数を選ぶと、その行に失敗を並べる |
+| ケースの流れ | ケースを選んだときだけ、いちばん上に出す。<br>① リクエスト → ② ステップ → ③ 結果（[⑥-7-e](#-7-e-ケースの流れ)） |
+| 確認状況 | 規則ごとに一行（下の表）。印と言葉で言い、色だけでは示さない。<br>ケースを選んだときは、ケースの流れの下に「テストの確認状況」として出す |
+| ケースの一覧 | ケースを選んでいないときだけ。<br>ステップへ進む道筋と終わり方は一行ずつ（名前、ステップの数、終わり方）。<br>失敗はエラーごとに畳み、投げる場所の数と印ごとの数を添える。開くと投げる場所が並び、選ぶとそのケースになる。<br>例のあるケース（`examples`）は、行の下に最初の例を一行で添える（`POST /token · grant_type=refresh_token → 200`、`previewOf`）。<br>`exampleCount` が 2 以上なら、その件数も添える |
+| ステップの表 | ケースが通るステップ（選んでいなければ全ステップ）を一行ずつ：番号、名前、ユニットテスト（合計、正常・異常・境界）、出る失敗（数と印ごとの数）。<br>ケースを選んだときの見出しは「通るステップのテスト」。<br>ユニットテストの数を選ぶと `step` を書いて一覧をそのステップに絞る。<br>失敗の数を選ぶと、その行に失敗を並べる |
 | テスト | 失敗のケース：`direct`、`byCode`、`nearby` を、理由の文を付けた三つの節に分けて並べる（8 件まで、「すべて表示」）。<br>ほかのケース：通るステップのユニットテストと、エンドポイントの E2E・API テストの一覧（[⑥-9](#-9-テストの一覧)）。<br>`step` で絞っているときは、どちらもそのステップのユニットテストの一覧 |
 
 確認状況の行は、次の規則で決める（`summarize`）。
@@ -1881,9 +1885,70 @@ Next.js の `token` では、`parse-request` など 7 個のステップが「�
 
 実装：
 
-- `apps/tests/src/components/CasePanel.tsx`：`CasePanel`、`Verdicts`、`StepTable`、`StepFailures`、`CaseList`、`EvidenceTests`、`VerdictMark`、`VerdictCountsLine`
+- `apps/tests/src/components/CasePanel.tsx`：`CasePanel`、`Verdicts`、`StepTable`、`StepFailures`、`CaseList`、`EvidenceTests`、`VerdictMark`、`VerdictCountsLine`、`ExamplePreview`
 - `apps/tests/src/components/EndpointPage.tsx`：`showCases`、再生の状態、`Flow` の道筋の表示
 - `apps/tests/src/lib/cases.ts`：`verdictOf`、`caseGroups`、`stepChecks`、`pathChecks`、`summarize`、`caseTests`、`requestTests`、`endWords`、`STEP_MS`
+
+### ⑥-7-e ケースの流れ
+
+ケースを選ぶと、右の欄のいちばん上に、そのケースを一つのリクエストが通る流れとして出す（`CaseFlow`）。
+上から ① リクエスト、② ステップ、③ 結果の順で、三つを下向きの矢印でつなぐ。
+例は、計測した API テストが送ったリクエストのうち、そのケースの道筋を通ったものである（ケースの `examples`、[⑤-11](05-data.md#-11-ケースのファイル)）。
+
+```mermaid
+flowchart TB
+  R["① リクエスト<br/>送ったテスト、例 1 / 3<br/>POST /token HTTP/1.1 …"]
+  S["② ステップ<br/>番号の箱を矢印でつなぐ<br/>種類、読む → 渡す<br/>判断と通った側、実行した関数"]
+  E["③ 結果<br/>状態とエラーコード<br/>HTTP/1.1 200 OK …"]
+  R --> S --> E
+```
+
+| 部分 | 例があるとき | 例が無いとき |
+|---|---|---|
+| ① リクエスト | 送ったテスト（結果の印、種類、言語の切り替えに従う題。選ぶとパネルに開く）。<br>例が二つ以上なら「‹ 例 1 / 3 ›」。<br>`exampleCount` が例の数より多ければ「この道筋を通ったリクエストは全部で <n> 件」。<br>その下にリクエストのブロック（下の表） | 「このケースを通ったリクエストの例はありません。」と、無い理由（下の表） |
+| ② ステップ | 例の `steps`。<br>判断は、そのリクエストで計測した側（`decisions`）。<br>実行した関数（`calls`）は名前で並べ、選ぶとその関数のコードをパネルに開く | ケースの `steps`。<br>失敗のステップ（`failure.step`）は「ここで失敗」とエラー、最後のステップは、応答で終わるケースなら「ここで応答」、エラーの応答で終わるケースなら「失敗を受け取ってエラーで応答」。<br>判断は、ケースの `conditions` をそのステップに置く。ステップの無い条件は、ステップの上に「ステップの外の判断」として出す |
+| ③ 結果 | 状態の行（`200 OK` と「応答した」「リダイレクトで応答した」「エラーで応答した」、OAuth のエラーコードがあれば `error: invalid_grant`）。<br>その下に応答のブロック | 終わり方の言葉（`resultWords`：応答して終わる、失敗を受け取り、エラーで応答する（`failure.code`）、失敗がエンドポイントの外へ出る）と、失敗ならエラーと投げる関数 |
+
+ステップは、縦に並べた番号付きの箱を矢印でつなぐ（フローチャートの読み方）。
+
+| 箱の部分 | 規則 |
+|---|---|
+| 一行目 | 番号、ステップの名前（`OutlineStep.label`）、種類の札（`kind`：読み取り、解決、検証、判断、振り分け、発行、保存、変換、応答。地図と同じ言葉、`STEP_KIND_LABELS`）、コードのボタン（そのステップのコードがあるとき） |
+| 起きたこと | `ran` は書かない。<br>`answered` は「■ ここで応答」（`--accent`）、`failed` は「✕ ここで失敗: <error>」（`--failed`、箱の地も `--failed-soft`）、`caught` は「↩ 失敗を受け取ってエラーで応答」（`--failure`） |
+| 読む → 渡す | `consumes` と `produces` をコードで並べる。<br>失敗したステップは渡さないので、渡すものを書かない |
+| 判断 | 「◇ <判断> → <通った側>」を一行ずつ。<br>判断はコードならコードで、言葉ならその言葉で。<br>`失敗する` の側は赤 |
+| 実行した関数 | 関数の名前のボタン。コードがデータに無い関数は名前だけ |
+| 次への矢印 | 灰色の実線。<br>失敗したステップから出る矢印と、失敗を受け取るステップへ入る矢印は、赤の破線に「失敗」を添える |
+| 再生 | 左の再生が今いるステップの箱に `--accent` の輪を付ける（失敗の箱は赤の輪） |
+
+例が無い理由は、索引の `measured` とエンドポイントのケースから決める（`noExampleReason`）。
+
+| 理由 | 条件 | 言うこと |
+|---|---|---|
+| `unmeasured` | `measured` が偽 | API テストを計測して実行したビルド（`MARONN_REACH=1`）では、この道筋を通った実際のリクエストと応答をここに出します |
+| `unrecorded` | `measured` が真で、エンドポイントのどのケースにも例が無い | 計測した実行に、このエンドポイントへの API テストのリクエストの記録はありません |
+| `untaken` | `measured` が真で、ほかのケースには例がある | 計測した API テストのリクエストに、この道筋を通ったものはありませんでした |
+
+リクエストと応答は、RFC の例の形のブロックで出す（`exchange.ts` の `requestBlock`、`responseBlock`）。
+
+| 部分 | 規則 |
+|---|---|
+| 一行目 | リクエストは `<METHOD> <path> HTTP/1.1`。<br>クエリが二つ以上あれば、パスの下に一つずつ字下げして並べ（`?a=…`、`&b=…`）、最後の行の後に ` HTTP/1.1`。<br>応答は `HTTP/1.1 <status> <reason>`。理由の句は記録のものか、HTTP の表のもの |
+| ヘッダー | リクエストは `Host:`（`host`）を先に、続けて送った順。<br>名前は RFC の書き方（`Content-Type`、`WWW-Authenticate`、`DPoP`）。<br>`Authorization: Basic` は送ったままで、下に `client_id:client_secret をデコードすると <client_id>:<secret>` を添える（二つとも form デコード）。<br>`Bearer` と `DPoP` のトークンは長ければ縮める |
+| `Location` | クエリとフラグメントがあれば、一つずつ字下げして並べる |
+| ボディ | 空行の後。<br>`application/x-www-form-urlencoded` は一行に一つ（`grant_type=…`、`&code=…`）。<br>JSON は二つ空けで整形し、短い値の配列は一行。<br>`application/jwt` は JWT を一つ。<br>Content-Type が無ければ、JSON、JWT、フォームの順に読めるかで決め、どれでもなければそのままの行 |
+| デコード | フォームとクエリの名前と値はパーセントデコードして見せ（`+` は空白）、デコードで変わった値があれば、ブロックの下に「フォームとクエリの値は、読みやすいようにパーセントデコードしています。」 |
+| 長い値 | 空白の無い 64 文字以上の値（URL は除く）と JWT は、先頭 20 文字と末尾 8 文字の間を `…` で縮める。<br>行の終わりに、JWT なら `JWT` の札と「中身を見る」、ほかは「全体を見る」のボタン。縮めた値を押しても開く。<br>開くと行の下に全体（見えている幅で折り返す）と、JWT なら、ヘッダーとペイロードをデコードした JSON（署名は検証しない。`iat`、`exp`、`nbf`、`auth_time` には UTC の日時を添える） |
+| 切れたボディ | `truncated` なら、ブロックの下に「ボディは 16 KiB で切っています。」 |
+| 幅 | ブロックは折り返さず、狭い画面ではブロックの中で横に送る。ページは横に送らない |
+
+例：hono の `token` で「`TokenError(invalid_grant)` で終わる（`validateAuthorizationCodeNotUsed` から）」に、使い済みの認可コードを送る API テストの例があれば、① は `POST /token HTTP/1.1` と `grant_type=authorization_code` のフォーム、② は 12 個のステップで、11 番目の「authorization_code グラントを検証する」が「ここで失敗: `TokenError(invalid_grant)`」、12 番目が「失敗を受け取ってエラーで応答」、③ は `400 Bad Request` と `error: invalid_grant` になる。
+
+実装：
+
+- `apps/tests/src/components/CaseFlow.tsx`：`CaseFlow`、`RequestPart`、`StepsPart`、`WayStepBox`、`ResultPart`、`HttpView`、`Lines`、`LongValue`、`LongControls`、`Expanded`、`SentBy`、`FunctionRef`
+- `apps/tests/src/lib/exchange.ts`：`requestBlock`、`responseBlock`、`formLines`、`jsonLines`、`valuePieces`、`shorten`、`decodeJwt`、`basicCredentials`、`headerName`、`reasonPhrase`、`bodyKind`、`errorCodeOf`、`statusTone`、`previewOf`
+- `apps/tests/src/lib/cases.ts`：`waySteps`、`looseConditions`、`noExampleReason`、`resultWords`、`STEP_KIND_LABELS`、`HOW_LABELS`
 
 ## ⑥-8 ファイルと検索と PR のページ
 

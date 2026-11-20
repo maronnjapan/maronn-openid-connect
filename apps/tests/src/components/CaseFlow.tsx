@@ -221,10 +221,10 @@ function Values({ label, values }: { label: string; values: readonly string[] })
 /** One box of the steps: its number, label and kind, what it reads and hands on, what happened in it, and the decisions and functions of it. */
 function WayStepBox({ item, index, next, playing, endpointKey }: { item: WayStep; index: number; next: WayStep | undefined; playing: boolean; endpointKey: string }) {
   const { db } = useApp();
-  const kind = item.step?.kind;
-  const consumes = item.step?.consumes ?? [];
+  const { kind, label } = item.step;
+  const consumes = item.step.consumes ?? [];
   // A step that failed hands nothing on.
-  const produces = item.how === 'failed' ? [] : (item.step?.produces ?? []);
+  const produces = item.how === 'failed' ? [] : (item.step.produces ?? []);
   // The arrow to the next box is the way of a failure when this box failed (or hands a failure on), as an error edge of a flowchart.
   const errorEdge = next !== undefined && (item.how === 'failed' || next.how === 'caught');
   return (
@@ -236,10 +236,10 @@ function WayStepBox({ item, index, next, playing, endpointKey }: { item: WayStep
           </span>
           <span className="way-step-label">
             <span className="visually-hidden">ステップ {index + 1}: </span>
-            {item.label}
+            {label}
           </span>
           {kind !== undefined && <span className={`kind-tag kind-${kind}`}>{STEP_KIND_LABELS[kind]}</span>}
-          {item.step !== undefined && stepHasCode(db, item.step) && <CodeButton target={{ kind: 'step', key: endpointKey, step: item.id }} label={`「${item.label}」のコードを見る`} className="way-step-code" />}
+          {stepHasCode(db, item.step) && <CodeButton target={{ kind: 'step', key: endpointKey, step: item.id }} label={`「${label}」のコードを見る`} className="way-step-code" />}
         </div>
         {item.how !== 'ran' && (
           <p className={`way-how way-how-${item.how}`}>
@@ -345,10 +345,8 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
   );
 }
 
-/** ② The steps the request went through, as a vertical flow; without an example, the conditions of the way that are in no step above them. */
-function StepsPart({ endpoint, chosen, way, measured, playing }: { endpoint: OutlineEndpoint; chosen: EndpointCase; way: readonly WayStep[]; measured: boolean; playing: string | undefined }) {
-  // A request's steps say the decisions it met; the case's own conditions stand in for them only without one.
-  const loose = measured ? [] : looseConditions(chosen);
+/** ② The steps the request went through, as a vertical flow, the decisions that are in no step it shows above them. */
+function StepsPart({ endpoint, way, loose, playing }: { endpoint: OutlineEndpoint; way: readonly WayStep[]; loose: readonly CaseCondition[]; playing: string | undefined }) {
   return (
     <li className="flow-part">
       <PartTitle no={2}>ステップ</PartTitle>
@@ -426,6 +424,8 @@ export function CaseFlow({ endpoint, cases, chosen, playing }: { endpoint: Outli
   const at = Math.min(index, Math.max(0, examples.length - 1));
   const example = examples[at];
   const way = waySteps(endpoint, chosen, example);
+  // The decisions in no step the flow shows: a request's own (measured) with an example, else the case's conditions.
+  const loose = looseConditions(endpoint, chosen, example);
   const reason = NO_EXAMPLE_NOTES[noExampleReason(db.index.measured === true, cases)];
   return (
     <section className="case-flow" aria-labelledby="case-flow-title">
@@ -437,7 +437,7 @@ export function CaseFlow({ endpoint, cases, chosen, playing }: { endpoint: Outli
       </h2>
       <ol className="flow-parts">
         <RequestPart chosen={chosen} example={example} index={at} onIndex={setIndex} reason={reason} />
-        <StepsPart endpoint={endpoint} chosen={chosen} way={way} measured={example !== undefined} playing={playing} />
+        <StepsPart endpoint={endpoint} way={way} loose={loose} playing={playing} />
         <ResultPart chosen={chosen} example={example} index={at} />
       </ol>
     </section>

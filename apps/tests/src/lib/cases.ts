@@ -112,10 +112,19 @@ export function unitCounts(tests: readonly TestEntry[]): UnitCounts {
   };
 }
 
+/**
+ * The steps of a way that the outline of the endpoint has, in the order of
+ * the way: the steps the page shows for a case (a step the outline does not
+ * have has no label, no tests and no place on the timeline).
+ */
+function onOutline(endpoint: OutlineEndpoint, ids: readonly string[]): string[] {
+  return ids.filter((id) => endpoint.steps.some((step) => step.id === id));
+}
+
 /** What the tests say about one step of an endpoint, for a case or for every case. */
 export interface StepCheck {
   step: OutlineStep;
-  /** Its place on the way of the case, from 1; undefined for a step the case does not run. */
+  /** Its place on the way of the case among the steps the outline has, from 1; undefined for a step the case does not run. */
   order?: number;
   unit: UnitCounts;
   /** The failures that can come up in the step: the failure cases that name it. */
@@ -125,13 +134,15 @@ export interface StepCheck {
 
 /**
  * The checks of the steps of an endpoint in the order of its outline: with a
- * case, each step it runs has its place on the way; without one, every step
- * is on.
+ * case, each step it runs has its place on the way (counted as the timeline
+ * and the flow of the case count it, over the steps the outline has);
+ * without one, every step is on.
  */
 export function stepChecks(db: Db, endpoint: OutlineEndpoint, cases: readonly EndpointCase[], chosen?: EndpointCase): StepCheck[] {
+  const way = chosen === undefined ? [] : onOutline(endpoint, chosen.steps);
   return endpoint.steps.map((step) => {
     const failures = cases.filter((item) => item.failure?.step === step.id);
-    const at = chosen === undefined ? -1 : chosen.steps.indexOf(step.id);
+    const at = way.indexOf(step.id);
     return { step, ...(at === -1 ? {} : { order: at + 1 }), unit: unitCounts(stepTests(db, endpoint.key, step)), failures, verdicts: countVerdicts(failures) };
   });
 }
@@ -257,9 +268,8 @@ export const HOW_LABELS: Record<StepHow, string> = {
 /** A step of the way a request takes through a case, in order, with what happened in it. */
 export interface WayStep {
   id: string;
-  /** The step of the outline; absent for a step the outline does not have (the label is then its id). */
-  step?: OutlineStep;
-  label: string;
+  /** The step of the outline. */
+  step: OutlineStep;
   how: StepHow;
   /** The decisions in the step and the side taken: measured for an example, the case's conditions without one. */
   decisions: CaseCondition[];
@@ -270,38 +280,49 @@ export interface WayStep {
 }
 
 /**
- * The steps a request goes through in a case, in order. With an example,
- * the steps the request ran as measured (ExampleStep). Without, the case's
- * own steps: the step a failure comes up in fails with its error, and the
- * last step answers (a way that ends in a response) or turns the failure
- * into the error response (a way that ends in one); the conditions of the
- * way are given to the steps they are in.
+ * The steps a request goes through in a case, in order, as the timeline
+ * shows them: only those the outline has. With an example, the steps the
+ * request ran as measured (ExampleStep). Without, the case's own steps: the
+ * step a failure comes up in fails with its error, and the last step answers
+ * (a way that ends in a response) or turns the failure into the error
+ * response (a way that ends in one); the conditions of the way are given to
+ * the steps they are in. When the request was answered, or its failure
+ * caught, in a step the outline does not have after the last step shown,
+ * that last step is said to have done it; the decisions in a step left out
+ * are looseConditions.
  */
 export function waySteps(endpoint: OutlineEndpoint, chosen: EndpointCase, example?: CaseExample): WayStep[] {
-  const stepOf = (id: string) => endpoint.steps.find((step) => step.id === id);
-  const of = (id: string, how: StepHow, decisions: CaseCondition[], calls: string[], error: string | undefined): WayStep => {
-    const step = stepOf(id);
-    return { id, ...(step === undefined ? {} : { step }), label: step?.label ?? id, how, decisions, calls, ...(error === undefined ? {} : { error }) };
-  };
-  if (example !== undefined) return example.steps.map((item) => of(item.id, item.how, item.decisions ?? [], item.calls ?? [], item.error));
   const conditions = chosen.conditions ?? [];
-  const last = chosen.steps.length - 1;
-  return chosen.steps.map((id, index) => {
-    const failed = chosen.failure !== undefined && chosen.failure.step === id;
-    const how: StepHow = failed ? 'failed' : index < last ? 'ran' : chosen.end === 'response' ? 'answered' : chosen.end === 'error-response' ? 'caught' : 'ran';
-    return of(
-      id,
-      how,
-      conditions.filter((condition) => condition.step === id),
-      [],
-      failed ? chosen.failure?.error : undefined,
-    );
+  const all: ExampleStep[] =
+    example?.steps ??
+    chosen.steps.map((id, index) => {
+      const failed = chosen.failure !== undefined && chosen.failure.step === id;
+      const how: StepHow = failed ? 'failed' : index < chosen.steps.length - 1 ? 'ran' : chosen.end === 'response' ? 'answered' : chosen.end === 'error-response' ? 'caught' : 'ran';
+      return { id, how, decisions: conditions.filter((condition) => condition.step === id), ...(failed && chosen.failure !== undefined ? { error: chosen.failure.error } : {}) };
+    });
+  const stepOf = (id: string) => endpoint.steps.find((step) => step.id === id);
+  const last = all.map((item) => stepOf(item.id) !== undefined).lastIndexOf(true);
+  // An answer or a catch in a step left out after the last step shown is the end of the way the page shows.
+  const ending = all.slice(last + 1).find((item) => item.how === 'answered' || item.how === 'caught')?.how;
+  return all.slice(0, last + 1).flatMap((item, index) => {
+    const step = stepOf(item.id);
+    if (step === undefined) return [];
+    const how = index === last && item.how === 'ran' && ending !== undefined ? ending : item.how;
+    return [{ id: item.id, step, how, decisions: item.decisions ?? [], calls: item.calls ?? [], ...(item.error === undefined ? {} : { error: item.error }) }];
   });
 }
 
-/** The conditions of a case that are in no step of its way (a decision of the endpoint between two steps): shown before its steps. */
-export function looseConditions(chosen: EndpointCase): CaseCondition[] {
-  return (chosen.conditions ?? []).filter((condition) => condition.step === undefined || !chosen.steps.includes(condition.step));
+/**
+ * The decisions of a case that are in no step its flow shows: shown before
+ * its steps. With an example, those the request met in a step the outline
+ * does not have. Without, the conditions of the way that are in no step of
+ * it (a decision of the endpoint between two steps) or in a step the
+ * outline does not have.
+ */
+export function looseConditions(endpoint: OutlineEndpoint, chosen: EndpointCase, example?: CaseExample): CaseCondition[] {
+  const shown = new Set(onOutline(endpoint, example === undefined ? chosen.steps : example.steps.map((item) => item.id)));
+  if (example !== undefined) return example.steps.flatMap((item) => (shown.has(item.id) ? [] : (item.decisions ?? [])));
+  return (chosen.conditions ?? []).filter((condition) => condition.step === undefined || !shown.has(condition.step));
 }
 
 /**

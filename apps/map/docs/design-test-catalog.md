@@ -687,47 +687,65 @@ interface TestDiff {
 - 新しく外へ出る失敗（`failuresAdded`）で、どのテストも期待していないもの
 - 関連するテストの観点と期待するエラーの集合が、変更前後でどう変わったか（保証範囲の変化）
 
-この差分は PR のコメントの「テスト」の節と、テストの画面（`tests/diff.json`）に出る。
+この差分は PR のコメント（検査に落ちる変更は先頭の側、ほかは折りたたんだ「テスト」の節）と、テストの画面（`tests/diff.json`）に出る。
 地図の「このPRの変更」の画面はテストを出さない。
 
 ### PR のコメント
 
-いまの地図のコメント（`<!-- oidc-provider-map-preview -->` の一つ）に「テスト」の節を足す。
+いまの地図のコメント（`<!-- oidc-provider-map-preview -->` の一つ）に、テストの差分を足す。
+関連するテストに変更の無い実装の変更（CI を落とす）は、コメントの先頭の側（`<details>` の外）に出す。
+
+```md
+**関連するテストに変更の無い実装の変更（1、CI を落とす）**
+
+- `verifyClientSecret()`（core client-auth.ts）（条件 `secret.length < 8` を足した）: 関連するテスト 5 件、変更なし
+
+テストを足すか変えるか、変えないのが妥当なら、変更メモのその関数の節に `テストを変えない理由: …` の行を書いてください（`pnpm --filter @maronn-openid-connect/map changes:draft` が書く場所を空けます）。
+```
+
+ほかは、折りたたんだ「テスト」の節に出す。
 要件 5.3 の例に合わせる。
 
-```
-## テスト
+```md
+<details><summary>テスト 5,521 → 5,527（追加 6 · 変更 1 · 名前の変更 0 · 削除 0）</summary>
 
-テストケース: 5,521 → 5,527（+6）  API +3、ユニット +3
+テストケース: +6  API +3、ユニット +3
 
-変更対象: POST /token（hono, nextjs）
-  追加されたテスト:
-    - Reject invalid client credentials with invalid_client（API, 異常系, 認証）
-    - Reject an unsupported grant_type with unsupported_grant_type（API, 異常系）
-    - Reject a request without <param> with invalid_request（API, 異常系, 2 行）
-  関連する変更関数:
-    - validateClientAuthMethod: ユニット 追加 2
-    - validateTokenGrantType: ユニット 変更 1（期待 the HTTP status is 400 → the HTTP status is 401）
+**テストを変えない理由が書かれた変更（1）**
 
-関連テストに変更の無い実装の変更（CI を落とす）:
-  - verifyClientSecret（条件 `secret.length < 8` を足した）: 関連するテスト 5 件、変更なし
-テストを変えない理由が書かれた変更:
-  - buildTokenResponse（`.trim()` を足した）: 関連するテスト 12 件。「レスポンスの形は変えていない。既存の 12 件が同じ期待で通る」
+- `buildTokenResponse()`（hono oidc-provider/endpoints/token/steps/build-token-response.ts）: 関連するテスト 12 件。「レスポンスの形は変えていない。既存の 12 件が同じ期待で通る」
 
-新しく外へ出る失敗を期待するテストが無いもの:
-  - TokenError(invalid_client)（verifyClientSecret から）
+**変更対象: POST /token（hono, nextjs）**
 
-結果とカバレッジの変化は Codecov のコメントを参照（リンク）
+追加されたテスト:
+- Reject invalid client credentials with invalid_client（API, 異常系, 認証）
+- Reject a request without <param> with invalid_request（API, 異常系, 2 行）
+
+変更されたテスト:
+- Reject an unsupported grant_type with unsupported_grant_type（API, 異常系）（期待 ~~400~~ → 401）
+
+関連する変更関数:
+- `validateClientAuthMethod()`（core client-auth.ts）: ユニット 追加 3
+- `validateTokenGrantType()`（hono oidc-provider/endpoints/token/steps/validate-grant-type.ts）: API 変更 1
+
+**新しく外へ出る失敗を期待するテストが無いもの**
+
+- TokenError(invalid_client)（`verifyClientSecret()`（core client-auth.ts） から）
+
+</details>
 ```
 
 数と名前は例である。
-実際の節は `packages/test-catalog` の markdown.ts が changes.md の末尾に `### テスト` として書き（コメントの `## OIDC Provider Map` の下に入るため一段下げる）、ほかの節と同じく一覧は 20 行で区切る。
+実際の二つは `packages/test-catalog` の markdown.ts（`untestedMarkdown`、`testsMarkdown`）が作り、地図が changes.md に入れる。
+折りたたんだ節は changes.md の末尾に置く。
+どちらも、一覧は 20 行で区切る。
+変えたテストの期待は、変わった語だけを出す（`the HTTP status is 400` を `the HTTP status is 401` に変えたなら `~~400~~ → 401`）。
 テストの記述は英語のまま載せ、枠の言葉は地図のコメントに合わせて日本語にする。
 PR には地図と Codecov の二つのコメントが付き、分けたままにする。
 二つは中身が重ならない。
 地図はテストの札の差分と実装の変更との対応を、Codecov はカバレッジと結果の変化を出す。
 一つにまとめるには Codecov の API から読んで地図のコメントに引くコードを持つことになり、その保守に見合う利点が無い。
-地図のコメントからは Codecov のコメントへのリンクを張る。
+地図のコメントからは Codecov へのリンクを張る。
 
 CI を落とすのは次のものである。
 
@@ -923,7 +941,7 @@ id にして、データは全体で 22 MB（`tests.json` 4 MB、`outline.json` 
 - `MapChanges.otherFiles` はテストの変更を数えず、テストファイルの変更は `testFiles` に数える
 - 地図のデータを読む `packages/test-catalog` は `packages/map-analysis` の上に置き、`buildMap` の拡張（`BuildOptions.extend`）として map.json と changes.md を書く前に走る。解析がテストを知らずに済み、データの書き出しは一度で済む
 - テストの画面は地図に組み込まず、別のアプリ `apps/tests` にする。地図と同じ Worker の `/tests/` に出し、PR ごとのプレビューにも入れる。地図はヘッダの「テスト」のリンクだけを持ち、ほかにテストを出さない。最初の版は地図の中に置いた（トレースの横の「テスト」のタブ、アウトラインの行の数の札、左の一覧の数と結果、`#tests` の一覧のページ、「このPRの変更」のテストの節）。しかし地図の画面が込み合い、どんなテストケースがあるかが見にくかった（リポジトリの持ち主の判断）。別の画面なら、テストケースとそのコードを主役にして簡素に組める
-- テストを読む解析は地図のデータの段に残す。テストの読み取りが地図の解析の TypeScript のプログラムを使うからである。PR のコメントの「テスト」の節と、関連するテストの変わらない変更の検査（`MapChanges.untested`）は、切り出しの前と変わらない。地図の古いリンク（`#tests`、`#<framework>--tests`）は、地図の既定の画面を開く
+- テストを読む解析は地図のデータの段に残す。テストの読み取りが地図の解析の TypeScript のプログラムを使うからである。PR のコメントのテストの差分と、関連するテストの変わらない変更の検査（`MapChanges.untested`）は、切り出しの後もこの段が作る。地図の古いリンク（`#tests`、`#<framework>--tests`）は、地図の既定の画面を開く
 - テストの画面のデータは、テストを一度ずつ索引（`tests.json`）に持ち、フレームとエンドポイントはテストを id で名指す。札の全文はテストファイルごとに一つのファイルに置く。フレームごとに札の全文を写した最初の版は 1.1 GB になり、id にして 22 MB になった（「データ」の項）
 
 ## 11. 確かめたこと

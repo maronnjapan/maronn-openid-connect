@@ -16,7 +16,7 @@ export { draftTests, mapDataOf } from './draft.js';
 export { exampleTestId, fileTestId, hashedTestId } from './id.js';
 export { countTests, joinTests, reachableFrames, type Joined } from './join.js';
 export { fixedIds, lintTests, type TestLintViolation } from './lint.js';
-export { testsMarkdown } from './markdown.js';
+export { changedWords, expectationChanges, testsMarkdown, untestedMarkdown } from './markdown.js';
 export { readRun, type JoinedRun } from './run.js';
 export { checkTranslations, japaneseKeyword, Translations, Vocabulary } from './vocabulary.js';
 export { expectationPhrases, sayExpectation } from './words.js';

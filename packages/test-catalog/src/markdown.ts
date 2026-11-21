@@ -1,17 +1,19 @@
 /**
- * The diff of the tests in Markdown: the `### テスト` section of the comment
- * of the map on a pull request (changes.md), after the changes of the code.
- * The frame of the words is Japanese like the rest of the comment; the names
- * and the expectations of the tests stay English.
+ * The diff of the tests in Markdown, for the comment of the map on a pull
+ * request (changes.md). The frame of the words is Japanese like the rest of
+ * the comment; the names and the expectations of the tests stay English.
  *
- * In order: the number of cases before and after; the changes whose related
- * tests did not change (the check fails on them) and the ones whose note says
- * why; for each endpoint the changes reach, the tests added and changed and
- * the changed functions with what happened to their tests; the new failures
- * no test expects; the tests removed and renamed. The results and the
- * coverage are Codecov's comment.
+ * Two parts. untestedMarkdown is what fails the check, shown at the top of
+ * the comment: the changes whose related tests did not change and whose note
+ * says no reason. testsMarkdown is the rest, folded in one `<details>` after
+ * the changes of the code: the number of cases before and after; the changes
+ * whose note says why their tests did not change; for each endpoint the
+ * changes reach, the tests added and changed (of a changed expectation only
+ * the words that changed) and the changed functions with what happened to
+ * their tests; the new failures no test expects; the tests removed and
+ * renamed. The results and the coverage are Codecov's.
  */
-import type { FrameChangeEntry, MapData } from '@maronn-openid-connect/map-analysis';
+import { diffLines, type FrameChangeEntry, type MapData } from '@maronn-openid-connect/map-analysis';
 import type { AspectTable } from './aspects.js';
 import type { TestDiff, TestKind } from './model.js';
 
@@ -69,32 +71,131 @@ function listed(lines: readonly string[]): string[] {
   return lines.length <= LIMIT ? [...lines] : [...lines.slice(0, LIMIT), `- ほか ${lines.length - LIMIT} 件は、テストの画面（地図の \`/tests/\` の「この PR のテスト」）で見てください。`];
 }
 
-/** The section (see the module comment). */
+/** A text cut to a width, with an ellipsis; a code span and a strike the cut left open are closed. */
+function cut(text: string, width: number): string {
+  const characters = [...text];
+  if (characters.length <= width) return text;
+  let kept = `${characters.slice(0, width - 1).join('')}…`;
+  if ((kept.match(/`/g) ?? []).length % 2 === 1) kept += '`';
+  if ((kept.match(/~~/g) ?? []).length % 2 === 1) kept += '~~';
+  return kept;
+}
+
+/** The words of an expectation, a code span whole whatever it holds (`` `b c` `` is one word). */
+function wordsOf(text: string): string[] {
+  return text.match(/(?:(`+)[\s\S]*?\1|\S)+/g) ?? [];
+}
+
+/** At most this many removed and added expectations of a test are compared to pair them. */
+const PAIRED = 8;
+/** At most this many changes of the expectations of a test are shown. */
+const SHOWN = 4;
+/** The width the removed words and the added words of a run, and an expectation said whole, are cut to. */
+const SIDE_WIDTH = 160;
+/** The width a change of an expectation is cut to. */
+const CHANGE_WIDTH = 340;
+
+/**
+ * The words that differ between an expectation before and after: each run of
+ * them as `~~removed~~ → added`, `~~removed~~` or `+added`, the runs joined
+ * by ` … ` (the words between that both have). '' when no word differs.
+ */
+export function changedWords(before: string, after: string): string {
+  const a = wordsOf(before);
+  const b = wordsOf(after);
+  const runs: string[] = [];
+  let removed: string[] = [];
+  let added: string[] = [];
+  const close = () => {
+    const was = removed.length === 0 ? '' : `~~${cut(removed.join(' '), SIDE_WIDTH)}~~`;
+    const now = added.length === 0 ? '' : cut(added.join(' '), SIDE_WIDTH);
+    if (was !== '' && now !== '') runs.push(`${was} → ${now}`);
+    else if (was !== '') runs.push(was);
+    else if (now !== '') runs.push(`+${now}`);
+    removed = [];
+    added = [];
+  };
+  for (const op of diffLines(a, b)) {
+    if (op.op === ' ') close();
+    else if (op.op === '-') removed.push(a[op.a as number] as string);
+    else added.push(b[op.b as number] as string);
+  }
+  close();
+  return runs.join(' … ');
+}
+
+/**
+ * The changes of the expectations of a changed test, as the comment says
+ * them. A removed expectation and an added one that share half of the words
+ * of the longer one or more are one expectation that changed, said by its
+ * changed words; where several could pair, those that share the most words
+ * do. The others are said whole, a removed one struck, an added one after
+ * `+`. In order: the removed ones (changed or struck), then the added ones.
+ */
+export function expectationChanges(removed: readonly string[], added: readonly string[]): string[] {
+  const before = removed.map((text) => wordsOf(text));
+  const after = added.map((text) => wordsOf(text));
+  const candidates: Array<{ from: number; to: number; common: number }> = [];
+  before.slice(0, PAIRED).forEach((words, from) => {
+    after.slice(0, PAIRED).forEach((other, to) => {
+      const common = diffLines(words, other).filter((op) => op.op === ' ').length;
+      if (common > 0 && common * 2 >= Math.max(words.length, other.length)) candidates.push({ from, to, common });
+    });
+  });
+  candidates.sort((x, y) => y.common - x.common || x.from - y.from || x.to - y.to);
+  const pairs = new Map<number, number>();
+  const taken = new Set<number>();
+  for (const { from, to } of candidates) {
+    if (pairs.has(from) || taken.has(to)) continue;
+    pairs.set(from, to);
+    taken.add(to);
+  }
+  return [
+    ...removed.map((text, from) => {
+      const to = pairs.get(from);
+      return to === undefined ? `~~${cut(text, SIDE_WIDTH)}~~` : changedWords(text, added[to] as string);
+    }),
+    ...added.filter((_, to) => !taken.has(to)).map((text) => `+${cut(text, SIDE_WIDTH)}`),
+  ].filter((change) => change !== '');
+}
+
+/**
+ * What fails the check of the tests, for the top of the comment: the changes
+ * whose related tests the pull request neither added nor changed and whose
+ * note says no reason, and what to do about them. '' when there is none.
+ */
+export function untestedMarkdown(diff: TestDiff, data: MapData): string {
+  const entries = new Map((data.changes?.frames ?? []).map((entry) => [entry.id, entry]));
+  const untouched = diff.frames.filter((frame) => frame.untouched && frame.reason === undefined);
+  if (untouched.length === 0) return '';
+  const lines = [`**関連するテストに変更の無い実装の変更（${untouched.length}、CI を落とす）**`, ''];
+  lines.push(
+    ...listed(
+      untouched.map((frame) => {
+        const entry = entries.get(frame.frame);
+        const summary = entry?.summary[0] === undefined ? '' : `（${cell(entry.summary[0])}）`;
+        return `- ${frameWords(entry, frame.frame)}${summary}: 関連するテスト ${frame.related.length} 件、変更なし`;
+      }),
+    ),
+  );
+  lines.push('', `テストを足すか変えるか、変えないのが妥当なら、変更メモのその関数の節に \`テストを変えない理由: …\` の行を書いてください（\`pnpm --filter @maronn-openid-connect/map changes:draft\` が書く場所を空けます）。`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** The folded section of the tests (see the module comment). */
 export function testsMarkdown(diff: TestDiff, data: MapData, aspects: AspectTable): string {
   const labels = new Map(aspects.aspects.map((rule) => [rule.id, rule.label]));
   const entries = new Map((data.changes?.frames ?? []).map((entry) => [entry.id, entry]));
-  const lines: string[] = ['### テスト', ''];
   const kinds = Object.entries(diff.counts.byKind)
     .map(([kind, [before, after]]) => [kind as TestKind, after - before] as const)
     .filter(([, delta]) => delta !== 0)
     .map(([kind, delta]) => `${KIND_WORDS[kind] ?? kind} ${signed(delta)}`);
-  lines.push(`テストケース: ${diff.counts.before.toLocaleString('en-US')} → ${diff.counts.after.toLocaleString('en-US')}（${signed(diff.counts.after - diff.counts.before)}）${kinds.length === 0 ? '' : `  ${kinds.join('、')}`}`);
-  lines.push(`追加 ${diff.added.length} · 変更 ${diff.modified.length} · 名前の変更 ${diff.renamed.length} · 削除 ${diff.removed.length}`);
+  const lines: string[] = [
+    `<details><summary>テスト ${diff.counts.before.toLocaleString('en-US')} → ${diff.counts.after.toLocaleString('en-US')}（追加 ${diff.added.length} · 変更 ${diff.modified.length} · 名前の変更 ${diff.renamed.length} · 削除 ${diff.removed.length}）</summary>`,
+    '',
+    `テストケース: ${signed(diff.counts.after - diff.counts.before)}${kinds.length === 0 ? '' : `  ${kinds.join('、')}`}`,
+  ];
 
-  const untouched = diff.frames.filter((frame) => frame.untouched && frame.reason === undefined);
-  if (untouched.length > 0) {
-    lines.push('', `**関連するテストに変更の無い実装の変更（${untouched.length}、CI を落とす）**`, '');
-    lines.push(
-      ...listed(
-        untouched.map((frame) => {
-          const entry = entries.get(frame.frame);
-          const summary = entry?.summary[0] === undefined ? '' : `（${cell(entry.summary[0])}）`;
-          return `- ${frameWords(entry, frame.frame)}${summary}: 関連するテスト ${frame.related.length} 件、変更なし`;
-        }),
-      ),
-    );
-    lines.push('', `テストを足すか変えるか、変えないのが妥当なら、変更メモのその関数の節に \`テストを変えない理由: …\` の行を書いてください（\`pnpm --filter @maronn-openid-connect/map changes:draft\` が書く場所を空けます）。`);
-  }
   const reasoned = diff.frames.filter((frame) => frame.untouched && frame.reason !== undefined);
   if (reasoned.length > 0) {
     lines.push('', `**テストを変えない理由が書かれた変更（${reasoned.length}）**`, '');
@@ -144,7 +245,8 @@ export function testsMarkdown(diff: TestDiff, data: MapData, aspects: AspectTabl
         ...listed(
           group.changed.map((id) => {
             const change = diff.modified.find((candidate) => candidate.id === id);
-            const pair = change?.assertions === undefined ? '' : `（期待 ${[...change.assertions.removed.map((assertion) => `~~${cell(assertion.text)}~~`), ...change.assertions.added.map((assertion) => cell(assertion.text))].slice(0, 4).join(' → ')}）`;
+            const changes = change?.assertions === undefined ? [] : expectationChanges(change.assertions.removed.map((assertion) => cell(assertion.text)), change.assertions.added.map((assertion) => cell(assertion.text)));
+            const pair = changes.length === 0 ? '' : `（期待 ${changes.slice(0, SHOWN).map((words) => cut(words, CHANGE_WIDTH)).join(' / ')}${changes.length > SHOWN ? ` ほか ${changes.length - SHOWN}` : ''}）`;
             const before = diff.renamed.find(([, after]) => after === id)?.[0];
             const renamed = before === undefined ? '' : `（名前の変更: ${diff.cards[before]?.title ?? before} から）`;
             return `- ${testWords(diff.cards[id], id, labels)}${renamed}${pair}`;
@@ -168,6 +270,6 @@ export function testsMarkdown(diff: TestDiff, data: MapData, aspects: AspectTabl
   if (failures.length > 0) lines.push('', '**新しく外へ出る失敗を期待するテストが無いもの**', '', ...listed(failures));
   if (diff.removed.length > 0) lines.push('', `**削除されたテスト（${diff.removed.length}）**`, '', ...listed(testLines(diff.removed, diff, labels)));
   if (diff.renamed.length > 0) lines.push('', `**名前を変えたテスト（${diff.renamed.length}）**`, '', ...listed(diff.renamed.map(([before, after]) => `- ${diff.cards[before]?.title ?? before} → ${diff.cards[after]?.title ?? after}`)));
-  lines.push('', 'テストの結果とカバレッジの変化は Codecov のコメントにあります。');
+  lines.push('', '</details>');
   return `${lines.join('\n')}\n`;
 }

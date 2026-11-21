@@ -84,7 +84,7 @@ flowchart LR
 | ④ PR の差分と検査 | [04-pull-request.md](04-pull-request.md) | 変更前後のカードを比べ、関連するテストの変わらない変更を落とす | `packages/test-catalog/src`（`diff.ts`、`markdown.ts`、`draft.ts`、`build.ts` の `readBaseCatalog`）、`packages/map-analysis/src`（`changes.ts`、`notes.ts`、`check.ts`、`draft.ts`）、`apps/map/scripts/draft-notes.mjs`、`check-map.mjs` | [7](#7-pr-の差分と検査) |
 | ⑤ データを書き出す | [05-data.md](05-data.md) | テストのページが読むファイルを書く（ケースと、計測した実行のリクエストの例を含む） | `packages/test-catalog/src/build.ts`、`cases.ts`、`examples.ts`、`model.ts` | [4](#4-データの段への接続-2)、[8](#8-データの仕上げ) |
 | ⑥ テストのページ | [06-viewer.md](06-viewer.md) | データを読んで画面を出す | `apps/tests` | [9](#9-テストのページ) |
-| ⑦ ビルドと CI | [07-build-ci.md](07-build-ci.md) | 部を順に動かし、配り、検査する | 各 `package.json` の `scripts`、`apps/map/scripts/build-data.mjs`、`copy-tests-viewer.mjs`、`check-map.mjs`、`.github/workflows/ci.yml`、`map-preview.yml`、`codecov.yml`、`.github/scripts/` の `lint-e2e-fixtures.mjs`、`lint-features.mjs`、`lint-steps.mjs`、`lint-tests.mjs`、`verify-ci-gate.mjs` | [4](#4-データの段への接続-2)、[10](#10-ビルドと-ci) |
+| ⑦ ビルドと CI | [07-build-ci.md](07-build-ci.md) | 部を順に動かし、配り、検査する | 各 `package.json` の `scripts`、`apps/map/scripts/build-data.mjs`、`copy-tests-viewer.mjs`、`check-map.mjs`、`.github/workflows/ci.yml`、`map-preview.yml`、`codecov.yml`、`.github/scripts/` の `lint-e2e-fixtures.mjs`、`lint-features.mjs`、`lint-steps.mjs`、`lint-tests.mjs`、`verify-ci-gate.mjs`、`map-comment.mjs` | [4](#4-データの段への接続-2)、[10](#10-ビルドと-ci) |
 
 [付録](appendix.md) は、機能ファイルと訳の表（`tests/steps/ja.yaml`）の全文である。
 
@@ -238,7 +238,7 @@ flowchart TB
   P3 -- "カードと measured" --> P4
   P3 -- "カードと Joined" --> P5
   P4 -- "TestDiff" --> P5
-  P4 -- "テストの節" --> MD
+  P4 -- "alerts と sections" --> MD
   P4 -- "MapChanges.untested" --> CHK
   P5 -- "apps/tests/public/data" --> P6
 ```
@@ -256,7 +256,7 @@ flowchart TB
 | ③ | ④ | `result` と `reach` を置き、到達の分を対象と `evidence` に足したカードと、`measured` | オブジェクト |
 | ③ | ⑤ | 同じカードと、`Joined`（フレームとエンドポイントごとのテストと不足） | オブジェクト |
 | ④ | ⑤ | `TestDiff` | オブジェクト。<br>⑤ が `tests/diff.json` に書く |
-| ④ | 地図 | `changes.md` に足す節（`### テスト`）と `MapChanges.untested` | 文字列とフィールド。<br>地図が `changes.md` と `map.json` に書く |
+| ④ | 地図 | `changes.md` に入れる `alerts`（検査に落ちる変更のブロック）と `sections`（折りたたんだテストの節）と、`MapChanges.untested` | 文字列とフィールド。<br>地図が `changes.md` と `map.json` に書く |
 | ⑤ | ⑥ | `tests.json`、`outline.json`、`tests/by-file/<hash>.json`、`tests/sources/<hash>.json`、`tests/diff.json` | ファイル（`apps/tests/public/data`） |
 
 一回のビルドの中では、拡張の関数 `buildTests` が部を次の順に動かす。
@@ -281,7 +281,8 @@ CI の `test` ジョブが報告を書き、後の `map` ジョブのビルド�
 
 道具は、地図のビルド（`buildMap`）の拡張として、同じプロセスで動く。
 地図は解析を終えると、`map.json` を書く前に `BuildOptions.extend` を呼び、`BuildContext` を渡す。
-拡張が返す `{ sections }` は、地図が `changes.md` の末尾に足す。
+拡張が返す `{ alerts, sections }`（`BuildExtension`）は、地図が `changes.md` に入れる。
+`alerts` は `<details>` の外の変更メモの行の前に、`sections` は末尾に置く（[④-8-b](04-pull-request.md#-8-b-地図がすること)）。
 道具が読むのは、次の二つの図のフィールドに限る。
 
 ```mermaid
@@ -455,11 +456,13 @@ Next.js の関数は、Route Handler 12 個とサーバーアクション `login
 | `isAlias(symbol)` | `symbol.flags & SymbolFlags.Alias` が 0 でないか（import と再エクスポート） | 同じ |
 | `SyntaxKind`、`getLeadingCommentRanges` | TypeScript の同じ名前の列挙と関数 | 同じ |
 | `isTestPath(path)` | テストのファイルかを決める | [①-1-b](01-read.md#-1-b-テストファイルの分け方)、[④-1-b](04-pull-request.md#-1-b-変わったファイルの数え方) |
+| `isTestSupportPath(path)` | テスト支援のファイルかを決める | [①-1-c](01-read.md#-1-c-テスト支援のファイル) |
+| `diffLines(a, b)` | 列 `a` を `b` にする操作（残す、消す、足す）の列を、最長共通部分列から作る | [④-7-c](04-pull-request.md#-7-c-エンドポイントの組) |
 | `git(root, args)` | `ls-files`、`ls-tree`、`show` を走らせる | [①-1-a](01-read.md#-1-a-git-が知るファイル)、[④-3](04-pull-request.md#-3-変更前のカタログ) |
 | `readRoots` | `packages/cli/extract.json` から根を読む | [①-1-b](01-read.md#-1-b-テストファイルの分け方) |
 | `nodesOf(nodes)` | 木のノードを前順に平らにたどる | [⑤-6-b](05-data.md#-6-b-ステップのブロック) |
 | `writeHashed`、`removeStale` | 内容のハッシュの名前でファイルを書き、書かなかったものを消す | [⑤-3](05-data.md#-3-ハッシュの名前) |
-| `changesMarkdown` の `sections`、`checkMap` の `untested`、`writeDraft` の `tests` | 道具のために地図の解析に足した口。<br>PR のコメントのテストの節、地図の検査、変更メモの雛形のテストの欄に使う | [④-8](04-pull-request.md#-8-書き出しと検査)、[④-9](04-pull-request.md#-9-変更メモの雛形) |
+| `changesMarkdown` の `alerts` と `sections`、`checkMap` の `untested`、`writeDraft` の `tests` | 道具のために地図の解析に足した口。<br>PR のコメントの検査に落ちる変更のブロックとテストの節、地図の検査、変更メモの雛形のテストの欄に使う | [④-8](04-pull-request.md#-8-書き出しと検査)、[④-9](04-pull-request.md#-9-変更メモの雛形) |
 
 根（`AnalysisRoot`）の `project` は、根のディレクトリから上へたどって最初に `tsconfig.json` のあるディレクトリで、リポジトリからのパス（`packages/core`、`apps/hono`）である。
 
@@ -522,14 +525,14 @@ flowchart TB
 作るもの：
 
 - `buildMap` が `BuildOptions.extend` を受け取り、`map.json` を書く前に `BuildContext` を渡して呼ぶ
-- `changesMarkdown` が、拡張の返す `sections` を `changes.md` の末尾に置く
+- `changesMarkdown` が、拡張の返す `alerts` を `<details>` の外の変更メモの行の前に、`sections` を `changes.md` の末尾に置く
 - `Repository.cli` に `specReferencesOf(text)` を足す（`packages/map-analysis/src/cli.ts` が、CLI の `extract/functions.js` から読む）
 - 「[地図から使うもの](#地図から使うもの)」の関数と型を、`packages/map-analysis/src/index.ts` から export する
 
 確かめ方：
 
 - `pnpm --filter @maronn-openid-connect/map-analysis test` が通る
-- そのテストに、`changesMarkdown` が拡張の節を末尾に置くテストと、`isTestPath` のテストを含める
+- そのテストに、`changesMarkdown` が拡張の `alerts` を変更メモの行の前に置くテスト、拡張の節を末尾に置くテストと、`isTestPath` のテストを含める
 
 例：地図は関数 1,070 とエンドポイントの処理本体 18 を持つ。
 hono と Next.js のエンドポイントは 17 ずつである。
@@ -658,7 +661,7 @@ E2E は実行先ごとに 122 行で、spec が 121 行、`@http` のシナリ�
 確かめ方：
 
 - `map-analysis` の `notes.test.ts`、`check.test.ts`、`changes.test.ts` と、`test-catalog` の `join.test.ts` の `diffCatalogs` を書く
-- `MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map run data` の後、`apps/map/public/data/changes.md` の末尾に `### テスト` が付く
+- `MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map run data` の後、`apps/map/public/data/changes.md` の末尾に `<details><summary>テスト <前> → <後>（…）</summary>` のブロックが付く
 - 同じとき、`apps/tests/public/data/tests/diff.json` ができる
 - `pnpm --filter @maronn-openid-connect/map run check` が、`changes whose tests did not change without a reason` の数を出す
 
@@ -710,6 +713,7 @@ E2E は実行先ごとに 122 行で、spec が 121 行、`@http` のシナリ�
 - `apps/map/package.json` の `viewer` と、`build` のその段
 - `apps/map/scripts/copy-tests-viewer.mjs` と、そのテスト
 - `ci.yml` の `test` と `map` のジョブ、`map-preview.yml`、`codecov.yml`
+- `.github/scripts/map-comment.mjs` と、そのテスト（[⑦-7-a](07-build-ci.md#-7-a-pr-のコメント)）
 - `verify-ci-gate.mjs` の二つの検査（`assertMapFollowsTests`、`assertMapSharesPreviewGroup`）
 - `.changeset/test-map-no-release.md`
 
@@ -718,8 +722,8 @@ E2E は実行先ごとに 122 行で、spec が 121 行、`@http` のシナリ�
 - `pnpm --filter @maronn-openid-connect/map test`（`copy-tests-viewer.test.mjs` を含む）が通る
 - `pnpm run test:ci-gate`、`pnpm run test:supply-chain`、`pnpm run lint` が通る
 - `pnpm run build:map` の終わり近くに、`Copied the tests viewer to ...` と `Checked the map: ...` が出る（その後に配線の検査の JSON が出る）
-- プレビューの URL があるとき、地図のコメントに `この PR のテスト:` の行が付く
+- プレビューの URL があるとき、地図のコメントの `**開く**` の次の行に `[テスト](<URL>/tests/#/pr)` のリンクが付く
 - URL は、同じリポジトリの PR で、Cloudflare のシークレットがあるときに出る
-- デプロイが URL を返さなければ、その行は付かない
+- デプロイが URL を返さなければ、そのリンクは付かない
 
 例：`apps/map/dist/tests` に 1,319 ファイル、24.7 MB である（スクリプトの表示で、1 MB は 1,048,576 バイト）。

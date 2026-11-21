@@ -79,7 +79,7 @@ export interface BuildOptions {
    * More work on the analysis before map.json and changes.md are written
    * (the tests of packages/test-catalog): it may write files of its own (the
    * data of the tests viewer, apps/tests), add to the changes
-   * (MapChanges.untested), and returns the sections it adds to changes.md.
+   * (MapChanges.untested), and returns what it adds to changes.md.
    */
   extend?: (context: BuildContext) => Promise<BuildExtension | void> | BuildExtension | void;
 }
@@ -96,8 +96,9 @@ export interface BuildContext {
   log: string[];
 }
 
-/** What an extension adds to the build: sections of changes.md (each under its own `###` heading). */
+/** What an extension adds to changes.md: `alerts`, what fails a check of its own, shown before everything else; `sections`, the rest, each folding its lists in `<details>`. */
 export interface BuildExtension {
+  alerts?: string[];
   sections?: string[];
 }
 
@@ -320,7 +321,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   const extension = (await options.extend?.({ data, repository, ...(changes === undefined ? {} : { changes }), out: options.out, failures, log })) ?? {};
   writeFileSync(join(options.out, 'map.json'), JSON.stringify(data));
   const changesFile = join(options.out, 'changes.md');
-  const markdown = changes === undefined ? undefined : changesMarkdown(changes.changes, { sections: extension.sections ?? [] });
+  const markdown = changes === undefined ? undefined : changesMarkdown(changes.changes, { alerts: extension.alerts ?? [], sections: extension.sections ?? [] });
   if (markdown === undefined) rmSync(changesFile, { force: true });
   else writeFileSync(changesFile, markdown);
 

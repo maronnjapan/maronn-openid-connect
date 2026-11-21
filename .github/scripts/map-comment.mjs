@@ -23,6 +23,17 @@ export const MARKER = '<!-- oidc-provider-map-preview -->';
 /** The line of changes.md the links go to: LINKS_PLACE of packages/map-analysis/src/changes.ts. */
 export const LINKS_PLACE = '<!-- oidc-provider-map-links -->';
 
+/** The most characters GitHub keeps in the body of a comment. */
+export const MAX_BODY = 65_536;
+
+/** A line that opens a fold the comment writes, and one that closes it. */
+const OPENS = /^\s*<details[\s>]/;
+const CLOSES = /<\/details>\s*$/;
+
+/** What a fold holds when the whole comment does not fit, and the end of a body cut short. */
+const LEFT_OUT = '（コメントが GitHub の上限の 65,536 字を超えるので、中身を省いた）';
+const CUT = '\n\n（コメントが GitHub の上限の 65,536 字を超えるので、ここから後を省いた）';
+
 /** The links of the comment: the changes and the tests of the preview when it has a URL, and Codecov. */
 export function linkLines({ url, codecov }) {
   const preview = url ? [`[変更](${url}#changes)`, `[テスト](${url.replace(/\/$/, '')}/tests/#/pr)`] : [];
@@ -54,17 +65,43 @@ export function commentBody({ changes = '', buildFailed = false, codecov, ...bui
     : [];
   const links = linkLines({ url: build.url, codecov }).join('\n');
   const text = changes.trim();
-  const body = text.includes(LINKS_PLACE) ? text.replace(LINKS_PLACE, links) : [links, ...(text === '' ? [] : ['', text])].join('\n');
-  return [MARKER, '## OIDC Provider Map', '', ...warning, body, '', buildLine(build)].join('\n');
+  const lines = text === '' ? [] : text.split('\n');
+  const place = lines.indexOf(LINKS_PLACE);
+  const body = place === -1 ? [links, ...(text === '' ? [] : ['', text])] : [...lines.slice(0, place), links, ...lines.slice(place + 1)];
+  return fitted([MARKER, '## OIDC Provider Map', '', ...warning, ...body, '', buildLine(build)].join('\n'));
 }
 
-/** The lines of a Markdown text a reader sees with every `<details>` folded: those outside them, with the lines that open and close one. */
+/** How deep in the folds the comment is after a line: one deeper after a line that opens one (OPENS), one less after one that closes one (CLOSES). */
+function depthAfter(depth, line) {
+  return Math.max(0, depth + (OPENS.test(line) ? 1 : 0) - (CLOSES.test(line) ? 1 : 0));
+}
+
+/**
+ * A body GitHub keeps (MAX_BODY): when the whole does not fit, each fold
+ * keeps its summary and says its lines were left out, and what still does
+ * not fit is cut at the end.
+ */
+export function fitted(body) {
+  if (body.length <= MAX_BODY) return body;
+  const kept = [];
+  let depth = 0;
+  for (const line of body.split('\n')) {
+    const before = depth;
+    depth = depthAfter(depth, line);
+    if (before === 0 && depth > 0) kept.push(line, '', LEFT_OUT, '');
+    else if (before === 0 || depth === 0) kept.push(line);
+  }
+  const short = kept.join('\n');
+  return short.length <= MAX_BODY ? short : `${short.slice(0, MAX_BODY - CUT.length)}${CUT}`;
+}
+
+/** The lines of a comment a reader sees with its folds closed: those outside them, with the lines that open and close one (OPENS, CLOSES). */
 export function linesOutsideDetails(markdown) {
   let depth = 0;
   let outside = 0;
   for (const line of markdown.replace(/\n$/, '').split('\n')) {
     const before = depth;
-    depth = Math.max(0, depth + (line.match(/<details[\s>]/g) ?? []).length - (line.match(/<\/details>/g) ?? []).length);
+    depth = depthAfter(depth, line);
     if (before === 0 || depth === 0) outside += 1;
   }
   return outside;

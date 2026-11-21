@@ -813,19 +813,19 @@ flowchart TB
 | `RUN_URL` | `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}` |
 | `HEAD_SHA` | `github.event.pull_request.head.sha` |
 
-本文は、`commentBody` が次の配列を `\n` でつないだものである。
+本文は、`commentBody` が次の配列を `\n` でつなぎ、`fitted` を通したものである。
 `...` で広げる項は、条件を満たすときだけ入る。
 
 ```ts
-const body = [
+const body = fitted([
   '<!-- oidc-provider-map-preview -->',
   '## OIDC Provider Map',
   '',
   ...(BUILD_OUTCOME === 'failure' ? ['> [!WARNING]', `> ${WARNING}`, ''] : []),
-  changes.includes(LINKS_PLACE) ? changes.replace(LINKS_PLACE, links) : [links, ...(changes ? ['', changes] : [])].join('\n'),
+  ...(place === -1 ? [links, ...(changes ? ['', changes] : [])] : [...lines.slice(0, place), links, ...lines.slice(place + 1)]), // place: LINKS_PLACE だけの行
   '',
   `Built from ${HEAD_SHA} · [Run](${RUN_URL}) (artifact \`oidc-provider-map\`)${preview}`, // buildLine
-].join('\n');
+].join('\n'));
 ```
 
 | 名前 | 値 |
@@ -854,7 +854,8 @@ const body = [
 
 道具で足したのは、`links` の `[テスト]` と `[Codecov]` と、`WARNING` の「「関連するテストに変更の無い実装の変更」に …… を書くか、」の部分である。
 
-ステップは、`<details>` の外の行（どの `<details>` の中にも無い行と、`<details>` を開く行と閉じる行）を `linesOutsideDetails` で数え、`The comment has <n> lines outside <details>.` とログに出す。
+ステップは、`<details>` の外の行（どの `<details>` の中にも無い行と、`<details>` を開く行と閉じる行。行頭の `<details` で開き、行末の `</details>` で閉じる）を `linesOutsideDetails` で数え、`The comment has <n> lines outside <details>.` とログに出す。
+本文が GitHub の上限の 65,536 字を超えるときは、`fitted` が `<details>` の中身を一行の断りに替え、それでも超える分を末尾で切る。
 PR の最初の 100 件のコメント（`per_page: 100`）から、本文にコメントの目印 `<!-- oidc-provider-map-preview -->` を含むものを探す。
 あれば `updateComment` で書き換え、無ければ `createComment` で作る。
 `changes.md` の「関連するテストに変更の無い実装の変更」の節と、末尾の畳んだテストの節は ④ が作る。
@@ -911,7 +912,7 @@ The preview of this pull request was removed when it was closed (<理由>). The 
 - `.github/workflows/ci.yml`：`map`、ワークフローの `concurrency`
 - `.github/workflows/map-preview.yml`
 - `.github/scripts/map-preview.mjs`
-- `.github/scripts/map-comment.mjs`：`commentBody`、`linkLines`、`buildLine`、`linesOutsideDetails`
+- `.github/scripts/map-comment.mjs`：`commentBody`、`linkLines`、`buildLine`、`fitted`、`linesOutsideDetails`
 
 ## ⑦-8 lint
 

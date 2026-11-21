@@ -18,6 +18,7 @@ export { countTests, joinTests, reachableFrames, type Joined } from './join.js';
 export { fixedIds, lintTests, type TestLintViolation } from './lint.js';
 export { changedWords, testsMarkdown, untestedMarkdown } from './markdown.js';
 export { readRun, type JoinedRun } from './run.js';
+export { authOf, lineCode, pathOf, recordedRequests, requestParams, sentLine } from './sent.js';
 export { checkTranslations, japaneseKeyword, Translations, Vocabulary } from './vocabulary.js';
 export { expectationPhrases, sayExpectation } from './words.js';
 export type * from './model.js';

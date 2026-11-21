@@ -41,6 +41,7 @@ import { testsMarkdown, untestedMarkdown } from './markdown.js';
 import type { FlowTree, MapData } from '@maronn-openid-connect/map-analysis';
 import type { CodeRef, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { FrameLocator, readRun, type JoinedRun } from './run.js';
+import { recordedRequests } from './sent.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
 export interface TestBuildOptions {
@@ -55,6 +56,13 @@ export function withRun(tests: TestCase[], run: ReturnType<typeof readRun>): voi
   for (const test of tests) {
     const result = run.run.results[test.id];
     if (result !== undefined) test.result = result;
+    // The requests its own code sent, each at the line that sent it (sent.ts).
+    const exchanges = run.exchanges.get(test.id) ?? [];
+    if (exchanges.length > 0) {
+      const { recorded, unpinned } = recordedRequests(test, exchanges);
+      if (recorded.length > 0) test.recorded = recorded;
+      if (unpinned > 0) test.unpinned = unpinned;
+    }
     const reach = run.reach.get(test.id);
     if (reach === undefined) continue;
     test.reach = reach;
@@ -332,20 +340,21 @@ export function caseRequests(data: MapData, run: Pick<JoinedRun, 'exchanges'>, t
   };
   const texts = new Map<string, readonly string[] | undefined>();
   const frames = new FrameLocator(data);
-  return {
-    byEndpoint: requestsByEndpoint(run.exchanges, byId, endpointOf),
-    linesOf: (path) => {
-      if (!texts.has(path)) {
-        let lines: string[] | undefined;
-        try {
-          lines = read(path).split('\n');
-        } catch {
-          lines = undefined;
-        }
-        texts.set(path, lines);
+  const linesOf = (path: string): readonly string[] | undefined => {
+    if (!texts.has(path)) {
+      let lines: string[] | undefined;
+      try {
+        lines = read(path).split('\n');
+      } catch {
+        lines = undefined;
       }
-      return texts.get(path);
-    },
+      texts.set(path, lines);
+    }
+    return texts.get(path);
+  };
+  return {
+    byEndpoint: requestsByEndpoint(run.exchanges, byId, endpointOf, linesOf),
+    linesOf,
     frameAt: (path, line) => frames.frameAt(path, line),
   };
 }
@@ -460,7 +469,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   if (out !== undefined) {
     const writtenCases = new Set<string>();
     const requests = run === undefined || run.exchanges.size === 0 ? undefined : caseRequests(data, run, tests, endpoints, read);
-    const counts = { read: 0, took: 0 };
+    const counts = { read: 0, took: 0, unpinned: 0 };
     const found = [...endpointCases(data, repository.head.trees, context.failures, joined, requests, counts)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     for (const [key, endpoint] of found) {
       cases[key] = `./data/tests/cases/${writeHashed(join(out, 'tests', 'cases'), key, JSON.stringify(endpoint), writtenCases)}`;
@@ -472,7 +481,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
       const toEndpoints = [...requests.byEndpoint.values()].reduce((sum, list) => sum + list.length, 0);
       const toCases = found.reduce((sum, [key]) => sum + (requests.byEndpoint.get(key)?.length ?? 0), 0);
       context.log.push(
-        `tests: ${sent} requests of ${run.exchanges.size} tests (unmatched: ${run.unmatched.exchanges} lines), ${toEndpoints} to an endpoint, ${toCases} to one with cases (${counts.read} answered and not overlapped), ${counts.took} took a case; ` +
+        `tests: ${sent} requests of ${run.exchanges.size} tests (unmatched: ${run.unmatched.exchanges} lines), ${toEndpoints} to an endpoint, ${toCases} to one with cases (${counts.read} answered, not overlapped and sent by a line of their test, ${counts.unpinned} sent by none), ${counts.took} took a case; ` +
           `${all.filter((item) => (item.examples ?? []).length > 0).length} of ${all.length} cases with examples`,
       );
     }

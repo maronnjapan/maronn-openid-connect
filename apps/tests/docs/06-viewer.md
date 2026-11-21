@@ -1894,10 +1894,12 @@ Next.js の `token` では、`parse-request` など 7 個のステップが「�
 ケースを選ぶと、右の欄のいちばん上に、そのケースを一つのリクエストが通る流れとして出す（`CaseFlow`）。
 上から ① リクエスト、② ステップ、③ 結果の順で、三つを下向きの矢印でつなぐ。
 例は、計測した API テストが送ったリクエストのうち、そのケースの道筋を通ったものである（ケースの `examples`、[⑤-11](05-data.md#-11-ケースのファイル)）。
+例にするのは、テストのコードのどの行が送ったかが記録から分かるリクエストだけで、例はその行と文を持つ（[⑤-11-b](05-data.md#送った行)）。
+だから、① に出すリクエストは、名前を出したテストのコードのその行が送ったものと必ず一致する。
 
 ```mermaid
 flowchart TB
-  R["① リクエスト<br/>送ったテスト、例 1 / 3<br/>POST /token HTTP/1.1 …"]
+  R["① リクエスト<br/>送ったテスト、例 1 / 3<br/>送った行とその文<br/>POST /token HTTP/1.1 …"]
   S["② ステップ<br/>番号の箱を矢印でつなぐ<br/>種類、読む → 渡す<br/>判断と通った側、実行した関数"]
   E["③ 結果<br/>状態とエラーコード<br/>HTTP/1.1 200 OK …"]
   R --> S --> E
@@ -1905,7 +1907,7 @@ flowchart TB
 
 | 部分 | 例があるとき | 例が無いとき |
 |---|---|---|
-| ① リクエスト | 送ったテスト（結果の印、種類、言語の切り替えに従う題。選ぶとパネルに開く）。<br>例が二つ以上なら「‹ 例 1 / 3 ›」。最初の例の ‹ と最後の例の › は `aria-disabled` で薄くし、押しても何もしない（`disabled` にしないので、キーボードで押していたボタンからフォーカスが外れない）。<br>`exampleCount` が例の数より多ければ「この道筋を通ったリクエストは全部で <n> 件」。<br>その下にリクエストのブロック（下の表） | 「このケースを通ったリクエストの例はありません。」と、無い理由（下の表） |
+| ① リクエスト | 送ったテスト（結果の印、種類、言語の切り替えに従う題。選ぶとパネルに開き、送った行に印を付ける）。<br>その下に、送った行（`pipeline.test.ts 378 行目`。押すと同じくパネルに開く）とその文（`const whileLoggedIn = await refresh(first.refresh_token ?? '');`）。<br>例が二つ以上なら「‹ 例 1 / 3 ›」。最初の例の ‹ と最後の例の › は `aria-disabled` で薄くし、押しても何もしない（`disabled` にしないので、キーボードで押していたボタンからフォーカスが外れない）。<br>`exampleCount` が例の数より多ければ「この道筋を通ったリクエストは全部で <n> 件」。<br>その下にリクエストのブロック（下の表） | 「このケースを通ったリクエストの例はありません。」と、無い理由（下の表） |
 | ② ステップ | 例の `steps`。<br>判断は、そのリクエストで計測した側（`decisions`）。<br>実行した関数（`calls`）は名前で並べ、選ぶとその関数のコードをパネルに開く | ケースの `steps`。<br>失敗のステップ（`failure.step`）は「ここで失敗」とエラー、最後のステップは、応答で終わるケースなら「ここで応答」、エラーの応答で終わるケースなら「失敗を受け取ってエラーで応答」。<br>判断は、ケースの `conditions` をそのステップに置く。ステップの無い条件は、ステップの上に「ステップの外の判断」として出す |
 | ③ 結果 | 状態の行（`200 OK` と「応答した」「リダイレクトで応答した」「エラーで応答した」、OAuth のエラーコードがあれば `error: invalid_grant`）。<br>その下に応答のブロック | 終わり方の言葉（`resultWords`：応答して終わる、失敗を受け取り、エラーで応答する（`failure.code`）、失敗がエンドポイントの外へ出る）と、失敗ならエラーと投げる関数 |
 
@@ -1940,8 +1942,8 @@ flowchart TB
 | 理由 | 条件 | 言うこと |
 |---|---|---|
 | `unmeasured` | `measured` が偽 | API テストを計測して実行したビルド（`MARONN_REACH=1`）では、この道筋を通った実際のリクエストと応答をここに出します |
-| `unrecorded` | `measured` が真で、エンドポイントのどのケースにも例が無い | 計測した実行に、このエンドポイントへの API テストのリクエストの記録はありません |
-| `untaken` | `measured` が真で、ほかのケースには例がある | 計測した API テストのリクエストに、この道筋を通ったものはありませんでした |
+| `unrecorded` | `measured` が真で、エンドポイントのどのケースにも例が無い | 計測した実行に、このエンドポイントへ API テストのコードが送ったリクエストの記録はありません（例にするのは、送ったテストの行が記録から分かるリクエストだけです） |
+| `untaken` | `measured` が真で、ほかのケースには例がある | API テストのコードが送ったリクエスト（送った行が記録から分かるもの）に、この道筋を通ったものはありませんでした |
 
 リクエストと応答は、RFC の例の形のブロックで出す（`exchange.ts` の `requestBlock`、`responseBlock`）。
 
@@ -1960,7 +1962,7 @@ flowchart TB
 
 実装：
 
-- `apps/tests/src/components/CaseFlow.tsx`：`CaseFlow`、`RequestPart`、`StepsPart`、`WayStepBox`、`ResultPart`、`HttpView`、`Lines`、`lineName`、`LongValue`、`LongControls`、`Expanded`、`SentBy`、`FunctionRef`
+- `apps/tests/src/components/CaseFlow.tsx`：`CaseFlow`、`RequestPart`、`StepsPart`、`WayStepBox`、`ResultPart`、`HttpView`、`Lines`、`lineName`、`LongValue`、`LongControls`、`Expanded`、`SentBy`、`SentLine`、`FunctionRef`
 - `apps/tests/src/lib/exchange.ts`：`requestBlock`、`responseBlock`、`formLines`、`jsonLines`、`valuePieces`、`shorten`、`decodeJwt`、`basicCredentials`、`headerName`、`reasonPhrase`、`bodyKind`、`errorCodeOf`、`statusTone`、`previewOf`
 - `apps/tests/src/lib/cases.ts`：`waySteps`、`looseConditions`、`noExampleReason`、`resultWords`、`STEP_KIND_LABELS`、`HOW_LABELS`
 
@@ -2791,19 +2793,19 @@ flowchart TB
 
 頭の後に、PR が変えたテストなら「この PR での変更」の欄を置く（[⑥-13-f](#-13-f-テストの詳細の印)）。
 
-### ⑥-11-b 確かめていることとリクエスト
+### ⑥-11-b 確かめていることと送ったリクエスト
 
 カードが届くと、頭の下に二つの節を出す。
 
 | 節 | 中身 | 規則 |
 |---|---|---|
 | 確かめていること | シナリオの `Then` のステップ（`type: 'outcome'`）。<br>無ければ `assertions` | それぞれ ✓ と `textOf(line, lang)` を `Words` で。<br>最初の 6 件（`FIRST_CHECKS`）を出し、「すべて表示（<n>）」で全部、「最初の 6 件だけ表示」で戻す。<br>一つも無ければ節を出さない |
-| リクエスト | カードの `requests` | それぞれ `METHOD path`（path が空なら METHOD だけ）、ほかのルートの札、添え書き。<br>一つも無ければ節を出さない |
+| 送ったリクエスト | カードの `recorded`（計測した実行でテストのコードが送ったもの、[⑤-11-b](05-data.md#送った行)） | 送った順に一行ずつ、送った行のボタン（`378 行目`）、`METHOD path`（クエリを除く）、パラメータ（`name=value` を ` · ` でつなぐ。36 文字を超える値は真ん中を縮め、全体は `title`）、`Authorization` の要約（`Basic client-1`）、応答の状態（`→ 200`。400 以上と、送信が投げたときの `→ 例外` は赤）。<br>`unpinned` があれば、その数と「このテストのコードのどの行が送ったかを記録から言えないので、表示していません」。<br>どちらも無ければ節を出さない |
 
-- 添え書きは、`params` を `, ` でつないだものと `auth` を、` · ` でつないだものである
-- 札（`ROUTE_LABELS`）を付けるのは、API テストの、`endpoint` を持たないリクエストである
-- そのリクエストの `route` が無ければ、`path` が空なら `unknown`、ほかは `app` とする
-- 各リクエストの `title` は `<METHOD> <path> <添え書き>（<ROUTE_NOTES>）` である
+- コードから読んだリクエスト（カードの `requests`）は、この節に出さない。<br>送った値も、ヘルパーの中で組み立てたリクエストも分からず、実際に送ったものと食い違うことがあるからである（コードを読む規則は [①-5-e](01-read.md#-5-e-リクエストの行き先)。テストの対象の行には使う）
+- 計測した実行の無いビルドと、記録の無いテスト（Next.js、E2E、シナリオ）には、この節が無い
+- 送った行のボタンを押すと、その行に印を付け（`aria-pressed`、行の地を `--accent-soft`）、コードのタブを「テスト」にして、コードの節を見える位置まで動かす。<br>コードの行も同じ印（`line-spot`）を付け、コードの箱をその行まで送る
+- URL の `line`（`?test=<id>&line=378`。ケースの例の「送ったテスト」と送った行が付ける）も、同じ行に印を付ける（ページは動かさず、コードの箱だけを送る）
 - PR が加えた期待と外した期待の印は、[⑥-13-f](#-13-f-テストの詳細の印) のとおりである
 
 `textOf(line, lang)` は、言語が `ja` で `ja` が空でなければ `ja`、ほかは `text` である。

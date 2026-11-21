@@ -210,7 +210,7 @@ function helpersTab(entry: TestEntry, card: TestCase | undefined): { label: stri
   return { label: helpers > 0 ? `ステップ ${steps} · ヘルパー ${helpers}` : `ステップ（${steps}）`, quiet: steps + helpers === 0 };
 }
 
-export function TestCode({ entry, card, lines, state }: { entry: TestEntry; card: TestCase | Error | undefined; lines?: [number, number]; state: CodeState }) {
+export function TestCode({ entry, card, lines, spot, state }: { entry: TestEntry; card: TestCase | Error | undefined; lines?: [number, number]; spot?: number; state: CodeState }) {
   const panelId = `code-${useId().replace(/[^\w-]/g, '')}`;
   const area = useRef<HTMLElement>(null);
   const full = card instanceof Error ? undefined : card;
@@ -254,7 +254,7 @@ export function TestCode({ entry, card, lines, state }: { entry: TestEntry; card
       <h3>コード</h3>
       <Tabs label="コード" options={options} value={tab} onChange={state.onTab} panelId={panelId} />
       <div className="tab-panel" role="tabpanel" id={panelId} aria-labelledby={`${panelId}-${tab}`}>
-        {tab === 'test' && <CodeView path={entry.file} lines={lines} />}
+        {tab === 'test' && <CodeView path={entry.file} lines={lines} spot={spot} />}
         {tab === 'target' && <TargetTab entry={entry} card={full} state={state} />}
         {tab === 'helpers' && <Helpers card={card} />}
       </div>

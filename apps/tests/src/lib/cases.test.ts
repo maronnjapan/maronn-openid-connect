@@ -163,6 +163,8 @@ describe('unitCounts', () => {
 describe('waySteps', () => {
   const example: CaseExample = {
     test: 'api-401',
+    line: 12,
+    code: "const response = await app.request(formPost('/token', fields));",
     request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [] },
     response: { status: 401, headers: [] },
     steps: [

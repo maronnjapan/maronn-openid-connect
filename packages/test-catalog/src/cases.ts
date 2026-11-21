@@ -157,7 +157,7 @@ export interface CaseRequests {
  * requests of the measured run that took them, and `counts` adds up what
  * that join saw.
  */
-export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0 }): Map<string, EndpointCases> {
+export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 }): Map<string, EndpointCases> {
   const plain = new Map([...trees].map(([id, built]) => [id, built.tree]));
   const treeOf = (id: string) => plain.get(id);
   const nameOf = (id: string) => data.functions[id]?.name ?? plain.get(id)?.name ?? id;
@@ -178,6 +178,7 @@ export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree
         const seen = attachExamples(ways, sent, { tree: built.tree, stepFunctions, callsOf: (frame) => data.functions[frame]?.calls ?? data.bodies[frame]?.calls ?? [], own }, sources);
         counts.read += seen.read;
         counts.took += seen.took;
+        counts.unpinned += seen.unpinned;
       }
       if (ways.length > 0) found.set(key, { version: 1, key, cases: ways.map((way) => way.made) });
     }

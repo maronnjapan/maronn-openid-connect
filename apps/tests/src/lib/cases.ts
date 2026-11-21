@@ -353,8 +353,8 @@ export function noExampleReason(measured: boolean, cases: readonly EndpointCase[
 /** What the page says where a case has no example request, by why (NoExample). */
 export const NO_EXAMPLE_NOTES: Record<NoExample, string> = {
   unmeasured: 'API テストを計測して実行したビルド（`MARONN_REACH=1`）では、この道筋を通った実際のリクエストと応答をここに出します。',
-  unrecorded: '計測した実行に、このエンドポイントへの API テストのリクエストの記録はありません。',
-  untaken: '計測した API テストのリクエストに、この道筋を通ったものはありませんでした。',
+  unrecorded: '計測した実行に、このエンドポイントへ API テストのコードが送ったリクエストの記録はありません（例にするのは、送ったテストの行が記録から分かるリクエストだけです）。',
+  untaken: 'API テストのコードが送ったリクエスト（送った行が記録から分かるもの）に、この道筋を通ったものはありませんでした。',
 };
 
 /** How a case ends, in words, for its result without an example: with the OAuth error code of a failure when it has one. */

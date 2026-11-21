@@ -196,7 +196,7 @@ HTTP で送るテスト（`app.request(...)`）でも、処理本体を直接呼
 
 ### いまあるもの
 
-- `packages/test-reach/src/exchanges.js`：hono のアプリに送ったリクエストごとに、リクエスト、応答、その間に計数が上がった文・分岐・関数（元のソースのファイル、行、桁）を控える。同じテストのリクエストが重なって走ったものには `overlapped` の印が付く
+- `packages/test-reach/src/exchanges.js`：hono のアプリに送ったリクエストごとに、リクエスト、応答、その間に計数が上がった文・分岐・関数（元のソースのファイル、行、桁）を控える。同じテストのリクエストが重なって走ったものには `overlapped` の印が付く。送った呼び出しの履歴（`from`、ファイルと行）も控え、カタログはそこからテストのコードのどの行が送ったかを求める（`packages/test-catalog/src/sent.ts`）。行の分からないリクエストは、例にもテストの「送ったリクエスト」にも出さない。想定リクエストの代表の例も同じ規則に従う
 - `apps/hono/src/test-support/record-exchanges.ts`：計測の実行でだけ、`vi.mock('hono')` で `Hono` を記録するサブクラスに差し替える。`apps/hono/vitest.config.ts` が `testReports()` の `exchanges` に渡す
 - 書き出しは `exchanges/vitest-<pkg>.jsonl` である（テストごとに一行、`RawExchanges`）
 - `packages/test-catalog/src/examples.ts`：記録を木に照らして読む。`RequestRun` が一回分の動いた行を持ち、`nodeRan()` がノードが動いたかを、`seenSide()` が決定の通った側を答える。`ExampleStep` は、通ったステップごとに `how`（`ran`、`answered`、`failed`、`caught`）、通った側、実行した関数、エラーを持つ

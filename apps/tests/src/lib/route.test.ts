@@ -64,6 +64,13 @@ describe('parseHash', () => {
     expect(parseHash('#/test/x?code=fn%3Aa')).toEqual({ page: 'test', test: 'x' });
   });
 
+  it('should read the line a test in the panel points at, only with the test and as a line number', () => {
+    expect(parseHash('#/endpoint/hono/token?cases=1&case=c1&test=a&line=378')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', cases: true, case: 'c1', test: 'a', line: 378 });
+    expect([parseHash('#/endpoint/hono/token?test=a&line=0'), parseHash('#/endpoint/hono/token?test=a&line=3.5'), parseHash('#/endpoint/hono/token?test=a&line=x')]).toEqual(Array(3).fill({ page: 'endpoint', source: 'hono', endpoint: 'token', test: 'a' }));
+    expect(parseHash('#/endpoint/hono/token?code=fn%3Aa&line=4')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', code: 'fn:a' });
+    expect(formatHash({ page: 'endpoint', source: 'hono', endpoint: 'token', case: 'c1', test: 'a', line: 378 })).toBe('#/endpoint/hono/token?case=c1&test=a&line=378');
+  });
+
   it('should keep only the changed tests of a list that has the switch, and read nothing else as on', () => {
     expect(parseHash('#/endpoint/hono/token?changed=1')).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', changed: true });
     expect(parseHash('#/kind/unit?pkg=hono&changed=1')).toEqual({ page: 'kind', testKind: 'unit', pkg: 'hono', changed: true });
@@ -137,7 +144,7 @@ describe('samePage, panelOf and withoutPanel', () => {
   });
 
   it('should close the panel and keep the filters', () => {
-    expect(withoutPanel({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit', test: 'x' })).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit' });
+    expect(withoutPanel({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit', test: 'x', line: 4 })).toEqual({ page: 'endpoint', source: 'hono', endpoint: 'token', kind: 'unit' });
     expect(withoutPanel({ page: 'kind', testKind: 'unit', pkg: 'hono', code: 'fn:a' })).toEqual({ page: 'kind', testKind: 'unit', pkg: 'hono' });
     expect(withoutPanel({ page: 'test', test: 'x' })).toEqual({ page: 'home' });
   });

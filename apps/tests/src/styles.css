@@ -1480,17 +1480,72 @@ button.row:hover,
   font-size: 14px;
 }
 
-/* One line a request: the method, the path, then its parameters, cut at the end of the line. */
+/* One line a request: the line of the test that sent it, then the method, the path, its parameters, how it authenticated and the status; long parameters wrap. */
 .requests li {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.requests li.request-spot {
+  background: var(--accent-soft);
+}
+
+.request-line {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.request-line[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.request-what {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .request-params {
   margin-left: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.request-param + .request-param::before {
+  content: ' · ';
+  color: var(--muted);
+}
+
+.request-param-name {
+  color: var(--text-2);
+}
+
+.request-auth,
+.request-status {
+  margin-left: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.request-status.request-error,
+.request-status.request-thrown {
+  color: var(--failed);
+}
+
+.request-unpinned {
+  margin-top: 6px;
 }
 
 .result-line {
@@ -1653,6 +1708,19 @@ button.row:hover,
 .line-on {
   background: var(--code-on);
   box-shadow: inset 3px 0 0 var(--code-on-edge);
+}
+
+/* The line that sent a request (an example of a case, a request of the test): the accent, stronger than the test's lines. */
+.line-spot,
+.line-on.line-spot {
+  background: var(--accent-soft);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+.line-spot .line-no {
+  color: var(--accent-text);
+  font-weight: 600;
+  opacity: 1;
 }
 
 /* Ownership is a labelled violet rail; the blue selected-test range stays visible. */
@@ -4557,6 +4625,43 @@ button.code-item-head:hover,
 
 .example-test-title {
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The line of the test that sent the request, and its code: what the reader finds in the test's code. */
+.example-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 8px 0 6px;
+  font-size: 13px;
+}
+
+.example-line-at {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.example-line-at:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.example-line-code {
+  min-width: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12.5px;
   overflow-wrap: anywhere;
 }
 

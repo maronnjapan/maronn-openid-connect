@@ -3,8 +3,9 @@
  * range of it (a test with a little context, a function, an endpoint, a
  * helper, a step definition) or the whole file with the range marked and
  * scrolled into view; with `mark` (the file page) the whole file with a
- * test's lines marked. The text of a file is fetched once, when a view first
- * needs it, and highlighted once.
+ * test's lines marked; with `spot` one line pointed at besides (the line of
+ * a test that sent a request) and scrolled to. The text of a file is fetched
+ * once, when a view first needs it, and highlighted once.
  */
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { codeWindow, inRange, type CodeMode } from '../lib/lines';
@@ -40,7 +41,7 @@ function linesOf(path: string, text: string): Token[][] {
   return lines;
 }
 
-export function CodeView({ path, lines, mark, fill, scope = 'test', caption }: { path: string; lines?: [number, number]; mark?: [number, number]; fill?: boolean; scope?: CodeScope; caption?: ReactNode }) {
+export function CodeView({ path, lines, mark, spot, fill, scope = 'test', caption }: { path: string; lines?: [number, number]; mark?: [number, number]; spot?: number; fill?: boolean; scope?: CodeScope; caption?: ReactNode }) {
   const source = useSource(path);
   const { db } = useApp();
   const [mode, setMode] = useState<CodeMode>('range');
@@ -51,18 +52,18 @@ export function CodeView({ path, lines, mark, fill, scope = 'test', caption }: {
   const from = span?.mark?.[0];
   const to = span?.mark?.[1];
 
-  // Scroll the box, not the page, to put the first marked line near its top: measured in the box, wherever the box is (the panel is fixed).
+  // Scroll the box, not the page, to put the line pointed at (else the first marked line) near its top: measured in the box, wherever the box is (the panel is fixed).
   useLayoutEffect(() => {
     const box = body.current;
     if (box === null) return;
-    const first = box.querySelector<HTMLElement>('.line-on');
+    const first = box.querySelector<HTMLElement>('.line-spot') ?? box.querySelector<HTMLElement>('.line-on');
     if (first === null) {
       box.scrollTop = 0;
       return;
     }
     const offset = first.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
     box.scrollTop = Math.max(offset - 48, 0);
-  }, [from, to, shown, tokens]);
+  }, [from, to, spot, shown, tokens]);
 
   if (source instanceof Error) {
     return (
@@ -94,10 +95,11 @@ export function CodeView({ path, lines, mark, fill, scope = 'test', caption }: {
               const number = span.start + offset;
               const ranges = featuresAt(source?.features, number);
               return (
-                <div key={number} className={`line${inRange(number, span.mark) ? ' line-on' : ''}${ranges.length > 0 ? ' line-feature' : ''}`} title={ranges.map((range) => `${range.feature} の実装。${featureCondition(db.features.find((feature) => feature.id === range.feature), range.feature)}`).join(' · ') || undefined}>
+                <div key={number} className={`line${inRange(number, span.mark) ? ' line-on' : ''}${number === spot ? ' line-spot' : ''}${ranges.length > 0 ? ' line-feature' : ''}`} title={number === spot ? 'リクエストを送った行' : ranges.map((range) => `${range.feature} の実装。${featureCondition(db.features.find((feature) => feature.id === range.feature), range.feature)}`).join(' · ') || undefined}>
                   <span className="line-no" aria-hidden="true">
                     {number}
                   </span>
+                  {number === spot && <span className="visually-hidden">リクエストを送った行: </span>}
                   <span className="line-text">
                     {line.map((token, index) =>
                       token.type === 'plain' ? (

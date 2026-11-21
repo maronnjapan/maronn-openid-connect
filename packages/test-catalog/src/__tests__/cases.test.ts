@@ -183,16 +183,30 @@ describe('endpointCases', () => {
     };
     const own = new Map([...trees, ['endpoint:token', { tree: root }], [VERIFY, { tree: { ...verify, file: 'core:client-auth.ts' } }]]);
     const sourced = { ...data, sources: { 'hono:pipeline.ts': { path: 'apps/hono/src/pipeline.ts', url: '' }, 'core:client-auth.ts': { path: 'packages/core/src/client-auth.ts', url: '' } } } as unknown as MapData;
-    const counts = { read: 0, took: 0 };
-    const requests = { byEndpoint: new Map([['hono:token', [{ test: card('api-401', { kind: 'api', root: 'hono' }), exchange: rejected }]]]), linesOf: (path: string) => texts[path], frameAt: (path: string) => (path === 'packages/core/src/client-auth.ts' ? VERIFY : undefined) };
+    const counts = { read: 0, took: 0, unpinned: 0 };
+    const sent = { line: 12, code: "const response = await app.request(formPost('/token', fields));" };
+    const requests = {
+      byEndpoint: new Map([
+        [
+          'hono:token',
+          [
+            { test: card('api-401', { kind: 'api', root: 'hono' }), exchange: rejected, sent },
+            // The same request sent by no line of its test (a hook, a framework that forwarded it): never an example.
+            { test: card('api-forwarded', { kind: 'api', root: 'hono' }), exchange: rejected },
+          ],
+        ],
+      ]),
+      linesOf: (path: string) => texts[path],
+      frameAt: (path: string) => (path === 'packages/core/src/client-auth.ts' ? VERIFY : undefined),
+    };
     const found = endpointCases(sourced, own, failures, joined, requests, counts);
     const failure = found.get('hono:token')?.cases.find((item) => item.kind === 'failure');
-    expect([failure?.exampleCount, failure?.examples?.[0]?.test, failure?.examples?.[0]?.response.status, failure?.examples?.[0]?.steps.map((item) => [item.id, item.how, item.error]), counts]).toEqual([
+    expect([failure?.exampleCount, failure?.examples?.map((example) => [example.test, example.line, example.code]), failure?.examples?.[0]?.response.status, failure?.examples?.[0]?.steps.map((item) => [item.id, item.how, item.error]), counts]).toEqual([
       1,
-      'api-401',
+      [['api-401', 12, "const response = await app.request(formPost('/token', fields));"]],
       401,
       [['authenticate-client', 'failed', 'TokenError(invalid_client)'], ['respond-error', 'caught', undefined]],
-      { read: 1, took: 1 },
+      { read: 1, took: 1, unpinned: 1 },
     ]);
   });
 });

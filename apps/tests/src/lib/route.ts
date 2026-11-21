@@ -18,7 +18,9 @@
  * one), `pkg` chooses the package of the unit tests, and `test` opens a test
  * in the panel over it (`code` the code of a function, an endpoint or a step,
  * see CodeTarget), so the back button closes the panel and a link opens the
- * list with the panel shown.
+ * list with the panel shown. With `test`, `line` points at a line of its
+ * code: the line that sent a request (an example of a case, a request it
+ * sent).
  */
 
 export type Source = 'hono' | 'nextjs';
@@ -61,6 +63,8 @@ export interface View {
   file?: string;
   /** On the test page, the test it shows; on a list, the test the panel over it shows. */
   test?: string;
+  /** With a test in the panel, the line of its code it points at (the line that sent a request), from 1. */
+  line?: number;
   /** On a list, the code the panel over it shows (CodeTarget, written by formatCode). */
   code?: string;
   /** The words of the search page. */
@@ -167,8 +171,11 @@ export function parseHash(hash: string): View {
 
   const test = query.get('test');
   const code = query.get('code') ?? undefined;
-  if (test !== null && test !== '') view.test = test;
-  else if (parseCode(code) !== undefined) view.code = code;
+  if (test !== null && test !== '') {
+    view.test = test;
+    const line = Number(query.get('line'));
+    if (Number.isInteger(line) && line > 0) view.line = line;
+  } else if (parseCode(code) !== undefined) view.code = code;
   // A kind page is the tests of one kind: it has no filter by kind.
   const kind = view.page === 'kind' ? undefined : oneOf(KIND_FILTERS, query.get('kind'));
   if (kind !== undefined && kind !== 'all') view.kind = kind;
@@ -226,8 +233,10 @@ export function formatHash(view: View): string {
   if (view.kind !== undefined && view.kind !== 'all' && view.page !== 'kind') query.set('kind', view.kind);
   if (view.outcome !== undefined && view.outcome !== 'both') query.set('outcome', view.outcome);
   if (view.changed === true && hasChangedFilter(view.page)) query.set('changed', '1');
-  if (view.test !== undefined) query.set('test', view.test);
-  else if (view.code !== undefined) query.set('code', view.code);
+  if (view.test !== undefined) {
+    query.set('test', view.test);
+    if (view.line !== undefined) query.set('line', String(view.line));
+  } else if (view.code !== undefined) query.set('code', view.code);
   const rest = query.toString();
   return `#${path}${rest === '' ? '' : `?${rest}`}`;
 }
@@ -255,6 +264,7 @@ export function withoutPanel(view: View): View {
   if (view.page === 'test') return HOME;
   const next = { ...view };
   delete next.test;
+  delete next.line;
   delete next.code;
   return next;
 }

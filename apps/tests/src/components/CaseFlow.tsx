@@ -1,7 +1,9 @@
 /**
  * A case as a request going through the endpoint, top to bottom, the way
  * the RFCs tell a flow: ① the request a measured API test sent that took
- * the case's way (例 1 / 3 when several did), ② the steps it went through,
+ * the case's way (例 1 / 3 when several did), with the line of the test's
+ * code that sent it and the code of that line (a request no line of its
+ * test sent is never an example: packages/test-catalog sent.ts), ② the steps it went through,
  * in order, as a vertical flow of numbered boxes joined by arrows, each with
  * its kind, the values it reads and hands on, what happened in it (ここで
  * 応答, ここで失敗, …), the decisions it met and the functions it ran, and
@@ -173,17 +175,33 @@ function HttpView({ block, label }: { block: HttpBlock; label: string }) {
   );
 }
 
-/** The test that sent a request: its result, its kind and its title in the page's language; choosing it opens the test in the panel. */
-function SentBy({ id }: { id: string }) {
+/** The test that sent a request: its result, its kind and its title in the page's language; choosing it opens the test in the panel, the line that sent the request marked in its code. */
+function SentBy({ id, line }: { id: string; line: number }) {
   const { db, view, go, lang } = useApp();
   const entry = db.byId.get(id);
   if (entry === undefined) return <span className="muted">テスト {id}（一覧にありません）</span>;
   return (
-    <button type="button" className="example-test" title={`${entry.file}:${entry.lines[0]}`} onClick={() => go({ ...withoutPanel(view), test: id })}>
+    <button type="button" className="example-test" title={`${entry.file}:${line}`} onClick={() => go({ ...withoutPanel(view), test: id, line })}>
       <StatusIcon status={entry.result} />
       <span className="badge">{KIND_LABELS[entry.kind]}</span>
       <span className="example-test-title">{titleOf(entry, lang)}</span>
     </button>
+  );
+}
+
+/** The line of the test's code that sent a request: the file and the line, which open the test with the line marked, and the code of the line. */
+function SentLine({ example }: { example: CaseExample }) {
+  const { db, view, go } = useApp();
+  const file = db.byId.get(example.test)?.file ?? '';
+  const name = file.slice(file.lastIndexOf('/') + 1);
+  return (
+    <p className="example-line">
+      <button type="button" className="example-line-at num" title={`${file} の ${example.line} 行目をコードで見る`} onClick={() => go({ ...withoutPanel(view), test: example.test, line: example.line })}>
+        {name} {example.line} 行目
+      </button>
+      <span className="visually-hidden">が送ったリクエスト: </span>
+      <code className="example-line-code">{example.code}</code>
+    </p>
   );
 }
 
@@ -335,7 +353,7 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
         <>
           <div className="example-bar">
             <span className="example-from">
-              送ったテスト <SentBy id={example.test} />
+              送ったテスト <SentBy id={example.test} line={example.line} />
             </span>
             {(examples.length > 1 || count > examples.length) && (
               <span className="example-nav" role="group" aria-label="リクエストの例">
@@ -373,6 +391,7 @@ function RequestPart({ chosen, example, index, onIndex, reason }: { chosen: Endp
               </span>
             )}
           </div>
+          <SentLine example={example} />
           <HttpView key={`request:${index}`} block={requestBlock(example.request)} label="リクエスト" />
         </>
       )}

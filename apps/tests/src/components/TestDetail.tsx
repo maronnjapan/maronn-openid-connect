@@ -1,10 +1,12 @@
 /**
  * One test: what it is (its title in both languages, its kind, outcome and
  * aspects, what it tests, its result on one line, where it is), the first
- * things it checks, the requests it sends, and its code: the test, the code
- * it tests and the helpers it uses, a tab each. Each name of what it tests
- * opens its code in 「テスト対象」. The index entry is shown at once; the
- * full card and the code come from their files when the test is opened.
+ * things it checks, the requests its code sent in the measured run (each at
+ * the line of the test that sent it; a line pointed at in the URL, or chosen
+ * here, is marked in its code), and its code: the test, the code it tests
+ * and the helpers it uses, a tab each. Each name of what it tests opens its
+ * code in 「テスト対象」. The index entry is shown at once; the full card and
+ * the code come from their files when the test is opened.
  *
  * In the build of a pull request a test it touched says so: an added test
  * has its badge, a changed one the block 「この PR での変更」 (what changed,
@@ -14,8 +16,8 @@
  * Whoever shows it keys it by the test (Panel, TestPage), so another test
  * starts afresh: its checks, its tab, its chosen code.
  */
-import type { Assertion, TestCase, TestEntry } from '@maronn-openid-connect/test-catalog/model';
-import { useState } from 'react';
+import type { Assertion, RecordedRequest, RequestParam, TestCase, TestEntry } from '@maronn-openid-connect/test-catalog/model';
+import { useEffect, useState } from 'react';
 import { KIND_LABELS, splitPath } from '../lib/data';
 import { textOf, titleOf, type Lang } from '../lib/filter';
 import { formatCount, formatDuration, targetLabel } from '../lib/format';
@@ -25,7 +27,7 @@ import { targetOf } from '../lib/targets';
 import { useApp, useCard } from './app-context';
 import { TestFeatures } from './FeatureBadge';
 import { PrChangeBlock, PrPill, prTitle, RemovedCheck } from './PrMarks';
-import { hasMainTarget, ROUTE_LABELS, ROUTE_NOTES, TargetLine } from './Target';
+import { hasMainTarget, TargetLine } from './Target';
 import { TestCode, type CodeState, type CodeTab } from './TestCode';
 import { Badge, OutcomeBadge, STATUS_LABELS, StatusIcon, Words } from './ui';
 
@@ -78,30 +80,69 @@ function Checks({ card, lang, change }: { card: TestCase; lang: Lang; change: Pr
   );
 }
 
+/** A value of a parameter is cut in the middle past this many characters (its whole text on hover). */
+const VALUE_LIMIT = 36;
+
+/** A parameter a request sent, `name=value`, a long value cut in the middle. */
+function Param({ param }: { param: RequestParam }) {
+  const long = param.value.length > VALUE_LIMIT;
+  const shown = long ? `${param.value.slice(0, 16)}…${param.value.slice(-12)}` : param.value;
+  return (
+    <span className="request-param" title={long ? `${param.name}=${param.value}` : undefined}>
+      <span className="request-param-name">{param.name}</span>=<span className="request-param-value">{shown}</span>
+    </span>
+  );
+}
+
 /**
- * The requests a test sends, each with its params and authentication; a
- * request of an API test that reaches no endpoint says why (「テストのルート」,
- * 「アプリのルート」, 「パスは実行時に決まる」).
+ * The requests the test's own code sent in the measured run, in the order
+ * sent, each with the line of the test that sent it (choosing it marks the
+ * line in the code), the path, the parameters it sent, how it authenticated
+ * and the status of the response. What the code is read to send is not
+ * shown: only what it sent, so the list always matches the code. Requests
+ * recorded for the test that no line of its code sent (a framework that
+ * forwarded them) are counted, not shown.
  */
-function Requests({ card, kind }: { card: TestCase; kind: TestEntry['kind'] }) {
-  const requests = card.requests ?? [];
-  if (requests.length === 0) return null;
+function Requests({ card, spot, onSpot }: { card: TestCase; spot: number | undefined; onSpot: (line: number) => void }) {
+  const recorded = card.recorded ?? [];
+  const unpinned = card.unpinned ?? 0;
+  if (recorded.length === 0 && unpinned === 0) return null;
   return (
     <section className="detail-section">
-      <h3>リクエスト</h3>
-      <ul className="requests">
-        {requests.map((request, index) => {
-          const line = [request.params?.join(', '), request.auth].filter((part) => part !== undefined && part !== '').join(' · ');
-          const route = kind === 'api' && (request.endpoint === undefined || request.endpoint === '') ? (request.route ?? (request.path === '' ? 'unknown' : 'app')) : undefined;
-          return (
-            <li key={index} title={`${request.method} ${request.path}${line === '' ? '' : ` ${line}`}${route === undefined ? '' : `（${ROUTE_NOTES[route]}）`}`}>
-              <span className="method">{request.method}</span> {request.path !== '' && <span className="mono">{request.path}</span>}
-              {route !== undefined && <span className="request-route">{ROUTE_LABELS[route]}</span>}
-              {line !== '' && <span className="request-params mono">{line}</span>}
-            </li>
-          );
-        })}
-      </ul>
+      <h3>送ったリクエスト</h3>
+      {recorded.length > 0 && (
+        <ul className="requests requests-recorded">
+          {recorded.map((request: RecordedRequest, index) => {
+            const path = request.path.split('?')[0] ?? request.path;
+            const params = request.params ?? [];
+            return (
+              <li key={index} className={request.line === spot ? 'request-spot' : undefined}>
+                <button type="button" className="request-line num" aria-pressed={request.line === spot} title={`テストの ${request.line} 行目が送ったリクエスト。押すとコードのこの行に印を付けます`} onClick={() => onSpot(request.line)}>
+                  {request.line} 行目
+                </button>
+                <span className="request-what">
+                  <span className="method">{request.method}</span> <span className="mono">{path}</span>
+                  {params.length > 0 && (
+                    <span className="request-params mono">
+                      {params.map((param, at) => (
+                        <Param key={at} param={param} />
+                      ))}
+                    </span>
+                  )}
+                  {request.auth !== undefined && <span className="request-auth mono">{request.auth}</span>}
+                  <span className={`request-status num${request.status === undefined ? ' request-thrown' : request.status >= 400 ? ' request-error' : ''}`}>{request.status === undefined ? '→ 例外' : `→ ${request.status}`}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {unpinned > 0 && (
+        <p className="note request-unpinned">
+          {recorded.length > 0 ? 'ほかに ' : ''}
+          {formatCount(unpinned)} 件のリクエストは、このテストのコードのどの行が送ったかを記録から言えないので、表示していません（フレームワークが転送したリクエストなど）。
+        </p>
+      )}
     </section>
   );
 }
@@ -129,7 +170,7 @@ function ResultLine({ card, entry }: { card: TestCase | undefined; entry: TestEn
 }
 
 export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?: string }) {
-  const { db, lang, source } = useApp();
+  const { db, lang, source, view } = useApp();
   const card = useCard(entry);
   const full = card instanceof Error ? undefined : card;
   const target = targetOf(db, entry, full, source);
@@ -138,7 +179,17 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
   const [chosen, setChosen] = useState<string | undefined>(undefined);
   const [side, setSide] = useState<Source>(source);
   const [focus, setFocus] = useState(0);
+  // The line of its code pointed at: one chosen among its requests, else the one the URL names (an example of a case).
+  const [picked, setPicked] = useState<number | undefined>(undefined);
+  useEffect(() => setPicked(undefined), [view.line]);
+  const spot = picked ?? (view.test === entry.id ? view.line : undefined);
   const code: CodeState = { tab, onTab: setTab, chosen, onChoose: setChosen, side, onSide: setSide, focus };
+  // A request chosen: its line marked in the code of the test, brought into view.
+  const point = (line: number) => {
+    setPicked(line);
+    setTab('test');
+    setFocus((count) => count + 1);
+  };
   // A name of what it tests: its code in 「テスト対象」, brought into view.
   const pick = (key: string) => {
     setTab('target');
@@ -204,9 +255,9 @@ export function TestDetail({ entry, headingId }: { entry: TestEntry; headingId?:
       {card === undefined && <p className="note">読み込んでいます…</p>}
       {card instanceof Error && <p className="note">{card.message}</p>}
       {full !== undefined && <Checks card={full} lang={lang} change={change} />}
-      {full !== undefined && <Requests card={full} kind={entry.kind} />}
+      {full !== undefined && <Requests card={full} spot={spot} onSpot={point} />}
 
-      <TestCode entry={entry} card={card} lines={lines} state={code} />
+      <TestCode entry={entry} card={card} lines={lines} spot={spot} state={code} />
     </article>
   );
 }

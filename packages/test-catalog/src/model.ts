@@ -167,6 +167,16 @@ export interface TestCase {
    */
   requests?: RequestShape[];
   /**
+   * The requests its own code sent in the measured run (an API test whose
+   * app records its requests), in the order they were sent, each at the
+   * line of the test that sent it (sent.ts); absent without a measured run
+   * or a recorded request. The viewer shows these, not `requests`: what the
+   * code is read to send may differ from what it sent.
+   */
+  recorded?: RecordedRequest[];
+  /** How many requests were recorded for it that no line of its own code sent (a hook, a framework that forwarded them): never shown as its requests. */
+  unpinned?: number;
+  /**
    * The code that answers the requests of an API test that reach no
    * endpoint of the OP (RequestShape.route): the app, the router or the
    * function its innermost describe that names a declaration names,
@@ -294,6 +304,13 @@ export interface RawExchange {
   overlapped?: true;
   /** What the request threw instead of answering. */
   error?: string;
+  /**
+   * Where the request was sent from: the repository path and the line of
+   * each frame of the call stack at the call, innermost first (absent when
+   * the recorder kept none). The line of the test's code that sent it is
+   * among them when its code did (sent.ts sentLine).
+   */
+  from?: Array<[string, number]>;
   /**
    * What ran while the request was answered: the Istanbul counters that went
    * up, by repository path of the original source (files of the function
@@ -537,6 +554,28 @@ export interface ExampleRequest {
   truncated?: true;
 }
 
+/** A parameter a request sent: from its query, its form body or the top level of its JSON body (a JSON value other than a string as JSON). */
+export interface RequestParam {
+  name: string;
+  value: string;
+  in: 'query' | 'form' | 'json';
+}
+
+/** A request a test's own code sent in the measured run (TestCase.recorded). */
+export interface RecordedRequest {
+  /** The line of the test's code that sent it (its call, directly or through a helper), from 1. */
+  line: number;
+  method: string;
+  /** The path and the query of its URL. */
+  path: string;
+  /** What it sent in its query and body (requestParams); absent when nothing. */
+  params?: RequestParam[];
+  /** Its Authorization header in short: the scheme, and for Basic the client id (`Basic client-1`). */
+  auth?: string;
+  /** The status of the response; absent when the send threw. */
+  status?: number;
+}
+
 /** The response the endpoint gave to an ExampleRequest. */
 export interface ExampleResponse {
   status: number;
@@ -569,6 +608,10 @@ export interface ExampleStep {
 export interface CaseExample {
   /** The test that sent it, by id. */
   test: string;
+  /** The line of the test's code that sent it (its call, directly or through a helper), from 1: a request no line of its test sent is never an example. */
+  line: number;
+  /** The code of that line, trimmed (cut at 160 characters). */
+  code: string;
   request: ExampleRequest;
   response: ExampleResponse;
   /** The steps of the endpoint the request ran, in order. */

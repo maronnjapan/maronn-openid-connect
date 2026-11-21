@@ -1208,7 +1208,8 @@ interface CaseCondition {
 
 - `packages/test-catalog/src/cases.ts`：`endpointCases`、`waysOf`、`casesOf`、`conditionsOf`、`failureTests`、`expectsFailure`、`errorClassOf`、`caseId`
 - `packages/test-catalog/src/examples.ts`：`requestsByEndpoint`、`attachExamples`、`takes`、`seenSide`、`nodeRan`、`exampleOf`、`responseError`
-- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`
+- `packages/test-catalog/src/sent.ts`：`sentLine`、`lineCode`、`recordedRequests`、`requestParams`、`authOf`、`pathOf`
+- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`、`withRun`（カードの `recorded`）
 - `packages/map-analysis/src/walk.ts`：`walkFlow`、`stepsOf`、`assumedSide`
 
 ### ⑤-11-a ケースの条件
@@ -1251,7 +1252,23 @@ flowchart LR
 | 送ったテスト | `JoinedRun.exchanges`（[③-1-b](03-join.md#-1-b-返す形)）のテストの id のカード |
 | ソース | テストの `root` が `hono` なら hono、`nextjs` なら nextjs。<br>ほかのルートのテストのリクエストは結ばない |
 | エンドポイント | URL のパスを `EndpointIndex.endpointOfPath` で引いたもののうち、そのソースのエンドポイントにあるもの |
-| 読まないやり取り | `overlapped`（同じテストのほかのリクエストと計数が混ざる）と、`error`（応答が無い）のもの |
+| 読まないやり取り | `overlapped`（同じテストのほかのリクエストと計数が混ざる）と、`error`（応答が無い）のもの。<br>送った行の分からないもの（下の「送った行」） |
+
+#### 送った行
+
+例は、名前を出すテストのコードのどの行が送ったかを、記録から言えるリクエストだけにする（`sentLine`、`packages/test-catalog/src/sent.ts`）。
+テストのコードと例が食い違わないようにするためである。
+
+- 送った行は、やり取りの `from`（[②-3-d](02-measure.md#送った行)）のうち、テストのファイルにあり、テストの行（カードの `source.lines`）の中にある、いちばん内側のフレームの行である
+- テストの外のヘルパー（同じファイルの `provider()` の `post`、`test-support` の関数）のフレームは飛ばし、それを呼んだテストの行を採る
+- そういうフレームが無いやり取り（フック、フレームワークが後で呼ぶコールバックから送ったもの、`from` の無い古い記録）は、例にしない。<br>計測した実行では、Fastify と Express の組み込みのテスト（`web/*/apply.test.ts`）のやり取りがこれに当たる。組み込みのコードが `inject` を Hono の `request` に渡すときには、テストの行が履歴に無い
+- 例には、送った行（`line`）と、その行から始まる文（`code`）を置く。<br>文は、行が括弧を開いたままなら閉じるまで次の行を足し（8 行まで）、行末のコメントを除き、一行に読める形でつなぐ（`const response = await app.request(introspect({ token: 'at-1' }, { Accept: '…' }));`）。240 字で切る
+
+テストのカードにも、そのテストのコードが送ったリクエストを、送った順に置く（`TestCase.recorded`、`recordedRequests`）。
+欄は、送った行、方法、パスとクエリ、クエリと本文のパラメータ（フォームの欄、JSON の最上位のメンバー。`requestParams`）、`Authorization` の要約（`Basic client-1`、`Bearer`。`authOf`）、応答の状態である。
+送った行の分からないものは、数だけを `unpinned` に置く。
+テストのページは、コードから読んだ `requests` ではなく、これを「送ったリクエスト」として出す（[⑥](06-viewer.md)）。
+コードから読んだものは、送った値も、ヘルパーの中で組み立てたリクエストも分からないので、実際に送ったものと食い違うことがある（計測した実行では、記録のある 211 テストのうち、方法・パス・パラメータの名前まで合うのは 79 テストだった）。
 
 #### 向きを読む
 
@@ -1307,6 +1324,8 @@ hono の `authorize` の `resolvePushedAuthorizationRequest` は、`resolvePushe
 ```ts
 interface CaseExample {
   test: string; // 送ったテストの id
+  line: number; // 送ったテストのコードの行（送った行）
+  code: string; // その行から始まる文
   request: { method: string; path: string; host: string; headers: Array<[string, string]>; body?: string; truncated?: true };
   response: { status: number; statusText?: string; headers: Array<[string, string]>; body?: string; truncated?: true };
   steps: ExampleStep[];
@@ -1322,6 +1341,7 @@ interface ExampleStep {
 
 | 欄 | 規則 |
 |---|---|
+| `line`、`code` | 送った行と、その行から始まる文（上の「送った行」） |
 | `request` | 方法、URL のパスとクエリ（`path`）、ホスト（`host`）、ヘッダー、本文 |
 | `response` | 状態、状態の文（空なら置かない）、ヘッダー、本文 |
 | `steps` | 処理本体の木を、読めた向き（読めなければケースの選択の向き）で `walkFlow` でたどり、`stepsOf` の順に並べる。<br>`catch` と読めた `try` は、本体に `fails` の呼び出しがあれば向きを決めず、その失敗まで本体をたどる。<br>たどってケースの終わり（失敗なら失敗する呼び出しか `throw`）に届かなければ、例にしない |
@@ -1341,10 +1361,12 @@ interface ExampleStep {
 地図のビルドのログに、次の一行を出す。
 
 ```
-tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (208 answered and not overlapped), 151 took a case; 64 of 631 cases with examples
+tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 to one with cases (146 answered, not overlapped and sent by a line of their test, 62 sent by none), 130 took a case; 62 of 631 cases with examples
 ```
 
-例：hono の `token` で、例を持つケースは 135 のうち 10 である。
+送った行の分からない 62 のやり取りは、どれも Fastify と Express の組み込みのテストのものである（hono のテストのコードが送ったものには、すべて送った行がある）。
+
+例：hono の `token` で、例を持つケースは 135 のうち 9 である（Fastify の組み込みのテストだけが通った `TokenError(invalid_grant)` で終わる（`requireStoredAuthorizationCode` から）は、例を持たなくなった）。
 `refresh_token グラントを検証する` には `grant_type=refresh_token` のリクエストが、`authorization_code グラントを検証する` には `grant_type=authorization_code` のものが、`client_credentials グラントに応答する` には `grant_type=client_credentials` で `dispatch-client-credentials` が答えたものが付く。
 `TokenError(invalid_client)` で終わる（`verifyClientSecretHash` から）には、401 で `invalid_client` を返したものが付き、その例のステップは `parse-request`（ran）、`authenticate-client`（failed、`TokenError(invalid_client)`）、`respond-error`（caught）である。
 refresh_token の `invalid_grant` のリクエストは、`TokenError(invalid_grant)` で終わる（`validateRefreshTokenNotUsed` から）に付かない。

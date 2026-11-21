@@ -495,6 +495,11 @@ function card(id: string, extra: Partial<TestCase> = {}): TestCase {
   return { id, kind: 'api', root: 'hono', source: { file: 'apps/hono/src/pipeline.test.ts', lines: [1, 2], form: 'code' }, title: id, path: [], subjects: [], outcome: 'success', aspects: [], spec: [], assertions: [], evidence: ['static'], digest: id, ...extra };
 }
 
+/** A request a test sent from the first line of its body, as requestsByEndpoint pins it. */
+function sentBy(test: TestCase, exchange: RawExchange): SentRequest {
+  return { test, exchange, sent: { line: test.source.lines[0] + 1, code: 'const response = await app.request(request);' } };
+}
+
 const ENDPOINT: EndpointExamples = {
   tree: ROOT,
   stepFunctions: new Map([['parse-request', PARSE]]),
@@ -685,9 +690,11 @@ describe('exampleOf', () => {
     const ways = tokenWays();
     const way = ways.find((item) => item.made.name === 'validate-refresh') as CaseWay;
     const run = new RequestRun(answered(false), SOURCES);
-    const example = exampleOf(way, [way], { test: card('refresh'), exchange: answered(false) }, run, ENDPOINT);
+    const example = exampleOf(way, [way], sentBy(card('refresh'), answered(false)), run, ENDPOINT);
     expect(example).toEqual({
       test: 'refresh',
+      line: 2,
+      code: 'const response = await app.request(request);',
       request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [['content-type', 'application/x-www-form-urlencoded']], body: 'grant_type=refresh_token&refresh_token=r' },
       response: { status: 200, headers: [['content-type', 'application/json']], body: '{"access_token":"at"}' },
       steps: [
@@ -705,7 +712,7 @@ describe('exampleOf', () => {
     const run = new RequestRun(NOT_A_FORM, SOURCES);
     const took = ways.filter((way) => takes(way, ROOT, run, NOT_A_FORM.response as NonNullable<RawExchange['response']>, SOURCES));
     const catching = ways.find((item) => item.made.name === '例外が起きたとき') as CaseWay;
-    expect(exampleOf(catching, took, { test: card('form'), exchange: NOT_A_FORM }, run, ENDPOINT)?.steps).toEqual([
+    expect(exampleOf(catching, took, sentBy(card('form'), NOT_A_FORM), run, ENDPOINT)?.steps).toEqual([
       { id: 'parse-request', how: 'failed', error: 'TokenEndpointError', calls: [READ] },
       { id: 'respond-error', how: 'caught', calls: [RESPOND_ERROR] },
     ]);
@@ -721,7 +728,7 @@ describe('exampleOf', () => {
     );
     const callsAt = (request: RawExchange, name: string) => {
       const way = ways.find((item) => item.made.name === name) as CaseWay;
-      return exampleOf(way, [way], { test: card(name), exchange: request }, new RequestRun(request, SOURCES), endpoint)?.steps.find((item) => item.id === 'dispatch')?.calls;
+      return exampleOf(way, [way], sentBy(card(name), request), new RequestRun(request, SOURCES), endpoint)?.steps.find((item) => item.id === 'dispatch')?.calls;
     };
     expect([callsAt(answered(false), 'validate-refresh'), callsAt(early, 'dispatch')]).toEqual([undefined, [RESPOND]]);
   });
@@ -729,7 +736,7 @@ describe('exampleOf', () => {
   it('should say the step of the call a return outside the steps returns the result of answered', () => {
     const [way] = waysOf(PAGE_TREE, [{ kind: 'exit', name: 'リクエスト: POST /page', decisions: { s0: 'c1' }, target: 's0c1s1' }], [], () => []);
     const post = exchange({ [PAGE]: { s: [at(PAGE, 6, 'await'), at(PAGE, 7, 'return')] }, 'apps/hono/src/submit.ts': { s: [[2, 2]], f: [1] } }, { status: 200 }, { url: 'https://op.example.com/page' });
-    const example = way === undefined ? undefined : exampleOf(way, [way], { test: card('post'), exchange: post }, new RequestRun(post, SOURCES), { ...ENDPOINT, tree: PAGE_TREE, stepFunctions: new Map() });
+    const example = way === undefined ? undefined : exampleOf(way, [way], sentBy(card('post'), post), new RequestRun(post, SOURCES), { ...ENDPOINT, tree: PAGE_TREE, stepFunctions: new Map() });
     expect(example?.steps).toEqual([{ id: 'submit', how: 'answered', calls: [SUBMIT] }]);
   });
 
@@ -740,7 +747,7 @@ describe('exampleOf', () => {
       { status: 302, headers: [['location', 'https://rp.example.com/cb?code=c']] },
       { url: 'https://op.example.com/session' },
     );
-    const example = way === undefined ? undefined : exampleOf(way, [way], { test: card('sso'), exchange: reused }, new RequestRun(reused, SOURCES), { ...ENDPOINT, tree: SESSION_TREE, stepFunctions: new Map() });
+    const example = way === undefined ? undefined : exampleOf(way, [way], sentBy(card('sso'), reused), new RequestRun(reused, SOURCES), { ...ENDPOINT, tree: SESSION_TREE, stepFunctions: new Map() });
     expect(example?.steps.map((item) => [item.id, item.how])).toEqual([
       ['reuse-session', 'ran'],
       ['issue-authorization-code', 'answered'],
@@ -754,17 +761,17 @@ describe('attachExamples', () => {
     const refreshing = (body: string): RawExchange => ({ ...answered(false), request: { ...answered(false).request, body } });
     const { response: _response, ...unanswered } = answered(false);
     const sent: SentRequest[] = [
-      { test: card('z-other'), exchange: answered(false) },
-      { test: card('own', { subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] }), exchange: refreshing(`grant_type=refresh_token&refresh_token=${'r'.repeat(80)}`) },
-      { test: card('a-other'), exchange: answered(false) },
-      { test: card('b-other'), exchange: refreshing('grant_type=refresh_token&refresh_token=s') },
-      { test: card('c-other'), exchange: refreshing('grant_type=refresh_token&refresh_token=t') },
-      { test: card('overlapped'), exchange: { ...answered(false), overlapped: true } },
-      { test: card('thrown'), exchange: { ...unanswered, error: 'TypeError: boom' } },
+      sentBy(card('z-other'), answered(false)),
+      sentBy(card('own', { subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] }), refreshing(`grant_type=refresh_token&refresh_token=${'r'.repeat(80)}`)),
+      sentBy(card('a-other'), answered(false)),
+      sentBy(card('b-other'), refreshing('grant_type=refresh_token&refresh_token=s')),
+      sentBy(card('c-other'), refreshing('grant_type=refresh_token&refresh_token=t')),
+      sentBy(card('overlapped'), { ...answered(false), overlapped: true }),
+      sentBy(card('thrown'), { ...unanswered, error: 'TypeError: boom' }),
     ];
     const counts = attachExamples(ways, sent, ENDPOINT, SOURCES);
     const refresh = ways.find((way) => way.made.name === 'validate-refresh')?.made;
-    expect(counts).toEqual({ read: 5, took: 5 });
+    expect(counts).toEqual({ read: 5, took: 5, unpinned: 0 });
     expect([refresh?.examples?.map((example) => example.test), refresh?.exampleCount]).toEqual([['own', 'a-other', 'b-other'], 5]);
     expect(ways.find((way) => way.made.name === 'dispatch')?.made.examples).toBeUndefined();
   });
@@ -773,13 +780,27 @@ describe('attachExamples', () => {
     const ways = tokenWays();
     const authorized = (name: string, value: string): RawExchange => ({ ...answered(false), request: { ...answered(false).request, headers: [...answered(false).request.headers, [name, value]] } });
     const sent: SentRequest[] = [
-      { test: card('basic-a'), exchange: authorized('authorization', 'Basic YTpz') },
-      { test: card('basic-a-again'), exchange: authorized('Authorization', 'Basic YTpz') },
-      { test: card('basic-b'), exchange: authorized('authorization', 'Basic Yjpz') },
+      sentBy(card('basic-a'), authorized('authorization', 'Basic YTpz')),
+      sentBy(card('basic-a-again'), authorized('Authorization', 'Basic YTpz')),
+      sentBy(card('basic-b'), authorized('authorization', 'Basic Yjpz')),
     ];
     attachExamples(ways, sent, ENDPOINT, SOURCES);
     const refresh = ways.find((way) => way.made.name === 'validate-refresh')?.made;
     expect([refresh?.examples?.map((example) => example.test), refresh?.exampleCount]).toEqual([['basic-a', 'basic-b'], 3]);
+  });
+});
+
+describe('attachExamples, of requests no line of their test sent', () => {
+  it('should leave out a request no line of its test sent and count it, and keep the line and the code of one a line sent', () => {
+    const ways = tokenWays();
+    const sent: SentRequest[] = [{ test: card('forwarded'), exchange: answered(false) }, sentBy(card('own'), answered(false))];
+    const counts = attachExamples(ways, sent, ENDPOINT, SOURCES);
+    const refresh = ways.find((way) => way.made.name === 'validate-refresh')?.made;
+    expect([counts, refresh?.examples?.map((example) => [example.test, example.line, example.code]), refresh?.exampleCount]).toEqual([
+      { read: 1, took: 1, unpinned: 1 },
+      [['own', 2, 'const response = await app.request(request);']],
+      1,
+    ]);
   });
 });
 
@@ -797,5 +818,15 @@ describe('requestsByEndpoint', () => {
       ['hono:token', ['hono']],
       ['nextjs:next-token', ['next']],
     ]);
+  });
+
+  it('should pin a request to the innermost frame of its stack in its test, and leave one with no frame there unpinned', () => {
+    const test = card('pinned', { source: { file: 'apps/hono/src/pipeline.test.ts', lines: [10, 20], form: 'code' } });
+    const lines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+    lines[14] = '    const response = await exchangeCode();   ';
+    const through = { ...answered(false), from: [['apps/hono/src/pipeline.test.ts', 4], ['apps/hono/src/test-support/token.ts', 30], ['apps/hono/src/pipeline.test.ts', 15], ['apps/hono/src/pipeline.test.ts', 19]] as Array<[string, number]> };
+    const forwarded = { ...answered(false), from: [['apps/hono/src/web/fastify/apply.ts', 55]] as Array<[string, number]> };
+    const found = requestsByEndpoint(new Map([['pinned', [through, forwarded, answered(false)]]]), new Map([[test.id, test]]), () => 'token', (path) => (path === 'apps/hono/src/pipeline.test.ts' ? lines : undefined));
+    expect(found.get('hono:token')?.map((sent) => sent.sent)).toEqual([{ line: 15, code: 'const response = await exchangeCode();' }, undefined, undefined]);
   });
 });

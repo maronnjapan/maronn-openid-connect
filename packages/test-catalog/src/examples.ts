@@ -44,10 +44,17 @@
  * and no rethrow of that catch ran (it threw another error, or none). These are
  * rules, not guesses: what they cannot tell is left unseen, and a case no
  * request took has no example.
+ *
+ * Only a request a line of its test's own code sent is read (sent.ts
+ * sentLine): an example says that line and its code, so the reader finds
+ * the request in the code of the test it names. A request no line of its
+ * test sent (a hook, a framework that forwarded it) is left out, as are the
+ * requests overlapped by another and those without a response.
  */
 import { Buffer } from 'node:buffer';
 import { assumedSide, FAILS, nodesOf, stepsOf, walkFlow, wayTo, type Decisions, type FlowTree, type FlowWalk, type Selection, type TreeNode } from '@maronn-openid-connect/map-analysis';
 import type { CaseCondition, CaseExample, EndpointCase, ExampleStep, ExchangeRun, RawExchange, TestCase } from './model.js';
+import { lineCode, sentLine } from './sent.js';
 
 /** The side seen for a decision its frame took both ways while one request was answered: it contradicts no side. */
 export const BOTH = 'both';
@@ -460,6 +467,8 @@ export interface CaseWay {
 export interface SentRequest {
   test: TestCase;
   exchange: RawExchange;
+  /** The line of the test's own code that sent it, and the code of that line (sent.ts); absent when no line of the test sent it, which keeps it from being an example. */
+  sent?: { line: number; code: string };
 }
 
 /** The `try` nodes of a tree whose body holds a node, from the innermost out. */
@@ -644,7 +653,7 @@ export function exampleOf(way: CaseWay, taken: readonly CaseWay[], sent: SentReq
   const { tree } = endpoint;
   const response = sent.exchange.response;
   const request = requestOf(sent.exchange);
-  if (response === undefined || request === undefined) return undefined;
+  if (response === undefined || request === undefined || sent.sent === undefined) return undefined;
   const decisions: Decisions = {};
   for (const [key, side] of Object.entries(way.selection.decisions)) if (!key.includes('.')) decisions[key] = side;
   const seen = new Map<string, string>();
@@ -709,6 +718,8 @@ export function exampleOf(way: CaseWay, taken: readonly CaseWay[], sent: SentReq
   const { status, statusText, headers, body, truncated } = response;
   return {
     test: sent.test.id,
+    line: sent.sent.line,
+    code: sent.sent.code,
     request,
     response: { status, ...(statusText === undefined || statusText === '' ? {} : { statusText }), headers, ...(body === undefined ? {} : { body }), ...(truncated === true ? { truncated } : {}) },
     steps,
@@ -723,10 +734,12 @@ function sizeOf(exchange: RawExchange): number {
 
 /** What joining the requests of an endpoint to its cases saw. */
 export interface ExampleCounts {
-  /** The requests read: those overlapped by another or without a response left out. */
+  /** The requests read: those overlapped by another, without a response, or sent by no line of their test left out. */
   read: number;
   /** Of those, the ones that took a case. */
   took: number;
+  /** The requests left out because no line of their test sent them (SentRequest.sent). */
+  unpinned: number;
 }
 
 /**
@@ -737,10 +750,14 @@ export interface ExampleCounts {
  */
 export function attachExamples(ways: readonly CaseWay[], requests: readonly SentRequest[], endpoint: EndpointExamples, sources: CaseSources): ExampleCounts {
   const found = new Map<CaseWay, Array<{ sent: SentRequest; example: CaseExample; order: number }>>();
-  const counts: ExampleCounts = { read: 0, took: 0 };
+  const counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 };
   requests.forEach((sent, order) => {
     const { response, overlapped, error } = sent.exchange;
     if (response === undefined || overlapped === true || error !== undefined) return;
+    if (sent.sent === undefined) {
+      counts.unpinned += 1;
+      return;
+    }
     counts.read += 1;
     const run = new RequestRun(sent.exchange, sources);
     const taken = ways.filter((way) => takes(way, endpoint.tree, run, response, sources));
@@ -778,9 +795,16 @@ export function attachExamples(ways: readonly CaseWay[], requests: readonly Sent
  * The requests of the measured tests by endpoint, `<source>:<endpoint>`: a
  * request of a test of hono goes to the endpoint of hono whose path its URL
  * has (`endpointOf`), and so for Next.js; the tests of any other root send
- * none to an endpoint of a source.
+ * none to an endpoint of a source. Each says the line of its test that sent
+ * it and that line's code (`linesOf` gives the lines of a test file), when
+ * a line of the test did.
  */
-export function requestsByEndpoint(exchanges: ReadonlyMap<string, readonly RawExchange[]>, tests: ReadonlyMap<string, TestCase>, endpointOf: (source: 'hono' | 'nextjs', path: string) => string | undefined): Map<string, SentRequest[]> {
+export function requestsByEndpoint(
+  exchanges: ReadonlyMap<string, readonly RawExchange[]>,
+  tests: ReadonlyMap<string, TestCase>,
+  endpointOf: (source: 'hono' | 'nextjs', path: string) => string | undefined,
+  linesOf: (path: string) => readonly string[] | undefined = () => undefined,
+): Map<string, SentRequest[]> {
   const byEndpoint = new Map<string, SentRequest[]>();
   for (const [id, list] of exchanges) {
     const test = tests.get(id);
@@ -796,7 +820,9 @@ export function requestsByEndpoint(exchanges: ReadonlyMap<string, readonly RawEx
       const endpoint = endpointOf(source, path);
       if (endpoint === undefined) continue;
       const key = `${source}:${endpoint}`;
-      byEndpoint.set(key, [...(byEndpoint.get(key) ?? []), { test, exchange }]);
+      const line = sentLine(test, exchange);
+      const sent = line === undefined ? {} : { sent: { line, code: lineCode(linesOf(test.source.file), line) } };
+      byEndpoint.set(key, [...(byEndpoint.get(key) ?? []), { test, exchange, ...sent }]);
     }
   }
   return byEndpoint;

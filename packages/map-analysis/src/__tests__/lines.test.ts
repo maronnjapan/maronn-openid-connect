@@ -23,6 +23,15 @@ describe('lineKinds', () => {
     expect(lineKinds(text)).toEqual(['code', 'comment', 'code', 'code', 'code', 'code', 'comment']);
   });
 
+  it('should read a `/` after a postfix `!` as a division and after the `)` of a condition as a regular expression', () => {
+    const text = ['function f(done: number | undefined, total: number) {', '  return `${done! / total} done / ${total} in all`;', '}', '', '// a', 'if (total) /\\/*/.test(String(done));', 'run();'].join('\n');
+    expect(lineKinds(text)).toEqual(['code', 'code', 'code', 'blank', 'comment', 'code', 'code']);
+  });
+
+  it('should move past a character the scanner does not (a `#` that starts no name) as code', () => {
+    expect(lineKinds(['const view = <p>#{pullRequest.number}</p>;', '// after'].join('\n'), true)).toEqual(['code', 'comment']);
+  });
+
   it('should take the comment of JSX as a comment and its braces as code', () => {
     const text = ['const view = (', '  <p>', '    {/* the note */}', '    text', '  </p>', ');', '// after'].join('\n');
     expect(lineKinds(text, true)).toEqual(['code', 'code', 'code', 'code', 'code', 'code', 'comment']);
@@ -71,6 +80,36 @@ describe('addedLinesOf', () => {
       'rename to moved.ts',
     ].join('\n');
     expect(Object.fromEntries(addedLinesOf(diff))).toEqual({ 'src/a.ts': [3, 4, 20], 'new.ts': [1, 2], 'odd"name.ts': [1] });
+  });
+
+  it('should read lines of context in a hunk, the tab after a name with a space, and the escapes of a quoted name in order', () => {
+    const diff = [
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -3,4 +3,4 @@',
+      '-a',
+      '+A',
+      ' b',
+      ' c',
+      '-d',
+      '+D',
+      'diff --git a/dir with space/b c.ts b/dir with space/b c.ts',
+      '--- a/dir with space/b c.ts\t',
+      '+++ b/dir with space/b c.ts\t',
+      '@@ -1,0 +2,2 @@',
+      '+one();',
+      '+two();',
+      'diff --git "a/back\\\\a.ts" "b/back\\\\a.ts"',
+      '+++ "b/back\\\\a.ts"',
+      '@@ -1 +1 @@',
+      '-x;',
+      '+y;',
+      '+++ "b/caf\\303\\251.ts"',
+      '@@ -0,0 +1 @@',
+      '+z;',
+    ].join('\n');
+    expect(Object.fromEntries(addedLinesOf(diff))).toEqual({ 'a.ts': [3, 6], 'dir with space/b c.ts': [2, 3], 'back\\a.ts': [1], 'café.ts': [1] });
   });
 });
 

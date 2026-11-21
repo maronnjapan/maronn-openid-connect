@@ -256,8 +256,14 @@ export function collectChanges(input: ChangeInput): ChangeResult {
   ];
   // The lines added to the code (lines.ts): those of the diff, and every line of an untracked file.
   const generated = generatedDirectories(root);
-  const addedLines = addedLinesOf(run(['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-ext-diff', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/', forkPoint]));
-  for (const path of untracked) if (countsLines(path, generated)) addedLines.set(path, read(path).split('\n').map((_line, index) => index + 1));
+  const addedLines = addedLinesOf(run(['-c', 'core.quotePath=false', 'diff', '--unified=0', '--inter-hunk-context=0', '--no-color', '--no-ext-diff', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/', forkPoint]));
+  for (const path of untracked.filter((candidate) => countsLines(candidate, generated))) {
+    try {
+      addedLines.set(path, read(path).split('\n').map((_line, index) => index + 1));
+    } catch {
+      // An untracked file that cannot be read (a broken link of an editor's lock file) has no lines to count.
+    }
+  }
   const notes: Array<ReturnType<typeof parseNote> & { file: string }> = [];
   const overlay = new Map<string, string | null>();
   const baseModules = new Map<string, string[]>();

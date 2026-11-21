@@ -41,24 +41,21 @@ const VALUE_ENDS = new Set<SyntaxKind>([
   SyntaxKind.NoSubstitutionTemplateLiteral,
   SyntaxKind.TemplateTail,
   SyntaxKind.RegularExpressionLiteral,
-  SyntaxKind.CloseParenToken,
   SyntaxKind.CloseBracketToken,
-  SyntaxKind.PlusPlusToken,
-  SyntaxKind.MinusMinusToken,
 ]);
 
-/** Whether a `/` after a token starts a regular expression: not after a value, nor after a keyword other than those of REGEX_AFTER (`this`, `null`). */
-function slashStartsRegex(previous: SyntaxKind | undefined): boolean {
-  if (previous === undefined) return true;
-  if (previous >= SyntaxKind.FirstKeyword && previous <= SyntaxKind.LastKeyword) return REGEX_AFTER.has(previous);
-  return !VALUE_ENDS.has(previous);
-}
+/** The keywords whose `(…)` is a condition or a head, after whose `)` a statement (and a regular expression) can start. */
+const CONTROL = new Set<SyntaxKind>([SyntaxKind.IfKeyword, SyntaxKind.WhileKeyword, SyntaxKind.ForKeyword, SyntaxKind.WithKeyword]);
 
 /**
  * What each line of a source file holds (the first at 0), the lines split
  * at `\n` as git splits them. The scanner reads a template and a regular
  * expression whole when told to, as a parser does: after the `}` of a `${`,
- * and at a `/` that starts a regular expression (slashStartsRegex).
+ * and at a `/` where no value ends (after a value a `/` divides). A value
+ * ends at a name, a literal, `]`, a `)` other than that of `if (…)`,
+ * `while (…)`, `for (…)` or `with (…)`, a postfix `!`, `++` or `--`, and a
+ * keyword other than REGEX_AFTER, or any after `.` (a name). A token the
+ * scanner does not move past counts as one character of code.
  */
 export function lineKinds(text: string, jsx = false): LineKind[] {
   const starts = [0];
@@ -78,10 +75,25 @@ export function lineKinds(text: string, jsx = false): LineKind[] {
     for (let line = lineOf(start), last = lineOf(Math.max(start, end - 1)); line <= last; line += 1) if (kind === 'code' || kinds[line] === 'blank') kinds[line] = kind;
   };
   const scanner = createScanner(false, jsx ? LanguageVariant.JSX : LanguageVariant.Standard, text);
-  // The braces open at the scanner: a `{`, or the `${` of a template.
+  // The braces open at the scanner (a `{`, or the `${` of a template) and the parentheses (whether of a condition).
   const braces: Array<'block' | 'template'> = [];
+  const parens: boolean[] = [];
   let previous: SyntaxKind | undefined;
-  for (let token = scanner.scan(); token !== SyntaxKind.EndOfFile; token = scanner.scan()) {
+  let previousName = false;
+  let ended = false;
+  for (let position = 0; position < text.length; ) {
+    let token = scanner.scan();
+    if (token === SyntaxKind.EndOfFile) break;
+    if (scanner.getTokenEnd() <= position) {
+      mark(position, position + 1, 'code');
+      position += 1;
+      scanner.resetTokenState(position);
+      previous = undefined;
+      previousName = false;
+      ended = false;
+      continue;
+    }
+    position = scanner.getTokenEnd();
     if (token === SyntaxKind.WhitespaceTrivia || token === SyntaxKind.NewLineTrivia) continue;
     if (token === SyntaxKind.SingleLineCommentTrivia || token === SyntaxKind.MultiLineCommentTrivia) {
       mark(scanner.getTokenStart(), scanner.getTokenEnd(), 'comment');
@@ -94,47 +106,88 @@ export function lineKinds(text: string, jsx = false): LineKind[] {
         token = scanner.reScanTemplateToken(false);
         if (token === SyntaxKind.TemplateMiddle) braces.push('template');
       }
-    } else if ((token === SyntaxKind.SlashToken || token === SyntaxKind.SlashEqualsToken) && slashStartsRegex(previous)) token = scanner.reScanSlashToken();
-    mark(scanner.getTokenStart(), scanner.getTokenEnd(), 'code');
+    } else if ((token === SyntaxKind.SlashToken || token === SyntaxKind.SlashEqualsToken) && !ended) token = scanner.reScanSlashToken();
+    position = scanner.getTokenEnd();
+    mark(scanner.getTokenStart(), position, 'code');
+    const keyword = token >= SyntaxKind.FirstKeyword && token <= SyntaxKind.LastKeyword;
+    const name = keyword && (previous === SyntaxKind.DotToken || previous === SyntaxKind.QuestionDotToken);
+    if (token === SyntaxKind.OpenParenToken) parens.push(previous !== undefined && CONTROL.has(previous) && !previousName);
+    ended =
+      keyword
+        ? name || !REGEX_AFTER.has(token)
+        : token === SyntaxKind.CloseParenToken
+          ? parens.pop() !== true
+          : token === SyntaxKind.ExclamationToken || token === SyntaxKind.PlusPlusToken || token === SyntaxKind.MinusMinusToken
+            ? ended
+            : VALUE_ENDS.has(token);
     previous = token;
+    previousName = name;
   }
   return kinds;
 }
 
-/** A path as git writes it in a diff: in double quotes with C escapes when it has a character git escapes. */
+/** A path as git writes it in a diff: in double quotes with the escapes of C when it has a character git escapes, read left to right. */
 function unquoted(name: string): string {
-  if (!name.startsWith('"')) return name;
-  return JSON.parse(name.replace(/\\([0-7]{3})/g, (_match, octal: string) => `\\u${Number.parseInt(octal, 8).toString(16).padStart(4, '0')}`).replace(/\\a/g, '\\u0007').replace(/\\v/g, '\\u000b')) as string;
+  if (!name.startsWith('"') || !name.endsWith('"')) return name;
+  const bytes: number[] = [];
+  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+  for (let index = 1; index < name.length - 1; index += 1) {
+    const char = name[index] as string;
+    if (char !== '\\') {
+      bytes.push(...Buffer.from(char));
+      continue;
+    }
+    const octal = /^[0-7]{3}/.exec(name.slice(index + 1))?.[0];
+    if (octal !== undefined) {
+      bytes.push(Number.parseInt(octal, 8));
+      index += 3;
+      continue;
+    }
+    index += 1;
+    bytes.push(escapes[name[index] as string] ?? (name[index] as string).charCodeAt(0));
+  }
+  return Buffer.from(bytes).toString('utf8');
 }
 
 /**
  * The lines a diff of `git diff --unified=0 --src-prefix=a/ --dst-prefix=b/`
- * adds to each file, by its path after (the first line at 1). The hunks are
- * read by their counts, so a line of a hunk never reads as a header.
+ * adds to each file, by its path after (the first line at 1). A hunk is read
+ * to the end its header counts, by the first character of each line: `+`
+ * adds a line, ` ` keeps one, `-` removes one; so a line of a hunk never
+ * reads as a header.
  */
 export function addedLinesOf(diff: string): Map<string, number[]> {
   const added = new Map<string, number[]>();
   let path: string | undefined;
-  let rest = 0;
-  for (const line of diff.split('\n')) {
-    if (rest > 0) {
-      if (line.startsWith('+') || line.startsWith('-')) rest -= 1;
+  let before = 0;
+  let after = 0;
+  let line = 0;
+  for (const text of diff.split('\n')) {
+    if (before > 0 || after > 0) {
+      if (text.startsWith('+')) {
+        if (path !== undefined) added.set(path, [...(added.get(path) ?? []), line]);
+        line += 1;
+        after -= 1;
+      } else if (text.startsWith('-')) before -= 1;
+      else if (text.startsWith(' ')) {
+        line += 1;
+        before -= 1;
+        after -= 1;
+      }
       continue;
     }
-    if (line.startsWith('diff --git ')) path = undefined;
-    else if (line.startsWith('+++ ')) {
-      const name = unquoted(line.slice(4));
+    if (text.startsWith('diff --git ')) path = undefined;
+    else if (text.startsWith('+++ ')) {
+      // git ends the name with a tab when it holds a space.
+      const name = unquoted(text.slice(4).replace(/\t$/, ''));
       path = name.startsWith('b/') ? name.slice(2) : undefined;
       continue;
     }
-    const hunk = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    const hunk = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
     if (hunk === null) continue;
-    const count = hunk[3] === undefined ? 1 : Number(hunk[3]);
-    rest = (hunk[1] === undefined ? 1 : Number(hunk[1])) + count;
-    if (path === undefined || count === 0) continue;
-    const lines = added.get(path) ?? [];
-    for (let offset = 0; offset < count; offset += 1) lines.push(Number(hunk[2]) + offset);
-    added.set(path, lines);
+    before = hunk[1] === undefined ? 1 : Number(hunk[1]);
+    after = hunk[3] === undefined ? 1 : Number(hunk[3]);
+    line = Number(hunk[2]);
   }
   return added;
 }

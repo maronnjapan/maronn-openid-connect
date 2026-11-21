@@ -82,7 +82,7 @@ flowchart TB
 
 ## ③-1 報告の読み方
 
-`readRun(directory, repository, tests, data, endpointOf)` は、報告のディレクトリから三種類のファイルを決まった順に読む。
+`readRun(directory, repository, tests, data, endpointOf)` は、報告のディレクトリから四種類のファイルを決まった順に読む。
 
 ```mermaid
 flowchart LR
@@ -118,8 +118,14 @@ flowchart LR
 | 1 | `vitest/*.json`（名前の順） | Vitest の JSON の報告 | 結果（`meta.reach` があれば到達も） |
 | 2 | `playwright/*.json`（名前の順） | Playwright の JSON の報告 | 結果（ファイルの名前が実行先） |
 | 3 | `reach/*.jsonl`（名前の順） | 到達の行（`RawReach`、[②-1-b](02-measure.md#-1-b-到達の行)） | 到達 |
+| 4 | `exchanges/*.jsonl`（名前の順） | リクエストの行（`RawExchanges`、[②-3-d](02-measure.md#-3-d-http-のやり取り)） | ケースの例（[⑤-11](05-data.md#-11-ケースのファイル)） |
 
 ディレクトリが無い種類は、ファイルが無いものとして飛ばす。
+
+リクエストの行は、到達の行と同じく、ファイル、describe の名前、名前で `CaseFinder.code` に引き当てる。
+引き当てたテストの id ごとに、行の `exchanges` を読んだ順に足す（`it.each` の行は、ひな形のカードに続けて足す）。
+JSON として読めない行と、カードに引き当てられない行は、`unmatched.exchanges` に数える。
+どのエンドポイントへのリクエストか、どのケースを通ったかは、ここでは決めない（⑤ で決める）。
 
 ### ③-1-a 読む形
 
@@ -186,7 +192,8 @@ Vitest の `meta.reach` は、② のレポーターが JSON から外すので�
 interface JoinedRun {
   run: TestRun; // { run: { at? }, results: テストの id ごとの TestResult }
   reach: Map<string, TestReach[]>; // テストの id ごとの到達
-  unmatched: { results: number; reach: number }; // カードに引き当てられなかった数
+  exchanges: Map<string, RawExchange[]>; // テストの id ごとの、送ったリクエスト
+  unmatched: { results: number; reach: number; exchanges: number }; // カードに引き当てられなかった数
   measured: boolean; // 到達を一つでも読んだか
 }
 ```
@@ -996,5 +1003,6 @@ interface TestCounts {
 - `measured`（到達を読んだか）は、④ が関連するテストを決めるときと、⑤ の `TestsIndex.measured` に使う
 - `Joined` は、⑤ が `indexRefs` で索引の `frames` と `endpoints` にし、不足を索引の `gaps` に置き、`outlineOf` で名指す関数を決めるのに使う
 - `JoinedRun` の `run.run`（`at`）は ⑤ が索引の `run` にし、`unmatched` の数は地図のビルドのログに出る
+- `JoinedRun.exchanges`（テストが送ったリクエスト）は、⑤ がケースの例にする（[⑤-11](05-data.md#-11-ケースのファイル)）
 
 [全体像](README.md) ｜ ← [② 実行して計る](02-measure.md) ｜ ③ 結果と関数に結ぶ ｜ [④ PR の差分と検査](04-pull-request.md) →

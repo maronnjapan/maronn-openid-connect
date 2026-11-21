@@ -212,7 +212,7 @@ redirect URI は何も配らず、ステップがブラウザの行き着いた 
 |---|---|---|
 | `packages/test-catalog` | `.` | `dist/index.js`（型は `dist/index.d.ts`） |
 | | `./model` | 型だけ（`src/model.ts`、[⑤-1](05-data.md#-1-ファイルの一覧)） |
-| `packages/test-reach` | `./env`、`./source-map`、`./vitest`、`./vitest-setup`、`./vitest-reporter`、`./op` | `src` の同じ名前の `.js`。<br>`./env`、`./vitest`、`./op` には `.d.ts` を添える |
+| `packages/test-reach` | `./env`、`./source-map`、`./vitest`、`./vitest-setup`、`./vitest-reporter`、`./exchanges`、`./op` | `src` の同じ名前の `.js`。<br>`./env`、`./vitest`、`./exchanges`、`./op` には `.d.ts` を添える |
 
 ### ⑦-1-e 依存
 
@@ -341,6 +341,7 @@ sequenceDiagram
 |---|---|
 | 読みの警告 | `tests: <警告>`。<br>警告の形は [①-2-f](01-read.md#-2-f-警告) |
 | PR の差分（PR のビルドだけ） | `tests: <前> → <後> cases, <n> added, <n> removed, <n> renamed, <n> changed; <n> changes need a test or a reason` |
+| ケースの例（報告が HTTP のやり取りを持つときだけ） | `tests: <n> requests of <n> tests (unmatched: <n> lines), <n> to an endpoint, <n> to one with cases (<n> answered and not overlapped), <n> took a case; <n> of <n> cases with examples`。<br>規則は [⑤-11-b](05-data.md#-11-b-ケースの例) |
 | 全体 | `tests: <件数> cases (<種類> <数>, ...) in <n> files, <n> with helpers, the code of <n> files, <n> frames and <n> endpoints with tests, <n> gaps, <実行>, <n> phrases without Japanese (<秒>s)` |
 
 - `(<種類> <数>, ...)` は `counts.kinds` の鍵の順で、カタログの順に初めて出た種類の順である（[③-9](03-join.md#-9-テストの数え方)）
@@ -610,7 +611,7 @@ flowchart LR
 
 | ステップ | 書くもの |
 |---|---|
-| `pnpm run test:ci` | Vitest のどのパッケージも `vitest/<名前>.json` と `junit/vitest-<名前>.xml`。<br>計測する 5 パッケージ（`core`、`experimental`、`google-login`、`app-hono`、`app-nextjs`）は、ほかに `reach/vitest-<名前>.jsonl` と `coverage/vitest/<名前>/lcov.info` |
+| `pnpm run test:ci` | Vitest のどのパッケージも `vitest/<名前>.json` と `junit/vitest-<名前>.xml`。<br>計測する 5 パッケージ（`core`、`experimental`、`google-login`、`app-hono`、`app-nextjs`）は、ほかに `reach/vitest-<名前>.jsonl` と `coverage/vitest/<名前>/lcov.info`。<br>`app-hono` は、ほかに `exchanges/vitest-app-hono.jsonl`（[②-3-d](02-measure.md#-3-d-http-のやり取り)） |
 | `pnpm run test:features` | `playwright/in-process.json`、`junit/features-in-process.junit.xml` |
 | `pnpm run test:e2e` | 実行先（`hono`、`nextjs`）ごとに `playwright/<実行先>.json`、`junit/e2e-<実行先>.junit.xml`、`reach/e2e-<実行先>.jsonl`、`coverage/e2e/<実行先>/lcov.info`。<br>途中のものとして `v8/<実行先>/` と `access/<実行先>-<役>.log` |
 

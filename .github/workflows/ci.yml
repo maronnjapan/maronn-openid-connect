@@ -91,7 +91,8 @@ jobs:
         run: pnpm audit --audit-level=high
 
   # テストの結果（Vitest と Playwright の JSON と JUnit）と、テストごとの到達（MARONN_REACH=1 の計測。
-  # Vitest は Istanbul の計数、E2E は OP の V8 の計数の差分）を work/test-reports に書く。
+  # Vitest は Istanbul の計数、E2E は OP の V8 の計数の差分）と、apps/hono の API テストが送ったリクエストと
+  # 応答とその間に走ったコード（exchanges/）を work/test-reports に書く。
   # 次の map ジョブがそれをテストのページ（apps/tests、地図の /tests/）に載せ、カバレッジと結果は Codecov に上げる
   # （apps/map/docs/design-test-catalog.md「データとビルド」）。計測は CI だけで行い、手元の pnpm test は変わらない。
   test:

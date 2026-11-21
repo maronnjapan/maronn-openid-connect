@@ -40,6 +40,24 @@ describe('testReports', () => {
     });
   });
 
+  it('should add the recorder of the exchanges after the reach setup file, and the exchanges file, with MARONN_REACH=1', () => {
+    const config = testReports({ root: PACKAGE, name: 'demo', roots: ['packages/core/src'], exchanges: './src/support/record.ts', env: { MARONN_TEST_REPORTS: '/reports', MARONN_REACH: '1' } });
+    expect(config.setupFiles).toEqual([fileURLToPath(new URL('./vitest-setup.js', import.meta.url)), `${PACKAGE}/src/support/record.ts`]);
+    expect(/** @type {unknown[]} */ (config.reporters).at(-2)).toEqual([
+      fileURLToPath(new URL('./vitest-reporter.js', import.meta.url)),
+      { outputFile: '/reports/vitest/demo.json', repositoryRoot: repositoryRoot(), reachFile: '/reports/reach/vitest-demo.jsonl', exchangesFile: '/reports/exchanges/vitest-demo.jsonl' },
+    ]);
+  });
+
+  it('should leave the recorder of the exchanges out when the reach is not measured', () => {
+    const config = testReports({ root: PACKAGE, name: 'demo', roots: ['packages/core/src'], exchanges: './src/support/record.ts', env: { MARONN_TEST_REPORTS: '/reports' } });
+    expect(config.setupFiles).toBeUndefined();
+    expect(/** @type {unknown[]} */ (config.reporters).at(-2)).toEqual([
+      fileURLToPath(new URL('./vitest-reporter.js', import.meta.url)),
+      { outputFile: '/reports/vitest/demo.json', repositoryRoot: repositoryRoot() },
+    ]);
+  });
+
   it('should only report a tool that names no roots, even with MARONN_REACH=1', () => {
     const config = testReports({ root: CONFIG, env: { MARONN_REACH: '1', MARONN_TEST_REPORTS: '/reports' } });
     expect(config.coverage).toBeUndefined();

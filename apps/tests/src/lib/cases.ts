@@ -7,10 +7,15 @@
  * A case names the steps it runs. For each of those steps the page counts
  * its unit tests (正常系, 異常系, 境界値) and the failures that can come up
  * in it, each with how surely a test expects it (Verdict). A failure case
- * also names the tests that expect its error. Nothing here touches the DOM
- * or fetches.
+ * also names the tests that expect its error.
+ *
+ * A case is also shown as a request going through it: the steps it runs,
+ * in order, with what happened in each (WayStep): from a request a measured
+ * API test sent that took it (CaseExample), or, without one, from the case
+ * itself and the conditions of its way. Nothing here touches the DOM or
+ * fetches.
  */
-import type { EndpointCase, FailureTests, OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
+import type { CaseCondition, CaseExample, EndpointCase, ExampleStep, FailureTests, OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
 import { endpointRef, entriesOf, sortForList, stepTests, type Db } from './data';
 
 /**
@@ -107,10 +112,19 @@ export function unitCounts(tests: readonly TestEntry[]): UnitCounts {
   };
 }
 
+/**
+ * The steps of a way that the outline of the endpoint has, in the order of
+ * the way: the steps the page shows for a case (a step the outline does not
+ * have has no label, no tests and no place on the timeline).
+ */
+function onOutline(endpoint: OutlineEndpoint, ids: readonly string[]): string[] {
+  return ids.filter((id) => endpoint.steps.some((step) => step.id === id));
+}
+
 /** What the tests say about one step of an endpoint, for a case or for every case. */
 export interface StepCheck {
   step: OutlineStep;
-  /** Its place on the way of the case, from 1; undefined for a step the case does not run. */
+  /** Its place on the way of the case among the steps the outline has, from 1; undefined for a step the case does not run. */
   order?: number;
   unit: UnitCounts;
   /** The failures that can come up in the step: the failure cases that name it. */
@@ -120,13 +134,15 @@ export interface StepCheck {
 
 /**
  * The checks of the steps of an endpoint in the order of its outline: with a
- * case, each step it runs has its place on the way; without one, every step
- * is on.
+ * case, each step it runs has its place on the way (counted as the timeline
+ * and the flow of the case count it, over the steps the outline has);
+ * without one, every step is on.
  */
 export function stepChecks(db: Db, endpoint: OutlineEndpoint, cases: readonly EndpointCase[], chosen?: EndpointCase): StepCheck[] {
+  const way = chosen === undefined ? [] : onOutline(endpoint, chosen.steps);
   return endpoint.steps.map((step) => {
     const failures = cases.filter((item) => item.failure?.step === step.id);
-    const at = chosen === undefined ? -1 : chosen.steps.indexOf(step.id);
+    const at = way.indexOf(step.id);
     return { step, ...(at === -1 ? {} : { order: at + 1 }), unit: unitCounts(stepTests(db, endpoint.key, step)), failures, verdicts: countVerdicts(failures) };
   });
 }
@@ -224,3 +240,126 @@ export function endWords(item: Pick<EndpointCase, 'end' | 'failure'>): string {
 
 /** How long the playback of a case stays on a step, in milliseconds. */
 export const STEP_MS = 1100;
+
+/** What a step of an endpoint does, by its kind: the words of the map (apps/map STEP_KIND_WORDS). */
+export const STEP_KIND_LABELS: Record<NonNullable<OutlineStep['kind']>, string> = {
+  parse: '読み取り',
+  resolve: '解決',
+  validate: '検証',
+  decide: '判断',
+  dispatch: '振り分け',
+  issue: '発行',
+  persist: '保存',
+  transform: '変換',
+  respond: '応答',
+};
+
+/** What happened to a request in a step (ExampleStep.how): it went on, the answer was returned, a failure came up, or a failure was turned into the error response. */
+export type StepHow = ExampleStep['how'];
+
+/** What the page says a step did with the request, in words; nothing for a step it went through. */
+export const HOW_LABELS: Record<StepHow, string> = {
+  ran: '',
+  answered: 'ここで応答',
+  failed: 'ここで失敗',
+  caught: '失敗を受け取ってエラーで応答',
+};
+
+/** A step of the way a request takes through a case, in order, with what happened in it. */
+export interface WayStep {
+  id: string;
+  /** The step of the outline. */
+  step: OutlineStep;
+  how: StepHow;
+  /** The decisions in the step and the side taken: measured for an example, the case's conditions without one. */
+  decisions: CaseCondition[];
+  /** The functions of the catalog the request ran that the step calls directly (frame ids); only an example has them. */
+  calls: string[];
+  /** For a step where a failure came up: the error. */
+  error?: string;
+}
+
+/**
+ * The steps a request goes through in a case, in order, as the timeline
+ * shows them: only those the outline has. With an example, the steps the
+ * request ran as measured (ExampleStep). Without, the case's own steps: the
+ * step a failure comes up in fails with its error, and the last step answers
+ * (a way that ends in a response) or turns the failure into the error
+ * response (a way that ends in one); the conditions of the way are given to
+ * the steps they are in. When the request was answered, or its failure
+ * caught, in a step the outline does not have after the last step shown,
+ * that last step is said to have done it; the decisions in a step left out
+ * are looseConditions.
+ */
+export function waySteps(endpoint: OutlineEndpoint, chosen: EndpointCase, example?: CaseExample): WayStep[] {
+  const conditions = chosen.conditions ?? [];
+  const all: ExampleStep[] =
+    example?.steps ??
+    chosen.steps.map((id, index) => {
+      const failed = chosen.failure !== undefined && chosen.failure.step === id;
+      const how: StepHow = failed ? 'failed' : index < chosen.steps.length - 1 ? 'ran' : chosen.end === 'response' ? 'answered' : chosen.end === 'error-response' ? 'caught' : 'ran';
+      return { id, how, decisions: conditions.filter((condition) => condition.step === id), ...(failed && chosen.failure !== undefined ? { error: chosen.failure.error } : {}) };
+    });
+  const stepOf = (id: string) => endpoint.steps.find((step) => step.id === id);
+  const last = all.map((item) => stepOf(item.id) !== undefined).lastIndexOf(true);
+  // An answer or a catch in a step left out after the last step shown is the end of the way the page shows.
+  const ending = all.slice(last + 1).find((item) => item.how === 'answered' || item.how === 'caught')?.how;
+  return all.slice(0, last + 1).flatMap((item, index) => {
+    const step = stepOf(item.id);
+    if (step === undefined) return [];
+    const how = index === last && item.how === 'ran' && ending !== undefined ? ending : item.how;
+    return [{ id: item.id, step, how, decisions: item.decisions ?? [], calls: item.calls ?? [], ...(item.error === undefined ? {} : { error: item.error }) }];
+  });
+}
+
+/**
+ * Returns how many steps the way of a case rules when the flow shows a
+ * different number: an example request that went through more steps than
+ * its case has (a catch of an error raised anywhere, whose case has only
+ * the step that answers it). The playback and the checks count the case's.
+ */
+export function ruledSteps(endpoint: OutlineEndpoint, chosen: EndpointCase, way: readonly WayStep[]): number | undefined {
+  const ruled = onOutline(endpoint, chosen.steps).length;
+  return ruled === way.length ? undefined : ruled;
+}
+
+/**
+ * The decisions of a case that are in no step its flow shows: shown before
+ * its steps. With an example, those the request met in a step the outline
+ * does not have. Without, the conditions of the way that are in no step of
+ * it (a decision of the endpoint between two steps) or in a step the
+ * outline does not have.
+ */
+export function looseConditions(endpoint: OutlineEndpoint, chosen: EndpointCase, example?: CaseExample): CaseCondition[] {
+  const shown = new Set(onOutline(endpoint, example === undefined ? chosen.steps : example.steps.map((item) => item.id)));
+  if (example !== undefined) return example.steps.flatMap((item) => (shown.has(item.id) ? [] : (item.decisions ?? [])));
+  return (chosen.conditions ?? []).filter((condition) => condition.step === undefined || !shown.has(condition.step));
+}
+
+/**
+ * Why a case shows no example request: the build has no measured run
+ * (`unmeasured`), the measured run recorded no request to this endpoint
+ * (`unrecorded`: no case of it has one), or no recorded request took this
+ * way (`untaken`).
+ */
+export type NoExample = 'unmeasured' | 'unrecorded' | 'untaken';
+
+/** Why a case shows no example request (see NoExample). */
+export function noExampleReason(measured: boolean, cases: readonly EndpointCase[]): NoExample {
+  if (!measured) return 'unmeasured';
+  return cases.some((item) => (item.examples?.length ?? 0) > 0) ? 'untaken' : 'unrecorded';
+}
+
+/** What the page says where a case has no example request, by why (NoExample). */
+export const NO_EXAMPLE_NOTES: Record<NoExample, string> = {
+  unmeasured: 'API テストを計測して実行したビルド（`MARONN_REACH=1`）では、この道筋を通った実際のリクエストと応答をここに出します。',
+  unrecorded: '計測した実行に、このエンドポイントへの API テストのリクエストの記録はありません。',
+  untaken: '計測した API テストのリクエストに、この道筋を通ったものはありませんでした。',
+};
+
+/** How a case ends, in words, for its result without an example: with the OAuth error code of a failure when it has one. */
+export function resultWords(item: Pick<EndpointCase, 'end' | 'failure'>): string {
+  if (item.end === 'escapes') return '失敗がエンドポイントの外へ出る';
+  if (item.end === 'error-response') return `失敗を受け取り、エラーで応答する${item.failure?.code === undefined ? '' : `（${item.failure.code}）`}`;
+  return '応答して終わる';
+}

@@ -166,7 +166,25 @@ describe('readRun', () => {
     expect(run.run.results['flow']).toEqual({ status: 'passed', targets: { hono: { status: 'passed', duration: 9, attempts: 2 } } });
     expect(run.reach.get('accept')).toEqual([{ functions: [VERIFY] }]);
     expect(run.reach.get('flow')).toEqual([{ target: 'hono', functions: [AUTH], requests: [{ endpoint: 'token', method: 'POST', path: '/token', status: 200 }] }]);
-    expect([run.measured, run.unmatched]).toEqual([true, { results: 0, reach: 0 }]);
+    expect([run.measured, run.unmatched]).toEqual([true, { results: 0, reach: 0, exchanges: 0 }]);
+  });
+
+  it('should read the requests each test sent, the rows of an it.each into their template, and count the lines that name no test', () => {
+    directory = mkdtempSync(join(tmpdir(), 'test-run-'));
+    mkdirSync(join(directory, 'exchanges'));
+    const sent = (url: string) => ({ request: { method: 'POST', url, headers: [] }, response: { status: 200, headers: [] }, ran: {} });
+    writeFileSync(
+      join(directory, 'exchanges', 'vitest-app-hono.jsonl'),
+      [
+        JSON.stringify({ file: 'packages/core/src/client-auth.test.ts', path: ['verifyClientSecret'], title: 'should accept a', exchanges: [sent('https://op.example.com/token')] }),
+        JSON.stringify({ file: 'packages/core/src/client-auth.test.ts', path: ['verifyClientSecret'], title: 'should accept b', exchanges: [sent('https://op.example.com/userinfo')] }),
+        JSON.stringify({ file: 'packages/core/src/client-auth.test.ts', path: ['verifyClientSecret'], title: 'should be gone', exchanges: [sent('https://op.example.com/token')] }),
+        '{ not json',
+        '',
+      ].join('\n'),
+    );
+    const run = readRun(directory, '/repo', [card('accept', { title: 'should accept %s' })], DATA, () => undefined);
+    expect([run.exchanges.get('accept')?.map((exchange) => exchange.request.url), run.unmatched.exchanges]).toEqual([['https://op.example.com/token', 'https://op.example.com/userinfo'], 2]);
   });
 
   it('should find a row of an outline by its title before its place, so a skipped row moves no result', () => {

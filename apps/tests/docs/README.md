@@ -79,10 +79,10 @@ flowchart LR
 | 部 | 章 | すること | 実装のディレクトリとファイル | 作る手順 |
 |---|---|---|---|---|
 | ① テストを読む | [01-read.md](01-read.md) | テストコードと機能ファイルを読み、カードにする | `packages/test-catalog/src`（`discover.ts`、`read-code.ts`、`read-feature.ts`、`vocabulary.ts`、`words.ts`、`catalog.ts`、`id.ts`、`aspects.ts`、`lint.ts`）、`tests/features`、`tests/steps`、`tests/catalog/aspects.yaml` | [2](#2-機能ファイルとプロセス内の実行先)、[3](#3-カードの読み取り) |
-| ② 実行して計る | [02-measure.md](02-measure.md) | テストを走らせ、結果と到達を報告のディレクトリに書く | `packages/test-reach/src`、各パッケージの `vitest.config.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach`、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs` | [5](#5-計測と-http-の実行先) |
+| ② 実行して計る | [02-measure.md](02-measure.md) | テストを走らせ、結果と到達と HTTP のやり取りを報告のディレクトリに書く | `packages/test-reach/src`、各パッケージの `vitest.config.ts`、`apps/hono/src/test-support/record-exchanges.ts`、`tests/e2e/fixtures.ts`、`tests/e2e/reach`、`tests/e2e/playwright.config.ts`、`tests/steps/playwright.config.ts`、`apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs` | [5](#5-計測と-http-の実行先) |
 | ③ 結果と関数に結ぶ | [03-join.md](03-join.md) | 結果と到達をカードに足し、フレームとエンドポイントに結ぶ | `packages/test-catalog/src/run.ts`、`build.ts`（`withRun`）、`join.ts` | [6](#6-結果と関数の結び付け) |
 | ④ PR の差分と検査 | [04-pull-request.md](04-pull-request.md) | 変更前後のカードを比べ、関連するテストの変わらない変更を落とす | `packages/test-catalog/src`（`diff.ts`、`markdown.ts`、`draft.ts`、`build.ts` の `readBaseCatalog`）、`packages/map-analysis/src`（`changes.ts`、`notes.ts`、`check.ts`、`draft.ts`）、`apps/map/scripts/draft-notes.mjs`、`check-map.mjs` | [7](#7-pr-の差分と検査) |
-| ⑤ データを書き出す | [05-data.md](05-data.md) | テストのページが読むファイルを書く | `packages/test-catalog/src/build.ts`、`model.ts` | [4](#4-データの段への接続-2)、[8](#8-データの仕上げ) |
+| ⑤ データを書き出す | [05-data.md](05-data.md) | テストのページが読むファイルを書く（ケースと、計測した実行のリクエストの例を含む） | `packages/test-catalog/src/build.ts`、`cases.ts`、`examples.ts`、`model.ts` | [4](#4-データの段への接続-2)、[8](#8-データの仕上げ) |
 | ⑥ テストのページ | [06-viewer.md](06-viewer.md) | データを読んで画面を出す | `apps/tests` | [9](#9-テストのページ) |
 | ⑦ ビルドと CI | [07-build-ci.md](07-build-ci.md) | 部を順に動かし、配り、検査する | 各 `package.json` の `scripts`、`apps/map/scripts/build-data.mjs`、`copy-tests-viewer.mjs`、`check-map.mjs`、`.github/workflows/ci.yml`、`map-preview.yml`、`codecov.yml`、`.github/scripts/` の `lint-e2e-fixtures.mjs`、`lint-features.mjs`、`lint-steps.mjs`、`lint-tests.mjs`、`verify-ci-gate.mjs` | [4](#4-データの段への接続-2)、[10](#10-ビルドと-ci) |
 
@@ -251,7 +251,7 @@ flowchart TB
 | 地図 | ⑤ | `MapData`（`flows`、`functions`、`bodies`、`sources`）と `Repository.head.trees` | オブジェクト |
 | ① | ③ | カードの配列 `TestCase[]` | オブジェクト |
 | ① | ⑤ | 読みの警告と、訳の無い言い回し | 文字列の配列。<br>警告はビルドのログに、言い回しは `tests.json` の `untranslated` に入る |
-| ② | ③ | 報告のディレクトリの `vitest/*.json`、`playwright/*.json`、`reach/*.jsonl`（一行に到達の行一つ） | ファイル。<br>CI では artifact `test-reports` で渡る |
+| ② | ③ | 報告のディレクトリの `vitest/*.json`、`playwright/*.json`、`reach/*.jsonl`（一行に到達の行一つ）、`exchanges/*.jsonl`（一行にテスト一つの HTTP のやり取り） | ファイル。<br>CI では artifact `test-reports` で渡る |
 | ② | Codecov | `coverage/vitest/<パッケージ>/lcov.info`、`coverage/e2e/<実行先>/lcov.info`、`junit/*.xml` | ファイル |
 | ③ | ④ | `result` と `reach` を置き、到達の分を対象と `evidence` に足したカードと、`measured` | オブジェクト |
 | ③ | ⑤ | 同じカードと、`Joined`（フレームとエンドポイントごとのテストと不足） | オブジェクト |
@@ -602,6 +602,7 @@ API のうち 51 枚は、行き先が `own` か `app` だけで、エンドポ�
 作るもの：
 
 - パッケージ `@maronn-openid-connect/test-reach`（`packages/test-reach/src`）と、各 `vitest.config.ts` の `testReports`
+- `apps/hono/src/test-support/record-exchanges.ts` と、`apps/hono/vitest.config.ts` の `testReports` の `exchanges`
 - 計る 5 パッケージの devDependencies の `@vitest/coverage-istanbul`（`5.0.5`）
 - `apps/hono/src/server.ts`、`apps/nextjs/src/instrumentation.ts`、`apps/nextjs/next.config.mjs`
 - `tests/e2e/fixtures.ts`、`tests/e2e/reach`、spec の `test` の import 先、`tests/e2e/playwright.config.ts` のレポーターと `reachRun` と `reachEnv`
@@ -624,6 +625,7 @@ http の実行先として、次を足す。
 - `node .github/scripts/lint-e2e-fixtures.mjs` が `E2E specs take test from tests/e2e/fixtures.ts.` を出す
 - `pnpm --filter @maronn-openid-connect/test-steps lint` が、二つの設定の生成で通る
 - `MARONN_REACH=1 pnpm --filter @maronn-openid-connect/core test` で、`work/test-reports` に `vitest/core.json`、`junit/vitest-core.xml`、`reach/vitest-core.jsonl`、`coverage/vitest/core/lcov.info` ができる
+- `MARONN_REACH=1 pnpm --filter @maronn-openid-connect/app-hono test` で、ほかに `exchanges/vitest-app-hono.jsonl` ができ、どのテストも通る（計らない `pnpm test` も、今までと同じに通る）
 - `MARONN_REACH=1 pnpm run test:e2e` で、`playwright/hono.json`、`reach/e2e-hono.jsonl`、`coverage/e2e/hono/lcov.info` ができる（Next.js の分は `nextjs` の名前で）
 
 例：到達の行は、Vitest の 5 パッケージで 4,880 行である。

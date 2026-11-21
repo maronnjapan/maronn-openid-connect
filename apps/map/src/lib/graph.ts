@@ -103,10 +103,25 @@ export const EDGE_LABEL_COLUMNS = 48;
 /** The least room between the border of a region and the boxes it encloses. */
 const GROUP_PAD = 12;
 
+/** The room between the boxes of a rank, between parallel arrows, and between ranks (see LayoutOptions.spacing). */
+export interface LayoutSpacing {
+  node: number;
+  edge: number;
+  rank: number;
+}
+
 /** How layoutGraph sizes the boxes, and the regions it draws around them. */
 export interface LayoutOptions {
   /** The height of a box at a width; every box is BOX_HEIGHT high without it. It is asked again when the width changes. */
   height?: (id: string, width: number) => number;
+  /**
+   * The width of each box, when the boxes are not all one width (the shapes
+   * of a flowchart): it replaces BOX_WIDE and BOX_NARROW, and the layout no
+   * longer narrows the boxes of a flow where a rank holds two.
+   */
+  width?: (id: string) => number;
+  /** The room between the boxes, the arrows and the ranks; NODE_SEP, EDGE_SEP and RANK_SEP without it. */
+  spacing?: LayoutSpacing;
   /** The regions: each encloses its members; a region inside another lies inside it. */
   groups?: readonly GraphGroup[];
   /** The room the label of a region takes at its top, from its border to its first box (GROUP_PAD without it). */
@@ -355,9 +370,12 @@ export function compactArguments(code: string): string {
 }
 
 /** The pixel width of a label of the arrows (11px text). */
-function labelWidth(text: string): number {
+export function labelWidth(text: string): number {
   return Math.ceil(textColumns(text) * 6.2) + 8;
 }
+
+/** The pixel height of a label of the arrows. */
+export const LABEL_HEIGHT = 22;
 
 /** Turn the routing points into an SVG polyline without cutting across its reserved lanes. */
 function arrowPath(points: readonly LayoutPoint[]): string {
@@ -440,23 +458,24 @@ function arrangeGraph(
   edges: readonly GraphEdge[],
   direction: LayoutDirection,
   align: 'UL' | 'UR' | 'DL' | 'DR',
-  width: number,
+  width: number | ((id: string) => number),
   heights: ReadonlyMap<string, number>,
   clusters: readonly Cluster[],
+  spacing: LayoutSpacing = { node: NODE_SEP, edge: EDGE_SEP, rank: RANK_SEP },
 ) {
   const graph = new graphlib.Graph({ compound: true, multigraph: true });
   graph.setGraph({
     rankdir: direction,
     align,
-    nodesep: NODE_SEP,
-    edgesep: EDGE_SEP,
-    ranksep: RANK_SEP,
+    nodesep: spacing.node,
+    edgesep: spacing.edge,
+    ranksep: spacing.rank,
     marginx: PAD,
     marginy: PAD,
   });
   const boxes = new Set(nodes.map((node) => node.id));
   const byCluster = new Map(clusters.map((cluster) => [cluster.id, cluster]));
-  for (const node of nodes) graph.setNode(node.id, { width, height: heights.get(node.id) ?? BOX_HEIGHT });
+  for (const node of nodes) graph.setNode(node.id, { width: typeof width === 'number' ? width : width(node.id), height: heights.get(node.id) ?? BOX_HEIGHT });
   for (const cluster of clusters) graph.setNode(cluster.id, {});
   for (const cluster of clusters) if (cluster.parent !== undefined) graph.setParent(cluster.id, cluster.parent);
   // A box goes in the deepest region that encloses it: the last of the outer-first order to name it.
@@ -468,7 +487,7 @@ function arrangeGraph(
     const text = truncateColumns(edge.label ?? '', EDGE_LABEL_COLUMNS);
     graph.setEdge(from, to, {
       width: text === '' ? 0 : labelWidth(text),
-      height: text === '' ? 0 : 22,
+      height: text === '' ? 0 : LABEL_HEIGHT,
       labelpos: 'c',
       // Keep the main path compact; give branches and errors their own lanes.
       weight: edge.kind === 'flow' ? 4 : 1,
@@ -597,8 +616,9 @@ function place(graph: graphlib.Graph, nodes: readonly GraphNode[], edges: readon
  *
  * Every box is BOX_WIDE wide, or BOX_NARROW in a top-to-bottom flow where a
  * rank holds two boxes, so the width follows from the graph alone, never
- * from the room it is shown in; boxWidth tells which. Each box is as high as
- * options.height says for that width.
+ * from the room it is shown in; boxWidth tells which. options.width gives
+ * each box a width of its own instead. Each box is as high as
+ * options.height says for its width.
  *
  * Each region of options.groups is a cluster of Dagre's compound layout: its
  * boxes stay together, no other box comes between them, and its rectangle
@@ -617,24 +637,27 @@ export function layoutGraph(
   if (nodes.length === 0) return { width: PAD * 2, height: PAD * 2, boxes: [], groups: [], arrows: [], boxWidth: BOX_WIDE };
   const clusters = clustersOf(nodes, options.groups ?? []);
   const header = (id: string) => options.header?.(id) ?? GROUP_PAD;
+  const own = options.width;
+  const widthOf = (id: string, boxWidth: number): number => own?.(id) ?? boxWidth;
   const heightsAt = (width: number): Map<string, number> =>
-    new Map(nodes.map((node) => [node.id, options.height === undefined ? BOX_HEIGHT : options.height(node.id, width)]));
+    new Map(nodes.map((node) => [node.id, options.height === undefined ? BOX_HEIGHT : options.height(node.id, widthOf(node.id, width))]));
   let boxWidth = BOX_WIDE;
   let heights = heightsAt(boxWidth);
-  let graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights, clusters);
+  const sized = (id: string) => widthOf(id, boxWidth);
+  let graph = arrangeGraph(nodes, edges, direction, 'UL', own === undefined ? boxWidth : sized, heights, clusters, options.spacing);
   // The ranks depend neither on the sizes nor on the alignment, so the first
   // arrangement already tells whether a rank holds two boxes.
-  if (direction === 'TB' && sharesRank(graph, nodes)) {
+  if (own === undefined && direction === 'TB' && sharesRank(graph, nodes)) {
     boxWidth = BOX_NARROW;
     heights = heightsAt(boxWidth);
-    graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights, clusters);
+    graph = arrangeGraph(nodes, edges, direction, 'UL', boxWidth, heights, clusters, options.spacing);
   }
   const crossAxis = direction === 'TB' ? 'width' : 'height';
   // Choose the most compact alignment. Averaging the alignments lets shared
   // error paths pull a straight sequence into a wide staircase.
   let best = place(graph, nodes, edges, clusters, direction, header);
   for (const align of ['UR', 'DL', 'DR'] as const) {
-    const candidate = place(arrangeGraph(nodes, edges, direction, align, boxWidth, heights, clusters), nodes, edges, clusters, direction, header);
+    const candidate = place(arrangeGraph(nodes, edges, direction, align, own === undefined ? boxWidth : sized, heights, clusters, options.spacing), nodes, edges, clusters, direction, header);
     if (candidate[crossAxis] < best[crossAxis]) best = candidate;
   }
   return { ...best, arrows: best.arrows.filter((arrow) => shown.has(arrow.index)), boxWidth };

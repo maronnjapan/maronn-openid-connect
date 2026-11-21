@@ -28,6 +28,14 @@ describe('layoutGraph', () => {
     { from: 'right', to: 'join', kind: 'flow' },
   ];
 
+  it('should give every box the width the caller asks for, without narrowing a flow where a rank holds two, and keep the room asked for between ranks', () => {
+    const widths: Record<string, number> = { start: 132, left: 300, right: 300, join: 180 };
+    const layout = layoutGraph(forkNodes, forkEdges, new Set([0, 1, 2, 3]), 'TB', { width: (id) => widths[id] ?? 0, spacing: { node: 30, edge: 14, rank: 40 } });
+    expect(layout.boxes.map((box) => [box.id, box.width])).toEqual(Object.entries(widths));
+    const [start, left] = layout.boxes;
+    expect(left!.y - (start!.y + start!.height)).toBeGreaterThanOrEqual(40);
+  });
+
   it('should place sibling branches side by side before their shared continuation', () => {
     const layout = layoutGraph(forkNodes, forkEdges, new Set([0, 1, 2, 3]));
     const [start, left, right, join] = layout.boxes;

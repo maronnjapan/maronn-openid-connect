@@ -6,7 +6,7 @@
  * (model.ts).
  */
 export { buildMap, plain, removeStale, writeHashed, type BuildContext, type BuildExtension, type BuildOptions, type BuildResult } from './build.js';
-export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
+export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, LINKS_PLACE, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
 export { checkMap, uncoveredLines, type CheckResult, type MapMetrics } from './check.js';
 export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeHunks } from './diff.js';
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';

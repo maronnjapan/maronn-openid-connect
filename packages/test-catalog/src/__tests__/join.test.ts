@@ -6,7 +6,7 @@ import type { FrameChangeEntry, FunctionEntry, MapChanges, MapData } from '@maro
 import { parseAspects } from '../aspects.js';
 import { diffCatalogs, expectationOverlap } from '../diff.js';
 import { entryOf, joinTests, reachableFrames } from '../join.js';
-import { testsMarkdown } from '../markdown.js';
+import { changedWords, testsMarkdown, untestedMarkdown } from '../markdown.js';
 import type { Assertion, TestCase } from '../model.js';
 import { CaseFinder, FrameLocator, readRun, repositoryPath } from '../run.js';
 
@@ -246,14 +246,19 @@ describe('diffCatalogs', () => {
       [VERIFY, ['kept'], true, undefined],
       [AUTH, [], true, '形は同じ'],
     ]);
-    const markdown = testsMarkdown(diff, { ...DATA, changes: changes([entry({})]) } as MapData, ASPECTS);
-    expect(markdown).toContain('**関連するテストに変更の無い実装の変更（1、CI を落とす）**');
+    const data = { ...DATA, changes: changes([entry({})]) } as MapData;
+    const markdown = untestedMarkdown(diff, data);
+    expect(markdown.startsWith('### 関連するテストに変更の無い実装の変更（1、CI を落とす）\n')).toBe(true);
     expect(markdown).toContain('- `verifyClientSecret()`（core client-auth.ts）（条件 `secret.length < 8` を足した）: 関連するテスト 1 件、変更なし');
+    // The rest is folded, with the change whose note says why.
+    const folded = testsMarkdown(diff, data, ASPECTS);
+    expect([folded.startsWith('<details><summary>テスト 1 → 1（追加 0 · 変更 0 · 名前の変更 0 · 削除 0）</summary>\n'), folded.endsWith('\n</details>\n'), folded.includes('CI を落とす'), folded.includes('「形は同じ」')]).toEqual([true, true, false, true]);
   });
 
   it('should count a change whose related test the pull request changed as touched, and the new failures no test expects', () => {
     const diff = diffCatalogs([named('kept')], [named('kept', { digest: 'other' })], DATA, changes([entry({ failuresAdded: ['TokenError(invalid_request)', 'RangeError'] })]), false);
     expect(diff.frames.map((frame) => [frame.touched, frame.untouched, frame.failuresWithoutTest])).toEqual([[['kept'], false, ['TokenError(invalid_request)']]]);
+    expect(untestedMarkdown(diff, { ...DATA, changes: changes([entry({})]) } as MapData)).toBe('');
   });
 
   it('should give the card of a test the functions it names or declares apart from those it calls, a removed test too, those a run added left out', () => {
@@ -298,5 +303,22 @@ describe('repositoryPath', () => {
       repositoryPath('/repo', '/repo/.claude/worktrees/agent-1/tests/e2e/specs/flow.spec.ts'),
       repositoryPath('/repo', '/home/runner/work/x/x/packages/core/src/a.test.ts'),
     ]).toEqual(['tests/e2e/specs/flow.spec.ts', 'tests/e2e/specs/flow.spec.ts', 'packages/core/src/a.test.ts']);
+  });
+});
+
+describe('changedWords', () => {
+  const expectation = (text: string, extra: Partial<Assertion> = {}): Assertion => ({ actual: 'response.status', matcher: 'toBe', line: 1, text, ...extra });
+
+  it('should say an expectation of the same phrase, or of the same value and matcher, by the words that changed', () => {
+    const phrase = { phrase: 'the HTTP status is {int}' };
+    expect(changedWords([expectation('the HTTP status is 400', phrase)], [expectation('the HTTP status is 401', { ...phrase, actual: 'res.status' })])).toEqual(['~~400~~ → 401']);
+    expect(changedWords([expectation('the error code is `invalid_request`', { actual: 'body.error' })], [expectation('the error code is `invalid_grant`', { actual: 'body.error' })])).toEqual(['~~invalid_request~~ → invalid_grant']);
+    expect(changedWords([expectation('the scope is `openid`'), expectation('it is `a`, `b` and `c`')], [expectation('the scope is `openid profile`'), expectation('it is `a` and `c`')])).toEqual(['+profile', '~~, `b`~~']);
+  });
+
+  it('should say whole an expectation removed or added without a pair, and keep the code spans of a cut closed', () => {
+    expect(changedWords([expectation('the body has `a`', { actual: 'body' })], [expectation('the header `DPoP` is set', { actual: 'headers', matcher: 'toHaveProperty' })])).toEqual(['~~the body has `a`~~', '+the header `DPoP` is set']);
+    const words = changedWords([expectation('it is `a b` now')], [expectation('it is `a` b now')]);
+    expect([words.length > 0, words.every((word) => (word.match(/`/g) ?? []).length % 2 === 0)]).toEqual([true, true]);
   });
 });

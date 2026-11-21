@@ -96,8 +96,9 @@ export interface BuildContext {
   log: string[];
 }
 
-/** What an extension adds to the build: sections of changes.md (each under its own `###` heading). */
+/** What an extension adds to changes.md (changesMarkdown): sections of what fails the check, at the top, and other sections, each folded in its own `<details>`, at the end. */
 export interface BuildExtension {
+  failing?: string[];
   sections?: string[];
 }
 
@@ -320,7 +321,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   const extension = (await options.extend?.({ data, repository, ...(changes === undefined ? {} : { changes }), out: options.out, failures, log })) ?? {};
   writeFileSync(join(options.out, 'map.json'), JSON.stringify(data));
   const changesFile = join(options.out, 'changes.md');
-  const markdown = changes === undefined ? undefined : changesMarkdown(changes.changes, { sections: extension.sections ?? [] });
+  const markdown = changes === undefined ? undefined : changesMarkdown(changes.changes, { failing: extension.failing ?? [], sections: extension.sections ?? [] });
   if (markdown === undefined) rmSync(changesFile, { force: true });
   else writeFileSync(changesFile, markdown);
 

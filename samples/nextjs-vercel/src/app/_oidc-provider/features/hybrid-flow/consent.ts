@@ -21,6 +21,7 @@ import { config, loadSigningKeys, resolvers, stores } from '../../provider';
 import { resolveGrantableScopes } from '../../scopes';
 import type { AuthSessionInfo } from '../../store';
 import { createFragmentResponseMode } from '../implicit-flow/response-mode';
+import { confirmationOf } from '../../token-binding';
 import { issueHybridTokens } from './tokens';
 
 /**
@@ -72,6 +73,7 @@ export async function issueHybridConsentResponse(input: {
       session,
       grantedScope,
       keys,
+      codeConfirmation: confirmationOf(transaction),
     });
   } catch (error) {
     if (!(error instanceof AuthorizationError)) throw error;

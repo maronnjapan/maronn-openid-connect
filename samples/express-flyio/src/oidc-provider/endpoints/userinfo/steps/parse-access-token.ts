@@ -8,7 +8,8 @@ export const meta = step({
   label: 'Bearer トークンを読み取る',
   spec: 'RFC 6750 §2.1 / §2.2',
   function: 'parseUserInfoRequest',
-  consumes: [],
+  consumes: ['dpopAccessToken'],
+  optional: ['dpopAccessToken'],
   produces: ['accessToken'],
   removable: false,
 });

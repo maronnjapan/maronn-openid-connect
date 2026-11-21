@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.15.1",
+  "cliVersion": "0.17.0",
   "framework": "hono",
   "features": {
     "pkce": true,
@@ -20,7 +20,8 @@
     "jwtIntrospectionResponse": true,
     "rpInitiatedLogout": true,
     "dynamicClientRegistration": true,
-    "googleLogin": false
+    "googleLogin": false,
+    "dpop": false
   },
   "scopes": [],
   "db": "sql",

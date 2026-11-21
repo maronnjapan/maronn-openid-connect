@@ -30,6 +30,12 @@ import {
   type ProviderSigningKeys,
 } from '../../provider';
 import { noStoreJson, oauthError } from '../../http';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../token-binding';
 import { tokenExchangeConfig } from './config';
 
 /**
@@ -38,13 +44,16 @@ import { tokenExchangeConfig } from './config';
  * `subject_token` の検証と、発行する内容（サブジェクト、スコープ、オーディエンス、有効期間、`act` クレーム）の導出は `processTokenExchangeRequest()` が行う。
  * 発行したアクセストークンはストアに保存し、トークン交換のレスポンスをキャッシュを禁止して返す。
  * 検証に失敗すると `TokenExchangeError` を投げ、`dispatchTokenExchange()` がそれを OAuth のエラーレスポンスにする。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、交換したアクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * @spec RFC 8693 §2.1
+ * @spec RFC 9449 §5
  */
 export async function exchangeToken(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response> {
   // リクエストを検証し、発行に使う値を導く。
   // 中の検証はそれぞれ独立したステップの関数としても公開されているので、代わりに 1 つずつ呼べば、個々の規則を外したり差し替えたりできる。
@@ -81,6 +90,8 @@ export async function exchangeToken(
       // それまでの委任の連なりは、`processTokenExchangeRequest()` が入れ子にしてある。
       // なりすましの交換では、`act` クレームを付けない。
       ...(grant.actor === undefined ? {} : { act: grant.actor }),
+      // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+      ...accessTokenClaimsOf(binding),
     },
     privateKey: keys.general[0].privateKey,
     keyId: keys.general[0].keyId,
@@ -106,16 +117,21 @@ export async function exchangeToken(
     ...(grant.actor === undefined ? {} : { act: grant.actor }),
     // `subject_token` に保存された `claims` パラメータ（OIDC Core 1.0 §5.5）は、意図して引き継がない。
     // 交換したトークンで UserInfo エンドポイントから得られるのは、スコープに基づくクレームだけである。
+    ...accessTokenRecordOf(binding),
   };
   await stores.accessTokenStore.set(accessToken, metadata);
 
   // 200 でトークン交換のレスポンスを返す。
   // `access_token`、`issued_token_type`、`token_type` は必須で（RFC 8693 §2.2.1）、ここでは `expires_in` と `scope` も必ず含める。
-  return noStoreJson(buildTokenExchangeResponse({
-    accessToken,
-    expiresIn: grant.expiresIn,
-    scope: grant.scope,
-  }));
+  return noStoreJson({
+    ...buildTokenExchangeResponse({
+      accessToken,
+      expiresIn: grant.expiresIn,
+      scope: grant.scope,
+    }),
+    // 鍵に束縛したトークンの `token_type` は、束縛の `token_type`（DPoP なら `DPoP`）にする（RFC 9449 §5）。
+    token_type: tokenTypeOf(binding),
+  });
 }
 
 /**
@@ -125,17 +141,20 @@ export async function exchangeToken(
  * `grant_type` がトークン交換の URN（`TOKEN_EXCHANGE_GRANT_TYPE`）でなければ、`undefined` を返す。
  * `TokenExchangeError` は、RFC 6749 §5.2 の形の 400 のエラーレスポンスにして返す（RFC 8693 §2.2.2）。
  * それ以外のエラーは投げ直し、ルートハンドラが 500 の `server_error` で応答する。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、交換したアクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * @spec RFC 8693 §2.1
+ * @spec RFC 9449 §5
  */
 export async function dispatchTokenExchange(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== TOKEN_EXCHANGE_GRANT_TYPE) return undefined;
   try {
-    return await exchangeToken(params, client, keys);
+    return await exchangeToken(params, client, keys, binding);
   } catch (error) {
     if (error instanceof TokenExchangeError) {
       return oauthError(error.code, error.errorDescription, error.statusCode);

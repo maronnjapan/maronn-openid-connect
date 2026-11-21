@@ -153,7 +153,9 @@ const projects = [
   {
     name: 'tsconfig.nextjs.json',
     compilerOptions: { ...compilerOptions, types: ['node', 'react', 'react-dom'], jsx: 'react-jsx' },
-    include: ['nextjs-*/**/*.ts', 'nextjs-*/**/*.tsx'],
+    // TypeScript's ** skips directories whose name starts with a dot, such as
+    // the discovery route under .well-known/: name them.
+    include: ['nextjs-*/**/*.ts', 'nextjs-*/**/*.tsx', 'nextjs-*/.well-known/**/*.ts'],
   },
 ];
 for (const project of projects) {

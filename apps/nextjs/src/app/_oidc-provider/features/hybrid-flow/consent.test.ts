@@ -38,6 +38,7 @@ async function approve(
     subject: string;
     responseType: AuthorizationResponseType;
     responseMode?: AuthorizationResponseMode;
+    cnf?: Record<string, string>;
   },
 ) {
   await registerClient(createDatabase(), {
@@ -45,7 +46,7 @@ async function approve(
     redirectUris: [REDIRECT_URI],
     responseTypes: ['code id_token token', 'code id_token', 'code token'],
   });
-  const transaction = createAuthTransaction(
+  const created = createAuthTransaction(
     {
       responseType: input.responseType,
       clientId: CLIENT_ID,
@@ -59,6 +60,7 @@ async function approve(
     },
     'csrf-1',
   );
+  const transaction = input.cnf === undefined ? created : { ...created, cnf: input.cnf };
   const session = { subject: input.subject, authTime: NOW - 30, sessionId: 'session-1' };
   await stores.transactionStore.put('auth_txn:' + input.transactionId, transaction, 600);
   await stores.authSessionStore.set(input.transactionId, session);
@@ -124,6 +126,17 @@ describe('issueHybridConsentResponse', () => {
     expect(await resolvers.consentResolver.hasConsent('hybrid-consent-user-2', CLIENT_ID, ['openid', 'profile'])).toBe(true);
     expect(await stores.transactionStore.get('auth_txn:hybrid-consent-txn-2')).toBeNull();
     expect(await stores.authSessionStore.get('hybrid-consent-txn-2')).toBeUndefined();
+  });
+
+  // RFC 9449 §10: the code of a request bound to a key with dpop_jkt (the dpop
+  // extension) carries the key of the transaction to the token endpoint.
+  it('should carry the confirmation of the transaction into the stored code', async () => {
+    const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+    const { response } = await approve({ transactionId: 'hybrid-consent-txn-cnf', subject: 'hybrid-consent-user-cnf', responseType: 'code id_token', cnf });
+
+    const { params } = fragmentOf(response);
+    expect(await stores.authCodeStore.get(params['code'] ?? '')).toMatchObject({ cnf });
   });
 
   // OAuth 2.0 Form Post Response Mode §2: the response mode the request asked for.

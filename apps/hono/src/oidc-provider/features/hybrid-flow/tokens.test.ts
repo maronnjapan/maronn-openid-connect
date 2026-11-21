@@ -46,6 +46,7 @@ async function issue(
     responseParams?: Partial<AuthorizationResponseParams>;
     grantedScope?: string[];
     client?: Partial<ClientRegistration>;
+    codeConfirmation?: Record<string, string>;
   } = {},
 ) {
   const context = await providerContext({ options: input.options });
@@ -56,6 +57,7 @@ async function issue(
     responseParams: responseParamsOf(input.responseParams),
     session: { subject: SUBJECT, authTime: AUTH_TIME, sessionId: SESSION_ID },
     grantedScope: input.grantedScope ?? ['openid', 'profile'],
+    ...(input.codeConfirmation === undefined ? {} : { codeConfirmation: input.codeConfirmation }),
   });
   return { ...context, ...issued };
 }
@@ -207,6 +209,15 @@ describe('issueHybridTokens', () => {
     // endpoint as the issue-authorization-code steps store it: the PKCE challenge
     // (RFC 7636), the nonce for the ID Token of the exchange, the OP session the
     // online refresh token is bound to, and the transaction it came from.
+    // RFC 9449 §10: the code of a request bound with dpop_jkt carries the key to the token endpoint.
+    it('should store the code with the confirmation the request was bound to', async () => {
+      const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+      const { db } = await issue('code id_token', { codeConfirmation: cnf });
+
+      expect([...db.codes.values()]).toEqual([expect.objectContaining({ cnf })]);
+    });
+
     it('should store the code with the request of the transaction, the session and the configured lifetime', async () => {
       const claims = { userinfo: { email: null } };
 

@@ -23,6 +23,7 @@ const ALL_FEATURES: OidcFeatureConfig = {
   rpInitiatedLogout: true,
   dynamicClientRegistration: true,
   googleLogin: true,
+  dpop: true,
 };
 
 describe('buildOpFlow', () => {
@@ -182,9 +183,11 @@ describe('buildOpFlow', () => {
     it('should place the grant dispatches of the features between client authentication and grant_type validation', () => {
       const flow = buildOpFlow({ features: ALL_FEATURES });
       const token = flow.endpoints.find((e) => e.id === 'token');
-      expect(token?.steps.slice(0, 9).map((s) => s.id)).toEqual([
+      expect(token?.steps.slice(0, 11).map((s) => s.id)).toEqual([
         'parse-request',
         'authenticate-client',
+        'verify-dpop-proof',
+        'validate-dpop-grant-binding',
         'dispatch-client-credentials',
         'dispatch-id-jag-issuance',
         'dispatch-id-jag-redemption',
@@ -192,6 +195,21 @@ describe('buildOpFlow', () => {
         'dispatch-device-code',
         'dispatch-ciba',
         'validate-grant-type',
+      ]);
+    });
+
+    // RFC 9449 §5 / §10: the DPoP proof decides the key every grant binds its
+    // tokens to, and a bound code or refresh token is checked before any grant
+    // consumes it.
+    it('should check the DPoP proof right after client authentication when dpop is enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
+      const token = flow.endpoints.find((e) => e.id === 'token');
+      expect(token?.steps.slice(0, 5).map((s) => s.id)).toEqual([
+        'parse-request',
+        'authenticate-client',
+        'verify-dpop-proof',
+        'validate-dpop-grant-binding',
+        'dispatch-client-credentials',
       ]);
     });
 
@@ -207,6 +225,38 @@ describe('buildOpFlow', () => {
         },
         { from: 'validate-grant-type', to: 'validate-refresh-token-grant', label: 'refresh_token', kind: 'branch' },
         { from: 'validate-grant-type', to: 'respond-error', kind: 'error' },
+      ]);
+    });
+  });
+
+  describe('userinfo endpoint steps', () => {
+    it('should list the Bearer pipeline by default', () => {
+      const flow = buildOpFlow({ features: DEFAULT_FEATURES });
+      const userinfo = flow.endpoints.find((e) => e.id === 'userinfo');
+      expect(userinfo?.steps.map((s) => s.id)).toEqual([
+        'parse-access-token',
+        'resolve-access-token',
+        'resolve-claims',
+        'build-response',
+        'respond',
+        'respond-error',
+      ]);
+    });
+
+    // RFC 9449 §7: the DPoP scheme is read before the Bearer one, and the key
+    // the token is bound to is checked once the token is resolved.
+    it('should read the DPoP scheme first and check the bound key after resolving the token when dpop is enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
+      const userinfo = flow.endpoints.find((e) => e.id === 'userinfo');
+      expect(userinfo?.steps.map((s) => s.id)).toEqual([
+        'read-dpop-access-token',
+        'parse-access-token',
+        'resolve-access-token',
+        'verify-dpop-access-token',
+        'resolve-claims',
+        'build-response',
+        'respond',
+        'respond-error',
       ]);
     });
   });
@@ -251,6 +301,34 @@ describe('buildOpFlow', () => {
         'resolve-form-post-response-mode',
         'resolve-fragment-response-mode',
         'validate-request',
+      ]);
+    });
+
+    // RFC 9449 §10: dpop_jkt is checked once the request is valid, and kept by the transaction.
+    it('should check dpop_jkt before creating the transaction when dpop is enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
+      const authorize = flow.endpoints.find((e) => e.id === 'authorize');
+      expect(authorize?.steps.map((s) => s.id).slice(7, 12)).toEqual([
+        'validate-request',
+        'validate-implicit-request',
+        'validate-hybrid-request',
+        'validate-dpop-jkt',
+        'create-transaction',
+      ]);
+    });
+
+    // RFC 9449 §10.1: the key of the DPoP header of a pushed request becomes its dpop_jkt.
+    it('should bind the pushed request to the DPoP key after client authentication when par and dpop are enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, par: true, dpop: true } });
+      const par = flow.endpoints.find((e) => e.id === 'par');
+      expect(par?.steps.map((s) => s.id)).toEqual([
+        'parse-request',
+        'authenticate-client',
+        'bind-pushed-dpop-key',
+        'validate-request',
+        'store-request',
+        'respond',
+        'respond-error',
       ]);
     });
 

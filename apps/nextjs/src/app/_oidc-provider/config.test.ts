@@ -53,4 +53,15 @@ describe('createProviderConfig', () => {
       allowInsecureClientJwksUri: false,
     });
   });
+
+  // The dpop extension accepts DPoP proofs of every asymmetric alg its checks
+  // verify (RFC 9449 §5.1), within 60 seconds of their iat plus 60 seconds
+  // of clock skew (RFC 9449 §11.1).
+  it('should hold the defaults of the dpop extension', () => {
+    expect(createProviderConfig()).toMatchObject({
+      dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
+      dpopProofMaxAgeSeconds: 60,
+      dpopProofLeewaySeconds: 60,
+    });
+  });
 });

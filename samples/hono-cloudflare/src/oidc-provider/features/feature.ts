@@ -6,8 +6,9 @@
  * advertises, the values it puts into the request context, the defaults it
  * adds to the provider settings, the grants it answers at the token
  * endpoint, the response types it answers at /authorize besides code, the
- * response modes it restores at /consent and the login methods it shows on
- * the login page. These are the hooks; the rest of the provider reads them
+ * response modes it restores at /consent, the login methods it shows on
+ * the login page and the headers it lets browser-based clients send to and
+ * read from the protected endpoints (CORS). These are the hooks; the rest of the provider reads them
  * through the functions below and never imports a feature.
  *
  * Logic that runs inside one of the provider's pipelines is not a hook: the
@@ -100,6 +101,17 @@ export interface Feature {
   };
   /** Ways to sign in that the login page offers next to the password form. */
   readonly loginMethods?: readonly LoginMethod[];
+  /**
+   * Headers of the CORS policy of the protected endpoints (the token endpoint,
+   * UserInfo and the routes with cors: 'protected'), besides the provider's
+   * own: request headers browser-based clients may send
+   * (Access-Control-Allow-Headers) and response headers they may read
+   * (Access-Control-Expose-Headers).
+   */
+  readonly cors?: {
+    readonly allowHeaders?: readonly string[];
+    readonly exposeHeaders?: readonly string[];
+  };
 }
 
 /**
@@ -202,6 +214,20 @@ export function responseModesOf(features: readonly Feature[]): AuthorizationResp
  */
 export function responseTypesOf(features: readonly Feature[]): AuthorizationResponseTypeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseTypes ?? []);
+}
+
+/**
+ * 保護されたエンドポイントの CORS に、機能が加えるヘッダーを返す。
+ *
+ * ブラウザのクライアントに送らせるリクエストヘッダー（`allowHeaders`）と、読ませるレスポンスヘッダー（`exposeHeaders`）を、機能の順に重複なく並べる。
+ *
+ * @spec OAuth 2.1 §4.2
+ */
+export function corsHeadersOf(features: readonly Feature[]): { allowHeaders: string[]; exposeHeaders: string[] } {
+  return {
+    allowHeaders: [...new Set(features.flatMap((feature) => feature.cors?.allowHeaders ?? []))],
+    exposeHeaders: [...new Set(features.flatMap((feature) => feature.cors?.exposeHeaders ?? []))],
+  };
 }
 
 /**

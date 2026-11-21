@@ -6,9 +6,10 @@
  * advertises, the defaults it adds to the provider settings, the values of
  * provider.ts it replaces, the grants it answers at the token endpoint, the
  * response types it answers at /authorize besides code, the response modes it
- * restores at /consent and the login methods it shows on the login page.
- * These are the hooks; the rest of the provider reads them through the
- * functions below and never imports a feature.
+ * restores at /consent, the login methods it shows on the login page and the
+ * headers it lets browser-based clients send to and read from the endpoints
+ * clients call directly (CORS). These are the hooks; the rest of the provider
+ * reads them through the functions below and never imports a feature.
  *
  * The endpoints of a feature are Route Handlers in its route group,
  * app/(<feature-id>)/, which URLs do not see. Logic that runs inside a Route
@@ -75,6 +76,17 @@ export interface Feature {
   };
   /** Ways to sign in that the login page offers next to the password form. */
   readonly loginMethods?: readonly LoginMethod[];
+  /**
+   * Headers of the CORS policy of the endpoints clients call directly
+   * (clientCors of http.ts: token, userinfo, introspect, revoke, par, ...),
+   * besides the provider's own: request headers browser-based clients may
+   * send (Access-Control-Allow-Headers) and response headers they may read
+   * (Access-Control-Expose-Headers).
+   */
+  readonly cors?: {
+    readonly allowHeaders?: readonly string[];
+    readonly exposeHeaders?: readonly string[];
+  };
 }
 
 /**
@@ -159,6 +171,20 @@ export function responseModesOf(features: readonly Feature[]): AuthorizationResp
  */
 export function responseTypesOf(features: readonly Feature[]): AuthorizationResponseType[] {
   return [...new Set(features.flatMap((feature) => feature.authorize?.responseTypes ?? []))];
+}
+
+/**
+ * クライアントが直接呼ぶエンドポイントの CORS に、機能が加えるヘッダーを返す。
+ *
+ * ブラウザのクライアントに送らせるリクエストヘッダー（`allowHeaders`）と、読ませるレスポンスヘッダー（`exposeHeaders`）を、機能の順に重複なく並べる。
+ *
+ * @spec OAuth 2.1 §4.2
+ */
+export function corsHeadersOf(features: readonly Feature[]): { allowHeaders: string[]; exposeHeaders: string[] } {
+  return {
+    allowHeaders: [...new Set(features.flatMap((feature) => feature.cors?.allowHeaders ?? []))],
+    exposeHeaders: [...new Set(features.flatMap((feature) => feature.cors?.exposeHeaders ?? []))],
+  };
 }
 
 /**

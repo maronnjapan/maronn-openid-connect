@@ -42,6 +42,12 @@ import {
 } from '../../provider';
 import { noStoreJson, oauthError } from '../../http';
 import { features } from '../../features';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../token-binding';
 import { idJagConfig } from './config';
 
 /**
@@ -114,14 +120,17 @@ export async function issueIdJag(
  * OIDC の認証のフローではなく、`openid` スコープは UserInfo を使えるようにするだけだからである。
  * リフレッシュトークンも発行しない（ID-JAG draft §4.4.3 の SHOULD NOT）。
  * 有効期間内の ID-JAG をもう一度提示すれば、リフレッシュトークンの代わりになる。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、発行するアクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * @spec ID-JAG draft §4.4
  * @spec RFC 7523 §2.1
+ * @spec RFC 9449 §5
  */
 export async function redeemIdJag(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response> {
   const grant = await processIdJagRedemptionRequest({
     params,
@@ -156,6 +165,8 @@ export async function redeemIdJag(
       // こうすると、後段のサービスにも、誰がサブジェクトの代わりに操作しているかがわかる。
       // 引き継がないと、委任が気付かれないままなりすましに変わってしまう。
       ...(grant.actor === undefined ? {} : { act: grant.actor }),
+      // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+      ...accessTokenClaimsOf(binding),
     },
     privateKey: keys.general[0].privateKey,
     keyId: keys.general[0].keyId,
@@ -178,12 +189,13 @@ export async function redeemIdJag(
     jti: payload.jti,
     // アクターの記録も保存するので、`opaque` 形式のトークンのイントロスペクションや、ストアを読むツールでも、JWT のクレームと同じように取り出せる。
     ...(grant.actor === undefined ? {} : { act: grant.actor }),
+    ...accessTokenRecordOf(binding),
   };
   await stores.accessTokenStore.set(accessToken, metadata);
 
   return noStoreJson({
     access_token: accessToken,
-    token_type: 'Bearer' as const,
+    token_type: tokenTypeOf(binding),
     expires_in: grant.expiresIn,
     scope: grant.scope.join(' '),
   });
@@ -271,17 +283,20 @@ export async function dispatchIdJagIssuance(
  *
  * `grant_type` が `jwt-bearer` グラントの URN（RFC 7523 §2.1）のときだけ応答し、それ以外のグラントタイプには `undefined` を返す。
  * `IdJagError` は、`answerIdJagError()` が OAuth のエラーレスポンスにする。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、発行するアクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * @spec ID-JAG draft §4.4
  * @spec RFC 7523 §2.1
+ * @spec RFC 9449 §5
  */
 export async function dispatchIdJagRedemption(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== JWT_BEARER_GRANT_TYPE) return undefined;
-  return answerIdJagError(() => redeemIdJag(params, client, keys));
+  return answerIdJagError(() => redeemIdJag(params, client, keys, binding));
 }
 
 /**

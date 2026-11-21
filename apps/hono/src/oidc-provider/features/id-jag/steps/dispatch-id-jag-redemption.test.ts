@@ -9,6 +9,7 @@ import { providerContext, TEST_ISSUER } from '../../../../test-support/context.j
 import { decodeJwt, signTestJwt } from '../../../../test-support/extensions.js';
 import { rs256Key } from '../../../../test-support/keys.js';
 import { TokenEndpointError, type TokenRequestBody } from '../../../endpoints/token/response.js';
+import type { TokenBinding } from '../../../token-binding.js';
 import { idJagConfig } from '../config.js';
 import { redeemIdJag } from './dispatch-id-jag-redemption.js';
 
@@ -17,6 +18,12 @@ const NOW = Date.UTC(2026, 0, 1) / 1000;
 const IDP = 'https://idp.partner.example';
 const USERINFO = `${TEST_ISSUER}/userinfo`;
 const defaults = { ...idJagConfig };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the access token is bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the step for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 const client: TokenClientInfo = {
   clientId: 'rp-1',
@@ -115,6 +122,41 @@ describe('redeemIdJag', () => {
       aud: [USERINFO],
       scope: 'calendar.read',
       jti: record!.jti,
+    });
+  });
+
+  // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the access token and its record,
+  // and answers its token_type. No refresh token is issued (ID-JAG draft §4.4.3), so refreshTokenCnf binds nothing.
+  it('should bind the access token to the key of the binding', async () => {
+    const { c, stores } = await providerContext();
+    const assertion = await idJag(await trustPartnerIdp());
+
+    const response = await redeemIdJag(c, redemptionRequest(assertion), client, BINDING);
+
+    const { access_token: accessToken, ...body } = (await response!.json()) as Record<string, unknown>;
+    const record = await stores.accessTokenStore.get(accessToken as string);
+    expect(response!.status).toBe(200);
+    expect(body).toEqual({ token_type: 'DPoP', expires_in: 3600, scope: 'calendar.read' });
+    expect(record).toEqual({
+      sub: 'alice@partner',
+      clientId: 'rp-1',
+      scope: ['calendar.read'],
+      expiresAt: NOW + 3600,
+      grantId: record!.jti,
+      iat: NOW,
+      nbf: NOW,
+      audience: [USERINFO],
+      issuer: TEST_ISSUER,
+      jti: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      cnf: { jkt: JKT },
+      tokenType: 'DPoP',
+    });
+    expect(decodeJwt(accessToken as string).payload).toMatchObject({
+      iss: TEST_ISSUER,
+      sub: 'alice@partner',
+      client_id: 'rp-1',
+      jti: record!.jti,
+      cnf: { jkt: JKT },
     });
   });
 

@@ -16,6 +16,12 @@ import {
   type SigningKey,
   type TokenClientInfo,
 } from '@maronn-openid-connect/core';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../../token-binding.js';
 import type { TokenRequestBody } from '../../../endpoints/token/response.js';
 import { respondToken } from '../../../endpoints/token/steps/respond.js';
 import { findUnsupportedScopes } from '../../../scopes.js';
@@ -29,7 +35,8 @@ export const meta = step({
   label: 'client_credentials グラントに応答する',
   spec: 'RFC 6749 §4.4 / OAuth 2.1 §4.2',
   function: 'issueClientCredentialsToken',
-  consumes: ['params', 'tokenClient'],
+  consumes: ['params', 'tokenClient', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: [],
   removable: false,
   before: ['validate-grant-type'],
@@ -49,6 +56,7 @@ export const meta = step({
  * - `openid` と `offline_access` は発行しない。ID トークンとリフレッシュトークンも返さない（RFC 6749 §4.4.3）。
  * - `sub` は `client_id` にする（RFC 9068 §2.2）。
  * - `audience` で要求できるのは、設定の `clientCredentialsAllowedAudiences` にあるリソースだけである（RFC 8707 §2）。
+ * - 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、アクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * 検証に失敗すると、中で呼ぶ core の関数が `TokenError` を投げ、トークンエンドポイントのエラー応答のステップが OAuth のエラーレスポンスにする。
  * 検証はそれぞれ core の独立した関数なので、一つずつ取り除いたり、差し替えたり、独自の方針（クライアントごとのオーディエンスの制限など）を間に挟んだりできる。
@@ -57,6 +65,7 @@ export const meta = step({
  * @spec OAuth 2.1 §4.2
  * @spec RFC 9068 §2.2
  * @spec RFC 8707 §2
+ * @spec RFC 9449 §5
  * @throws {TokenError} `unauthorized_client`: クライアントが `client_credentials` を登録していないとき、またはパブリッククライアントのとき
  * @throws {TokenError} `invalid_scope`: 発行できないスコープ、クライアントに登録されていないスコープ、OP が受け付けないスコープを要求したとき
  * @throws {TokenError} `invalid_target`: 許可されていないオーディエンスを要求したとき
@@ -65,6 +74,7 @@ export async function issueClientCredentialsToken(
   c: any,
   params: TokenRequestBody,
   tokenClient: TokenClientInfo,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== CLIENT_CREDENTIALS_GRANT_TYPE) return undefined;
 
@@ -132,15 +142,19 @@ export async function issueClientCredentialsToken(
 
   // ペイロードに `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`client_id` を入れ、スコープがあれば `scope` も入れる（RFC 9068 §2.2）。
   // エンドユーザーの認証がないので、`acr` は入れない。
-  const accessTokenPayload = buildAccessTokenPayload({
-    issuer: config.issuer,
-    subject: validatedRequest.subject,
-    clientId: validatedRequest.clientId,
-    scope: validatedRequest.scope,
-    audience,
-    expiresIn: config.accessTokenExpiresIn,
-    issuedAt,
-  });
+  // 機能（dpop）がトークンを鍵に束縛するときは、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+  const accessTokenPayload = {
+    ...buildAccessTokenPayload({
+      issuer: config.issuer,
+      subject: validatedRequest.subject,
+      clientId: validatedRequest.clientId,
+      scope: validatedRequest.scope,
+      audience,
+      expiresIn: config.accessTokenExpiresIn,
+      issuedAt,
+    }),
+    ...accessTokenClaimsOf(binding),
+  };
   const accessToken = await accessTokenIssuer.issue({
     payload: accessTokenPayload,
     privateKey: signingKey.privateKey,
@@ -159,16 +173,22 @@ export async function issueClientCredentialsToken(
     audience,
     issuer: config.issuer,
     jti: accessTokenPayload.jti,
+    // 鍵に束縛したトークンは、確認の `cnf` と `token_type` も保存する（RFC 9449 §6.2）。
+    ...accessTokenRecordOf(binding),
   });
 
   // 200 でトークンレスポンスを返す。
   // `access_token`、`token_type`、`expires_in` と、発行したスコープがあれば `scope` を入れ、リフレッシュトークンと ID トークンは入れない（RFC 6749 §4.4.3）。
+  // 鍵に束縛したトークンの `token_type` は、束縛の `token_type`（DPoP なら `DPoP`）にする（RFC 9449 §5）。
   return respondToken(c, {
     status: 200,
-    body: buildClientCredentialsTokenResponse({
-      accessToken,
-      expiresIn: config.accessTokenExpiresIn,
-      scope: validatedRequest.scope,
-    }),
+    body: {
+      ...buildClientCredentialsTokenResponse({
+        accessToken,
+        expiresIn: config.accessTokenExpiresIn,
+        scope: validatedRequest.scope,
+      }),
+      token_type: tokenTypeOf(binding),
+    },
   });
 }

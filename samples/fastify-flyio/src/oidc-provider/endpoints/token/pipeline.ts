@@ -26,12 +26,12 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  *
  * Each block below calls one step (one box of
  * `maronn-oidc graph --detail steps --endpoint token`): parse the request,
- * authenticate the client, dispatch the grants a feature answers, validate
- * the grant, select the keys, resolve the subject, issue and store the
- * tokens, and answer. Delete a block to drop that step, or insert your own
- * logic between two blocks. A block whose marker names a feature belongs to
- * that feature, and its step is in features/<id>/. A step that throws ends in
- * respondTokenError().
+ * authenticate the client, check the DPoP proof (dpop), dispatch the grants
+ * a feature answers, validate the grant, select the keys, resolve the
+ * subject, issue and store the tokens, and answer. Delete a block to drop
+ * that step, or insert your own logic between two blocks. A block whose
+ * marker names a feature belongs to that feature, and its step is in
+ * features/<id>/. A step that throws ends in respondTokenError().
  */
 export const tokenApp = new WebRouter();
 
@@ -43,16 +43,18 @@ tokenApp.post('/', async (c) => {
     // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
 
+    const tokenBinding = undefined;
+
     // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
-    const clientCredentialsResponse = await issueClientCredentialsToken(c, params, tokenClient);
+    const clientCredentialsResponse = await issueClientCredentialsToken(c, params, tokenClient, tokenBinding);
     if (clientCredentialsResponse) return clientCredentialsResponse;
 
     // [dispatch-device-code] (feature: device-authorization-grant) device_code を引き換える — RFC 8628 §3.4 / §3.5
-    const deviceGrantResponse = await redeemDeviceCode(c, params, tokenClient, authenticatedClientId);
+    const deviceGrantResponse = await redeemDeviceCode(c, params, tokenClient, authenticatedClientId, tokenBinding);
     if (deviceGrantResponse) return deviceGrantResponse;
 
     // [dispatch-ciba] (feature: ciba) auth_req_id を引き換える（CIBA） — CIBA Core 1.0 §10.1 / §11
-    const cibaGrantResponse = await redeemCibaRequest(c, params, tokenClient, authenticatedClientId);
+    const cibaGrantResponse = await redeemCibaRequest(c, params, tokenClient, authenticatedClientId, tokenBinding);
     if (cibaGrantResponse) return cibaGrantResponse;
 
     // [validate-grant-type] grant_type を検証する — RFC 6749 §5.2
@@ -81,13 +83,13 @@ tokenApp.post('/', async (c) => {
     // One timestamp for the whole response so the issued tokens and the stored
     // token metadata agree on iat / exp.
     const issuedAt = Math.floor(Date.now() / 1000);
-    const { accessToken, accessTokenPayload, audience } = await issueAccessToken(c, { signingKey, subject, validatedRequest, issuedAt, acr });
+    const { accessToken, accessTokenPayload, audience } = await issueAccessToken(c, { signingKey, subject, validatedRequest, issuedAt, acr, binding: tokenBinding });
 
     // [issue-id-token] ID トークンを発行する — OIDC Core 1.0 §3.1.3.6 / §12.1
     const idToken = await issueIdToken(c, { idTokenSigningKey, accessToken, subject, authTime, nonce, validatedRequest, issuedAt, acr, amr });
 
     // [persist-access-token] アクセストークンのレコードを保存する — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
-    await persistAccessToken(c, { accessToken, accessTokenPayload, subject, validatedRequest, issuedAt, audience, acr });
+    await persistAccessToken(c, { accessToken, accessTokenPayload, subject, validatedRequest, issuedAt, audience, acr, binding: tokenBinding });
 
     // [issue-refresh-token] (feature: refresh-token) リフレッシュトークンを発行して保存する — OAuth 2.1 §4.3.1 / §6.1
     const refreshToken = await issueRefreshToken(c, {
@@ -100,13 +102,14 @@ tokenApp.post('/', async (c) => {
       audience,
       acr,
       amr,
+      binding: tokenBinding,
     });
 
     // [revoke-rotated-refresh-token] (feature: refresh-token) 古いリフレッシュトークンを失効させる — OAuth 2.1 §4.3.1
     await revokeRotatedRefreshToken(c, params, validatedRequest);
 
     // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
-    const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
+    const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest, binding: tokenBinding });
 
     // [respond] 応答する（no-store） — RFC 6749 §5.1
     return respondToken(c, tokenResponse);

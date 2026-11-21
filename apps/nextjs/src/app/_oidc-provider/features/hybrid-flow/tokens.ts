@@ -46,6 +46,7 @@ import {
   type ProviderSigningKeys,
 } from '../../provider';
 import { issueImplicitAccessToken } from '../implicit-flow/tokens';
+import { confirmationRecordOf } from '../../token-binding';
 
 /** What the Hybrid Flow issues the code and the tokens for: an authenticated, consented request. */
 export interface HybridTokensInput {
@@ -65,6 +66,8 @@ export interface HybridTokensInput {
   /** The scope the End-User granted, after the scope policy (scopes.ts). */
   grantedScope: string[];
   keys: ProviderSigningKeys;
+  /** The confirmation the authorization request was bound to (dpop_jkt, RFC 9449 §10), carried into the code. */
+  codeConfirmation?: Readonly<Record<string, string>>;
 }
 
 export interface HybridTokens {
@@ -96,7 +99,7 @@ export interface HybridTokens {
  *   このエラーは何かを保存する前に投げ、リクエストのほかのエラーと同じくクライアントへリダイレクトで返る。
  */
 export async function issueHybridTokens(input: HybridTokensInput): Promise<HybridTokens> {
-  const { responseType, responseParams, session, grantedScope, keys } = input;
+  const { responseType, responseParams, session, grantedScope, keys, codeConfirmation } = input;
   const grantId = generateRandomString(32);
   // レスポンス全体で一つの時刻を使い、認可コード、トークン、保存するレコードの `iat` と `exp` を揃える。
   const issuedAt = Math.floor(Date.now() / 1000);
@@ -135,7 +138,8 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
       sessionId: session.sessionId,
     },
   );
-  await stores.authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、その `cnf` を認可コードのレコードに引き継ぐ。
+  await stores.authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf({ cnf: codeConfirmation }) });
 
   // `code token` と `code id_token token` では、認可コードと一緒に返すアクセストークンを、認可コードと同じグラントで発行する。
   const accessToken = responseTypeIncludes(responseType, 'token')

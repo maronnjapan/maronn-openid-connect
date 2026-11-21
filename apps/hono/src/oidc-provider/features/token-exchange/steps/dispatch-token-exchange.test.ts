@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { providerContext, TEST_ISSUER } from '../../../../test-support/context.js';
 import { decodeJwt } from '../../../../test-support/extensions.js';
 import { TokenEndpointError, type TokenRequestBody } from '../../../endpoints/token/response.js';
+import type { TokenBinding } from '../../../token-binding.js';
 import { tokenExchangeConfig } from '../config.js';
 import { exchangeToken } from './dispatch-token-exchange.js';
 
@@ -11,6 +12,12 @@ import { exchangeToken } from './dispatch-token-exchange.js';
 const NOW = Date.UTC(2026, 0, 1) / 1000;
 const USERINFO = `${TEST_ISSUER}/userinfo`;
 const defaults = { ...tokenExchangeConfig };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the exchanged token is bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the step for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 /** The client that asks for the exchange: a confidential client registered for the grant. */
 const client: TokenClientInfo = {
@@ -100,6 +107,45 @@ describe('exchangeToken', () => {
       sub: 'alice',
       client_id: 'service-1',
       jti: record!.jti,
+    });
+  });
+
+  // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the exchanged access token
+  // and its record, and answers its token_type.
+  it('should bind the exchanged access token to the key of the binding', async () => {
+    const { c, stores } = await providerContext();
+    await stores.accessTokenStore.set('subject-at', subjectToken());
+
+    const response = await exchangeToken(c, exchangeRequest(), client, BINDING);
+
+    const { access_token: accessToken, ...body } = (await response!.json()) as Record<string, unknown>;
+    const record = await stores.accessTokenStore.get(accessToken as string);
+    expect(response!.status).toBe(200);
+    expect(body).toEqual({
+      issued_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+      token_type: 'DPoP',
+      expires_in: 3600,
+      scope: 'openid profile email',
+    });
+    expect(record).toEqual({
+      sub: 'alice',
+      clientId: 'service-1',
+      scope: ['openid', 'profile', 'email'],
+      expiresAt: NOW + 3600,
+      grantId: 'grant-1',
+      iat: NOW,
+      nbf: NOW,
+      audience: [USERINFO],
+      issuer: TEST_ISSUER,
+      jti: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      cnf: { jkt: JKT },
+      tokenType: 'DPoP',
+    });
+    expect(decodeJwt(accessToken as string).payload).toMatchObject({
+      sub: 'alice',
+      client_id: 'service-1',
+      jti: record!.jti,
+      cnf: { jkt: JKT },
     });
   });
 

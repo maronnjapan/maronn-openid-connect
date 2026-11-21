@@ -40,6 +40,7 @@ import {
   parseTransactionId,
 } from '../../_oidc-provider/cookies';
 import { resolveGrantableScopes } from '../../_oidc-provider/scopes';
+import { confirmationRecordOf } from '../../_oidc-provider/token-binding';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -186,7 +187,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     sessionId: session.sessionId,
     ttlSeconds: config.authorizationCodeTtl,
   });
-  await stores.authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
+  // トークンエンドポイントは、同じ鍵の DPoP proof が付いた交換だけを受け付ける。
+  await stores.authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
 
   // [record-consent] 同意とグラントを記録する — OIDC Core 1.0 §3.1.2.4
   // 同意を記録し、後の `prompt=none` や SSO のリクエストで、同意画面を出さずに同意を確かめられるようにする（OIDC Core 1.0 §3.1.2.1、§3.1.2.4）。

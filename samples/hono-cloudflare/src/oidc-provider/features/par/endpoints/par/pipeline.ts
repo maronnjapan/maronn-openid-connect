@@ -34,11 +34,13 @@ parApp.post('/', async (c) => {
     // [authenticate-client] プッシュしたクライアントを認証する — RFC 9126 §2.1
     const { clientId, pushedParams } = await authenticatePushingClient(c, params, authorization);
 
+    const dpopBoundParams = undefined;
+
     // [validate-request] /authorize と同じ規則でリクエストを検証する — RFC 9126 §2.1
-    await validatePushedRequest(c, pushedParams);
+    await validatePushedRequest(c, dpopBoundParams ?? pushedParams);
 
     // [store-request] 新しい request_uri でリクエストを保存する — RFC 9126 §2.2 / §7.1
-    const parResponse = await storePushedRequest(c, clientId, pushedParams);
+    const parResponse = await storePushedRequest(c, clientId, dpopBoundParams ?? pushedParams);
 
     // [respond] 201 で応答する（no-store） — RFC 9126 §2.2
     return respondPar(c, parResponse);

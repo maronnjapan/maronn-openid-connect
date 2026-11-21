@@ -3,6 +3,7 @@ import {
   createAuthorizationCode,
   type AuthTransaction,
 } from '@maronn-openid-connect/core';
+import { confirmationRecordOf } from '../../../token-binding.js';
 import type { AuthSessionInfo } from '../../../store.js';
 import { resolveGrantableScopes } from '../../../scopes.js';
 import type { ConsentedAuthorization } from '../screen.js';
@@ -59,6 +60,8 @@ export async function issueConsentedAuthorizationCode(
     sessionId: session.sessionId,
     ttlSeconds: config.authorizationCodeTtl,
   });
-  await authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
+  // トークンエンドポイントは、同じ鍵の DPoP proof が付いた交換だけを受け付ける。
+  await authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
   return { responseParams, authCodeData, grantedScope };
 }

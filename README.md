@@ -45,6 +45,8 @@ OpenID Connect 関連機能をプロジェクトへ導入する CLI ツールで
 Authorization Code Flow や OpenID Connect の拡張機能を実行するためのコードを生成します。
 `maronn-oidc graph` は、生成される OP をエンドポイントとステップの図（Mermaid）か JSON のフロー文書として書き出します。
 フロー文書を編集して `--flow` で渡すと、ステップを消したり並べ替えたりした OP を生成できます。
+既定では無効の機能は、`--enable` で加えます。実験的機能（`packages/experimental`）と拡張機能があります。
+拡張機能のうち `google-login` は専用のパッケージ（`packages/google-login`）を使い、DPoP（RFC 9449）の `dpop` はパッケージを持たず、DPoP のコードをすべて生成コードの `features/dpop/` に書き出します。
 
 ### packages/google-login
 

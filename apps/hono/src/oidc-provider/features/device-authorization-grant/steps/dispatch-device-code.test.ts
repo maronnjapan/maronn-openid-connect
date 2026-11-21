@@ -5,6 +5,7 @@ import { providerContext, TEST_ISSUER } from '../../../../test-support/context.j
 import { registerClient } from '../../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../../db/memory/database.js';
 import type { TokenRequestBody } from '../../../endpoints/token/response.js';
+import type { TokenBinding } from '../../../token-binding.js';
 import { InMemoryDeviceAuthorizationStore } from '../store.js';
 import { redeemDeviceCode } from './dispatch-device-code.js';
 
@@ -17,6 +18,12 @@ const tokenClient: TokenClientInfo = {
   grantTypes: [DEVICE_GRANT, 'refresh_token'],
   tokenEndpointAuthMethods: ['none'],
 };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the tokens are bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the step for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 function deviceCodeRequest(deviceCode: string): TokenRequestBody {
   return { grant_type: DEVICE_GRANT, device_code: deviceCode, client_id: 'device-client' } as TokenRequestBody;
@@ -181,6 +188,31 @@ describe('redeemDeviceCode', () => {
         authTime: 1_700_000_000,
         originalIssuedAt: NOW_SECONDS,
         expiresAt: NOW_SECONDS + 7_776_000,
+      });
+    });
+
+    // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the access token and its record,
+    // answers its token_type, and binds the public client's refresh token to refreshTokenCnf.
+    it('should bind the access token and the refresh token to the key of the binding', async () => {
+      const { c, stores, record } = await tokenContext(approved({ approvedScope: ['openid', 'offline_access'] }));
+
+      const response = await redeemDeviceCode(c, deviceCodeRequest(record.deviceCode), tokenClient, 'device-client', BINDING);
+      const body = (await response?.json()) as Record<string, string>;
+      const accessToken = body['access_token'] ?? '';
+
+      expect(response?.status).toBe(200);
+      expect(body).toMatchObject({ token_type: 'DPoP', expires_in: 3600, scope: 'openid offline_access' });
+      expect(decodeJwtPayload(accessToken)).toMatchObject({ sub: 'alice', client_id: 'device-client', cnf: { jkt: JKT } });
+      expect(await stores.accessTokenStore.get(accessToken)).toMatchObject({
+        sub: 'alice',
+        grantId: 'grant-1',
+        cnf: { jkt: JKT },
+        tokenType: 'DPoP',
+      });
+      expect(await stores.refreshTokenStore.get(body['refresh_token'] ?? '')).toMatchObject({
+        subject: 'alice',
+        grantId: 'grant-1',
+        cnf: { jkt: JKT },
       });
     });
 

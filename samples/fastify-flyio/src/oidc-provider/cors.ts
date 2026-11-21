@@ -14,6 +14,8 @@ export interface CorsOptions {
   origins: CorsOrigins;
   allowMethods: readonly string[];
   allowHeaders: readonly string[];
+  /** Response headers a browser lets the client read beside the CORS-safelisted ones; none when left out. */
+  exposeHeaders?: readonly string[];
   /** Seconds a browser may cache the preflight answer. */
   maxAge: number;
 }
@@ -35,6 +37,7 @@ export function resolveCorsOrigin(requestOrigin: string | null, allowed: CorsOri
  * CORS のヘッダーを付けるミドルウェアを作って返す。
  *
  * ミドルウェアは、登録したパスのレスポンスに、`Vary: Origin`、`options` の許可するメソッド、許可するヘッダー、キャッシュしてよい秒数を付ける。
+ * `exposeHeaders` があれば、クライアントに読ませるレスポンスヘッダー（`Access-Control-Expose-Headers`）も付ける。
  * `resolveCorsOrigin()` がリクエストの `Origin` を許可すれば、`Access-Control-Allow-Origin` も付ける。
  * プリフライト（`OPTIONS`）には、後続の処理を呼ばずに、ボディなしの 204 で応答する。
  */
@@ -47,6 +50,9 @@ export function createCorsMiddleware(options: CorsOptions) {
     c.header('Vary', 'Origin');
     c.header('Access-Control-Allow-Methods', options.allowMethods.join(','));
     c.header('Access-Control-Allow-Headers', options.allowHeaders.join(','));
+    if (options.exposeHeaders !== undefined && options.exposeHeaders.length > 0) {
+      c.header('Access-Control-Expose-Headers', options.exposeHeaders.join(','));
+    }
     c.header('Access-Control-Max-Age', String(options.maxAge));
 
     if (c.req.method === 'OPTIONS') {

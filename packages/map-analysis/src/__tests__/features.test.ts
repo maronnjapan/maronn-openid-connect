@@ -18,6 +18,11 @@ describe('feature ownership', () => {
       'packages/experimental/src/par/validate.ts',
     ]) expect(featureOfPath(path, cli.features)).toBe('par');
     for (const path of [
+      'apps/hono/src/oidc-provider/features/dpop/steps/verify-dpop-proof.ts',
+      'apps/nextjs/src/app/_oidc-provider/features/dpop/proof.ts',
+    ]) expect(featureOfPath(path, cli.features)).toBe('dpop');
+    expect(featureOfPath('packages/google-login/src/id-token.ts', cli.features)).toBe('google-login');
+    for (const path of [
       'apps/hono/src/oidc-provider/endpoints/authorize/pipeline.ts',
       'packages/core/src/client-auth.ts',
       'apps/hono/src/oidc-provider/features/not-registered/file.ts',

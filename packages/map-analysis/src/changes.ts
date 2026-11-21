@@ -20,6 +20,7 @@ import { readRevision, type FrameInfo, type Revision } from './analyze.js';
 import { countWords, diffTrees, markCounts, nodeWords, placeHunks } from './diff.js';
 import { escapingFailures } from './failures.js';
 import { CallGraph, reachOf, rootOf, type EndpointRoot } from './impact.js';
+import { addedLinesOf, countAddedLines, countsLines, generatedDirectories } from './lines.js';
 import { attachNotes, draftSections, isNote, NOTES_DIRECTORY, parseNote, type Named } from './notes.js';
 import type { Repository } from './repository.js';
 import { isTestPath, moduleOf } from './roots.js';
@@ -246,13 +247,17 @@ export function collectChanges(input: ChangeInput): ChangeResult {
   const read = input.read ?? ((path: string) => readFileSync(join(root, path), 'utf8'));
   const forkPoint = run(['merge-base', base, 'HEAD']).trim();
   const head = run(['rev-parse', 'HEAD']).trim();
+  const untracked = run(['ls-files', '--others', '--exclude-standard', '-z'])
+    .split('\0')
+    .filter((path) => path !== '');
   const files: ChangedFile[] = [
     ...parseNameStatus(run(['diff', '--name-status', '-z', '--find-renames', '--no-color', '--no-ext-diff', forkPoint])),
-    ...run(['ls-files', '--others', '--exclude-standard', '-z'])
-      .split('\0')
-      .filter((path) => path !== '')
-      .map((path): ChangedFile => ({ status: 'A', after: path })),
+    ...untracked.map((path): ChangedFile => ({ status: 'A', after: path })),
   ];
+  // The lines added to the code (lines.ts): those of the diff, and every line of an untracked file.
+  const generated = generatedDirectories(root);
+  const addedLines = addedLinesOf(run(['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-ext-diff', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/', forkPoint]));
+  for (const path of untracked) if (countsLines(path, generated)) addedLines.set(path, read(path).split('\n').map((_line, index) => index + 1));
   const notes: Array<ReturnType<typeof parseNote> & { file: string }> = [];
   const overlay = new Map<string, string | null>();
   const baseModules = new Map<string, string[]>();
@@ -514,6 +519,7 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     outside,
     otherFiles,
     testFiles,
+    addedLines: countAddedLines(addedLines, read, generated),
   };
   if (input.pullRequest !== undefined) changes.pullRequest = input.pullRequest;
   return { changes, frames: diffs, base: baseRevision, forkPoint, files };

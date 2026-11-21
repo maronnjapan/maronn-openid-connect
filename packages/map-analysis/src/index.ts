@@ -19,7 +19,7 @@ export { readRepository, type Repository } from './repository.js';
 export { catalogModules, type EndpointSource, type FrameInfo, type Revision } from './analyze.js';
 export { any, endLine, is, nameOf, startLine, stringOf, textOf, unwrap, walk } from './ast.js';
 export { Resolver, type ResolverOptions } from './resolve.js';
-export { isTestPath, moduleOf, overlayConfigs, overlayOf, pathOf, readRoots, type AnalysisRoot } from './roots.js';
+export { isTestPath, isTestSupportPath, moduleOf, overlayConfigs, overlayOf, pathOf, readRoots, type AnalysisRoot } from './roots.js';
 export { Compiler, getLeadingCommentRanges, isAlias, SyntaxKind, type Node, type Overlay, type Project, type SourceFile } from './ts.js';
 export { failureSelections, frameSelections, inFrame, wayTo } from './selections.js';
 export { buildTree, ends, nodesOf } from './tree.js';

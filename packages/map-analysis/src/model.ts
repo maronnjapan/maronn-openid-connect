@@ -585,6 +585,8 @@ export interface MapChanges {
   otherFiles: number;
   /** The changed test files (tests, specs and feature files), which the diff of the tests reads. */
   testFiles?: number;
+  /** The lines the pull request adds to the code outside the tests and the generated samples, by what they hold: only comments, or code (lines.ts). */
+  addedLines?: { comment: number; code: number };
   /**
    * The changed frames that require a note (`required`) whose related tests
    * the pull request neither added nor changed, without a reason not to in

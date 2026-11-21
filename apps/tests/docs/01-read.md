@@ -248,8 +248,8 @@ interface TestFile {
 
 実装：
 
-- `packages/test-catalog/src/discover.ts`：`listFiles`、`testFileOf`、`testFiles`、`TOOL_ROOTS`、`isTestSupportPath`、`supportFiles`
-- `packages/map-analysis/src/roots.ts`：`isTestPath`、`readRoots`
+- `packages/test-catalog/src/discover.ts`：`listFiles`、`testFileOf`、`testFiles`、`TOOL_ROOTS`、`supportFiles`
+- `packages/map-analysis/src/roots.ts`：`isTestPath`、`isTestSupportPath`、`readRoots`
 
 ## ①-2 型で読む準備
 

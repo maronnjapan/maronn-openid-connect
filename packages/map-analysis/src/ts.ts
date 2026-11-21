@@ -13,8 +13,9 @@ import { readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { API, SignatureKind, SymbolFlags, type Checker, type Project, type Symbol as TsSymbol, type Type as TsType } from 'typescript/unstable/sync';
 import { SyntaxKind, getLeadingCommentRanges, type Node, type SourceFile } from 'typescript/unstable/ast';
+import { createScanner } from 'typescript/unstable/ast/scanner';
 
-export { SyntaxKind, SignatureKind, SymbolFlags, getLeadingCommentRanges };
+export { SyntaxKind, SignatureKind, SymbolFlags, createScanner, getLeadingCommentRanges };
 export type { Checker, Node, Project, SourceFile, TsSymbol, TsType };
 
 /**

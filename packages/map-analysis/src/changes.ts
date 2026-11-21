@@ -20,6 +20,7 @@ import { readRevision, type FrameInfo, type Revision } from './analyze.js';
 import { countWords, diffTrees, markCounts, nodeWords, placeHunks } from './diff.js';
 import { escapingFailures } from './failures.js';
 import { CallGraph, reachOf, rootOf, type EndpointRoot } from './impact.js';
+import { addedLines, countAddedLines } from './lines.js';
 import { attachNotes, draftSections, isNote, NOTES_DIRECTORY, parseNote, type Named } from './notes.js';
 import type { Repository } from './repository.js';
 import { isTestPath, moduleOf } from './roots.js';
@@ -219,6 +220,16 @@ export interface ChangeResult {
   files: ChangedFile[];
 }
 
+/**
+ * The lines the working tree adds since a commit, as comment and as code
+ * (lines.ts): those `git diff` adds to the tracked files, and every line of
+ * an untracked file.
+ */
+export function addedLineCounts(repository: string, commit: string, untracked: readonly string[], read: (path: string) => string): { comment: number; code: number } {
+  const diff = git(repository, ['-c', 'core.quotePath=false', 'diff', '--unified=0', '--find-renames', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', commit]);
+  return countAddedLines([...addedLines(diff), ...untracked.map((path) => [path, undefined] as const)], read);
+}
+
 /** The lines of a frame in its file: the JSDoc, the declaration up to the body, the rest. */
 function partsOf(text: string, frame: FrameInfo, tree: FlowTree): { doc: string[]; head: string[]; code: string[]; all: string[] } {
   const lines = text.split('\n');
@@ -246,13 +257,11 @@ export function collectChanges(input: ChangeInput): ChangeResult {
   const read = input.read ?? ((path: string) => readFileSync(join(root, path), 'utf8'));
   const forkPoint = run(['merge-base', base, 'HEAD']).trim();
   const head = run(['rev-parse', 'HEAD']).trim();
-  const files: ChangedFile[] = [
-    ...parseNameStatus(run(['diff', '--name-status', '-z', '--find-renames', '--no-color', '--no-ext-diff', forkPoint])),
-    ...run(['ls-files', '--others', '--exclude-standard', '-z'])
-      .split('\0')
-      .filter((path) => path !== '')
-      .map((path): ChangedFile => ({ status: 'A', after: path })),
-  ];
+  const untracked = run(['ls-files', '--others', '--exclude-standard', '-z'])
+    .split('\0')
+    .filter((path) => path !== '');
+  const files: ChangedFile[] = [...parseNameStatus(run(['diff', '--name-status', '-z', '--find-renames', '--no-color', '--no-ext-diff', forkPoint])), ...untracked.map((path): ChangedFile => ({ status: 'A', after: path }))];
+  const lineCounts = addedLineCounts(root, forkPoint, untracked, read);
   const notes: Array<ReturnType<typeof parseNote> & { file: string }> = [];
   const overlay = new Map<string, string | null>();
   const baseModules = new Map<string, string[]>();
@@ -514,6 +523,7 @@ export function collectChanges(input: ChangeInput): ChangeResult {
     outside,
     otherFiles,
     testFiles,
+    addedLines: lineCounts,
   };
   if (input.pullRequest !== undefined) changes.pullRequest = input.pullRequest;
   return { changes, frames: diffs, base: baseRevision, forkPoint, files };
@@ -753,25 +763,37 @@ function narrowWords(warning: MapChanges['ambiguous'][number]): string {
     : `どれも \`${roots[0] ?? ''}\` にあるので、id（見出しの末尾に \`<!-- id -->\`）で絞り込んでください: ${ids}`;
 }
 
+/** Where changesMarkdown leaves the place of the links of the comment on the pull request (.github/scripts/map-comment.mjs puts them there); the summary of the run shows nothing at it. */
+export const LINKS_MARKER = '<!-- map-links -->';
+
 /**
- * The changes in Markdown (see the module comment): first the changes that
- * need a note and have none (and a draft of the sections to add), then the
- * notes, then every changed frame with its badge, place, automatic summary
- * (with the failures that leave it now or no more), the endpoints it reaches
- * (with the features they need) and the first line of its note, and under
- * the table where the new failures are caught and the calls the types do not
- * tell that may reach a change.
+ * The changes in Markdown, for the comment on the pull request and the
+ * summary of the run (see the module comment). The lists are folded in
+ * `<details>`, so what stays outside is short
+ * (apps/map/docs/design-request-premises.md「PR のコメント」).
+ *
+ * Outside, in order: what fails the check (the changes that need a note and
+ * have none, with a draft of the sections to add, then the `alerts` of the
+ * extensions), a line a change note with what the pull request does, what
+ * to check (how many changes have no note and no changed test, the headings
+ * of the notes that name no change or several, the lines of comment and of
+ * code the pull request adds), and LINKS_MARKER.
+ *
+ * Folded: every changed frame with its badge, place, automatic summary (with
+ * the failures that leave it now or no more), the endpoints it reaches (with
+ * the features they need) and the first line of its note, where the new
+ * failures are caught, the calls the types do not tell that may reach a
+ * change, and how many lines changed outside every frame (the map lists the
+ * files); then the `sections` of the extensions, which fold their own lists.
  */
-export function changesMarkdown(changes: MapChanges, { limit = 40, sections = [] }: { limit?: number; sections?: readonly string[] } = {}): string {
+export function changesMarkdown(changes: MapChanges, { limit = 40, alerts = [], sections = [] }: { limit?: number; alerts?: readonly string[]; sections?: readonly string[] } = {}): string {
   const lines: string[] = [];
   const missing = changes.frames.filter((entry) => (entry.kind === 'added' || entry.kind === 'modified') && !entry.documented);
-  if (missing.length > 0) {
-    const required = changes.undocumented.length;
+  const required = changes.undocumented.length;
+  if (required > 0) {
     lines.push(`### 説明の無い変更（${missing.length}）`, '');
     lines.push(
-      required > 0
-        ? `このうち、エンドポイントに届く変更とエンドポイントの処理の変更 ${required} 個は変更メモ（\`${NOTES_DIRECTORY}/*.md\`）に説明が要ります。説明が無いと地図の検査が落ちます。`
-        : 'どれも説明の要る変更ではない（エンドポイントに届かないか、コメントや書き方だけの変更）ので、変更メモの検査は落ちません。',
+      `このうち、エンドポイントに届く変更とエンドポイントの処理の変更 ${required} 個は変更メモ（\`${NOTES_DIRECTORY}/*.md\`）に説明が要ります。説明が無いと地図の検査が落ちます。`,
       '',
       '| | 関数 | 場所 | 自動要約 | 届くエンドポイント |',
       '|---|---|---|---|---|',
@@ -786,36 +808,42 @@ export function changesMarkdown(changes: MapChanges, { limit = 40, sections = []
     }
     lines.push('');
   }
-  const counted = changes.frames.filter((entry) => entry.kind !== 'noted');
-  lines.push(`### このPRで変わった関数（${counted.length}）`, '');
-  const counts = KIND_ORDER.map((kind) => [kind, changes.frames.filter((entry) => entry.kind === kind).length] as const).filter(([, n]) => n > 0);
-  lines.push(counts.length > 0 ? counts.map(([kind, n]) => `${KIND_WORDS[kind]} ${n}`).join(' · ') : '地図に載る関数（関数カタログとエンドポイントの処理）の変更はありません。');
+  for (const alert of alerts) if (alert.trim() !== '') lines.push(alert.trimEnd(), '');
+
   for (const note of changes.notes) {
-    const title = note.title === undefined ? '' : `**${note.title}** `;
     const summary = note.summary === '' ? '' : shorten(joinLines(note.summary.split(/\n\s*\n/)[0] ?? ''), 300);
-    lines.push('', `> ${title}${summary}`.trimEnd(), `> — \`${note.file}\``);
+    const words = [note.title === undefined ? '' : `**${note.title}**`, summary].filter((part) => part !== '').join(' — ');
+    if (words !== '') lines.push(words, '');
   }
-  if (changes.notes.length === 0) lines.push('', `変更メモ（\`${NOTES_DIRECTORY}/*.md\`）がありません。なぜ変えたかを書くと、地図とこのコメントに表示されます。`);
-  for (const warning of changes.ambiguous) lines.push('', `- 見出し \`${warning.reference}\`（${warning.file}）は ${warning.matches.length} 個の変更に当たります。${narrowWords(warning)}`);
-  for (const unknown of changes.unknown) lines.push('', `- 見出し \`${unknown.reference}\`（${unknown.file}）に当たる関数がありません。`);
+  if (changes.notes.length === 0) lines.push(`変更メモ（\`${NOTES_DIRECTORY}/*.md\`）がありません。なぜ変えたかを書くと、地図とこのコメントに表示されます。`, '');
+
+  lines.push('**確かめること**');
+  lines.push(`- 説明の無い変更 ${required}${changes.untested === undefined ? '' : ` · テストを変えていない変更 ${changes.untested.length}`}`);
+  for (const warning of changes.ambiguous) lines.push(`- 見出し \`${warning.reference}\`（${warning.file}）は ${warning.matches.length} 個の変更に当たります。${narrowWords(warning)}`);
+  for (const unknown of changes.unknown) lines.push(`- 見出し \`${unknown.reference}\`（${unknown.file}）に当たる関数がありません。`);
+  if (changes.addedLines !== undefined) lines.push(`- コメント +${changes.addedLines.comment.toLocaleString('en-US')} 行、コード +${changes.addedLines.code.toLocaleString('en-US')} 行`);
+  lines.push('', LINKS_MARKER);
+
+  const counted = changes.frames.filter((entry) => entry.kind !== 'noted');
+  const counts = KIND_ORDER.map((kind) => [kind, changes.frames.filter((entry) => entry.kind === kind).length] as const).filter(([, n]) => n > 0);
   const ordered = [...changes.frames].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || compare(a.id, b.id));
   const listed = ordered.filter((entry) => entry.kind !== 'docs' || entry.documented);
+  const folded: string[] = [];
   if (listed.length > 0) {
-    lines.push('', '| 札 | 関数 | 場所 | 自動要約 | 届くエンドポイント | メモ |', '|---|---|---|---|---|---|');
+    folded.push('| 札 | 関数 | 場所 | 自動要約 | 届くエンドポイント | メモ |', '|---|---|---|---|---|---|');
     for (const entry of listed.slice(0, limit)) {
       const note = entry.noteLine === undefined ? '説明なし' : shorten(entry.noteLine, 160);
-      lines.push(`| ${KIND_WORDS[entry.kind]} | ${nameWords(entry)} | ${cell(placeWords(entry))} | ${cell(summaryWords(entry))} | ${cell(reachWords(entry))} | ${cell(note)} |`);
+      folded.push(`| ${KIND_WORDS[entry.kind]} | ${nameWords(entry)} | ${cell(placeWords(entry))} | ${cell(summaryWords(entry))} | ${cell(reachWords(entry))} | ${cell(note)} |`);
     }
-    if (listed.length > limit) lines.push('', `ほか ${listed.length - limit} 個は地図で見てください。`);
+    if (listed.length > limit) folded.push('', `ほか ${listed.length - limit} 個は地図で見てください。`);
     const effects = effectLines(listed.slice(0, limit));
-    if (effects.length > 0) lines.push('', ...effects);
+    if (effects.length > 0) folded.push('', ...effects);
   }
-  const folded = ordered.length - listed.length;
-  if (folded > 0) lines.push('', `説明のない、JSDoc だけ変えた関数 ${folded} 個は表に入れていません（地図の「このPRの変更」にあります）。`);
+  if (ordered.length > listed.length) folded.push('', `説明のない、JSDoc だけ変えた関数 ${ordered.length - listed.length} 個は表に入れていません（地図の「このPRの変更」にあります）。`);
   const outsideLines = changes.outside.reduce((sum, file) => sum + file.lines.length, 0);
-  if (outsideLines > 0) lines.push('', `関数の外（import、型、定数など）の変更: ${changes.outside.map((file) => `\`${file.file}\` ${file.lines.length} 行`).join('、')}`);
-  // The sections others add (the tests of packages/test-catalog), each in its own `###` heading.
+  if (outsideLines > 0) folded.push('', `関数の外（import、型、定数など）の変更: ${changes.outside.length} ファイル ${outsideLines.toLocaleString('en-US')} 行（ファイルごとの行数は地図の「関数の外の変更」にあります）`);
+  if (folded.length === 0) lines.push('', '地図に載る関数（関数カタログとエンドポイントの処理）の変更はありません。');
+  else lines.push('', `<details><summary>変わった関数 ${counted.length}${counts.length === 0 ? '' : `（${counts.map(([kind, n]) => `${KIND_WORDS[kind]} ${n}`).join(' · ')}）`}</summary>`, '', ...(folded[0] === '' ? folded.slice(1) : folded), '', '</details>');
   for (const section of sections) if (section.trim() !== '') lines.push('', section.trimEnd());
   return `${lines.join('\n')}\n`;
 }
-

@@ -6,7 +6,7 @@ import type { FrameChangeEntry, FunctionEntry, MapChanges, MapData } from '@maro
 import { parseAspects } from '../aspects.js';
 import { diffCatalogs, expectationOverlap } from '../diff.js';
 import { entryOf, joinTests, reachableFrames } from '../join.js';
-import { testsMarkdown } from '../markdown.js';
+import { changedWords, expectationChanges, testsMarkdown, untestedMarkdown } from '../markdown.js';
 import type { Assertion, TestCase } from '../model.js';
 import { CaseFinder, FrameLocator, readRun, repositoryPath } from '../run.js';
 
@@ -246,9 +246,34 @@ describe('diffCatalogs', () => {
       [VERIFY, ['kept'], true, undefined],
       [AUTH, [], true, '形は同じ'],
     ]);
-    const markdown = testsMarkdown(diff, { ...DATA, changes: changes([entry({})]) } as MapData, ASPECTS);
-    expect(markdown).toContain('**関連するテストに変更の無い実装の変更（1、CI を落とす）**');
-    expect(markdown).toContain('- `verifyClientSecret()`（core client-auth.ts）（条件 `secret.length < 8` を足した）: 関連するテスト 1 件、変更なし');
+    const data = { ...DATA, changes: changes([entry({})]) } as MapData;
+    const alert = untestedMarkdown(diff, data);
+    expect(alert.startsWith('**関連するテストに変更の無い実装の変更（1、CI を落とす）**\n\n- `verifyClientSecret()`（core client-auth.ts）（条件 `secret.length < 8` を足した）: 関連するテスト 1 件、変更なし\n\nテストを足すか変えるか、')).toBe(true);
+    const folded = testsMarkdown(diff, data, ASPECTS);
+    expect([folded.includes('CI を落とす'), folded.includes('**テストを変えない理由が書かれた変更（1）**\n\n- `hono:oidc-provider/endpoints/token/steps/authenticate-client.ts#authenticateTokenClient`: 関連するテスト 0 件。「形は同じ」')]).toEqual([false, true]);
+  });
+
+  it('should say nothing at the top of the comment when every change has a changed test or a reason', () => {
+    const diff = diffCatalogs([named('kept')], [named('kept', { digest: 'other' })], DATA, changes([entry({})]), false);
+    expect(untestedMarkdown(diff, { ...DATA, changes: changes([entry({})]) } as MapData)).toBe('');
+  });
+
+  it('should fold the section of the tests under its counts', () => {
+    const api = (id: string, title: string) => card(id, { kind: 'api', root: 'hono', title, subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }], assertions: [said('a')] });
+    const diff = diffCatalogs([api('kept', 'should answer')], [api('kept', 'should answer'), api('fresh', 'should reject a replay')], DATA, changes([]), false);
+    const markdown = testsMarkdown(diff, { ...DATA, changes: changes([]) } as MapData, ASPECTS);
+    expect(markdown).toBe(
+      ['<details><summary>テスト 1 → 2（追加 1 · 変更 0 · 名前の変更 0 · 削除 0）</summary>', '', 'テストケース: +1  API +1', '', '**変更対象: POST /token（hono）**', '', '追加されたテスト:', '- should reject a replay（API, 正常系）', '', '</details>', ''].join('\n'),
+    );
+  });
+
+  it('should say of a changed expectation only the words that changed', () => {
+    const api = (assertions: Assertion[]) => card('cors', { kind: 'api', root: 'hono', title: 'should answer the preflight', subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }], assertions });
+    const before = api([said('the `Access-Control-Allow-Headers` header is `Authorization,Content-Type`'), said('the HTTP status is 204')]);
+    const after = api([said('the `Access-Control-Allow-Headers` header is `Authorization,Content-Type,DPoP`'), said('the HTTP status is 204'), said('the `Access-Control-Expose-Headers` header is `WWW-Authenticate`')]);
+    const diff = diffCatalogs([before], [after], DATA, changes([]), false);
+    const markdown = testsMarkdown(diff, { ...DATA, changes: changes([]) } as MapData, ASPECTS);
+    expect(markdown).toContain('変更されたテスト:\n- should answer the preflight（API, 正常系）（期待 ~~`Authorization,Content-Type`~~ → `Authorization,Content-Type,DPoP` / +the `Access-Control-Expose-Headers` header is `WWW-Authenticate`）');
   });
 
   it('should count a change whose related test the pull request changed as touched, and the new failures no test expects', () => {
@@ -282,6 +307,58 @@ describe('diffCatalogs', () => {
     const api = card('token-401', { kind: 'api', root: 'hono', subjects: [{ kind: 'endpoint', id: 'token', source: 'hono', how: 'request' }] });
     const diff = diffCatalogs([api], [api], DATA, changes([entry({})]), false);
     expect(diff.frames[0]?.related).toEqual(['token-401']);
+  });
+});
+
+describe('changedWords', () => {
+  it('should give the words added to the end of an expectation, a code span as one word', () => {
+    const before = 'the body equals `issuer` `https://op.example.com` and `registration_endpoint` `https://op.example.com/register`';
+    expect(changedWords(before, `${before} and \`dpop_signing_alg_values_supported\` [\`ES256\`, \`a b\`]`)).toBe('+and `dpop_signing_alg_values_supported` [`ES256`, `a b`]');
+  });
+
+  it('should give each run of changed words, a replaced one struck before its replacement, and nothing for the same text', () => {
+    expect([changedWords('the HTTP status is 400 and the error is `invalid_request`', 'the HTTP status is 401 and then the error is `invalid_client` now'), changedWords('the HTTP status is 200 exactly', 'the HTTP status is 200'), changedWords('same', 'same')]).toEqual([
+      '~~400~~ → 401 … +then … ~~`invalid_request`~~ → `invalid_client` now',
+      '~~exactly~~',
+      '',
+    ]);
+  });
+});
+
+describe('expectationChanges', () => {
+  it('should take a removed and an added expectation that share half of their words as one that changed, and say the others whole', () => {
+    const removed = ['the HTTP status is 400', 'the body has no `refresh_token`'];
+    const added = ['the `Cache-Control` header is `no-store`', 'the HTTP status is 401'];
+    expect(expectationChanges(removed, added)).toEqual(['~~400~~ → 401', '~~the body has no `refresh_token`~~', '+the `Cache-Control` header is `no-store`']);
+  });
+
+  it('should pair the two that share the most words first, whichever comes first', () => {
+    expect(expectationChanges(['the status is 400 and the body is empty', 'the status is 400 and the `error` is `invalid_grant`'], ['the status is 401 and the `error` is `invalid_grant`'])).toEqual(['~~the status is 400 and the body is empty~~', '~~400~~ → 401']);
+  });
+
+  it('should count every change, also those of more expectations than it compares', () => {
+    const removed = Array.from({ length: 10 }, (_, index) => `the header ${index} is set`);
+    const added = Array.from({ length: 10 }, (_, index) => `the header ${index} is unset`);
+    const changes = expectationChanges(removed, added);
+    expect([changes.length, changes[0], changes[8], changes[10]]).toEqual([12, '~~set~~ → unset', '~~the header 8 is set~~', '+the header 8 is unset']);
+  });
+
+  it('should close the strike and the code span of words it cuts, and keep the words that replace them', () => {
+    const long = `\`${'x'.repeat(300)}\``;
+    const change = changedWords(`the error is ${long}`, 'the error is `short`');
+    expect([change.startsWith('~~`xxx'), change.endsWith('…`~~ → `short`'), expectationChanges([`the body is ${long}`], [])[0]?.endsWith('…`~~')]).toEqual([true, true, true]);
+  });
+
+  it('should take a code span fenced by more backticks as one word, and say nothing of two texts whose words are the same', () => {
+    expect([changedWords('the code is ``a`b c`` here', 'the code is ``a`b d`` here'), expectationChanges(['the  status is 400'], ['the status is 400'])]).toEqual(['~~``a`b c``~~ → ``a`b d``', []]);
+  });
+
+  it('should pair a removed expectation with the added one that shares the most words', () => {
+    expect(expectationChanges(['the `error` of the body is `invalid_grant`'], ['the `error` of the page is `invalid_grant`', 'the `error` of the body is `invalid_request`', 'the `error_description` of the body is `invalid_grant` too'])).toEqual([
+      '~~body~~ → page',
+      '+the `error` of the body is `invalid_request`',
+      '+the `error_description` of the body is `invalid_grant` too',
+    ]);
   });
 });
 

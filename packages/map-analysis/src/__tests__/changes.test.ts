@@ -167,8 +167,53 @@ describe('changesMarkdown', () => {
   });
 
   it('should end with the sections an extension of the build adds, each after a blank line', () => {
-    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['### テスト\n\nテストケース: 1 → 2（+1）\n', '  '] });
-    expect(markdown.endsWith('\n\n### テスト\n\nテストケース: 1 → 2（+1）\n')).toBe(true);
+    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['<details><summary>テスト 1 → 2</summary>\n\nテストケース: +1\n\n</details>\n', '  '] });
+    expect(markdown.endsWith('\n\n</details>\n\n<details><summary>テスト 1 → 2</summary>\n\nテストケース: +1\n\n</details>\n')).toBe(true);
+  });
+
+  it('should keep outside the folds a line a note, what to check and the place of the links', () => {
+    const noted: MapChanges = {
+      ...changes([frame({ documented: true, noteLine: '短い秘密を拒む。' }), frame({ id: 'core:b.ts#g', name: 'g', module: 'b.ts', kind: 'added', summary: ['関数を足した'], counts: {}, documented: true, noteLine: '束縛を確かめる。' })]),
+      notes: [
+        { file: 'apps/map/changes/dpop.md', title: 'DPoP を加える', summary: 'DPoP を拡張機能として加える。\n既定は無効である。\n\n二段落目は出さない。' },
+        { file: 'apps/map/changes/empty.md', summary: '' },
+      ],
+      unknown: [{ file: 'apps/map/changes/dpop.md', reference: 'gone' }],
+      untested: [],
+      addedLines: { comment: 1412, code: 380 },
+      outside: [
+        { file: 'hono:oidc-provider/app.ts', lines: [1, 2] },
+        { file: 'nextjs:app/token/route.ts', lines: [7] },
+      ],
+    };
+    const markdown = changesMarkdown(noted);
+    expect(markdown.split('<details>')[0]).toBe(
+      [
+        '**DPoP を加える** — DPoP を拡張機能として加える。既定は無効である。',
+        '',
+        '**確かめること**',
+        '- 説明の無い変更 0 · テストを変えていない変更 0',
+        '- 見出し `gone`（apps/map/changes/dpop.md）に当たる関数がありません。',
+        '- コメント +1,412 行、コード +380 行',
+        '',
+        '<!-- map-links -->',
+        '',
+        '',
+      ].join('\n'),
+    );
+    expect(markdown).toContain('<details><summary>変わった関数 2（追加 1 · 変更 1）</summary>\n\n| 札 | 関数 | 場所 | 自動要約 | 届くエンドポイント | メモ |');
+    expect(markdown.endsWith('\n\n関数の外（import、型、定数など）の変更: 2 ファイル 3 行（ファイルごとの行数は地図の「関数の外の変更」にあります）\n\n</details>\n')).toBe(true);
+  });
+
+  it('should put what fails a check of an extension before the notes, after the changes without an explanation', () => {
+    const alert = '**関連するテストに変更の無い実装の変更（1、CI を落とす）**\n\n- `f()`\n';
+    const markdown = changesMarkdown({ ...changes([frame({ required: true })]), untested: ['core:a.ts#f'] }, { alerts: [alert, ''] });
+    expect([markdown.startsWith('### 説明の無い変更（1）'), markdown.indexOf('</details>\n\n**関連するテストに変更の無い実装の変更（1、CI を落とす）**\n\n- `f()`\n\n変更メモ') > 0, markdown.includes('- 説明の無い変更 1 · テストを変えていない変更 1')]).toEqual([true, true, true]);
+  });
+
+  it('should say that no frame of the map changed in a line, with nothing to fold', () => {
+    const markdown = changesMarkdown(changes([]));
+    expect(markdown).toBe(['変更メモ（`apps/map/changes/*.md`）がありません。なぜ変えたかを書くと、地図とこのコメントに表示されます。', '', '**確かめること**', '- 説明の無い変更 0', '', '<!-- map-links -->', '', '地図に載る関数（関数カタログとエンドポイントの処理）の変更はありません。', ''].join('\n'));
   });
 
   it('should say the calls the types do not tell may reach a change', () => {
@@ -186,7 +231,12 @@ describe('changesMarkdown', () => {
 
   it('should show the first line of the note of an explained change, and no list of the unexplained when there is none', () => {
     const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '境界をそろえる。', required: true, reach: [way, { ...way, source: 'nextjs', frameworks: ['nextjs'] }] })]));
-    expect(markdown).not.toContain('説明の無い変更');
+    expect(markdown).not.toContain('### 説明の無い変更');
     expect(markdown).toContain('| 変更 | `f()` | core a.ts:3 | 条件 `x` を足した（条件 +1） | token, token (nextjs) | 境界をそろえる。 |');
+  });
+
+  it('should list no change without an explanation at the top when none of them needs one', () => {
+    const markdown = changesMarkdown(changes([frame({})]));
+    expect([markdown.includes('### 説明の無い変更'), markdown.includes('- 説明の無い変更 0'), markdown.includes('| 変更 | `f()` | core a.ts:3 | 条件 `x` を足した（条件 +1） | なし | 説明なし |')]).toEqual([false, true, true]);
   });
 });

@@ -17,6 +17,7 @@
 import type { FrameChangeEntry, MapData } from '@maronn-openid-connect/map-analysis';
 import type { AspectTable } from './aspects.js';
 import type { Assertion, TestDiff, TestKind } from './model.js';
+import { codeSpan } from './words.js';
 
 const KIND_WORDS: Record<TestKind, string> = { unit: 'ユニット', api: 'API', e2e: 'E2E', tool: 'ツール' };
 const OUTCOME_WORDS: Record<string, string> = { success: '正常系', failure: '異常系' };
@@ -72,61 +73,132 @@ function listed(lines: readonly string[]): string[] {
   return lines.length <= LIMIT ? [...lines] : [...lines.slice(0, LIMIT), `- ほか ${lines.length - LIMIT} 件は、テストの画面（地図の \`/tests/\` の「この PR のテスト」）で見てください。`];
 }
 
-/** A text with its code spans closed: an odd backtick left open would run into the rest of the line. */
-function closed(text: string): string {
-  return (text.match(/`/g) ?? []).length % 2 === 0 ? text : `${text}\``;
+/** Beyond this many cells, the words between the common start and end of two expectations are taken as one change. */
+const MAX_WORD_CELLS = 1_000_000;
+
+/** A text on one line: an expectation in an item of a list, its spaces and line breaks one space each. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
 }
 
-/** The words of a text with where each starts and ends: a run of letters, digits, `_` and `$`, or one other character that is not a space. */
-function wordsOf(text: string): Array<{ word: string; start: number; end: number }> {
-  return [...text.matchAll(/[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu)].map((match) => ({ word: match[0], start: match.index, end: match.index + match[0].length }));
+/**
+ * The words of a said expectation (words.ts), each with the piece of the
+ * text it is in: plain words, or the code inside a code span, whose fence
+ * (a run of backticks to the next run as long) is no word. A word is a run
+ * of letters, digits, `_` and `$`, or one other character that is not a space.
+ */
+function wordsOf(text: string): Array<{ word: string; start: number; end: number; piece: number; code: boolean }> {
+  const pieces: Array<{ start: number; end: number; code: boolean }> = [];
+  let plain = 0;
+  for (let at = text.indexOf('`'); at !== -1; ) {
+    const fence = /^`+/.exec(text.slice(at))?.[0] ?? '`';
+    const close = [...text.slice(at + fence.length).matchAll(/`+/g)].find((run) => run[0].length === fence.length);
+    if (close === undefined) break;
+    const end = at + fence.length + (close.index ?? 0);
+    const padded = text[at + fence.length] === ' ' && text[end - 1] === ' ' && text.slice(at + fence.length, end).trim() !== '';
+    pieces.push({ start: plain, end: at, code: false }, { start: at + fence.length + (padded ? 1 : 0), end: end - (padded ? 1 : 0), code: true });
+    plain = end + fence.length;
+    at = text.indexOf('`', plain);
+  }
+  pieces.push({ start: plain, end: text.length, code: false });
+  return pieces.flatMap((piece, index) =>
+    [...text.slice(piece.start, piece.end).matchAll(/[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu)].map((match) => ({ word: match[0], start: piece.start + match.index, end: piece.start + match.index + match[0].length, piece: index, code: piece.code })),
+  );
 }
 
-/** What changed from one text to another by its words (the longest common subsequence): each run of changed words as `~~before~~ → after`, `~~before~~` or `+after`. */
+/** Some words of a text as Markdown: those of one code span in a code span of their own (words.ts codeSpan), with a space where the text had one between. */
+function wordsMarkdown(text: string, words: ReturnType<typeof wordsOf>): string {
+  let markdown = '';
+  let previous: number | undefined;
+  for (let index = 0; index < words.length; index += 1) {
+    const first = words[index] as (typeof words)[number];
+    let last = first;
+    while ((words[index + 1] as typeof first | undefined)?.piece === first.piece) {
+      index += 1;
+      last = words[index] as typeof first;
+    }
+    const part = oneLine(text.slice(first.start, last.end));
+    const space = previous !== undefined && /\s/.test(text.slice(previous, first.start)) ? ' ' : '';
+    markdown += `${space}${first.code ? codeSpan(part) : part}`;
+    previous = last.end;
+  }
+  return markdown;
+}
+
+/**
+ * What changed from one expectation to another by its words: each run of
+ * words outside their longest common subsequence as `~~before~~ → after`,
+ * `~~before~~` or `+after`. The words of the common start and end are left
+ * out first; past MAX_WORD_CELLS the rest between is one run.
+ */
 function wordChanges(before: string, after: string): string[] {
   const a = wordsOf(before);
   const b = wordsOf(after);
-  const common: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
-  for (let i = a.length - 1; i >= 0; i -= 1) {
-    for (let j = b.length - 1; j >= 0; j -= 1) common[i]![j] = a[i]!.word === b[j]!.word ? common[i + 1]![j + 1]! + 1 : Math.max(common[i + 1]![j]!, common[i]![j + 1]!);
+  const same = (i: number, j: number) => a[i]?.word === b[j]?.word && a[i]?.code === b[j]?.code;
+  let start = 0;
+  while (start < a.length && start < b.length && same(start, start)) start += 1;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && same(endA - 1, endB - 1)) {
+    endA -= 1;
+    endB -= 1;
   }
-  const changes: string[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i]!.word === b[j]!.word) {
-      i += 1;
-      j += 1;
-      continue;
+  const n = endA - start;
+  const m = endB - start;
+  // The pairs of words to keep, by the table of the longest common subsequence of the words between.
+  const kept: Array<[number, number]> = [];
+  if (n * m > 0 && (n + 1) * (m + 1) <= MAX_WORD_CELLS) {
+    const width = m + 1;
+    const common = new Uint32Array((n + 1) * width);
+    for (let i = n - 1; i >= 0; i -= 1) {
+      for (let j = m - 1; j >= 0; j -= 1) common[i * width + j] = same(start + i, start + j) ? (common[(i + 1) * width + j + 1] ?? 0) + 1 : Math.max(common[(i + 1) * width + j] ?? 0, common[i * width + j + 1] ?? 0);
     }
-    const [fromA, fromB] = [i, j];
-    while ((i < a.length || j < b.length) && !(i < a.length && j < b.length && a[i]!.word === b[j]!.word)) {
-      if (j >= b.length || (i < a.length && common[i + 1]![j]! >= common[i]![j + 1]!)) i += 1;
+    for (let i = 0, j = 0; i < n && j < m; ) {
+      if (same(start + i, start + j)) {
+        kept.push([start + i, start + j]);
+        i += 1;
+        j += 1;
+      } else if ((common[(i + 1) * width + j] ?? 0) >= (common[i * width + j + 1] ?? 0)) i += 1;
       else j += 1;
     }
-    const removed = i > fromA ? closed(cell(before.slice(a[fromA]!.start, a[i - 1]!.end))) : '';
-    const added = j > fromB ? closed(cell(after.slice(b[fromB]!.start, b[j - 1]!.end))) : '';
-    changes.push(removed === '' ? `+${added}` : added === '' ? `~~${removed}~~` : `~~${removed}~~ → ${added}`);
+  }
+  const changes: string[] = [];
+  let [i, j] = [start, start];
+  for (const [keptA, keptB] of [...kept, [endA, endB] as [number, number]]) {
+    const removed = wordsMarkdown(before, a.slice(i, keptA));
+    const added = wordsMarkdown(after, b.slice(j, keptB));
+    if (removed !== '' || added !== '') changes.push(removed === '' ? `+${added}` : added === '' ? `~~${removed}~~` : `~~${removed}~~ → ${added}`);
+    [i, j] = [keptA + 1, keptB + 1];
   }
   return changes;
 }
 
 /**
  * The words that changed between the expectations a test removed and those
- * it added (TestDiff.modified): a removed and an added expectation of the same
- * phrase, or of the same value and matcher, are one changed expectation, said
- * by its changed words (`~~400~~ → 401`); the others are said whole, a removed
- * one struck out and an added one after `+`.
+ * it added (TestDiff.modified): a removed and an added expectation of the
+ * same value and matcher, or else of the same phrase, are one changed
+ * expectation, said by its changed words (`~~400~~ → 401`), or whole when
+ * only its spaces changed; the others are said whole, a removed one struck
+ * out and an added one after `+`.
  */
 export function changedWords(removed: readonly Assertion[], added: readonly Assertion[]): string[] {
-  const rest = [...added];
-  const changes: string[] = [];
-  for (const before of removed) {
-    const index = rest.findIndex((after) => (before.phrase !== undefined && before.phrase === after.phrase) || (before.actual === after.actual && before.matcher === after.matcher));
-    const after = index === -1 ? undefined : rest.splice(index, 1)[0];
-    changes.push(...(after === undefined ? [`~~${closed(cell(before.text))}~~`] : wordChanges(before.text, after.text)));
-  }
-  return [...changes, ...rest.map((after) => `+${closed(cell(after.text))}`)];
+  const pairs = new Map<number, number>();
+  const pair = (matches: (before: Assertion, after: Assertion) => boolean) => {
+    removed.forEach((before, i) => {
+      if (pairs.has(i)) return;
+      const j = added.findIndex((after, k) => ![...pairs.values()].includes(k) && matches(before, after));
+      if (j !== -1) pairs.set(i, j);
+    });
+  };
+  pair((before, after) => before.actual === after.actual && before.matcher === after.matcher);
+  pair((before, after) => before.phrase !== undefined && before.phrase === after.phrase);
+  const changes = removed.flatMap((before, i) => {
+    const after = pairs.has(i) ? added[pairs.get(i) as number] : undefined;
+    if (after === undefined) return [`~~${oneLine(before.text)}~~`];
+    const words = wordChanges(before.text, after.text);
+    return words.length > 0 ? words : [`~~${oneLine(before.text)}~~ → ${oneLine(after.text)}`];
+  });
+  return [...changes, ...added.filter((_after, k) => ![...pairs.values()].includes(k)).map((after) => `+${oneLine(after.text)}`)];
 }
 
 /**

@@ -1083,11 +1083,11 @@ flowchart LR
 ```
 
 - 「変更されたテスト」の期待は、`changedWords(消した期待結果, 足した期待結果)` の言葉の先頭の四つを `、` でつなぎ、五つ以上あれば ` ほか <残りの数>` を続ける
-- `changedWords` は、消した期待結果を順に、句（`phrase`）があって同じか、`actual` と `matcher` が同じ、残っている足した期待結果の最初の一つと組にする
-- 組は、二つの `text` の語の最長共通部分列から外れた語の連なりごとに、`~~<前の語>~~ → <後の語>`、`~~<前の語>~~`、`+<後の語>` のどれかの言葉になる（`~~400~~ → 401`）
-- 語は、文字、数字、`_`、`$` の連なりか、そのほかの空白でない一文字である
+- `changedWords` は、消した期待結果を組にする。まず `actual` と `matcher` が同じもの、次に句（`phrase`）が同じもので、どちらも残っている足した期待結果の最初の一つを取る
+- 組は、二つの `text` の語の最長共通部分列から外れた語の連なりごとに、`~~<前の語>~~ → <後の語>`、`~~<前の語>~~`、`+<後の語>` のどれかの言葉になる（`~~400~~ → 401`）。語が同じで空白だけが違う組は、`~~<前の全文>~~ → <後の全文>` になる
+- 語は、文字、数字、`_`、`$` の連なりか、そのほかの空白でない一文字である。コードスパンのフェンスは語にせず、コードスパンの中の語は、同じコードスパンの語ごとに `codeSpan` で包み直す（`` ~~`invalid_request`~~ → `invalid_grant` ``）
+- 共通の始まりと終わりの語を先に除き、残りの表が 100 万の升を超えるときは、残りの語を一つの連なりとする
 - 組にならない消した期待結果は `~~<全文>~~` になり、残った足した期待結果は最後に `+<全文>` で並ぶ
-- 前と後の語と全文は、それぞれバッククォートの数が奇数なら末尾に一つ足して閉じる
 - `changedWords` の言葉が無い行には期待の括弧を付けず、名前の変更でない行には名前の括弧を付けない
 - 「関連する変更関数」に出すのは、`reach` がこの組の鍵に届く判定である
 - ただし、触ったテストのうち、この組の鍵を持つものか、エンドポイントを持たないもの（ユニットテストなど）があるときだけ出す
@@ -1140,7 +1140,7 @@ flowchart LR
 - `should list a renamed test of an endpoint as changed in the comment, not as added`
 - `changedWords` のテスト
 
-実装：`packages/test-catalog/src/markdown.ts`（`untestedMarkdown`、`testsMarkdown`、`changedWords`、`wordChanges`、`wordsOf`、`closed`、`testLines`、`testWords`、`frameWords`、`listed`、`cell`、`signed`、`KIND_WORDS`、`OUTCOME_WORDS`、`LIMIT`）
+実装：`packages/test-catalog/src/markdown.ts`（`untestedMarkdown`、`testsMarkdown`、`changedWords`、`wordChanges`、`wordsOf`、`wordsMarkdown`、`oneLine`、`MAX_WORD_CELLS`、`testLines`、`testWords`、`frameWords`、`listed`、`cell`、`signed`、`KIND_WORDS`、`OUTCOME_WORDS`、`LIMIT`）
 
 ## ④-8 書き出しと検査
 

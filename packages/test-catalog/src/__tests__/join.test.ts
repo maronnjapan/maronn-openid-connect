@@ -309,16 +309,35 @@ describe('repositoryPath', () => {
 describe('changedWords', () => {
   const expectation = (text: string, extra: Partial<Assertion> = {}): Assertion => ({ actual: 'response.status', matcher: 'toBe', line: 1, text, ...extra });
 
-  it('should say an expectation of the same phrase, or of the same value and matcher, by the words that changed', () => {
+  it('should say an expectation of the same value and matcher, or else of the same phrase, by the words that changed', () => {
     const phrase = { phrase: 'the HTTP status is {int}' };
     expect(changedWords([expectation('the HTTP status is 400', phrase)], [expectation('the HTTP status is 401', { ...phrase, actual: 'res.status' })])).toEqual(['~~400~~ → 401']);
-    expect(changedWords([expectation('the error code is `invalid_request`', { actual: 'body.error' })], [expectation('the error code is `invalid_grant`', { actual: 'body.error' })])).toEqual(['~~invalid_request~~ → invalid_grant']);
-    expect(changedWords([expectation('the scope is `openid`'), expectation('it is `a`, `b` and `c`')], [expectation('the scope is `openid profile`'), expectation('it is `a` and `c`')])).toEqual(['+profile', '~~, `b`~~']);
+    expect(changedWords([expectation('the error code is `invalid_request`', { actual: 'body.error' })], [expectation('the error code is `invalid_grant`', { actual: 'body.error' })])).toEqual(['~~`invalid_request`~~ → `invalid_grant`']);
+    expect(changedWords([expectation('the scope is `openid`'), expectation('it is `a`, `b` and `c`')], [expectation('the scope is `openid profile`'), expectation('it is `a` and `c`')])).toEqual(['+`profile`', '~~, `b`~~']);
   });
 
-  it('should say whole an expectation removed or added without a pair, and keep the code spans of a cut closed', () => {
+  it('should pair by the same value and matcher before the same phrase, so an expectation added first does not take the place of the changed one', () => {
+    const header = (name: string, value: string): Assertion => expectation(`the \`${name}\` header is \`${value}\``, { actual: `response.headers.get('${name}')`, phrase: 'the {string} header is {string}' });
+    expect(changedWords([header('Access-Control-Allow-Headers', 'Authorization,Content-Type')], [header('Access-Control-Expose-Headers', 'WWW-Authenticate'), header('Access-Control-Allow-Headers', 'Authorization,Content-Type,DPoP')])).toEqual([
+      '+`,DPoP`',
+      '+the `Access-Control-Expose-Headers` header is `WWW-Authenticate`',
+    ]);
+  });
+
+  it('should keep a word of a code span in a code span, and the code spans of a whole expectation as they are', () => {
+    expect(changedWords([expectation('it is [`a`, `b`]')], [expectation('it is [`a`, `x`, `b`]')])).toEqual(['+`x`,']);
+    expect(changedWords([expectation('the text is `<p>a <strong>b</strong>.</p>`')], [expectation('the text is `<p>a b.</p>`')])).toEqual(['~~`<strong>`~~', '~~`</strong>`~~']);
+    expect(changedWords([], [expectation('the `Location` header is `` `${issuer}/login` ``', { actual: 'location' })])).toEqual(['+the `Location` header is `` `${issuer}/login` ``']);
+  });
+
+  it('should say whole an expectation removed or added without a pair, or whose words did not change', () => {
     expect(changedWords([expectation('the body has `a`', { actual: 'body' })], [expectation('the header `DPoP` is set', { actual: 'headers', matcher: 'toHaveProperty' })])).toEqual(['~~the body has `a`~~', '+the header `DPoP` is set']);
-    const words = changedWords([expectation('it is `a b` now')], [expectation('it is `a` b now')]);
-    expect([words.length > 0, words.every((word) => (word.match(/`/g) ?? []).length % 2 === 0)]).toEqual([true, true]);
+    expect(changedWords([expectation('the header is `a,b`')], [expectation('the header is `a, b`')])).toEqual(['~~the header is `a,b`~~ → the header is `a, b`']);
+  });
+
+  it('should take the words between the common start and end as one change past the size of the table', () => {
+    const words = (prefix: string) => Array.from({ length: 1200 }, (_, index) => `${prefix}${index}`).join(' ');
+    const changes = changedWords([expectation(`it is ${words('w')} now`)], [expectation(`it is ${words('v')} now`)]);
+    expect([changes.length, changes[0]?.startsWith('~~w0 w1 '), changes[0]?.includes('~~ → v0 v1 ')]).toEqual([1, true, true]);
   });
 });

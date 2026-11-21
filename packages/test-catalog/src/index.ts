@@ -6,7 +6,7 @@
  * shows (model.ts).
  */
 export { parseAspects, readAspects, aspectsOf, ASPECTS_FILE, type AspectTable } from './aspects.js';
-export { buildTests, caseRequests, codeOfFrame, readBaseCatalog, readTables, shownFiles, stepBlocks, withRun, type TestBuildOptions } from './build.js';
+export { buildTests, caseRequests, codeOfFrame, readBaseCatalog, readTables, rootRequests, shownFiles, stepBlocks, withRun, type TestBuildOptions } from './build.js';
 export { caseId, casesOf, conditionsOf, endpointCases, errorClassOf, expectsFailure, failureTests, waysOf, type CaseRequests, type CaseTree } from './cases.js';
 export { attachExamples, BOTH, conditionOf, exampleOf, GOES, locate, nodeRan, RequestRun, requestsByEndpoint, seenSide, takes, type CaseSources, type CaseWay, type EndpointExamples, type ExampleCounts, type SentRequest } from './examples.js';
 export { EndpointIndex, helperResolver, outcomeOf, readCatalog, scenarioHelpers, stepDefinitionCode, stepDefinitionLines, stepOutcome, type CatalogInput, type CatalogResult, type StepDefinitionCode } from './catalog.js';

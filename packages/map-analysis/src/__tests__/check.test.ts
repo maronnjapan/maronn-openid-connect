@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkMap } from '../check.js';
-import type { FrameFile, MapChanges, MapData } from '../model.js';
+import type { FrameFile, MapChanges, MapData, RootRequests, WayRequest } from '../model.js';
 
 /** A map of one function whose frame offers some choices by name. */
 function mapOf(names: readonly string[]): { data: MapData; frame: FrameFile } {
@@ -49,6 +49,46 @@ function changesOf(changedLines: number[]): MapChanges {
     otherFiles: 0,
   };
 }
+
+/** A request of a way, sent by a line of a test. */
+function wayRequest(line: number, code = 'const response = await app.request(request);'): WayRequest {
+  return { test: { id: 't-1', title: 'a test', file: 'apps/hono/src/a.test.ts', line, code }, method: 'POST', path: '/token', params: [], headers: [], status: 200 };
+}
+
+describe('checkMap, with the requests of a measured run', () => {
+  it('should pass ways that are choices of their root and requests that say the line of their test, and count them', async () => {
+    const { data, frame } = mapOf(['return x']);
+    data.requests = { 'core:a.ts#f': 'requests.json' };
+    const requests: RootRequests = { version: 1, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', count: 2, examples: [wayRequest(12), wayRequest(30)] }] };
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
+    expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, examples: 2, unmatched: 0 }, []]);
+  });
+
+  it('should fail on a way no choice of its root is, a request without the line of its test, and a root with no frame', async () => {
+    const { data, frame } = mapOf(['return x']);
+    data.requests = { 'core:a.ts#f': 'requests.json', 'core:b.ts#g': 'other.json' };
+    const requests: RootRequests = {
+      version: 1,
+      root: 'core:a.ts#f',
+      source: 'hono',
+      endpoint: 'token',
+      ways: [
+        { id: 'c1', kind: 'step', name: 'a step', target: 's0', count: 1, examples: [wayRequest(12)] },
+        { id: 'c2', kind: 'exit', name: 'return x', target: 's0', count: 1, examples: [wayRequest(0), wayRequest(4, ' ')] },
+      ],
+    };
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
+    expect([metrics.requests.unmatched, failures]).toEqual([
+      1,
+      [
+        'core:a.ts#f: the requests name the way step "a step" (s0), which no ready-made choice of the root is: the flow view would not show them',
+        'core:a.ts#f: a request of the way "return x" names no line of the code of its test t-1',
+        'core:a.ts#f: a request of the way "return x" names no line of the code of its test t-1',
+        'core:b.ts#g: the requests of the measured run name a root the map has no frame of',
+      ],
+    ]);
+  });
+});
 
 describe('checkMap', () => {
   it('should reject feature labels with an unknown flag or a range outside the source', async () => {

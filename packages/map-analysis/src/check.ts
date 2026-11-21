@@ -17,8 +17,12 @@
  * - Wiring outside ordinary call paths retains its source and a reason when
  *   unresolved; claiming a destination requires a target and destinations.
  * - Every unresolved call node explains why it cannot be followed.
+ * - With the requests of a measured run (MapData.requests): every way they
+ *   name is a ready-made choice of its root (its kind and target), so the
+ *   flow view finds the request of the way chosen, and every request says
+ *   the line of its test that sent it and the code of that line.
  */
-import type { FlowTree, FrameFile, MapData, TreeNode } from './model.js';
+import type { FlowTree, FrameFile, MapData, RootRequests, TreeNode } from './model.js';
 
 export interface MapMetrics {
   frames: number;
@@ -38,6 +42,8 @@ export interface MapMetrics {
   untested: string[];
   /** Wiring inventory entries, their unresolved count, and malformed output entries. */
   wiring: { entries: number; untraceable: number; invalid: number };
+  /** The requests of the measured run (MapData.requests): the roots, the ways and the requests, and the ways no choice of their root is. */
+  requests: { roots: number; ways: number; examples: number; unmatched: number };
 }
 
 export interface CheckResult {
@@ -86,11 +92,59 @@ function checkTargets(nodes: readonly TreeNode[], frame: string, failures: strin
 }
 
 /**
- * Measure the map (see the module comment): the index, a reader of the
- * frame files by url, and of the text of the source files by id.
+ * Check the requests of a measured run against the frames of their roots
+ * (see the module comment), adding to the metrics and the failures.
  */
-export async function checkMap(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readSource: (id: string) => Promise<string | undefined>): Promise<CheckResult> {
-  const metrics: MapMetrics = { frames: 0, selections: 0, unnamed: 0, duplicateNames: [], uncovered: [], changedOutside: [], token: {}, undocumented: data.changes?.undocumented ?? [], untested: data.changes?.untested ?? [], wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 } };
+async function checkRequests(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readRequests: (url: string) => Promise<RootRequests>, metrics: MapMetrics, failures: string[]): Promise<void> {
+  for (const [root, url] of Object.entries(data.requests ?? {})) {
+    const entry = data.bodies[root] ?? data.functions[root];
+    if (entry === undefined || entry.frame === '') {
+      failures.push(`${root}: the requests of the measured run name a root the map has no frame of`);
+      continue;
+    }
+    const [file, requests] = await Promise.all([readFrame(entry.frame), readRequests(url)]);
+    metrics.requests.roots += 1;
+    if (requests.root !== root) failures.push(`${root}: its requests file is of ${requests.root}`);
+    for (const way of requests.ways) {
+      metrics.requests.ways += 1;
+      metrics.requests.examples += way.examples.length;
+      if (!file.selections.some((selection) => selection.kind === way.kind && selection.target === way.target)) {
+        metrics.requests.unmatched += 1;
+        failures.push(`${root}: the requests name the way ${way.kind} "${way.name}" (${way.target}), which no ready-made choice of the root is: the flow view would not show them`);
+      }
+      for (const example of way.examples) {
+        if (!Number.isSafeInteger(example.test.line) || example.test.line < 1 || example.test.code.trim() === '' || example.test.file.trim() === '') failures.push(`${root}: a request of the way "${way.name}" names no line of the code of its test ${example.test.id}`);
+      }
+    }
+  }
+}
+
+/**
+ * Measure the map (see the module comment): the index, a reader of the
+ * frame files by url, of the text of the source files by id, and of the
+ * requests files by url (MapData.requests).
+ */
+export async function checkMap(
+  data: MapData,
+  readFrame: (url: string) => Promise<FrameFile>,
+  readSource: (id: string) => Promise<string | undefined>,
+  readRequests: (url: string) => Promise<RootRequests> = async (url) => {
+    throw new Error(`no reader of the requests file ${url}`);
+  },
+): Promise<CheckResult> {
+  const metrics: MapMetrics = {
+    frames: 0,
+    selections: 0,
+    unnamed: 0,
+    duplicateNames: [],
+    uncovered: [],
+    changedOutside: [],
+    token: {},
+    undocumented: data.changes?.undocumented ?? [],
+    untested: data.changes?.untested ?? [],
+    wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 },
+    requests: { roots: 0, ways: 0, examples: 0, unmatched: 0 },
+  };
   const failures: string[] = [];
   for (const wiring of data.wiring ?? []) {
     const invalid: string[] = [];
@@ -155,6 +209,7 @@ export async function checkMap(data: MapData, readFrame: (url: string) => Promis
     const file = await readFrame(root.frame);
     metrics.token[framework] = file.selections.filter((selection) => selection.kind === 'step' || selection.kind === 'exit').map((selection) => selection.name);
   }
+  await checkRequests(data, readFrame, readRequests, metrics, failures);
   if (metrics.unnamed > 0) failures.push(`${metrics.unnamed} ready-made choices have no name`);
   for (const duplicate of metrics.duplicateNames.slice(0, 10)) failures.push(`${duplicate.frame}: two choices are named "${duplicate.name}"`);
   for (const frame of metrics.uncovered.slice(0, 10)) failures.push(`${frame.frame}: lines ${frame.lines.join(', ')} of the body are in no node`);

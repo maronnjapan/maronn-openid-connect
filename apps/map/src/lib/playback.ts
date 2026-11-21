@@ -202,83 +202,10 @@ export const STEP_KIND_WORDS: Record<StepKind, string> = {
   respond: '応答',
 };
 
+/** The speeds a playback offers (1 is the normal pace). */
+export const SPEEDS = [0.5, 1, 2] as const;
+
 /** How long a scene stays before the playback moves on, in milliseconds, at a speed (1 is the normal pace). */
 export function sceneDuration(speed: number): number {
   return Math.round(1500 / Math.max(0.25, speed));
-}
-
-/** What a scene does on the way, in a few words: a line of the summary of the way (see sceneGist). */
-export interface SceneGist {
-  /** The kind of the endpoint's step the scene is the box of, in words (検証). */
-  kind?: string;
-  /** What that step hands on. */
-  hands?: string[];
-  /** The sides its decisions take, in words, and whether the walk assumed them. */
-  sides: Array<{ label: string; assumed: boolean }>;
-  /** It goes into the frame of a call. */
-  enters: boolean;
-  /** How it ends its frame or fails, in words where code is set in code marks: `x` を返して終わる, a failure, a catch. */
-  end?: { tone: 'end' | 'error' | 'caught'; text: string };
-}
-
-/** The value a return returns, as code: `return respondToken(c, x);` → `respondToken(c, x)`; '' for none. */
-export function returnedValue(code: string): string {
-  return code.replace(/\s+/g, ' ').trim().replace(/^return\b\s*/, '').replace(/;$/, '').trim();
-}
-
-/** How a return reads in a line of the way: `` `value` を返して終わる ``, or ここで終わる for a return of nothing. */
-function returnLine(code: string): string {
-  const value = returnedValue(code);
-  return value === '' ? 'ここで終わる' : `\`${value}\` を返して終わる`;
-}
-
-/**
- * What a scene does (see SceneGist): the kind and the values of the step
- * whose box it is (`step`, given for a scene of an endpoint's root frame),
- * the sides its decisions take, whether it goes into a call, and how it
- * ends: a return, a failure thrown or come up through a call, a catch.
- */
-export function sceneGist(scene: Scene, step?: { kind: StepKind; produces: readonly string[] }): SceneGist {
-  const gist: SceneGist = { sides: [], enters: scene.stops.some((stop) => stop.event === 'enters') };
-  if (step !== undefined && scene.node.step?.id === scene.step) {
-    gist.kind = STEP_KIND_WORDS[step.kind];
-    if (step.produces.length > 0) gist.hands = [...step.produces];
-  }
-  for (const stop of scene.stops) {
-    if (stop.side !== undefined && stop.event !== 'catches') gist.sides.push({ label: stop.side.label, assumed: stop.side.assumed });
-  }
-  const caught = scene.stops.find((stop) => stop.event === 'catches');
-  const failed = scene.stops.find((stop) => stop.event === 'throws' || stop.event === 'fails');
-  const returned = scene.stops.find((stop) => stop.event === 'returns' || stop.event === 'ends');
-  const ending = returned === undefined ? undefined : returned.event === 'ends' ? '最後まで進んで終わる' : returnLine(returned.node.code);
-  if (caught !== undefined) gist.end = { tone: 'caught', text: `例外${caught.error === undefined ? '' : ` \`${caught.error}\` `}を受け取る${ending === undefined ? '' : `、${ending}`}` };
-  else if (failed !== undefined) gist.end = { tone: 'error', text: `失敗${failed.error === undefined ? '' : ` \`${failed.error}\``}${failed.event === 'fails' ? '（ここで失敗する）' : ''}` };
-  else if (ending !== undefined) gist.end = { tone: 'end', text: ending };
-  return gist;
-}
-
-/**
- * How a whole way ends, in words where code is set in code marks: the value
- * its root returns (`` `respondToken(c, x)` を返して終わる ``), a failure its
- * root caught and answered with what it returns (`` 失敗 `TokenError(…)` →
- * `respondTokenError(c, e)` で応答して終わる ``; `answers` for the root of an
- * endpoint, else を返して終わる), or a failure that leaves it.
- */
-export function wayEnding(walked: Pick<FlowWalk, 'stops' | 'outcome' | 'error'>, answers: boolean): { tone: 'end' | 'error' | 'caught'; text: string } {
-  const failure = walked.stops.find((stop) => stop.event === 'throws' || stop.event === 'fails');
-  if (walked.outcome === 'fails') {
-    const error = walked.error ?? failure?.error;
-    return { tone: 'error', text: `失敗${error === undefined ? '' : ` \`${error}\` `}が外へ出る` };
-  }
-  const roots = walked.stops.filter((stop) => stop.depth === 0);
-  const last = [...roots].reverse().find((stop) => stop.event === 'returns' || stop.event === 'ends');
-  const caught = roots.find((stop) => stop.event === 'catches');
-  if (last === undefined || last.event === 'ends') return { tone: caught === undefined ? 'end' : 'caught', text: '最後まで進んで終わる' };
-  if (caught !== undefined) {
-    const error = caught.error ?? failure?.error;
-    const value = returnedValue(last.node.code);
-    const answer = answers ? 'で応答して終わる' : 'を返して終わる';
-    return { tone: 'caught', text: `失敗${error === undefined ? '' : ` \`${error}\``} → ${value === '' ? answer.replace(/^[でを]/, '') : `\`${value}\` ${answer}`}` };
-  }
-  return { tone: 'end', text: returnLine(last.node.code) };
 }

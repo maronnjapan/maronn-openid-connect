@@ -507,6 +507,8 @@ export interface EndpointCase {
   name: string;
   /** Where it leads (`→ return respondToken(…)`), when the map says. */
   note?: string;
+  /** The node of the endpoint's tree it leads to (Selection.target): with its kind, the map finds its choice of the way by it. */
+  target: string;
   /** The steps of the endpoint it runs, in the order it reaches them. */
   steps: string[];
   /** How it ends: the endpoint answers, a failure is caught and answered with an error, or a failure leaves the endpoint. */

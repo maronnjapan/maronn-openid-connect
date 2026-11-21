@@ -1,11 +1,13 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { FlowStep, MapData, Selection } from '../types';
-import { STEP_KIND_WORDS, sceneAt, sceneDuration, sceneGist, sceneLines, scenarioOf, wayEnding, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
+import { STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, scenarioOf, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
 import { choose, entryOf, type TraceState } from '../lib/trace';
 import { firstSentence } from '../lib/words';
 import { Inline } from './ChangeParts';
 import { FeatureBadge } from './FeatureBadge';
+import { FlowRequest } from './FlowRequest';
 import { failureGroups } from './SelectionBar';
+import type { RootRequestsState } from './useRequests';
 
 /** Where a playback is and how it moves (see usePlayback). */
 export interface Playback {
@@ -20,9 +22,6 @@ export interface Playback {
   play: (on: boolean) => void;
   setSpeed: (speed: number) => void;
 }
-
-/** The speeds a playback offers. */
-const SPEEDS = [0.5, 1, 2] as const;
 
 /**
  * The state of a playback over some scenes: the scene shown, whether it
@@ -94,9 +93,13 @@ export interface FlowPlayerProps {
   walked: FlowWalk;
   scenes: readonly Scene[];
   playback: Playback;
+  /** The requests the code of the API tests sent that took the ways of the root (useRootRequests): the one of the way chosen is shown. */
+  requests: RootRequestsState;
+  /** The framework the map shows (TraceProps.framework). */
+  framework: string;
   /** The words a scene is named by: those of its box in the diagram. */
   titleOf: (scene: Scene) => { text: string; code: boolean };
-  /** The endpoint whose root the trace starts from (see TraceProps.endpoint): the summary of the way starts from it, and a scene of one of its steps says the step's kind and values. */
+  /** The endpoint whose root the trace starts from (see TraceProps.endpoint): a scene of one of its steps says the step's kind and values. */
   endpoint?: { name: string; steps: readonly FlowStep[] } | undefined;
   /** Whether a function has a frame the playback can go into. */
   hasFrame: (id: string) => boolean;
@@ -121,10 +124,6 @@ const GROUP_HEADINGS: ReadonlyArray<{ kind: Selection['kind']; heading: string }
   { kind: 'exit', heading: '終わり方' },
 ];
 
-/** The mark before a scene in the list of the way: how it reads at a glance. */
-const TONE_MARKS: Record<Scene['tone'], string> = { normal: '●', end: '■', error: '✕', caught: '↩' };
-/** The mark before the ending of the way, by how it ends. */
-const ENDING_MARKS: Record<'end' | 'error' | 'caught', string> = { end: '■', error: '✕', caught: '↩' };
 const TONE_WORDS: Record<Scene['tone'], string> = { normal: '', end: '応答して終わる', error: '失敗する', caught: '例外を受け取る' };
 
 /** The name of a selection in the list of the ways, without the code marks. */
@@ -135,32 +134,20 @@ function plain(text: string): string {
 /**
  * The player of the flow view: which way the request takes (a ready-made
  * choice, or the sides the reader chose), the controls of the playback, what
- * happens in the scene shown, and what the whole flow does
- * (このフローがしていること): the request coming in, every scene in order on a
- * line of what it does (the kind of a step and what it hands on, the side a
- * decision takes, how it ends), and how the way ends, as the code says it;
- * each line goes to its scene. The chart beside it shows where the scene
- * is; this says what happens there, in the words the outline uses.
+ * happens in the scene shown, and the request of the way: for a ready-made
+ * way (a case of the tests page), the parameters a test's code actually sent
+ * that took it (FlowRequest). The chart beside it shows where the scene is
+ * (a node of it goes to its scene); this says what happens there, in the
+ * words the outline uses.
  *
  * A decision the way does not decide is taken on an assumed side, marked 仮:
  * its other sides are buttons, and taking one makes it part of the way (the
  * same choice the outline's side buttons make). A call that has a frame can
  * be entered, which makes the request go through that function too.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
   const scene = scenes[at];
-  const list = useRef<HTMLOListElement>(null);
-  const headingId = useId();
-  // The way's list follows the scene shown, inside its own scroll: the page itself never moves (on a phone the list is part of the page, and stays put).
-  useEffect(() => {
-    const box = list.current;
-    const item = box?.querySelector<HTMLElement>('[aria-current="step"]');
-    if (box == null || item == null || box.scrollHeight <= box.clientHeight) return;
-    const top = item.offsetTop - box.offsetTop;
-    if (top < box.scrollTop) box.scrollTop = top;
-    else if (top + item.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + item.offsetHeight - box.clientHeight;
-  }, [at, scenes]);
   const choice = state.choices[0];
   const picked = scenarioOf(selections, choice);
   const custom = picked === -1 && choice !== undefined && Object.keys(choice).length > 0;
@@ -214,10 +201,6 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
   /** Whether a line says in words what the title already says: it then shows its code instead. */
   const bare = (text: string) => text.replace(/`/g, '').replace(/。$/, '');
   const repeats = (item: SceneLine) => !item.code && title !== undefined && (bare(item.text) === bare(title.text) || (more !== undefined && bare(more).startsWith(bare(item.text))));
-  // How the way ends, as the code says it: what the root returns, a failure it caught and answered, or a failure that leaves it.
-  const ending = wayEnding(walked, endpoint !== undefined);
-  const rootEntry = entryOf(data, scenes[0]?.tree ?? '');
-  const comesIn = endpoint !== undefined ? endpoint.name : rootEntry === undefined ? '' : 'endpoint' in rootEntry ? rootEntry.name : `${rootEntry.name}()`;
   // What that function calls in turn, the first few: a look inside before going in.
   const inside = (callee?.calls ?? []).slice(0, 6).flatMap((id) => (data.functions[id] === undefined ? [] : [data.functions[id]]));
   const feature = scene?.node.feature ?? scene?.node.step?.feature;
@@ -426,78 +409,12 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
       )}
       </div>
 
-      <div className="flow-way-head">
-        <h4 id={headingId}>このフローがしていること</h4>
-        <span className="note">
-          {assumedCount > 0 ? `仮に進んだ分岐 ${assumedCount}` : ''}
-          {loading ? `${assumedCount > 0 ? ' · ' : ''}読み込み中…` : ''}
-        </span>
-      </div>
-      <ol className="flow-list" ref={list} aria-labelledby={headingId}>
-        <li className={`flow-item flow-edge${at === 0 ? ' current-edge' : ' done'}`}>
-          <button type="button" onClick={() => { playback.play(false); playback.go(0); }} title="最初の場面へ">
-            <span className="flow-mark" aria-hidden="true">▶</span>
-            <span className="flow-text">
-              <span className="flow-name">{endpoint !== undefined ? 'リクエストが来る' : '呼ばれる'}</span>
-              {comesIn !== '' ? <code className="flow-gist mono">{comesIn}</code> : null}
-            </span>
-          </button>
-        </li>
-        {scenes.map((item) => {
-          const name = titleOf(item);
-          const isAssumed = item.stops.some((stop) => stop.side?.assumed === true && walked.assumed.includes(stop.frame === '' ? stop.node.id : `${stop.frame}.${stop.node.id}`));
-          const gist = sceneGist(item, stepOf(item));
-          return (
-            <li key={item.index} className={`flow-item tone-${item.tone}${item.index < at ? ' done' : ''}${item.index === at ? ' current' : ''}`} style={{ paddingLeft: `${item.depth * 14}px` }}>
-              <button type="button" aria-current={item.index === at ? 'step' : undefined} onClick={() => { playback.play(false); playback.go(item.index); }} title={name.text}>
-                <span className="flow-mark" aria-hidden="true">
-                  {TONE_MARKS[item.tone]}
-                </span>
-                <span className="flow-no">{item.index + 1}</span>
-                <span className="flow-text">
-                  <span className={`flow-name${name.code ? ' mono' : ''}`}>{plain(name.text)}</span>
-                  {gist.kind !== undefined || gist.hands !== undefined || gist.sides.length > 0 || gist.enters || gist.end !== undefined ? (
-                    <span className="flow-gist">
-                      {gist.kind !== undefined ? <span className="gist-kind">{gist.kind}</span> : null}
-                      {gist.hands !== undefined ? <span className="gist-hands">→ {gist.hands.join(', ')}</span> : null}
-                      {gist.sides.map((side, index) => (
-                        <span key={index} className={`gist-side${side.assumed ? ' assumed' : ''}`}>
-                          → {side.label}
-                          {side.assumed ? '（仮）' : ''}
-                        </span>
-                      ))}
-                      {gist.enters ? <span className="gist-enters">↳ 中へ</span> : null}
-                      {gist.end !== undefined ? (
-                        <span className={`gist-end tone-${gist.end.tone}`}>
-                          <Inline text={gist.end.text} />
-                        </span>
-                      ) : null}
-                    </span>
-                  ) : null}
-                </span>
-                {isAssumed ? <span className="assumed-mark" title="仮の側へ進んだ分岐があります">仮</span> : null}
-              </button>
-            </li>
-          );
-        })}
-        {scenes.length > 0 ? (
-          <li className={`flow-item flow-edge flow-ending tone-${ending.tone}${at === scenes.length - 1 ? ' current-edge' : ''}`}>
-            <button type="button" onClick={() => { playback.play(false); playback.go(scenes.length - 1); }} title="最後の場面へ">
-              <span className="flow-mark" aria-hidden="true">{ENDING_MARKS[ending.tone]}</span>
-              <span className="flow-text">
-                <span className="flow-name">
-                  <Inline text={ending.text} />
-                </span>
-              </span>
-            </button>
-          </li>
-        ) : null}
-      </ol>
+      <FlowRequest state={requests} selection={picked === -1 ? undefined : selections[picked]} custom={custom} assumed={assumedCount} framework={framework} />
       <p className="flow-foot">
         <button type="button" className="link" onClick={() => onOutline()}>
           ← アウトラインに戻る
         </button>
-        <span className="note">← → で前後、再生ボタンで自動再生</span>
+        <span className="note">{loading ? '読み込み中… · ' : ''}← → で前後、再生ボタンで自動再生</span>
       </p>
     </section>
   );

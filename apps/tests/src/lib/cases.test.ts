@@ -37,13 +37,14 @@ const failure = (id: string, step: string, tests: EndpointCase['tests'], error =
   id,
   kind: 'failure',
   name: `\`${error}\` で終わる（\`verify\` から）`,
+  target: `s0b1s0.${id}`,
   steps: ['parse-request', 'authenticate-client', 'respond-error'],
   end: 'error-response',
   failure: { error, code: 'invalid_client', from: 'core:client-auth.ts#verify', name: 'verify', step },
   ...(tests === undefined ? {} : { tests }),
 });
-const normal: EndpointCase = { id: 'main', kind: 'exit', name: 'return `respondToken(…)`', steps: ['parse-request', 'authenticate-client', 'respond'], end: 'response' };
-const early: EndpointCase = { id: 'early', kind: 'step', name: 'client_credentials グラントに応答する', steps: ['parse-request', 'authenticate-client'], end: 'response' };
+const normal: EndpointCase = { id: 'main', kind: 'exit', name: 'return `respondToken(…)`', target: 's0b4s0', steps: ['parse-request', 'authenticate-client', 'respond'], end: 'response' };
+const early: EndpointCase = { id: 'early', kind: 'step', name: 'client_credentials グラントに応答する', target: 's0b2', steps: ['parse-request', 'authenticate-client'], end: 'response' };
 const direct = failure('direct', 'authenticate-client', { direct: ['auth-rejects'], byCode: ['api-401'], nearby: [] });
 const byCode = failure('by-code', 'authenticate-client', { direct: [], byCode: ['api-401'], nearby: [] });
 const nearby = failure('nearby', 'parse-request', { direct: [], byCode: [], nearby: ['parse-rejects'] }, 'TokenEndpointError');
@@ -261,7 +262,7 @@ describe('waySteps', () => {
   });
 
   it('should give the number of steps a case rules only when its example request went through a different number', () => {
-    const caught: EndpointCase = { id: 'catch', kind: 'exit', name: '例外が起きたとき', steps: ['respond-error'], end: 'error-response' };
+    const caught: EndpointCase = { id: 'catch', kind: 'exit', name: '例外が起きたとき', target: 's0h0', steps: ['respond-error'], end: 'error-response' };
     expect([ruledSteps(token, direct, waySteps(token, direct)), ruledSteps(token, direct, waySteps(token, direct, example)), ruledSteps(token, caught, waySteps(token, caught, example))]).toEqual([undefined, undefined, 1]);
   });
 

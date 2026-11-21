@@ -114,7 +114,7 @@ export function waysOf(tree: FlowTree, selections: readonly Selection[], ofEndpo
     // A catch that runs answers for a failure, the one the walk saw or the one the choice only says happened.
     const caught = walked.stops.some((stop) => stop.event === 'catches');
     const end: EndpointCase['end'] = walked.outcome === 'fails' ? 'escapes' : failed !== undefined || caught ? 'error-response' : 'response';
-    const made: EndpointCase = { id, kind: selection.kind, name: selection.name, ...(selection.note === undefined || selection.note === '' ? {} : { note: selection.note }), steps: stepsOf(walked), end };
+    const made: EndpointCase = { id, kind: selection.kind, name: selection.name, ...(selection.note === undefined || selection.note === '' ? {} : { note: selection.note }), target: selection.target, steps: stepsOf(walked), end };
     // A failure is what the map names as one, or a way that ends in a throw of the endpoint's own.
     const error = selection.failure?.error ?? failed?.error;
     if (error !== undefined && (selection.kind === 'failure' || failed !== undefined)) {

@@ -38,10 +38,10 @@ import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from '.
 import { requestsByEndpoint } from './examples.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown, untestedMarkdown } from './markdown.js';
-import type { FlowTree, MapData } from '@maronn-openid-connect/map-analysis';
-import type { CodeRef, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
+import type { FlowTree, MapData, RootRequests, WayRequest, WayRequests } from '@maronn-openid-connect/map-analysis';
+import type { CodeRef, EndpointCases, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { FrameLocator, readRun, type JoinedRun } from './run.js';
-import { recordedRequests } from './sent.js';
+import { recordedRequests, requestParams } from './sent.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
 export interface TestBuildOptions {
@@ -359,6 +359,45 @@ export function caseRequests(data: MapData, run: Pick<JoinedRun, 'exchanges'>, t
   };
 }
 
+/**
+ * The requests that took the ways of each root, for the flow view of the
+ * map (RootRequests): the examples of the cases of each endpoint, with the
+ * test and the line of its code that sent each, and the parameters it sent.
+ * Only the cases some request took; only the endpoints with one.
+ */
+export function rootRequests(data: MapData, found: ReadonlyArray<readonly [string, EndpointCases]>, tests: ReadonlyMap<string, TestCase>): RootRequests[] {
+  const roots: RootRequests[] = [];
+  for (const [key, endpoint] of found) {
+    const colon = key.indexOf(':');
+    const source = key.slice(0, colon);
+    const id = key.slice(colon + 1);
+    const root = data.flows[source]?.endpoints.find((candidate) => candidate.id === id)?.root;
+    if (root === undefined) continue;
+    const ways: WayRequests[] = [];
+    for (const item of endpoint.cases) {
+      const examples: WayRequest[] = [];
+      for (const example of item.examples ?? []) {
+        const test = tests.get(example.test);
+        if (test === undefined) continue;
+        const { method, path, headers, body, truncated } = example.request;
+        const { status, statusText } = example.response;
+        examples.push({
+          test: { id: test.id, title: test.title, file: test.source.file, line: example.line, code: example.code },
+          method,
+          path: path.split('?')[0] ?? path,
+          params: requestParams({ path, headers, ...(body === undefined ? {} : { body }), ...(truncated === true ? { truncated } : {}) }),
+          headers: headers.filter(([name]) => name.toLowerCase() !== 'host' && name.toLowerCase() !== 'content-length'),
+          status,
+          ...(statusText === undefined ? {} : { statusText }),
+        });
+      }
+      if (examples.length > 0) ways.push({ id: item.id, kind: item.kind, name: item.name, target: item.target, count: Math.max(item.exampleCount ?? 0, examples.length), examples });
+    }
+    if (ways.length > 0) roots.push({ version: 1, root, source, endpoint: id, ways });
+  }
+  return roots;
+}
+
 /** What reading a catalog needs besides the revision: the tables of the repository. */
 interface Tables {
   aspects: AspectTable;
@@ -475,6 +514,15 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
       cases[key] = `./data/tests/cases/${writeHashed(join(out, 'tests', 'cases'), key, JSON.stringify(endpoint), writtenCases)}`;
     }
     removeStale(join(out, 'tests', 'cases'), writtenCases);
+    // The requests of the ways of each root, beside map.json: the flow view of the map shows the one of the way chosen.
+    const writtenRequests = new Set<string>();
+    if (requests !== undefined) {
+      const byId = new Map(tests.map((test) => [test.id, test]));
+      const urls: Record<string, string> = {};
+      for (const root of rootRequests(data, found, byId)) urls[root.root] = `./data/requests/${writeHashed(join(context.out, 'requests'), root.root, JSON.stringify(root), writtenRequests)}`;
+      data.requests = urls;
+    }
+    removeStale(join(context.out, 'requests'), writtenRequests);
     if (run !== undefined && requests !== undefined) {
       const all = found.flatMap(([, endpoint]) => endpoint.cases);
       const sent = [...run.exchanges.values()].reduce((sum, list) => sum + list.length, 0);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, Selection, TreeNode } from '../types';
-import { callsToEnter, depthOf, returnedValue, sceneAt, sceneDuration, sceneGist, sceneLines, scenarioOf, scenesOf, stopKey, walkTrace, wayEnding, withoutDeepest } from './playback';
+import { callsToEnter, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, stopKey, walkTrace, withoutDeepest } from './playback';
 import { nodesRun } from './trace';
 
 /** A tree of nodes written by hand. */
@@ -157,52 +157,5 @@ describe('sceneDuration', () => {
     expect(sceneDuration(1)).toBe(1500);
     expect(sceneDuration(2)).toBe(750);
     expect(sceneDuration(0)).toBe(6000);
-  });
-});
-
-describe('sceneGist', () => {
-  it('should say the kind of the step a scene is the box of, what it hands on, and how it ends', () => {
-    const scenes = scenesOf(walkTrace(root, {}, { open: [], trees }), shapeOf);
-    expect(sceneGist(scenes[0] as (typeof scenes)[number], { kind: 'validate', produces: ['client'] })).toEqual({ kind: '検証', hands: ['client'], sides: [], enters: false });
-    expect(sceneGist(scenes[1] as (typeof scenes)[number])).toEqual({ sides: [], enters: false, end: { tone: 'end', text: '`x` を返して終わる' } });
-  });
-
-  it('should say that a scene goes into a call, the side a decision takes, a failure and the catch that takes it', () => {
-    const scenes = scenesOf(walkTrace(root, { 's0b0s0.s0': 'true' }, { open: ['s0b0s0'], trees }), shapeOf);
-    expect(scenes.map((scene) => sceneGist(scene))).toEqual([
-      { sides: [], enters: true },
-      { sides: [{ label: '成立', assumed: false }], enters: false },
-      { sides: [], enters: false, end: { tone: 'error', text: '失敗 `TokenError(invalid_client)`' } },
-      { sides: [], enters: false, end: { tone: 'caught', text: '例外 `TokenError(invalid_client)` を受け取る、`x` を返して終わる' } },
-    ]);
-  });
-
-  it('should leave out the kind of a step for a scene inside it', () => {
-    const scenes = scenesOf(walkTrace(root, {}, { open: [], trees }), (stop) => `n:${stop.node.id}`);
-    expect(sceneGist(scenes[1] as (typeof scenes)[number], { kind: 'validate', produces: ['client'] }).kind).toBeUndefined();
-  });
-});
-
-describe('wayEnding', () => {
-  it('should say what the root returns, as code', () => {
-    expect(wayEnding(walkTrace(root, {}, { open: [], trees }), true)).toEqual({ tone: 'end', text: '`x` を返して終わる' });
-  });
-
-  it('should say the failure its catch answered, as an answer of an endpoint or a return of a function', () => {
-    const walked = walkTrace(root, { 's0b0s0.s0': 'true' }, { open: ['s0b0s0'], trees });
-    expect(wayEnding(walked, true)).toEqual({ tone: 'caught', text: '失敗 `TokenError(invalid_client)` → `x` で応答して終わる' });
-    expect(wayEnding(walked, false)).toEqual({ tone: 'caught', text: '失敗 `TokenError(invalid_client)` → `x` を返して終わる' });
-  });
-
-  it('should say the failure that leaves the root', () => {
-    expect(wayEnding(walkTrace(verify, { s0: 'true' }, { open: [], trees }), false)).toEqual({ tone: 'error', text: '失敗 `TokenError(invalid_client)` が外へ出る' });
-  });
-});
-
-describe('returnedValue', () => {
-  it('should read the value of a return as code, and nothing for a return of nothing', () => {
-    expect(returnedValue('return respondToken(c, x);')).toBe('respondToken(c, x)');
-    expect(returnedValue('return  await  f(a,\n b)')).toBe('await f(a, b)');
-    expect(returnedValue('return;')).toBe('');
   });
 });

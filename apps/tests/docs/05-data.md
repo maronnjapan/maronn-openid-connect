@@ -1182,6 +1182,7 @@ interface EndpointCase {
   kind: 'step' | 'exit' | 'failure';
   name: string;          // 地図の選択の名前。コードはバッククォートで囲む
   note?: string;         // どこへ行くか（→ return respondToken(…)）
+  target: string;        // 行き先のノード（Selection.target）。地図は種類と行き先で選択を見つける
   steps: string[];       // 通るステップの id
   end: 'response' | 'error-response' | 'escapes';
   failure?: { error: string; code?: string; from: string; name: string; step?: string };
@@ -1209,7 +1210,7 @@ interface CaseCondition {
 - `packages/test-catalog/src/cases.ts`：`endpointCases`、`waysOf`、`casesOf`、`conditionsOf`、`failureTests`、`expectsFailure`、`errorClassOf`、`caseId`
 - `packages/test-catalog/src/examples.ts`：`requestsByEndpoint`、`attachExamples`、`takes`、`seenSide`、`nodeRan`、`exampleOf`、`responseError`
 - `packages/test-catalog/src/sent.ts`：`sentLine`、`lineCode`、`recordedRequests`、`requestParams`、`authOf`、`pathOf`
-- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`、`withRun`（カードの `recorded`）
+- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`、`rootRequests`、`withRun`（カードの `recorded`）
 - `packages/map-analysis/src/walk.ts`：`walkFlow`、`stepsOf`、`assumedSide`
 
 ### ⑤-11-a ケースの条件
@@ -1365,6 +1366,19 @@ tests: 246 requests of 169 tests (unmatched: 0 lines), 228 to an endpoint, 208 t
 ```
 
 送った行の分からない 62 のやり取りは、どれも Fastify と Express の組み込みのテストのものである（hono のテストのコードが送ったものには、すべて送った行がある）。
+
+#### 地図のフローに渡す
+
+地図のフローの「リクエスト」（地図の README の「リクエスト」）のために、hono のエンドポイントごとに、例を持つケースの例を地図のデータへ書く（`rootRequests`）。
+
+| 出力 | 中身 |
+|---|---|
+| `apps/map/public/data/requests/<hash>.json` | `RootRequests`（`packages/map-analysis/src/model.ts`）：処理本体のフレームの id、ソース、エンドポイント、例を持つケースごとに、ケースの id、種類、名前、行き先（`target`）、通った数、例 |
+| `map.json` の `requests` | 処理本体のフレームの id から上のファイルの url への表。計測した実行が無ければ置かない |
+
+例は、送ったテスト（id、名前、ファイル、送った行、その文）、方法、パス（クエリを除く）、クエリと本文のパラメータ（`requestParams`）、ヘッダー（`Host` と `Content-Length` を除く）、応答の状態と状態の文である。
+Express と Fastify の処理本体は hono と同じフレームなので、同じファイルを使う。
+地図の出力検査（`apps/map/scripts/check-map.mjs`、`packages/map-analysis/src/check.ts`）は、どのケースも処理本体のよく使う選択に種類と行き先で見つかること、どの例も送った行と文を持つことを確かめ、外れれば地図のビルドを落とす。
 
 例：hono の `token` で、例を持つケースは 135 のうち 9 である（Fastify の組み込みのテストだけが通った `TokenError(invalid_grant)` で終わる（`requireStoredAuthorizationCode` から）は、例を持たなくなった）。
 `refresh_token グラントを検証する` には `grant_type=refresh_token` のリクエストが、`authorization_code グラントを検証する` には `grant_type=authorization_code` のものが、`client_credentials グラントに応答する` には `grant_type=client_credentials` で `dispatch-client-credentials` が答えたものが付く。

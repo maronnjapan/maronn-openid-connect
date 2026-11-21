@@ -36,6 +36,7 @@ import { useMobileMenu } from './MobileMenu';
 import { SelectionBar } from './SelectionBar';
 import { rootedName, TraceView, type MemberDiff } from './TraceView';
 import { useFrames } from './useFrames';
+import { useRootRequests } from './useRequests';
 
 /** What a trace starts from, what it shows and what it tells the page (see Trace). */
 export interface TraceProps {
@@ -217,6 +218,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const loading = rows.some((row) => row.kind === 'loading');
   const root = frames.trees.get(rootId);
   const selections = useMemo(() => [...(frames.selections.get(rootId) ?? []).filter((selection) => selection.kind !== 'change'), ...extraSelections], [frames.selections, rootId, extraSelections]);
+  // The requests the code of the API tests sent that took the ways of the root: the flow view shows the one of the way chosen.
+  const requests = useRootRequests(data, rootId);
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
@@ -816,6 +819,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               walked={walked}
               scenes={scenes}
               playback={playback}
+              requests={requests}
+              framework={framework}
               titleOf={sceneTitle}
               endpoint={endpoint}
               hasFrame={hasFrame}

@@ -8,7 +8,9 @@
  * - every line of the body of every frame is inside a node of its tree, and
  *   so is every line a pull request changes in a frame;
  * - in the map of a pull request (MAP_BASE), every change that reaches an
- *   endpoint, and every change of an endpoint body, has a change note.
+ *   endpoint, and every change of an endpoint body, has a change note;
+ * - with a measured run, every way the requests name is a ready-made choice
+ *   of its root, and every request says the line of its test that sent it.
  *
  * It measures the map, not the code it reads: a failure of the first two is
  * a bug of the map. Prints the measures, and exits with 1 on a failure.
@@ -27,18 +29,21 @@ const directory = resolve(argument ?? join(appRoot, 'public', 'data'));
 const data = JSON.parse(readFileSync(join(directory, 'map.json'), 'utf8'));
 /** A url of the data (`./data/functions/<hash>.json`) as a file of the directory. */
 const fileOf = (url) => join(directory, url.replace(/^\.\/data\//, ''));
+const readJson = async (url) => JSON.parse(readFileSync(fileOf(url), 'utf8'));
 const { metrics, failures } = await checkMap(
   data,
-  async (url) => JSON.parse(readFileSync(fileOf(url), 'utf8')),
+  readJson,
   async (id) => {
     const source = data.sources[id];
     return source === undefined ? undefined : JSON.parse(readFileSync(fileOf(source.url), 'utf8')).code;
   },
+  readJson,
 );
 console.log(
   `Checked the map: ${metrics.frames} frames, ${metrics.selections} ready-made choices (${metrics.unnamed} without a name, ${metrics.duplicateNames.length} repeated), ` +
     `${metrics.wiring.entries} wiring entries (${metrics.wiring.untraceable} untraceable, ${metrics.wiring.invalid} invalid), ` +
-    `${metrics.uncovered.length} frames with lines in no node, ${metrics.changedOutside.length} frames with changed lines in no node, ${metrics.undocumented.length} changes without a note, ${metrics.untested.length} changes whose tests did not change without a reason`,
+    `${metrics.uncovered.length} frames with lines in no node, ${metrics.changedOutside.length} frames with changed lines in no node, ${metrics.undocumented.length} changes without a note, ${metrics.untested.length} changes whose tests did not change without a reason, ` +
+    `${data.requests === undefined ? 'no measured requests' : `the requests of ${metrics.requests.ways} ways of ${metrics.requests.roots} roots (${metrics.requests.examples} requests, ${metrics.requests.unmatched} ways no choice is)`}`,
 );
 for (const [framework, names] of Object.entries(metrics.token)) console.log(`  /token (${framework}): ${names.join(' | ')}`);
 if (failures.length > 0) {

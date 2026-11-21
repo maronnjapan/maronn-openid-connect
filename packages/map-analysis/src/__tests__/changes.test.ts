@@ -204,8 +204,8 @@ describe('changesMarkdown', () => {
   });
 
   it('should end with the sections an extension of the build adds, each after a blank line', () => {
-    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['### テスト\n\nテストケース: 1 → 2（+1）\n', '  '] });
-    expect(markdown.endsWith('\n\n### テスト\n\nテストケース: 1 → 2（+1）\n')).toBe(true);
+    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['<details><summary>テスト 1 → 2</summary>\n\nテストケース: +1\n\n</details>\n', '  '] });
+    expect(markdown.endsWith('\n</details>\n\n<details><summary>テスト 1 → 2</summary>\n\nテストケース: +1\n\n</details>\n')).toBe(true);
   });
 
   it('should say the calls the types do not tell may reach a change', () => {

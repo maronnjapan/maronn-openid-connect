@@ -76,7 +76,7 @@ OIDF 適合性スイート（`tests/conformance`）は、この設計の対象�
 - 関数カタログの id（`<root>:<module>#<name>`）と、エンドポイントの処理本体の id（`endpoint:<id>`）。テストの対象はこの id で指す
 - `packages/map-analysis` の、TypeScript のコンパイラ API による読み取りと型による呼び先の解決。テストファイルも同じ解析器で読む
 - PR の地図の、変更前後の比較と「届く経路」（`changes.frames[].reach`）。テストの差分はこの上に足す
-- `map-preview.yml` の、PR ごとのプレビューと一つのコメントを書き換える仕組み。テストの節を同じコメントに足す
+- PR ごとのプレビューと一つのコメントを書き換える仕組み（`ci.yml` の `map` ジョブ）。テストの差分を同じコメントに足す
 - 既存のテストの書き方。いまのテストを書き直さずに読めることを設計の条件にする
 
 捨てるものは、テストの変更を数だけで扱う `otherFiles` と、地図のビルドとテストの実行が別のワークフローで独立に走る構成である（「データとビルド」の節）。
@@ -103,7 +103,7 @@ OIDF 適合性スイート（`tests/conformance`）は、この設計の対象�
                      │
         ┌────────────┴──────────────┐
         ▼                           ▼
-  テストの画面（apps/tests、       PR のコメントの「テスト」の節と、
+  テストの画面（apps/tests、       PR のコメントのテストの差分と、
   地図の Worker の /tests/）       関連するテストの変わらない変更の検査
 
   （PR のカバレッジの変化と結果の変化は Codecov が別に PR へコメントする）
@@ -687,54 +687,61 @@ interface TestDiff {
 - 新しく外へ出る失敗（`failuresAdded`）で、どのテストも期待していないもの
 - 関連するテストの観点と期待するエラーの集合が、変更前後でどう変わったか（保証範囲の変化）
 
-この差分は PR のコメントの「テスト」の節と、テストの画面（`tests/diff.json`）に出る。
+この差分は PR のコメントと、テストの画面（`tests/diff.json`）に出る。
 地図の「このPRの変更」の画面はテストを出さない。
 
 ### PR のコメント
 
-いまの地図のコメント（`<!-- oidc-provider-map-preview -->` の一つ）に「テスト」の節を足す。
+いまの地図のコメント（`<!-- oidc-provider-map-preview -->` の一つ）に、テストの差分を足す。
 要件 5.3 の例に合わせる。
 
 ```
-## テスト
+### 関連するテストに変更の無い実装の変更（1、CI を落とす）
 
-テストケース: 5,521 → 5,527（+6）  API +3、ユニット +3
+- verifyClientSecret（条件 `secret.length < 8` を足した）: 関連するテスト 5 件、変更なし
+
+（変更メモ、確かめること、開く、変わった関数）
+
+<details><summary>テスト 5,521 → 5,527（追加 6 · 変更 1 · 名前の変更 0 · 削除 0）</summary>
+
+テストケース: +6  API +4、ユニット +2
+
+テストを変えない理由が書かれた変更:
+  - buildTokenResponse: 関連するテスト 12 件。「レスポンスの形は変えていない。既存の 12 件が同じ期待で通る」
 
 変更対象: POST /token（hono, nextjs）
   追加されたテスト:
     - Reject invalid client credentials with invalid_client（API, 異常系, 認証）
     - Reject an unsupported grant_type with unsupported_grant_type（API, 異常系）
     - Reject a request without <param> with invalid_request（API, 異常系, 2 行）
+  変更されたテスト:
+    - Reject a grant_type the client may not use（API, 異常系）（期待 ~~400~~ → 401）
   関連する変更関数:
     - validateClientAuthMethod: ユニット 追加 2
-    - validateTokenGrantType: ユニット 変更 1（期待 the HTTP status is 400 → the HTTP status is 401）
-
-関連テストに変更の無い実装の変更（CI を落とす）:
-  - verifyClientSecret（条件 `secret.length < 8` を足した）: 関連するテスト 5 件、変更なし
-テストを変えない理由が書かれた変更:
-  - buildTokenResponse（`.trim()` を足した）: 関連するテスト 12 件。「レスポンスの形は変えていない。既存の 12 件が同じ期待で通る」
+    - validateTokenGrantType: API 変更 1
 
 新しく外へ出る失敗を期待するテストが無いもの:
   - TokenError(invalid_client)（verifyClientSecret から）
 
-結果とカバレッジの変化は Codecov のコメントを参照（リンク）
+</details>
 ```
 
 数と名前は例である。
-実際の節は `packages/test-catalog` の markdown.ts が changes.md の末尾に `### テスト` として書き（コメントの `## OIDC Provider Map` の下に入るため一段下げる）、ほかの節と同じく一覧は 20 行で区切る。
+実際の節は `packages/test-catalog` の markdown.ts が書き、一覧は 20 行で区切る。
+検査に落ちる変更の一覧（`untestedMarkdown`）は changes.md の説明の無い変更の次に `###` の見出しで（コメントの `## OIDC Provider Map` の下に入るため一段下げる）、ほか（`testsMarkdown`）は一つの `<details>` に畳んで末尾に置く。
 テストの記述は英語のまま載せ、枠の言葉は地図のコメントに合わせて日本語にする。
 PR には地図と Codecov の二つのコメントが付き、分けたままにする。
 二つは中身が重ならない。
 地図はテストの札の差分と実装の変更との対応を、Codecov はカバレッジと結果の変化を出す。
 一つにまとめるには Codecov の API から読んで地図のコメントに引くコードを持つことになり、その保守に見合う利点が無い。
-地図のコメントからは Codecov のコメントへのリンクを張る。
+地図のコメントは、「開く」の行で Codecov のその PR のページへリンクする。
 
 CI を落とすのは次のものである。
 
 - 機能ファイルの lint、ステップの未定義と曖昧さ、テストの id の重複
 - 関連するテストに変更が無い実装の変更で、理由の書かれていないもの（次の項）
 
-「新しい失敗を期待するテストが無い」は、コメントに出すだけにする。
+「新しい失敗を期待するテストが無い」は、コメントの畳んだテストの差分に出すだけにする。
 patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）で決められるので、地図の検査とは独立に後で選べる。
 
 ### 関連するテストに変更が無い実装の変更
@@ -762,7 +769,7 @@ patch coverage の閾値で落とすかは Codecov の設定（`codecov.yml`）�
 変更メモはもともと関数ごとに意図を書く場所で、この行もその PR のレビューの対象になる。
 ラベルで PR 全体を通す方法を採らないのは、関数ごとに理由が残らないからである。
 行の中身の質は、説明の無い変更の検査と同じく検査しない。
-PR のコメントでは、理由の書かれた関数を、関連するテストの数と理由と並べて出す。
+PR のコメントの畳んだテストの差分では、理由の書かれた関数を、関連するテストの数と理由と並べて出す。
 `changes:draft` は、この検査で落ちる関数の節に、関連するテストの一覧を HTML コメントで添え、`テストを変えない理由:` の行を書く場所を空けておく。
 すでに節がある関数には、同じ見出しの節をもう一つ足してそこに置く。
 
@@ -777,7 +784,7 @@ PR のコメントでは、理由の書かれた関数を、関連するテス�
 
 - `packages/test-catalog`（非公開）：テストコードの読み取り（コンパイラ API）、機能ファイルの読み取り（`@cucumber/gherkin`）、実行結果と到達の取り込み（Istanbul の計数から関数の id への対応づけを含む）、テストの差分。`packages/map-analysis` に依り、関数カタログの id と木を使う
 - `apps/tests`：テストの画面（Vite と React の別のアプリ）。地図のビルドが地図の `dist/tests/` に入れ、地図と同じ Worker が `<地図の URL>/tests/` で配る
-- `apps/map`：データの段（`scripts/build-data.mjs`）がテストを読み、テストの画面のデータを `apps/tests/public/data` に書き、PR のコメントにテストの節を足す。地図の画面にテストは無く、ヘッダの「テスト」がテストの画面へのリンクである
+- `apps/map`：データの段（`scripts/build-data.mjs`）がテストを読み、テストの画面のデータを `apps/tests/public/data` に書き、PR のコメントにテストの差分を足す。地図の画面にテストは無く、ヘッダの「テスト」がテストの画面へのリンクである
 - `tests/features/`：機能ファイル。エンドポイントごとのディレクトリ
 - `tests/steps/`：英語の式のステップ定義と、日本語の訳の表（`ja.yaml`）。ステップ定義は `apps/hono` と `apps/nextjs` の `test-support` に依る
 - `packages/test-reach`（非公開、devDependency）：E2E の OP の中で V8 の計数を取り、別のポートで `reset` と `collect` に答える数十行。`apps/hono/src/server.ts` と `apps/nextjs/src/instrumentation.ts` が `MARONN_REACH=1` のときだけ動的に import する
@@ -820,7 +827,7 @@ id にして、データは全体で 22 MB（`tests.json` 4 MB、`outline.json` 
 `test` のジョブの間に PR を閉じると、削除が先に走り、後から `map` のジョブがプレビューを作り直して残すからである。これも CI の検査が確かめる。
 
 1. `test`：`pnpm run test:ci` を `MARONN_REACH=1` で走らせ、Vitest の JSON、JUnit、lcov、到達の JSONL を artifact にする。E2E も同じジョブで、`MARONN_REACH=1` で `apps/hono` と `apps/nextjs` を起動して走らせる（Next.js は到達を取るビルドでサーバーのソースマップを有効にする）。lcov と JUnit は Codecov に上げる
-2. `map`：artifact を受け取り（`MAP_TEST_REPORTS`）、`build:map` がテストカタログと差分も作る。テストが落ちても、そこまでの結果で作る。地図のビルド（`apps/map` の `build`）は、データの段、地図のページ、テストの画面のビルド（`apps/tests` の `vite build`。データは `public/data` から `dist/data` に写る）、その `dist/` を地図の `dist/tests/` に写す段（`apps/map/scripts/copy-tests-viewer.mjs`）、検査の順に走る。検査より前に写すので、検査が落ちた PR でもプレビューにテストの画面が入る。写す段は、テストの画面がビルドされていないとき、データが無いとき、地図のデータにテストのファイルが残っているときに落ちる。デプロイとコメントは前のとおりで、コメントにはテストの画面（`<プレビューの URL>/tests/`）と Codecov のコメントへのリンクを足した
+2. `map`：artifact を受け取り（`MAP_TEST_REPORTS`）、`build:map` がテストカタログと差分も作る。テストが落ちても、そこまでの結果で作る。地図のビルド（`apps/map` の `build`）は、データの段、地図のページ、テストの画面のビルド（`apps/tests` の `vite build`。データは `public/data` から `dist/data` に写る）、その `dist/` を地図の `dist/tests/` に写す段（`apps/map/scripts/copy-tests-viewer.mjs`）、検査の順に走る。検査より前に写すので、検査が落ちた PR でもプレビューにテストの画面が入る。写す段は、テストの画面がビルドされていないとき、データが無いとき、地図のデータにテストのファイルが残っているときに落ちる。デプロイとコメントは前のとおりで、コメントにはテストの画面の「この PR のテスト」（`<プレビューの URL>/tests/#/pr`）と Codecov へのリンクを足した
 3. main への push：本番にデプロイする。結果の基準は Codecov が持つので、地図は置かない
 
 計測つきの実行は遅くなる。
@@ -923,7 +930,7 @@ id にして、データは全体で 22 MB（`tests.json` 4 MB、`outline.json` 
 - `MapChanges.otherFiles` はテストの変更を数えず、テストファイルの変更は `testFiles` に数える
 - 地図のデータを読む `packages/test-catalog` は `packages/map-analysis` の上に置き、`buildMap` の拡張（`BuildOptions.extend`）として map.json と changes.md を書く前に走る。解析がテストを知らずに済み、データの書き出しは一度で済む
 - テストの画面は地図に組み込まず、別のアプリ `apps/tests` にする。地図と同じ Worker の `/tests/` に出し、PR ごとのプレビューにも入れる。地図はヘッダの「テスト」のリンクだけを持ち、ほかにテストを出さない。最初の版は地図の中に置いた（トレースの横の「テスト」のタブ、アウトラインの行の数の札、左の一覧の数と結果、`#tests` の一覧のページ、「このPRの変更」のテストの節）。しかし地図の画面が込み合い、どんなテストケースがあるかが見にくかった（リポジトリの持ち主の判断）。別の画面なら、テストケースとそのコードを主役にして簡素に組める
-- テストを読む解析は地図のデータの段に残す。テストの読み取りが地図の解析の TypeScript のプログラムを使うからである。PR のコメントの「テスト」の節と、関連するテストの変わらない変更の検査（`MapChanges.untested`）は、切り出しの前と変わらない。地図の古いリンク（`#tests`、`#<framework>--tests`）は、地図の既定の画面を開く
+- テストを読む解析は地図のデータの段に残す。テストの読み取りが地図の解析の TypeScript のプログラムを使うからである。PR のコメントのテストの差分と、関連するテストの変わらない変更の検査（`MapChanges.untested`）は、切り出しで変えていない。地図の古いリンク（`#tests`、`#<framework>--tests`）は、地図の既定の画面を開く
 - テストの画面のデータは、テストを一度ずつ索引（`tests.json`）に持ち、フレームとエンドポイントはテストを id で名指す。札の全文はテストファイルごとに一つのファイルに置く。フレームごとに札の全文を写した最初の版は 1.1 GB になり、id にして 22 MB になった（「データ」の項）
 
 ## 11. 確かめたこと

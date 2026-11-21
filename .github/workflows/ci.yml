@@ -334,44 +334,23 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const marker = '<!-- oidc-provider-map-preview -->';
-            const url = process.env.PREVIEW_URL;
-            const outcome = process.env.PREVIEW_OUTCOME;
-            // The functions and the tests the pull request changed and what its change notes say (written by the build).
+            // The body: the changes the build wrote (apps/map/dist/data/changes.md) with the links and a line about the build (.github/scripts/map-comment.mjs).
+            const { MARKER, commentBody, linesOutsideDetails } = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/map-comment.mjs`);
             const changesFile = 'apps/map/dist/data/changes.md';
-            const changes = fs.existsSync(changesFile) ? fs.readFileSync(changesFile, 'utf8').trim() : '';
-            const how = process.env.PREVIEW_MODE === 'worker'
-              ? 'a Worker of this pull request (Worker Previews failed; see the run)'
-              : 'a Worker Preview of this pull request: the same URL follows every push, and it is removed when the pull request is closed';
-            const status = url
-              ? `Preview: ${url}\n\n(${how})`
-              : outcome === 'skipped'
-                ? 'Preview: not deployed (no Cloudflare secrets for this run). Download the `oidc-provider-map` artifact of the run below and serve `dist/` statically.'
-                : `Preview: the deploy failed; see the run below. (${process.env.PREVIEW_NOTE || ''})`;
-            // The build fails after writing the page when a change that reaches an endpoint has no note, or changes no related test without a reason.
-            const failed = process.env.BUILD_OUTCOME === 'failure'
-              ? ['', '> [!WARNING]', '> 地図のビルドの検査が落ちました。下の「説明の無い変更」に変更メモの節を足すか、「テスト」の節の「関連するテストに変更の無い実装の変更」にテストを足すか変更メモに `テストを変えない理由:` を書くか、検査の出力を Run で確かめてください（`pnpm --filter @maronn-openid-connect/map changes:draft` で雛形を作れます）。']
-              : [];
-            const codecov = `${context.serverUrl.replace('github.com', 'app.codecov.io/gh')}/${context.repo.owner}/${context.repo.repo}/pull/${context.issue.number}`;
-            // The changes come first (they open with 説明の無い変更), then the preview, the run and what the map is.
-            const body = [
-              marker,
-              '## OIDC Provider Map',
-              ...failed,
-              ...(changes ? ['', changes] : []),
-              '',
-              status,
-              ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路）: ${url}#changes`] : []),
-              // The tests viewer (apps/tests) is deployed with the map, at /tests/ of the same Worker.
-              ...(url ? [`この PR のテスト: ${url.replace(/\/$/, '')}/tests/#/pr`] : []),
-              `テストの結果とカバレッジ（Codecov）: ${codecov}`,
-              '',
-              `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
-              '',
-              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches and what its change notes (\`apps/map/changes/*.md\`) say. The tests have a page of their own at \`/tests/\` (apps/tests): the test cases of each endpoint and step, their latest results and their code.`,
-            ].join('\n');
+            const body = commentBody({
+              changes: fs.existsSync(changesFile) ? fs.readFileSync(changesFile, 'utf8') : '',
+              url: process.env.PREVIEW_URL,
+              mode: process.env.PREVIEW_MODE,
+              note: process.env.PREVIEW_NOTE,
+              outcome: process.env.PREVIEW_OUTCOME,
+              buildFailed: process.env.BUILD_OUTCOME === 'failure',
+              runUrl: process.env.RUN_URL,
+              headSha: process.env.HEAD_SHA,
+              codecov: `${context.serverUrl.replace('github.com', 'app.codecov.io/gh')}/${context.repo.owner}/${context.repo.repo}/pull/${context.issue.number}`,
+            });
+            core.info(`The comment has ${linesOutsideDetails(body)} lines outside <details>.`);
             const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
-            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            const existing = comments.find((comment) => comment.body && comment.body.includes(MARKER));
             if (existing) {
               await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
             } else {

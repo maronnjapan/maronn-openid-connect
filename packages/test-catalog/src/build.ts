@@ -3,7 +3,7 @@
  * apps/map/scripts/build-data.mjs), which gives the analysis the reader
  * needs. Two things come out of it:
  *
- * - for the map of a pull request, the diff of the tests: the section of the
+ * - for the map of a pull request, the diff of the tests: the sections of the
  *   comment (changes.md) and MapChanges.untested, which fails the check;
  * - with `out`, the data of the tests viewer (apps/tests/public/data):
  *   - tests.json: the index (model.ts TestsIndex), every case once, the
@@ -37,7 +37,7 @@ import { diffCatalogs } from './diff.js';
 import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from './discover.js';
 import { requestsByEndpoint } from './examples.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
-import { testsMarkdown } from './markdown.js';
+import { testsMarkdown, untestedMarkdown } from './markdown.js';
 import type { FlowTree, MapData } from '@maronn-openid-connect/map-analysis';
 import type { CodeRef, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { FrameLocator, readRun, type JoinedRun } from './run.js';
@@ -501,6 +501,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     ...(Object.keys(cases).length === 0 ? {} : { cases }),
   };
 
+  const failing: string[] = [];
   const sections: string[] = [];
   if (context.changes !== undefined && data.changes !== undefined) {
     const before = readBaseCatalog(context, tests, tables);
@@ -508,6 +509,7 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     if (out !== undefined) writeFileSync(join(out, 'tests', 'diff.json'), JSON.stringify(diff));
     index.diff = true;
     data.changes.untested = diff.frames.filter((frame) => frame.untouched && frame.reason === undefined).map((frame) => frame.frame);
+    failing.push(untestedMarkdown(diff, data));
     sections.push(testsMarkdown(diff, data, tables.aspects));
     context.log.push(`tests: ${diff.counts.before} → ${diff.counts.after} cases, ${diff.added.length} added, ${diff.removed.length} removed, ${diff.renamed.length} renamed, ${diff.modified.length} changed; ${data.changes.untested.length} changes need a test or a reason`);
   } else if (out !== undefined) rmSync(join(out, 'tests', 'diff.json'), { force: true });
@@ -522,5 +524,5 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
     `tests: ${tests.length} cases (${kinds}) in ${files.length} files, ${helped} with helpers${out === undefined ? '' : `, the code of ${Object.keys(sources).length} files`}, ${Object.keys(refs.frames).length} frames and ${Object.keys(refs.endpoints).length} endpoints with tests, ${gaps.length} gaps, ` +
       `${run === undefined ? 'no run' : `${Object.keys(run.run.results).length} results${measured ? `, the reach of ${run.reach.size}` : ''} (unmatched: ${run.unmatched.results} results, ${run.unmatched.reach} reach)`}, ${catalog.untranslated.length} phrases without Japanese (${((Date.now() - started) / 1000).toFixed(1)}s)`,
   );
-  return { sections };
+  return { failing, sections };
 }

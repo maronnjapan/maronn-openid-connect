@@ -6,7 +6,7 @@
  * (model.ts).
  */
 export { buildMap, plain, removeStale, writeHashed, type BuildContext, type BuildExtension, type BuildOptions, type BuildResult } from './build.js';
-export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
+export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, LINKS_PLACE, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
 export { checkMap, uncoveredLines, type CheckResult, type MapMetrics } from './check.js';
 export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeHunks } from './diff.js';
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';
@@ -19,7 +19,7 @@ export { readRepository, type Repository } from './repository.js';
 export { catalogModules, type EndpointSource, type FrameInfo, type Revision } from './analyze.js';
 export { any, endLine, is, nameOf, startLine, stringOf, textOf, unwrap, walk } from './ast.js';
 export { Resolver, type ResolverOptions } from './resolve.js';
-export { isTestPath, moduleOf, overlayConfigs, overlayOf, pathOf, readRoots, type AnalysisRoot } from './roots.js';
+export { isTestPath, isTestSupportPath, moduleOf, overlayConfigs, overlayOf, pathOf, readRoots, type AnalysisRoot } from './roots.js';
 export { Compiler, getLeadingCommentRanges, isAlias, SyntaxKind, type Node, type Overlay, type Project, type SourceFile } from './ts.js';
 export { failureSelections, frameSelections, inFrame, wayTo } from './selections.js';
 export { buildTree, ends, nodesOf } from './tree.js';

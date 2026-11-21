@@ -39,7 +39,7 @@ flowchart LR
 | 項目 | 内容 |
 |---|---|
 | 入力 | PR のビルドで、地図が集めた PR の変更（`BuildContext.changes`：`MapChanges`、分岐点、変わったファイル）、③ のカード（結果と到達つき）と `measured`、変更メモ（`apps/map/changes/*.md`）、分岐点の版のファイル（git）。<br>[④-9](#-9-変更メモの雛形) だけは手元のコマンドで動く |
-| 出力 | テストの差分（`TestDiff`）、検査に落ちるフレームの列（`MapChanges.untested`）、`changes.md` の `### テスト` の節、地図の検査の失敗、変更メモの雛形 |
+| 出力 | テストの差分（`TestDiff`）、検査に落ちるフレームの列（`MapChanges.untested`）、`changes.md` に入る二つの節（落ちる変更の節と、折りたたんだテストの節）、地図の検査の失敗、変更メモの雛形 |
 | 実装 | `packages/test-catalog/src/`（`build.ts` の `readBaseCatalog` と `buildTests` の PR の部分、`diff.ts`、`markdown.ts`、`draft.ts`）、`packages/map-analysis/src/`（`changes.ts`、`notes.ts`、`check.ts`、`draft.ts`、`build.ts`、`roots.ts`）、`apps/map/scripts/`（`build-data.mjs`、`check-map.mjs`、`draft-notes.mjs`）<br>作る順：[再現の手順](README.md#再現の手順)の [7](README.md#7-pr-の差分と検査) |
 
 ```mermaid
@@ -236,7 +236,8 @@ required =
 | `MapMetrics` | `untested` | 地図（`MapChanges.untested` の写し） | [④-8-c](#-8-c-地図の検査) |
 | `DraftOptions`、`DraftResult` | `tests` | 道具が渡し、地図が返す | [④-9](#-9-変更メモの雛形) |
 
-関数では、`roots.ts` の `isTestPath` を足し、`changesMarkdown` に引数 `sections` を足した。
+関数では、`roots.ts` の `isTestPath` を足し、`changesMarkdown` に引数 `failing` と `sections` を足した。
+`isTestSupportPath`（[①-1-c](01-read.md#-1-c-テスト支援のファイル)）は、地図も使うので道具の `discover.ts` から `roots.ts` に移した（`discover.ts` が export し直す）。
 拡張の口（`BuildOptions.extend`）は全体像にある。
 
 実装：
@@ -916,7 +917,7 @@ flowchart TB
 
 - `MapChanges.untested` は、`untouched` が真で `reason` の無い判定の `frame` の列である
 - 関連するテストが一つも無いフレームも、`required` なら `untouched` になる
-- 期待するテストの無い新しい失敗は、コメントに出すだけで落とさない
+- 期待するテストの無い新しい失敗は、コメントの折りたたんだテストの節に出すだけで落とさない
 
 `join.test.ts` の、変更前と同じテストを渡す例は次の判定になる。
 `verifyClientSecret` を変え、それを `describe` が名指すテスト `kept` を変えなかった場合である。
@@ -946,7 +947,7 @@ flowchart TB
 
 ## ④-7 PR のコメントの節
 
-テストの差分を、PR のコメントに入る Markdown の節にする。
+テストの差分を、PR のコメントに入る Markdown の二つの節にする。
 
 ```mermaid
 flowchart LR
@@ -981,32 +982,36 @@ flowchart LR
   class S1,S2,S3,S4,S5,S6,S8,S9 dim
 ```
 
-`testsMarkdown(diff, data, aspects)` は、`### テスト` で始まり改行で終わる文字列を返す。
+`untestedMarkdown(diff, data)` は、検査に落ちる変更だけの節（**落ちる変更の節**）を返す。
+`### 関連するテストに変更の無い実装の変更（<n>、CI を落とす）` で始まり改行で終わる文字列で、落ちる変更が無ければ空の文字列である。
 見出しを `###` にするのは、コメントの `## OIDC Provider Map` の下に入るからである。
+`testsMarkdown(diff, data, aspects)` は、ほかのすべてを `<details>` に折りたたんだ節（**テストの節**）を返す。
+`<details><summary>` の行で始まり、`</details>` の行と改行で終わる。
 枠の言葉は日本語で、テストの名前と期待結果は英語のままである。
 
 ### ④-7-a ブロックの並び
 
-節は、次の九つのブロックをこの順に並べる。
+二つの節は、次の九つのブロックでできている。
+落ちる変更の節は 2 だけで、テストの節はほかの八つをこの順に並べる。
 「読む欄」は、そのブロックが読む `TestDiff` の欄と、地図の変更の欄（`MapChanges.frames` の要素）である。
-各ブロックの前には空行を一つ置き、太字の見出しの後にも空行を一つ置く。
+3 から 9 の前には空行を一つ置き、`###` と太字の見出しの後と、1 の `<summary>` の行の後にも空行を一つ置く。
 
 | 順 | 見出しか行 | 出す条件 | 読む欄 | 一覧の一行 |
 |---|---|---|---|---|
-| 1 | `テストケース: <前> → <後>（<差>）  <種類> <差>、…` と `追加 <n> · 変更 <n> · 名前の変更 <n> · 削除 <n>` | いつも | `counts`、`added`、`modified`、`renamed`、`removed` | |
-| 2 | `**関連するテストに変更の無い実装の変更（<n>、CI を落とす）**` | `untouched` で理由の無い判定がある | `frames`、変更の `summary` | `- <フレーム>（<要約の先頭>）: 関連するテスト <n> 件、変更なし` |
+| 1 | `<details><summary>テスト <前> → <後>（追加 <n> · 変更 <n> · 名前の変更 <n> · 削除 <n>）</summary>` と `テストケース: <差>  <種類> <差>、…` | いつも | `counts`、`added`、`modified`、`renamed`、`removed` | |
+| 2 | `### 関連するテストに変更の無い実装の変更（<n>、CI を落とす）` | `untouched` で理由の無い判定がある | `frames`、変更の `summary` | `- <フレーム>（<要約の先頭>）: 関連するテスト <n> 件、変更なし` |
 | 3 | `**テストを変えない理由が書かれた変更（<n>）**` | `untouched` で理由のある判定がある | `frames`（`reason.text`） | `- <フレーム>: 関連するテスト <n> 件。「<理由>」` |
 | 4 | `**変更対象: <エンドポイントの名前>（<source>, …）**` | エンドポイントを持つ、足したか変えたテストがある | `added`、`renamed`、`modified`、`cards[].endpoints`、`MapData.flows` | [④-7-c](#-7-c-エンドポイントの組) |
 | 5 | `**テストを足すか変えた変更関数**` | 触ったテストがあり、どの組の鍵にも届かないフレームがある | `frames`（`touched`）、変更の `reach`、`cards` | `- <フレーム>: <触ったテストの言葉>` |
 | 6 | `**新しく外へ出る失敗を期待するテストが無いもの**` | `failuresWithoutTest` がある | `frames[].failuresWithoutTest` | `- <失敗>（<フレーム> から）` |
 | 7 | `**削除されたテスト（<n>）**` | 消したテストがある | `removed`、`cards` | `- <テスト>` |
 | 8 | `**名前を変えたテスト（<n>）**` | 名前の変更がある | `renamed`、`cards` | `- <前の名前> → <後の名前>` |
-| 9 | `テストの結果とカバレッジの変化は Codecov のコメントにあります。` | いつも | なし | |
+| 9 | `</details>` | いつも | なし | |
 
-- 1 行目の種類の差は、差が 0 でない種類だけを `、` でつなぎ、前に空白を二つ置く
+- 1 の種類の差は、差が 0 でない種類だけを `、` でつなぎ、前に空白を二つ置く
 - 種類の並びは `byKind` の鍵の順（[④-4-d](#-4-d-数)）である
 - 種類の言葉（[④-7-b](#-7-b-言葉)）に無い種類は、種類の名前をそのまま出す
-- 1 行目の `変更 <n>` は `modified` の数である（名前の変更の組は、名前のほかも変えたときだけ入る。[④-4-c](#-4-c-変えたテスト)）
+- 1 の `変更 <n>` は `modified` の数である（名前の変更の組は、名前のほかも変えたときだけ入る。[④-4-c](#-4-c-変えたテスト)）
 - 2 の一覧の後に、空行と次の一文を置く
 
 ```text
@@ -1016,6 +1021,7 @@ flowchart LR
 - 2 と 3 の `<n> 件` は `related` の数で、要約の先頭は `summary` の一つ目（無ければ括弧ごと出さない）である
 - 5 は、触ったテストがあり、`reach` のどの道もどの組の鍵にも届かない判定である
 - 2、3、5、6 の並びは判定の順（id の順）で、6 はその中で `failuresWithoutTest` の順である
+- テストの結果とカバレッジの案内は置かない（Codecov へは、コメントの `**開く**` の行のリンクから行く。[⑦-7-a](07-build-ci.md#-7-a-pr-のコメント)）
 
 ### ④-7-b 言葉
 
@@ -1070,14 +1076,19 @@ flowchart LR
 - <テスト>
 
 変更されたテスト:
-- <テスト>（名前の変更: <前の名前> から）（期待 ~~<消した期待結果>~~ → <足した期待結果>）
+- <テスト>（名前の変更: <前の名前> から）（期待 ~~<前の語>~~ → <後の語>、~~<消した期待結果>~~、+<足した期待結果>）
 
 関連する変更関数:
 - <フレーム>: ユニット 追加 2、API 変更 1
 ```
 
-- 「変更されたテスト」の期待は、消した期待結果に取り消し線を付けて先に、足した期待結果を後に置き、先頭の四つを ` → ` でつなぐ
-- 期待結果が変わっていない行には期待の括弧を付けず、名前の変更でない行には名前の括弧を付けない
+- 「変更されたテスト」の期待は、`changedWords(消した期待結果, 足した期待結果)` の言葉の先頭の四つを `、` でつなぎ、五つ以上あれば ` ほか <残りの数>` を続ける
+- `changedWords` は、消した期待結果を組にする。まず `actual` と `matcher` が同じもの、次に句（`phrase`）が同じもので、どちらも残っている足した期待結果の最初の一つを取る
+- 組は、二つの `text` の語の最長共通部分列から外れた語の連なりごとに、`~~<前の語>~~ → <後の語>`、`~~<前の語>~~`、`+<後の語>` のどれかの言葉になる（`~~400~~ → 401`）。語が同じで空白だけが違う組は、`~~<前の全文>~~ → <後の全文>` になる
+- 語は、文字、数字、`_`、`$` の連なりか、そのほかの空白でない一文字である。コードスパンのフェンスは語にせず、コードスパンの中の語は、同じコードスパンの語ごとに `codeSpan` で包み直す（`` ~~`invalid_request`~~ → `invalid_grant` ``）
+- 共通の始まりと終わりの語を先に除き、残りの表が 100 万の升を超えるときは、残りの語を一つの連なりとする
+- 組にならない消した期待結果は `~~<全文>~~` になり、残った足した期待結果は最後に `+<全文>` で並ぶ
+- `changedWords` の言葉が無い行には期待の括弧を付けず、名前の変更でない行には名前の括弧を付けない
 - 「関連する変更関数」に出すのは、`reach` がこの組の鍵に届く判定である
 - ただし、触ったテストのうち、この組の鍵を持つものか、エンドポイントを持たないもの（ユニットテストなど）があるときだけ出す
 - 一行の言葉には、その触ったテストだけを数える
@@ -1093,13 +1104,12 @@ flowchart LR
 
 ### ④-7-d 例
 
-例：このブランチを `MAP_BASE=origin/main` で作ったときの節である。
+例：このブランチを `MAP_BASE=origin/main` で作ったときのテストの節である。
 
 ```md
-### テスト
+<details><summary>テスト 5,731 → 6,062（追加 331 · 変更 0 · 名前の変更 0 · 削除 0）</summary>
 
-テストケース: 5,731 → 6,062（+331）  ツール +323、API +7、E2E +1
-追加 331 · 変更 0 · 名前の変更 0 · 削除 0
+テストケース: +331  ツール +323、API +7、E2E +1
 
 **変更対象: POST /token（hono, nextjs）**
 
@@ -1111,14 +1121,14 @@ flowchart LR
 - Reject invalid client credentials with invalid_client（API, 異常系, 認証）
 - Reject a grant_type the provider does not offer with unsupported_grant_type（API, 異常系）
 
-テストの結果とカバレッジの変化は Codecov のコメントにあります。
+</details>
 ```
 
-検査に落ちる変更があると、数の二行の後に次のブロックが入る。
+検査に落ちる変更があると、`untestedMarkdown` が次の落ちる変更の節を返し、地図はそれを説明の無い変更の後に置く（[④-8-b](#-8-b-地図がすること)）。
 `verifyClientSecret` を変え、関連する二つのテストを変えなかった場合である。
 
 ```md
-**関連するテストに変更の無い実装の変更（1、CI を落とす）**
+### 関連するテストに変更の無い実装の変更（1、CI を落とす）
 
 - `verifyClientSecret()`（core client-auth.ts）（条件 `secret.length < 8` を足した）: 関連するテスト 2 件、変更なし
 
@@ -1128,8 +1138,9 @@ flowchart LR
 この形は、[④-6](#-6-変えたフレームの判定) の二つのテストと、`join.test.ts` の次のテストが確かめる。
 
 - `should list a renamed test of an endpoint as changed in the comment, not as added`
+- `changedWords` のテスト
 
-実装：`packages/test-catalog/src/markdown.ts`（`testsMarkdown`、`testLines`、`testWords`、`frameWords`、`listed`、`cell`、`signed`、`KIND_WORDS`、`OUTCOME_WORDS`、`LIMIT`）
+実装：`packages/test-catalog/src/markdown.ts`（`untestedMarkdown`、`testsMarkdown`、`changedWords`、`wordChanges`、`wordsOf`、`wordsMarkdown`、`oneLine`、`MAX_WORD_CELLS`、`testLines`、`testWords`、`frameWords`、`listed`、`cell`、`signed`、`KIND_WORDS`、`OUTCOME_WORDS`、`LIMIT`）
 
 ## ④-8 書き出しと検査
 
@@ -1181,7 +1192,7 @@ sequenceDiagram
   T->>G: ls-tree と show で分岐点の版を読む
   T->>T: diffCatalogs
   T->>T: data.changes.untested を書く
-  T-->>B: sections に テスト の節
+  T-->>B: failing と sections に二つの節
   B->>B: map.json と changes.md を書く
   B-->>S: data と markdown
   S->>S: ランの要約とログ
@@ -1195,18 +1206,20 @@ sequenceDiagram
 2. 書き出し先（`out`）があれば `tests/diff.json` を書く（[⑤-9](05-data.md#-9-pr-の差分のファイル)）
 3. 索引の `diff` を `true` にする
 4. `data.changes.untested` に [④-6-b](#-6-b-検査に落ちる変更) の列を入れる（`data` は、地図がこの後で `map.json` に書くオブジェクト）
-5. `testsMarkdown` の結果を `sections` に入れて返す
+5. `untestedMarkdown` の結果を `failing` に、`testsMarkdown` の結果を `sections` に入れて返す
 6. ログに PR の差分の一行（`tests: <前> → <後> cases, ...`）を足す（形は [⑦-2](07-build-ci.md#-2-データの段)）
 
 `MAP_BASE` の無いビルドでは、この章の処理は走らない。
-道具は、`out` があれば前のビルドの `tests/diff.json` を消し、`sections` を空で返す。
+道具は、`out` があれば前のビルドの `tests/diff.json` を消し、`failing` と `sections` を空で返す。
 地図も前の `changes.md` を消す。
 
 ### ④-8-b 地図がすること
 
-- `changes.md` を `changesMarkdown(changes, { sections })` で書く
-- 地図の節（説明の無い変更、変わった関数の表など）の後に、空行を挟み、各節の末尾の空白を除いて足す
+- `changes.md` を `changesMarkdown(changes, { failing, sections })` で書く
+- 並びは、説明の無い変更、`failing` の節、変更メモの行と見出しの警告、`**確かめること**`、リンクの場所の行（`LINKS_PLACE`）、変わった関数（`<details>` に折りたたむ）、`sections` の節の順である
+- 道具の節は末尾の空白を除き、`failing` の節の後と `sections` の節の前に空行を一つ置く
 - 空の節（空白だけのものを含む）は足さない
+- `**確かめること**` の `テストを変えていない変更 <n>` は `MapChanges.untested` の数で、`untested` が無ければ出さない
 - 書いた `changes.md` を `BuildResult.markdown` として返す
 - PR のビルドでなければ、`changes.md` を消す
 
@@ -1254,7 +1267,7 @@ Changes since <MAP_BASE> (<分岐点の先頭 7 文字>[, with the uncommitted w
 - 数の行の末尾は `<n> changes whose tests did not change without a reason` である
 - 検査は `apps/map` の `build` の中で、データ、地図、テストのページを作った後、`check:wiring` の前に走る（[⑦-3](07-build-ci.md#-3-地図のビルドと検査)）
 - CI は、検査が落ちた PR でもプレビューとコメントを作る（[⑦-7-a](07-build-ci.md#-7-a-pr-のコメント)）
-- コメントには `changes.md` が入る
+- コメントには `changes.md` が入り、落ちる変更の節は折りたたまずに出る
 
 この失敗の形は `packages/map-analysis/src/__tests__/check.test.ts` の次のテストが確かめる。
 
@@ -1264,7 +1277,7 @@ Changes since <MAP_BASE> (<分岐点の先頭 7 文字>[, with the uncommitted w
 
 - `packages/test-catalog/src/build.ts`：`buildTests`
 - `packages/map-analysis/src/build.ts`：`buildMap`、`BuildContext`、`BuildExtension`、`BuildResult`
-- `packages/map-analysis/src/changes.ts`：`changesMarkdown`、`KIND_ORDER`、`KIND_WORDS`
+- `packages/map-analysis/src/changes.ts`：`changesMarkdown`、`LINKS_PLACE`、`KIND_ORDER`、`KIND_WORDS`
 - `packages/map-analysis/src/check.ts`：`checkMap`
 - `apps/map/scripts/build-data.mjs`
 - `apps/map/scripts/check-map.mjs`
@@ -1446,7 +1459,7 @@ For a change marked テスト, change one of the tests the comment lists, or wri
 ## この章の出力
 
 - ⑤ へ：`TestDiff`（⑤ が `tests/diff.json` に書き、索引に `diff: true` を立てる、[⑤-9](05-data.md#-9-pr-の差分のファイル)）
-- 地図へ：`MapChanges.untested`（`map.json` に入り、地図の検査が読む）と、`changes.md` の末尾の `### テスト` の節
+- 地図へ：`MapChanges.untested`（`map.json` に入り、地図の検査と `changes.md` の `**確かめること**` が読む）と、`changes.md` に入る落ちる変更の節（`failing`）とテストの節（`sections`）
 - ⑦ へ：落ちた検査の終了コードと、PR のコメントとランの要約に入る `changes.md`
 
 [全体像](README.md) ｜ ← [③ 結果と関数に結ぶ](03-join.md) ｜ ④ PR の差分と検査 ｜ [⑤ データを書き出す](05-data.md) →

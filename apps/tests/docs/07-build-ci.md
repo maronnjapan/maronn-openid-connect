@@ -40,7 +40,7 @@ flowchart LR
 |---|---|
 | 入力 | ① から ⑥ のパッケージとスクリプト。<br>GitHub の PR と、シークレットの `CODECOV_TOKEN`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` |
 | 出力 | artifact の `test-reports`、`oidc-provider-map`、`oidc-e2e-reports`、Codecov への報告、`apps/map/dist`（`dist/tests/` にテストのページ）、プレビューと本番の Worker、PR のコメント、CI の合否 |
-| 実装 | `package.json` の `scripts`（ルート、`apps/map`、`apps/tests`、`packages/test-catalog`、`packages/test-reach`、`tests/e2e`、`tests/steps`）、`apps/map/scripts/build-data.mjs`、`copy-tests-viewer.mjs`、`check-map.mjs`、`.github/workflows/ci.yml`、`map-preview.yml`、`codecov.yml`、`.github/scripts/lint-e2e-fixtures.mjs`、`lint-features.mjs`、`lint-steps.mjs`、`lint-tests.mjs`、`verify-ci-gate.mjs`、`.gitignore`、`apps/map/README.md`、`apps/map/changes/README.md`、`.changeset/test-map-no-release.md`<br>作る順：[再現の手順](README.md#再現の手順)の [4](README.md#4-データの段への接続-2)、[10](README.md#10-ビルドと-ci) |
+| 実装 | `package.json` の `scripts`（ルート、`apps/map`、`apps/tests`、`packages/test-catalog`、`packages/test-reach`、`tests/e2e`、`tests/steps`）、`apps/map/scripts/build-data.mjs`、`copy-tests-viewer.mjs`、`check-map.mjs`、`.github/workflows/ci.yml`、`map-preview.yml`、`codecov.yml`、`.github/scripts/lint-e2e-fixtures.mjs`、`lint-features.mjs`、`lint-steps.mjs`、`lint-tests.mjs`、`map-comment.mjs`、`verify-ci-gate.mjs`、`.gitignore`、`apps/map/README.md`、`apps/map/changes/README.md`、`.changeset/test-map-no-release.md`<br>作る順：[再現の手順](README.md#再現の手順)の [4](README.md#4-データの段への接続-2)、[10](README.md#10-ビルドと-ci) |
 
 ```mermaid
 flowchart TB
@@ -323,7 +323,7 @@ sequenceDiagram
   B->>B: 地図を解析する
   B->>T: extend(context)
   T->>D: tests.json、outline.json、tests/
-  T-->>B: sections と、log に足した行
+  T-->>B: failing と sections と、log に足した行
   B->>M: map.json（changes.untested を含む）と changes.md
   B-->>S: data、log、markdown
   S->>S: ログを出し、要約に changes.md を足す
@@ -794,7 +794,7 @@ flowchart TB
 | Check that the pull request is still open（`id: pull`） | `actions/github-script@v9` が `github.rest.pulls.get` で PR を読み、出力 `open` に `String(data.state === 'open')` を書く | `!cancelled()` で、PR のイベントで、PR が同じリポジトリから来た | 足した |
 | Create or update the Preview（`id: preview`） | `node .github/scripts/map-preview.mjs create --pr <番号> --sha <head の SHA>` | 上の条件に加えて、`dist/index.html` があり、`steps.pull.outputs.open == 'true'` で、`CLOUDFLARE_API_TOKEN` がある | 移した（`open` の条件を足した） |
 | Deploy main to production（`id: production`） | `node .github/scripts/map-preview.mjs deploy` | それまでのステップが失敗しておらず、PR でなく、`CLOUDFLARE_API_TOKEN` がある | 移した |
-| Comment the Preview on the pull request | `actions/github-script@v9`（[⑦-7-a](#-7-a-pr-のコメント)） | `!cancelled()` で、`dist/index.html` があり、PR が同じリポジトリから来て、`open` が `'true'` | 移した（`open` の条件と本文の行を足した） |
+| Comment the Preview on the pull request | `actions/github-script@v9` と `.github/scripts/map-comment.mjs`（[⑦-7-a](#-7-a-pr-のコメント)） | `!cancelled()` で、`dist/index.html` があり、PR が同じリポジトリから来て、`open` が `'true'` | 移した（`open` の条件と、本文のテストと Codecov のリンクを足した） |
 
 - 報告を受け取れないとき（`test` ジョブが途中で止まった）は、コードから読めることだけで地図を作る
 - PR では、`Build the map` が検査で落ちても、`dist/` があれば後のステップはプレビューとコメントを作る（ジョブは失敗のまま終わる）
@@ -803,7 +803,7 @@ flowchart TB
 
 ### ⑦-7-a PR のコメント
 
-コメントは `actions/github-script@v9` が組み、次の環境変数を読む。
+コメントは `actions/github-script@v9` が `${GITHUB_WORKSPACE}/.github/scripts/map-comment.mjs` を `import()` して組み、次の環境変数を読む。
 
 | 変数 | 値 |
 |---|---|
@@ -813,59 +813,55 @@ flowchart TB
 | `RUN_URL` | `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}` |
 | `HEAD_SHA` | `github.event.pull_request.head.sha` |
 
-本文は、次の配列を `\n` でつないだものである。
+本文は、`commentBody` が次の配列を `\n` でつなぎ、`fitted` を通したものである。
 `...` で広げる項は、条件を満たすときだけ入る。
 
 ```ts
-const body = [
+const body = fitted([
   '<!-- oidc-provider-map-preview -->',
   '## OIDC Provider Map',
-  ...(BUILD_OUTCOME === 'failure' ? ['', '> [!WARNING]', `> ${WARNING}`] : []),
-  ...(changes ? ['', changes] : []),
   '',
-  status,
-  ...(url && changes ? ['', `このPRの変更（説明の無い変更、変わった関数の差分と変更メモ、届く経路）: ${url}#changes`] : []),
-  ...(url ? [`この PR のテスト: ${url.replace(/\/$/, '')}/tests/#/pr`] : []), // 道具で足した
-  `テストの結果とカバレッジ（Codecov）: ${codecov}`, // 道具で足した
+  ...(BUILD_OUTCOME === 'failure' ? ['> [!WARNING]', `> ${WARNING}`, ''] : []),
+  ...(place === -1 ? [links, ...(changes ? ['', changes] : [])] : [...lines.slice(0, place), links, ...lines.slice(place + 1)]), // place: LINKS_PLACE だけの行
   '',
-  `Run: ${RUN_URL} (artifact \`oidc-provider-map\`)`,
-  '',
-  `Built from ${HEAD_SHA}. ${ABOUT}`,
-].join('\n');
+  `Built from ${HEAD_SHA} · [Run](${RUN_URL}) (artifact \`oidc-provider-map\`)${preview}`, // buildLine
+].join('\n'));
 ```
 
 | 名前 | 値 |
 |---|---|
 | `url` | `PREVIEW_URL`。<br>空なら無いとみなす |
 | `changes` | `apps/map/dist/data/changes.md` の前後の空白を除いた中身。<br>ファイルが無ければ空 |
+| `LINKS_PLACE` | 地図の `changesMarkdown` が「確かめること」の後に置く行 `<!-- oidc-provider-map-links -->` |
+| `links` | `**開く**` と、リンクを ` · ` でつないだ行の二行（`linkLines`）。<br>リンクは、`url` があれば `` `[変更](${url}#changes)` `` と `` `[テスト](${url.replace(/\/$/, '')}/tests/#/pr)` `` で、最後にいつも `` `[Codecov](${codecov})` `` |
 | `codecov` | `context.serverUrl` の `github.com` を `app.codecov.io/gh` に置き換え、`/<owner>/<repo>/pull/<番号>` を足した URL |
 
-`status` は次の三つのどれかである。
+`preview` は、次の表を上から見て最初に当たる行のものである。
 
-| 条件 | `status` |
+| 条件 | `preview` |
 |---|---|
-| `url` がある | `` `Preview: ${url}\n\n(${how})` `` |
-| `PREVIEW_OUTCOME` が `skipped` | ``Preview: not deployed (no Cloudflare secrets for this run). Download the `oidc-provider-map` artifact of the run below and serve `dist/` statically.`` |
-| それ以外 | `` `Preview: the deploy failed; see the run below. (${PREVIEW_NOTE \|\| ''})` `` |
+| `url` があり、`PREVIEW_MODE` が `worker` でない | 空 |
+| `url` があり、`PREVIEW_MODE` が `worker` | ` · Worker Previews failed: the preview is a Worker of this pull request.` |
+| `PREVIEW_OUTCOME` が `skipped` | `` · No preview: this run has no Cloudflare secrets; serve `dist/` of the artifact statically.`` |
+| `PREVIEW_MODE` が `worker` | ` · No preview URL: the Worker of this pull request was deployed, but its URL was not found; see the run.` |
+| それ以外 | `` ` · No preview: the deploy failed${PREVIEW_NOTE ? ` (${PREVIEW_NOTE})` : ''}; see the run.` `` |
 
-| `PREVIEW_MODE` | `how` |
-|---|---|
-| `worker` | `a Worker of this pull request (Worker Previews failed; see the run)` |
-| それ以外 | `a Worker Preview of this pull request: the same URL follows every push, and it is removed when the pull request is closed` |
-
-`WARNING` と `ABOUT` は次の固定の文である。
+`WARNING` は次の固定の文である。
 
 ```text
-WARNING: 地図のビルドの検査が落ちました。下の「説明の無い変更」に変更メモの節を足すか、「テスト」の節の「関連するテストに変更の無い実装の変更」にテストを足すか変更メモに `テストを変えない理由:` を書くか、検査の出力を Run で確かめてください（`pnpm --filter @maronn-openid-connect/map changes:draft` で雛形を作れます）。
-
-ABOUT: The map shows the endpoints, steps and functions of every framework with every feature on as traces you open call by call; the feature toggles narrow it to one `maronn-oidc generate` command line. The functions and endpoint bodies this pull request changes carry a badge, with what changed (the diff of their flow), the endpoints it reaches and what its change notes (`apps/map/changes/*.md`) say. The tests have a page of their own at `/tests/` (apps/tests): the test cases of each endpoint and step, their latest results and their code.
+地図のビルドの検査が落ちました。下の「説明の無い変更」に変更メモの節を足すか、「関連するテストに変更の無い実装の変更」にテストを足すか変更メモに `テストを変えない理由:` を書くか、検査の出力を Run で確かめてください（`pnpm --filter @maronn-openid-connect/map changes:draft` で雛形を作れます）。
 ```
 
-道具で足したのは、上の二行と、`WARNING` の「「テスト」の節の …… を書くか、」の部分と、`ABOUT` の最後の文（`The tests have a page of their own …`）である。
+道具で足したのは、`links` の `[テスト]` と `[Codecov]` と、`WARNING` の「「関連するテストに変更の無い実装の変更」に …… を書くか、」の部分である。
 
+ステップは、`<details>` の外の行（どの `<details>` の中にも無い行と、`<details>` を開く行と閉じる行。行頭の `<details` で開き、行末の `</details>` で閉じる）を `linesOutsideDetails` で数え、`The comment has <n> lines outside <details>.` とログに出す。
+本文が GitHub の上限の 65,536 字を超えるときは、`fitted` が `<details>` の中身を一行の断りに替え、それでも超える分を末尾で切る。
 PR の最初の 100 件のコメント（`per_page: 100`）から、本文にコメントの目印 `<!-- oidc-provider-map-preview -->` を含むものを探す。
 あれば `updateComment` で書き換え、無ければ `createComment` で作る。
-`changes.md` の末尾の `### テスト` の節は ④ が作る。
+`changes.md` の「関連するテストに変更の無い実装の変更」の節と、末尾の畳んだテストの節は ④ が作る。
+
+手元では、`node .github/scripts/map-comment.mjs [changes.md]` が、同じ環境変数と `CODECOV_URL` から組んだ本文を標準出力に、`<n> lines outside <details>, <n> in all, <n> characters` を標準エラーに出す。
+本文の形は `.github/scripts/map-comment.test.mjs` が確かめ、`pnpm run test:supply-chain` で走る。
 
 ### ⑦-7-b 閉じた PR のプレビュー
 
@@ -916,6 +912,7 @@ The preview of this pull request was removed when it was closed (<理由>). The 
 - `.github/workflows/ci.yml`：`map`、ワークフローの `concurrency`
 - `.github/workflows/map-preview.yml`
 - `.github/scripts/map-preview.mjs`
+- `.github/scripts/map-comment.mjs`：`commentBody`、`linkLines`、`buildLine`、`fitted`、`linesOutsideDetails`
 
 ## ⑦-8 lint
 
@@ -1265,7 +1262,7 @@ flowchart LR
 人と CI が受け取るものは次のとおりである。
 
 - `<地図の URL>/tests/` のテストのページ（PR ごとのプレビューと、main の本番）
-- 地図の PR のコメント（`### テスト` の節、`この PR のテスト` と Codecov へのリンク）
+- 地図の PR のコメント（「関連するテストに変更の無い実装の変更」の節、畳んだテストの節、「開く」の行の `[テスト]` と `[Codecov]`）
 - Codecov の PR のコメント（patch coverage、失敗したテスト、flaky なテスト）
 - artifact の `test-reports`、`oidc-provider-map`、`oidc-e2e-reports`
 - CI の合否（lint、`test:ci-gate`、地図の検査の `untested`）

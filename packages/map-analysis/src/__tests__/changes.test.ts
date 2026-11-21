@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { changesMarkdown, changeTargets, diffLines, hunksOf, memberCounts, parseNameStatus, pullRequestOf, targetLabels, touchedLines } from '../changes.js';
+import { changesMarkdown, changeTargets, diffLines, hunksOf, LINKS_PLACE, memberCounts, parseNameStatus, pullRequestOf, targetLabels, touchedLines } from '../changes.js';
 import type { FlowTree, FrameChangeEntry, MapChanges, TreeNode } from '../model.js';
 
 describe('parseNameStatus', () => {
@@ -141,13 +144,47 @@ describe('changesMarkdown', () => {
   });
   const way = { source: 'hono', frameworks: ['hono', 'express', 'fastify'], endpoint: 'token', frames: [], decisions: {}, via: [], features: [], target: 's0' };
 
-  it('should list first the changes without an explanation, with a draft of the sections the check needs', () => {
-    const markdown = changesMarkdown(changes([frame({ required: true, reach: [way] }), frame({ id: 'endpoint:token', name: 'token', body: true, module: 'oidc-provider/endpoints/token/pipeline.ts', required: true })]));
-    expect(markdown.startsWith('### 説明の無い変更（2）')).toBe(true);
-    expect(markdown).toContain('| 要説明 | `f()` | core a.ts:3 | 条件 `x` を足した（条件 +1） | token |');
-    expect(markdown).toContain('| 要説明 | `token`（エンドポイントの処理） | core oidc-provider/endpoints/token/pipeline.ts:3 | 条件 `x` を足した（条件 +1） | （エンドポイントそのもの） |');
+  it('should list first the changes that need an explanation and have none, with a draft of the sections the check needs', () => {
+    const markdown = changesMarkdown(
+      changes([
+        frame({ required: true, reach: [way] }),
+        frame({ id: 'endpoint:token', name: 'token', body: true, module: 'oidc-provider/endpoints/token/pipeline.ts', required: true }),
+        frame({ id: 'core:b.ts#g', name: 'g', module: 'b.ts' }),
+      ]),
+    );
+    expect(markdown.startsWith('### 説明の無い変更（2）\n')).toBe(true);
+    expect(markdown).toContain('| `f()` | core a.ts:3 | 条件 `x` を足した（条件 +1） | token |');
+    expect(markdown).toContain('| `token`（エンドポイントの処理） | core oidc-provider/endpoints/token/pipeline.ts:3 | 条件 `x` を足した（条件 +1） | （エンドポイントそのもの） |');
     expect(markdown).toContain('## f <!-- core:a.ts#f -->');
-    expect(markdown).toContain('| 札 | 関数 | 場所 | 自動要約 | 届くエンドポイント | メモ |');
+    expect(markdown).toContain('- 説明の無い変更 2');
+    // A change that needs no note is in the folded table only.
+    expect(markdown.slice(0, markdown.indexOf('**確かめること**'))).not.toContain('`g()`');
+    expect(markdown).toContain('| 変更 | `g()` | core b.ts:3 | 条件 `x` を足した（条件 +1） | なし | 説明なし |');
+  });
+
+  it('should put a line a note, what to check and the place of the links outside the folds, and the changed frames in one', () => {
+    const markdown = changesMarkdown({
+      ...changes([frame({ documented: true, noteLine: '短い秘密を拒む。' }), frame({ id: 'core:b.ts#g', name: 'g', module: 'b.ts', kind: 'added' })]),
+      notes: [{ file: 'apps/map/changes/dpop.md', title: 'DPoP を足す', summary: `${'あ'.repeat(320)}\n\n二段落目` }],
+      untested: [],
+      addedLines: { comment: 1889, code: 2171 },
+      outside: [{ file: 'core:a.ts', lines: [1, 2] }],
+    });
+    expect(markdown.split('\n').slice(0, 7)).toEqual([`**DPoP を足す** — ${'あ'.repeat(299)}…`, '', '**確かめること**', '- 説明の無い変更 0 · テストを変えていない変更 0', '- コメント +1,889 行、コード +2,171 行', '', LINKS_PLACE]);
+    expect(markdown).toContain('\n<details><summary>変わった関数 2（追加 1 · 変更 1）</summary>\n\n| 札 | 関数 | 場所 | 自動要約 | 届くエンドポイント | メモ |\n');
+    expect(markdown).toContain('\n関数の外（import、型、定数など）の変更: 1 ファイル、2 行（地図の「このPRの変更」にあります）\n\n</details>\n');
+    expect(markdown).not.toContain('二段落目');
+  });
+
+  it('should leave the place of the links by the line the comment of the pull request replaces', () => {
+    const script = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../../.github/scripts/map-comment.mjs'), 'utf8');
+    expect(script).toContain(`export const LINKS_PLACE = '${LINKS_PLACE}';`);
+  });
+
+  it('should put the sections of an extension that fail the check after the changes without a note, before the notes', () => {
+    const markdown = changesMarkdown(changes([frame({ required: true })]), { failing: ['### 関連するテストに変更の無い実装の変更（1、CI を落とす）\n\n- `f()`\n', ''] });
+    const order = ['### 説明の無い変更（1）', '### 関連するテストに変更の無い実装の変更（1、CI を落とす）', '変更メモ（`apps/map/changes/*.md`）がありません。', '**確かめること**', LINKS_PLACE, '<details><summary>変わった関数'].map((text) => markdown.indexOf(text));
+    expect(order.every((index, position) => index !== -1 && (position === 0 || index > (order[position - 1] as number)))).toBe(true);
   });
 
   it('should show the failures a change makes leave its frame, where they are caught, and the features its endpoints need', () => {
@@ -167,8 +204,8 @@ describe('changesMarkdown', () => {
   });
 
   it('should end with the sections an extension of the build adds, each after a blank line', () => {
-    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['### テスト\n\nテストケース: 1 → 2（+1）\n', '  '] });
-    expect(markdown.endsWith('\n\n### テスト\n\nテストケース: 1 → 2（+1）\n')).toBe(true);
+    const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '短い秘密を拒む。' })]), { sections: ['<details><summary>テスト 1 → 2</summary>\n\nテストケース: +1\n\n</details>\n', '  '] });
+    expect(markdown.endsWith('\n</details>\n\n<details><summary>テスト 1 → 2</summary>\n\nテストケース: +1\n\n</details>\n')).toBe(true);
   });
 
   it('should say the calls the types do not tell may reach a change', () => {
@@ -186,7 +223,8 @@ describe('changesMarkdown', () => {
 
   it('should show the first line of the note of an explained change, and no list of the unexplained when there is none', () => {
     const markdown = changesMarkdown(changes([frame({ documented: true, noteLine: '境界をそろえる。', required: true, reach: [way, { ...way, source: 'nextjs', frameworks: ['nextjs'] }] })]));
-    expect(markdown).not.toContain('説明の無い変更');
+    expect(markdown).not.toContain('### 説明の無い変更');
+    expect(markdown).toContain('- 説明の無い変更 0\n');
     expect(markdown).toContain('| 変更 | `f()` | core a.ts:3 | 条件 `x` を足した（条件 +1） | token, token (nextjs) | 境界をそろえる。 |');
   });
 });

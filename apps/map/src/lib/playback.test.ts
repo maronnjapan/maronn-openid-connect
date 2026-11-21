@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, Selection, TreeNode } from '../types';
-import { callsToEnter, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, stopKey, walkTrace, withoutDeepest } from './playback';
+import { callsToEnter, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, SPEEDS, stopKey, walkTrace, withoutDeepest } from './playback';
 import { nodesRun } from './trace';
 
 /** A tree of nodes written by hand. */
@@ -153,9 +153,9 @@ describe('scenarioOf', () => {
 });
 
 describe('sceneDuration', () => {
-  it('should stay shorter on a scene at a higher speed, and never stop', () => {
-    expect(sceneDuration(1)).toBe(1500);
-    expect(sceneDuration(2)).toBe(750);
-    expect(sceneDuration(0)).toBe(6000);
+  it('should stay 2.6 s on a scene at the normal pace, shorter at a higher speed, and never stop', () => {
+    expect(SPEEDS).toEqual([0.5, 1, 2]);
+    expect(SPEEDS.map((speed) => sceneDuration(speed))).toEqual([5200, 2600, 1300]);
+    expect(sceneDuration(0)).toBe(10400);
   });
 });

@@ -738,8 +738,8 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .diagram .travel.play-error .token-dot, .diagram .travel.play-error .token-glow, .diagram .travel .token.to-failure .token-dot, .diagram .travel .token.to-failure .token-glow { fill: var(--danger); }
 @media (prefers-reduced-motion: no-preference) {
   /* The links the request has taken flow along their way; the node it is at pulses once the token reaches it. */
-  .diagram.chart:not(.still) .link.taken path, .diagram.chart:not(.still) .link.travel path { animation: chart-flow 0.7s linear infinite; }
-  .diagram.chart:not(.still) .chart-node.current .pulse { stroke: var(--accent); animation: chart-pulse 1.6s ease-out var(--arrive, 0ms) infinite; }
+  .diagram.chart:not(.still) .link.taken path, .diagram.chart:not(.still) .link.travel path { animation: chart-flow 1.2s linear infinite; }
+  .diagram.chart:not(.still) .chart-node.current .pulse { stroke: var(--accent); animation: chart-pulse 2.4s ease-out var(--arrive, 0ms) infinite; }
   .diagram.chart:not(.still) .chart-node.current.tone-error .pulse { stroke: var(--danger); }
   /* The node the token travels to, and the exit after it, light up when it arrives: until then they read as nodes of the way still ahead. */
   .diagram.chart .chart-node.current.arriving .frame { animation: chart-arrive var(--arrive, 0ms) step-end both; }

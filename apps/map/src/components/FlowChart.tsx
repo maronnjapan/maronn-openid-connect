@@ -84,7 +84,12 @@ function fitLines(svg: SVGSVGElement): void {
 }
 
 /** The pause of the token on the node of a scene before it goes on to the scene's exit, in milliseconds. */
-const EXIT_PAUSE = 220;
+const EXIT_PAUSE = 400;
+
+/** The token's travel along an arrow: the shortest hop, what any travel takes before its length, and the time a pixel adds, in milliseconds. */
+const TRAVEL_MIN = 320;
+const TRAVEL_BASE = 260;
+const TRAVEL_PER_PIXEL = 4;
 
 /** The words a node's state is read by. */
 const STATE_WORDS: Record<WayNodeState, string> = { visited: 'このリクエストが通った', current: 'いまの場所', exit: 'この場面で終わる所', ahead: 'このリクエストがこの先で通る' };
@@ -164,8 +169,8 @@ export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, 
       element.style.setProperty('--exit-arrive', '0ms');
       return undefined;
     }
-    // A short hop is quick, a long arrow takes no more than its share of the scene.
-    const spanOf = (pixels: number, share: number) => (pixels === 0 ? 0 : Math.max(180, Math.min(playDuration * share, 160 + pixels * 2.4)));
+    // A short hop takes a moment the eye can follow, a long arrow longer, and none more than its share of the scene (about 4 ms a pixel: 2.4 was too quick to follow).
+    const spanOf = (pixels: number, share: number) => (pixels === 0 ? 0 : Math.max(TRAVEL_MIN, Math.min(playDuration * share, TRAVEL_BASE + pixels * TRAVEL_PER_PIXEL)));
     const firstSpan = spanOf(firstLength, secondLength === 0 ? 1 : 0.5);
     const pause = firstLength === 0 || secondLength === 0 ? 0 : EXIT_PAUSE;
     const secondSpan = spanOf(secondLength, firstLength === 0 ? 1 : 0.4);

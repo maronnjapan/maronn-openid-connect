@@ -205,7 +205,11 @@ export const STEP_KIND_WORDS: Record<StepKind, string> = {
 /** The speeds a playback offers (1 is the normal pace). */
 export const SPEEDS = [0.5, 1, 2] as const;
 
-/** How long a scene stays before the playback moves on, in milliseconds, at a speed (1 is the normal pace). */
+/**
+ * How long a scene stays before the playback moves on, in milliseconds, at
+ * a speed: 2.6 s at the normal pace, time enough to read the card of the
+ * scene and follow the token along its arrow (1.5 s was too quick to read).
+ */
 export function sceneDuration(speed: number): number {
-  return Math.round(1500 / Math.max(0.25, speed));
+  return Math.round(2600 / Math.max(0.25, speed));
 }

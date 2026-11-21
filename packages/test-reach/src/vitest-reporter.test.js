@@ -111,6 +111,15 @@ describe('rawExchangesOf', () => {
     expect(Object.keys(/** @type {any} */ (line).exchanges[0].ran)).toEqual(['apps/hono/src/oidc-provider/endpoints/token/pipeline.ts', 'packages/core/src/token-request.ts']);
   });
 
+  it('should keep where an exchange was sent from to the files of the repository, by repository path', () => {
+    const exchange = { request: { method: 'GET', url: 'https://op.example.com/jwks', headers: [] }, from: /** @type {Array<[string, number]>} */ ([['/repo/apps/hono/src/support.ts', 4], ['/elsewhere/other.ts', 9], ['/repo/apps/hono/src/jwks.test.ts', 21]]), ran: {} };
+    const unknown = { request: { method: 'GET', url: 'https://op.example.com/jwks', headers: [] }, from: /** @type {Array<[string, number]>} */ ([['/elsewhere/other.ts', 9]]), ran: {} };
+
+    const line = /** @type {any} */ (rawExchangesOf(testCase({ state: 'passed' }), [exchange, unknown], '/repo'));
+
+    expect(line.exchanges.map((/** @type {{ from?: unknown }} */ item) => item.from)).toEqual([[['apps/hono/src/support.ts', 4], ['apps/hono/src/jwks.test.ts', 21]], undefined]);
+  });
+
   it('should keep the overlap and the error of an exchange', () => {
     const exchange = { request: { method: 'GET', url: 'https://op.example.com/jwks', headers: [] }, overlapped: /** @type {const} */ (true), error: 'TypeError: boom', ran: {} };
 

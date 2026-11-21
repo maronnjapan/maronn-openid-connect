@@ -93,9 +93,28 @@ function catalogRan(ran, root) {
 }
 
 /**
+ * Where an exchange was sent from, kept to the files of the repository, by
+ * repository path, innermost first (none outside it, such as a file of
+ * another checkout).
+ * @param {Array<[string, number]> | undefined} from By absolute path.
+ * @param {string} root The repository root.
+ * @returns {Array<[string, number]>}
+ */
+function repositorySites(from, root) {
+  /** @type {Array<[string, number]>} */
+  const kept = [];
+  for (const [file, line] of from ?? []) {
+    const path = repositoryPath(file, root);
+    if (path !== undefined) kept.push([path, line]);
+  }
+  return kept;
+}
+
+/**
  * The RawExchanges line of a test from the exchanges the recorder put on its
  * meta: each exchange as it was recorded, with what ran kept to the sources
- * of the function catalog, by repository path.
+ * of the function catalog and where it was sent from kept to the files of the
+ * repository, by repository path.
  * @param {import('vitest/node').TestCase} testCase
  * @param {import('./exchanges.js').Exchange[]} exchanges
  * @param {string} root The repository root.
@@ -104,7 +123,10 @@ function catalogRan(ran, root) {
 export function rawExchangesOf(testCase, exchanges, root) {
   return {
     ...testKeyOf(testCase, root),
-    exchanges: exchanges.map((exchange) => ({ ...exchange, ran: catalogRan(exchange.ran, root) })),
+    exchanges: exchanges.map(({ from, ...exchange }) => {
+      const sites = repositorySites(from, root);
+      return { ...exchange, ...(sites.length > 0 ? { from: sites } : {}), ran: catalogRan(exchange.ran, root) };
+    }),
   };
 }
 

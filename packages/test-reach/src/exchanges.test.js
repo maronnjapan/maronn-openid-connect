@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { COVERAGE_KEY } from './coverage.js';
-import { BODY_LIMIT, bodyText, countersNow, ranSince, recordExchange, recordingHono, resetExchanges, takeExchanges } from './exchanges.js';
+import { BODY_LIMIT, bodyText, callSites, countersNow, ranSince, recordExchange, recordingHono, resetExchanges, takeExchanges } from './exchanges.js';
 import { encodeMappings } from './source-map.js';
 
 const PIPELINE = '/repo/apps/hono/src/oidc-provider/endpoints/token/pipeline.ts';
@@ -236,6 +236,49 @@ describe('recordExchange', () => {
     await pending;
 
     expect(takeExchanges()).toEqual([]);
+  });
+});
+
+describe('callSites', () => {
+  it('should give the place and line of each frame, innermost first, without this package, node_modules and the runtime', () => {
+    const stack = [
+      'Error: call site',
+      '    at callerSites (/repo/packages/test-reach/src/exchanges.js:120:12)',
+      '    at app.request (/repo/packages/test-reach/src/exchanges.js:400:18)',
+      '    at post (/repo/apps/hono/src/token.test.ts:56:9)',
+      '    at exchangeCode (file:///repo/apps/hono/src/token.test.ts:65:5)',
+      '    at /repo/apps/hono/src/token.test.ts:85:30',
+      '    at async /repo/apps/hono/src/token.test.ts:85:24',
+      '    at async Promise.all (index 0)',
+      '    at async runTest (/repo/node_modules/@vitest/runner/dist/index.js:1:2)',
+      '    at new Promise (<anonymous>)',
+      '    at node:internal/process/task_queues:95:5',
+      '    at load (/repo/apps/hono/src/support.ts?v=1a2b:5:1)',
+      '    at Object.<anonymous> (C:\\repo\\apps\\x.test.ts:3:1)',
+    ].join('\n');
+
+    expect(callSites(stack)).toEqual([
+      ['/repo/apps/hono/src/token.test.ts', 56],
+      ['/repo/apps/hono/src/token.test.ts', 65],
+      ['/repo/apps/hono/src/token.test.ts', 85],
+      ['/repo/apps/hono/src/support.ts', 5],
+      ['C:\\repo\\apps\\x.test.ts', 3],
+    ]);
+  });
+
+  it('should give nothing for no stack, or one of no frame with a place', () => {
+    expect([callSites(undefined), callSites('Error\n    at new Promise (<anonymous>)')]).toEqual([[], []]);
+  });
+});
+
+describe('recordExchange, with where it was sent from', () => {
+  it('should keep the call sites the caller took at the call, and none when it took none', async () => {
+    const send = () => new Response('ok');
+
+    await recordExchange(new Request('https://op.example.com/token'), send, [['/repo/apps/hono/src/token.test.ts', 85]]);
+    await recordExchange(new Request('https://op.example.com/token'), send);
+
+    expect(takeExchanges().map((exchange) => exchange.from)).toEqual([[['/repo/apps/hono/src/token.test.ts', 85]], undefined]);
   });
 });
 

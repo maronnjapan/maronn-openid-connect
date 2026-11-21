@@ -28,6 +28,12 @@
  * test may send several requests at once (Promise.all): their counters are
  * then mixed, and each of them is marked `overlapped`.
  *
+ * A send also keeps where it was called from (`from`, callSites): the files
+ * and lines of the call stack at the call, so the catalog can tell the line
+ * of the test's own code that sent the request (directly or through its
+ * helpers) from a request the test's code did not send (a hook, a callback
+ * a framework scheduled), which it then never shows as the test's.
+ *
  * Like the setup file, this module uses neither node:fs nor node:path (only
  * Request, Response, ReadableStream and TextDecoder), so it runs in the
  * edge-runtime environment too.
@@ -61,9 +67,63 @@ export const BODY_LIMIT = 16 * 1024;
 
 /**
  * An exchange as the worker records it; the reporter turns the absolute paths
- * of `ran` into repository paths and keeps the sources of the function catalog.
- * @typedef {{ request: ExchangeRequest, response?: ExchangeResponse, overlapped?: true, error?: string, ran: Record<string, RanInFile> }} Exchange
+ * of `ran` and `from` into repository paths and keeps the sources of the
+ * function catalog in `ran` and the files of the repository in `from`.
+ * @typedef {{ request: ExchangeRequest, response?: ExchangeResponse, overlapped?: true, error?: string, from?: Array<[string, number]>, ran: Record<string, RanInFile> }} Exchange
  */
+
+/** How many frames of the call stack a send keeps looking through (V8 keeps 10 by default, too few under a few helpers and the runner). */
+const STACK_FRAMES = 64;
+
+/** A frame of a V8 stack: `at name (place:line:column)`, `at place:line:column`, either after `async `. */
+const FRAME = /^\s*at (?:async )?(?:.*? \()?(.+?):(\d+):\d+\)?\s*$/;
+
+/**
+ * Where a send was called from: the place and the line of each frame of the
+ * stack an Error made at the call holds, innermost first, without the frames
+ * of this package, of node_modules and of the runtime (`node:`, internals),
+ * and each place once at a line. The line of the test that made the call is
+ * among them when its code made it, through helpers or after an `await` of an
+ * async function (V8 keeps those frames); a callback a framework scheduled
+ * has no frame of the test.
+ * @param {string | undefined} stack
+ * @returns {Array<[string, number]>} Absolute paths (a `file://` URL made a path) and lines from 1.
+ */
+export function callSites(stack) {
+  /** @type {Array<[string, number]>} */
+  const sites = [];
+  for (const text of (stack ?? '').split('\n').slice(1)) {
+    const match = FRAME.exec(text);
+    if (match === null) continue;
+    let place = /** @type {string} */ (match[1]);
+    if (place.startsWith('file://')) place = decodeURIComponent(place.slice('file://'.length));
+    // A module the runner loaded may carry a query (`?v=…`) after its path.
+    place = place.replace(/\?.*$/, '');
+    if (!place.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(place)) continue;
+    const path = place.replace(/\\/g, '/');
+    if (path.includes('/node_modules/') || path.includes('/packages/test-reach/src/')) continue;
+    const line = Number(match[2]);
+    const last = sites[sites.length - 1];
+    if (last !== undefined && last[0] === place && last[1] === line) continue;
+    sites.push([place, line]);
+  }
+  return sites;
+}
+
+/**
+ * The call sites of the code that called the caller of this function (see
+ * callSites), with enough frames of the stack kept to reach the test.
+ * @returns {Array<[string, number]>}
+ */
+function callerSites() {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = STACK_FRAMES;
+  try {
+    return callSites(new Error('call site').stack);
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+}
 
 /**
  * The counters of a file before a request, with the coverage object they were
@@ -277,15 +337,18 @@ function errorText(thrown) {
 
 /**
  * Send a request through `send` and record the exchange for the running test:
- * the request, the response (or the error the send threw, thrown again), and
- * what ran between the start of the send and the end of the response's body.
- * An exchange that runs while another of this worker is in flight is marked
- * overlapped, and so is the other one.
+ * the request, the response (or the error the send threw, thrown again), what
+ * ran between the start of the send and the end of the response's body, and
+ * where the send was called from (`from`, taken by the caller at the call:
+ * after an await the stack no longer holds it). An exchange that runs while
+ * another of this worker is in flight is marked overlapped, and so is the
+ * other one.
  * @param {Request} request
  * @param {(request: Request) => Response | Promise<Response>} send
+ * @param {Array<[string, number]>} [from] The call sites of the send (callSites).
  * @returns {Promise<Response>}
  */
-export async function recordExchange(request, send) {
+export async function recordExchange(request, send, from = []) {
   const list = exchangeList();
   const copy = request.body === null || request.bodyUsed ? null : request.clone();
   const sent = await requestPart(request, copy);
@@ -314,6 +377,7 @@ export async function recordExchange(request, send) {
     ...(received ? { response: received } : {}),
     ...(flight.overlapped ? { overlapped: /** @type {const} */ (true) } : {}),
     ...(failure ? { error: errorText(failure.thrown) } : {}),
+    ...(from.length > 0 ? { from } : {}),
     ran,
   });
   if (failure) throw failure.thrown;
@@ -349,7 +413,7 @@ function sentBy(app, request, args) {
 /**
  * Make a Hono app record each request sent with its `request` (an instance
  * field): the request is built as Hono builds it, then recorded around the
- * app's real `fetch`.
+ * app's real `fetch`, with the call sites of the call.
  * @template {{ request: (...args: any[]) => unknown, fetch: (...args: any[]) => unknown }} App
  * @param {App} app
  * @returns {App}
@@ -357,8 +421,10 @@ function sentBy(app, request, args) {
 export function recordRequests(app) {
   const request = app.request;
   app.request = (/** @type {unknown[]} */ ...args) => {
+    // Taken before anything else: the stack holds the caller only until the first await.
+    const from = callerSites();
     const [sent, ...rest] = sentBy(app, request, args);
-    return recordExchange(sent, (built) => /** @type {Response | Promise<Response>} */ (app.fetch(built, ...rest)));
+    return recordExchange(sent, (built) => /** @type {Response | Promise<Response>} */ (app.fetch(built, ...rest)), from);
   };
   return app;
 }

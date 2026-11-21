@@ -561,17 +561,20 @@ vi.mock('hono', async (importOriginal) => {
 
 - `vi.mock` は、アプリの中の setup ファイルに置く。<br>`packages/` の下の setup ファイルの `vi.mock` を、Vitest はアプリのテストに当てない
 - 子クラスは、作られたときに `request` を包む（`recordRequests`）。<br>`basePath` が作るアプリ（Hono は親のクラスで作る）も包む
+- 包んだ `request` は、最初に呼び出しの履歴を写す（`callerSites`、[送った行](#送った行)）。<br>`await` の後では、呼んだテストの行が履歴に無いからである
 - 包んだ `request` は、元の `request` を一度、引数を受け取るだけの `fetch` で呼ぶ（`sentBy`）。<br>Hono が作る Request（パスだけなら `http://localhost` に解いたもの）と、`fetch` への残りの引数を得る
 - その Request を、アプリの本物の `fetch` に同じ引数で渡す
 - 元の `request` が `fetch` を呼ばなければ投げる。<br>Hono の作りが変わったことを、計測した実行の失敗で知らせる
 - `src/test-support` は関数カタログの外で、CLI も写さない
 
 `express` と `fastify` に組み込むテスト（`web/*/apply.test.ts`）では、組み込みのコードが OP の Hono の `request` を呼ぶので、その分も記録される。
+ただし、その `request` はフレームワークが後で呼ぶコールバックの中から呼ばれるので、呼び出しの履歴にテストの行が無い。
+⑤ は、そのやり取りをテストの例にもテストの「送ったリクエスト」にもしない（[送った行](#送った行)）。
 `WebRouter`（`web/web-router.ts`）は Hono ではないので、その単体のテストは記録しない。
 
 #### 一つのやり取り
 
-`recordExchange(request, send)` は、一つの送信を次の順に記録する。
+`recordExchange(request, send, from)` は、一つの送信を次の順に記録する（`from` は、呼んだ側が呼んだときに写した呼び出しの履歴）。
 
 1. 記録を足す一覧を、始めたときのテストのものに決める
 2. Request に本文があれば写し（`clone()`）を取り、その本文を読む（アプリは元の本文を全部読める）
@@ -580,7 +583,7 @@ vi.mock('hono', async (importOriginal) => {
 5. `send(request)` で送る。投げたら、その値を持っておく
 6. 応答があれば、写しから本文を読む
 7. 計数を写しと比べ、増えたものを元の位置にする（`ranSince`）
-8. やり取りを一覧に足す
+8. やり取りを一覧に足す（`from` が空でなければ、それも置く）
 9. 送信が投げていれば同じ値を投げ、そうでなければ応答を返す
 
 - 応答の本文を計数を比べる前に読むのは、ストリームの本文では、読む間にアプリのコードが走るからである
@@ -593,6 +596,25 @@ vi.mock('hono', async (importOriginal) => {
 テストは一つずつ走るが、一つのテストが `Promise.all` で同時に送ることはある。
 そのときは計数が混ざるので、重なったやり取りの両方に印を付ける。
 ⑤ は、印のあるやり取りを結ばない。
+
+#### 送った行
+
+`callSites(stack)` は、送ったときに作った `Error` の `stack` を、フレームごとの `[場所, 行]` にする（内側から順）。
+`callerSites` が `Error.stackTraceLimit` を一時 64 にして呼ぶ（既定の 10 では、ヘルパーとランナーの間でテストの行に届かないことがある）。
+
+- V8 の `at 名前 (場所:行:列)`、`at 場所:行:列`、その前の `async ` を読む
+- `file://` の URL はパスにし、モジュールに付いた `?v=…` のようなクエリは取る
+- `packages/test-reach/src/` のフレーム（記録するコード自身）、`node_modules` のもの、絶対パスでない場所（`node:`、内部）は捨てる
+- 続く同じ場所と同じ行は一つにする
+
+Vitest はソースマップを当てた履歴を作るので、行はテストのファイルの元の行である。
+`await` を挟む非同期の関数のフレームも V8 が残すので、`const response = await exchangeCode();` のように、テストがヘルパーを通して送ったものも、テストの行に届く。
+フレームワークが後で呼ぶコールバック（`setImmediate` や `process.nextTick` で回るもの）の中から送ったものは、テストの行に届かない。
+
+レポーターは、場所をリポジトリからのパスにし、リポジトリの外のものを捨てる（`repositorySites`）。
+どの行がテストの行かは ⑤ が決める（[⑤-11-b の「送った行」](05-data.md#送った行)）。
+
+例：トークンのテストの `should stop accepting an online refresh token once its login session has ended` が 378 行で `refresh(...)` を呼ぶと、`from` は `[["apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts", 56], [同じファイル, 66], [同じファイル, 378]]` になる（56 行は `post`、66 行は `refresh` のヘルパー）。
 
 #### 走ったもの
 
@@ -642,6 +664,7 @@ interface RawExchange {
   response?: { status: number; statusText?: string; headers: Array<[string, string]>; body?: string; truncated?: true };
   overlapped?: true; // ほかのやり取りと重なった
   error?: string; // 送信が投げた値（`TypeError: …`）。このとき response は無い
+  from?: Array<[string, number]>; // 送った呼び出しの履歴。リポジトリからのパスと行、内側から順（送った行）
   ran: Record<string, { s: Array<[number, number, number]>; b: Array<[number, number, string, number[]]>; f: Array<[number, string] | [number]> }>;
 }
 ```
@@ -689,8 +712,8 @@ authorization_code の要求では、同じ分岐が `[1, 1]` になる。
 
 - `packages/test-reach/src/vitest-setup.js`：`snapshot`、`reachedSince`
 - `packages/test-reach/src/coverage.js`：`coverageNow`、`originalPosition`、`functionStart`、`functionName`、`sourcePath`、`sourceMapOf`
-- `packages/test-reach/src/exchanges.js`：`recordExchange`、`countersNow`、`ranSince`、`bodyText`、`resetExchanges`、`takeExchanges`、`recordingHono`、`recordRequests`、`sentBy`
-- `packages/test-reach/src/vitest-reporter.js`：`TestReportsReporter`、`rawReachOf`、`rawExchangesOf`、`describePath`、`testKeyOf`、`catalogRan`
+- `packages/test-reach/src/exchanges.js`：`recordExchange`、`callSites`、`callerSites`、`countersNow`、`ranSince`、`bodyText`、`resetExchanges`、`takeExchanges`、`recordingHono`、`recordRequests`、`sentBy`
+- `packages/test-reach/src/vitest-reporter.js`：`TestReportsReporter`、`rawReachOf`、`rawExchangesOf`、`repositorySites`、`describePath`、`testKeyOf`、`catalogRan`
 - `apps/hono/src/test-support/record-exchanges.ts`
 
 ## ②-4 ソースマップの読み取り

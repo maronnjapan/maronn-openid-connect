@@ -225,7 +225,7 @@ flowchart TB
 - `out` が無いときも、索引とアウトラインは組み立てる
 - そのときはファイルを書かないので、項目の `card` は無く、`sources` は空になる
 - 最後にログに一行足す（形は [⑦-2](07-build-ci.md#-2-データの段)）
-- 地図に返すのは `{ sections }` で、PR のビルドでなければ空の列である（[④-8](04-pull-request.md#-8-書き出しと検査)）
+- 地図に返すのは `{ alerts, sections }` で、PR のビルドでなければどちらも空の列である（[④-8](04-pull-request.md#-8-書き出しと検査)）
 
 実装：`packages/test-catalog/src/build.ts`（`buildTests`、`TestBuildOptions`）
 

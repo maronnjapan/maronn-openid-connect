@@ -211,7 +211,7 @@ interface TestFile {
 [①-6](#-6-ヘルパー) は、この中に宣言された関数だけを、ほかのファイルのヘルパーとして認める。
 [①-3-d](#-3-d-describe-が名指す関数とコード)（製品のコードの判定）と [①-5-g](#-5-g-iteach-の表)（表の定数）も、この判定を使う。
 
-`isTestSupportPath(path)` は次の順で決める。
+地図の `isTestSupportPath(path)` は次の順で決める。
 
 | 順 | 条件 | 結果 |
 |---|---|---|
@@ -248,8 +248,8 @@ interface TestFile {
 
 実装：
 
-- `packages/test-catalog/src/discover.ts`：`listFiles`、`testFileOf`、`testFiles`、`TOOL_ROOTS`、`isTestSupportPath`、`supportFiles`
-- `packages/map-analysis/src/roots.ts`：`isTestPath`、`readRoots`
+- `packages/test-catalog/src/discover.ts`：`listFiles`、`testFileOf`、`testFiles`、`TOOL_ROOTS`、`supportFiles`、`isTestSupportPath` の再エクスポート
+- `packages/map-analysis/src/roots.ts`：`isTestPath`、`isTestSupportPath`、`readRoots`
 
 ## ①-2 型で読む準備
 

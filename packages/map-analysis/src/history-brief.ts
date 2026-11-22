@@ -197,14 +197,16 @@ function namedOf(id: string, name: string): Named {
  * The sections of the change notes of a change that are about a function: as
  * the map attaches them (notes.ts attachNotes), a section is about each
  * changed function one of its references resolves to (by id, by name, by
- * `root:name` or `module#name`).
+ * `root:name` or `module#name`). With `byId` (an endpoint body, which the map
+ * makes a frame of only when its own lines changed, and never when it has
+ * none), only the sections that name it by its id.
  */
-function notesOn(detail: HistoryDetail | undefined, entry: HistoryEntry, id: string, also: readonly Named[] = []): Array<{ path: string; heading: string; text: string }> {
-  const changed = [...entry.functions.map((change) => namedOf(change.id, change.name)), ...also];
+function notesOn(detail: HistoryDetail | undefined, entry: HistoryEntry, id: string, byId = false): Array<{ path: string; heading: string; text: string }> {
+  const changed = entry.functions.map((change) => namedOf(change.id, change.name));
   const found: Array<{ path: string; heading: string; text: string }> = [];
   for (const note of detail?.notes ?? []) {
     for (const section of parseNote(note.text).sections) {
-      const about = section.references.some((reference) => resolveReference(reference, changed).some((target) => target.id === id));
+      const about = byId ? section.references.includes(id) : section.references.some((reference) => resolveReference(reference, changed).some((target) => target.id === id));
       if (about && section.text.trim() !== '') found.push({ path: note.path, heading: section.heading, text: section.text.trim() });
     }
   }
@@ -436,14 +438,12 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
   else {
     lines.push(`- このファイルを変えた変更: ${all.length}（新しい順）`, ...READING_NOTES, '');
     const lineHistory = place !== undefined ? `この行だけの履歴は \`git log --first-parent -L ${place.start},${place.end}:${shellWord(place.path)}\` で読める。` : bodyPath !== undefined ? `このファイルの履歴は \`git log --first-parent -p -- ${shellWord(bodyPath)}\` で読める。` : '';
-    lines.push(`エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイル${bodyPath === undefined ? '' : `（${bodyPath}）`}を変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。${lineHistory}`, '');
+    lines.push(`エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイル${bodyPath === undefined ? '' : `（${bodyPath}）`}を変えた変更を、変更メモのうちこの処理を id（\`<!-- ${id} -->\`）で挙げた節と、このファイルの関数の外の差分（import や型を含む）で並べる。${lineHistory}`, '');
     const handlers = body.calls.filter((call) => own(map.functions, call) !== undefined);
     if (handlers.length > 0) lines.push(`この処理が呼ぶ関数には、関数ごとの履歴がある: ${handlers.slice(0, 8).map((call) => `\`${call}\``).join('、')}${handlers.length > 8 ? ` ほか ${handlers.length - 8}` : ''}`, '');
   }
   if (history.shallow === true) lines.push('浅い clone から読んだ履歴なので、古い変更は無い。', '');
   if (options.only !== undefined && entries.length === 0) lines.push(body === undefined ? 'この変更は、この関数を変えていない。' : 'この変更は、このファイルを変えていない。', '');
-  // The map names the frame of an endpoint body by its endpoint (`## token`), as the change notes do.
-  const named = body === undefined ? [] : [{ id, name: body.endpoint, package: body.package, module: body.module }];
   for (const entry of entries.slice(0, limit)) {
     const change = entry.functions.find((candidate) => candidate.id === id);
     lines.push(`## ${titleOf(entry)}`, '', `- キー: ${keyOf(history, entry)} · ${entry.date.slice(0, 10)} · ${change === undefined ? '' : `${STATUS_WORDS[change.status]} · `}作成者: ${entry.authors.join('、')}`);
@@ -453,7 +453,7 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
     const detail = details.get(entry.commit);
     const unread = detail === undefined && entry.detail !== undefined;
     if (unread && entry.notes.length > 0) lines.push(`変更メモ（${entry.notes.join('、')}）を読めなかった。`, '');
-    for (const section of notesOn(detail, entry, id, named)) lines.push(`変更メモ ${section.path} の「${section.heading}」:`, '', fenced('markdown', section.text), '');
+    for (const section of notesOn(detail, entry, id, body !== undefined)) lines.push(`変更メモ ${section.path} の「${section.heading}」:`, '', fenced('markdown', section.text), '');
     lines.push(...(bodyPath === undefined ? diffLines(entry, detail, unread, id) : outsideLines(entry, detail, unread, bodyPath)));
   }
   if (entries.length > limit) lines.push(`ほか ${entries.length - limit} 件の古い変更（--limit で増やせる）。`, '');

@@ -317,8 +317,8 @@ describe('a function for an AI', () => {
     const bodyDetail: HistoryDetail = { version: 1, commit: touching.commit, notes: [{ path: 'remove.md', text: '## token <!-- hono:token#body -->\n\nRAR のステップを外した。\n\n## verify\n\n別。\n\n## token\n\n名前だけの節。\n' }], files: [{ path, status: 'modified', functions: [], outside: [{ base: 50, head: 50, lines: ['-  rar(c),', '+  next(c),'] }] }] };
     const withBody: HistoryData = { version: 1, entries: [touching, ...history.entries], functions: {} };
     const brief = functionBrief(map, withBody, 'hono:token#body', new Map([[touching.commit, bodyDetail]]));
-    expect(brief).toContain('エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイル（apps/hono/src/oidc-provider/endpoints/token/pipeline.ts）を変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。この行だけの履歴は `git log --first-parent -L 5,40:apps/hono/src/oidc-provider/endpoints/token/pipeline.ts` で読める。');
-    expect([brief.includes('- このファイルを変えた変更: 1（新しい順）'), brief.includes('RAR のステップを外した。'), brief.includes('別。'), brief.includes('名前だけの節。'), brief.includes('-  rar(c),\n+  next(c),')]).toEqual([true, true, false, true, true]);
+    expect(brief).toContain('エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイル（apps/hono/src/oidc-provider/endpoints/token/pipeline.ts）を変えた変更を、変更メモのうちこの処理を id（`<!-- hono:token#body -->`）で挙げた節と、このファイルの関数の外の差分（import や型を含む）で並べる。この行だけの履歴は `git log --first-parent -L 5,40:apps/hono/src/oidc-provider/endpoints/token/pipeline.ts` で読める。');
+    expect([brief.includes('- このファイルを変えた変更: 1（新しい順）'), brief.includes('RAR のステップを外した。'), brief.includes('別。'), brief.includes('名前だけの節。'), brief.includes('-  rar(c),\n+  next(c),')]).toEqual([true, true, false, false, true]);
     expect([functionsNamed(map, withBody, 'POST /token', touching), functionsNamed(map, withBody, 'POST /token', merged)]).toEqual([['hono:token#body'], []]);
   });
 

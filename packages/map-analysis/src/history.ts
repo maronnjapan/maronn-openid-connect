@@ -664,8 +664,9 @@ function gitMaybe(repository: string, args: readonly string[]): string | undefin
 /**
  * The newest commit of the first-parent history of a ref that brought code
  * HEAD has: after the newest commit that is HEAD's (found by halves: the older
- * ones are HEAD's too), the newest that brought a commit of HEAD's (its merge
- * base with HEAD is not in the commit before it), as a merge of a branch that
+ * ones are HEAD's too), the newest that brought a commit of HEAD's (one of its
+ * merge bases with HEAD, all of them as git lists them where histories cross,
+ * is not in the commit before it), as a merge of a branch that
  * goes on without merging main back, or of a branch stacked on HEAD's. So the
  * history reaches every commit of HEAD's that main has, as far as the changes
  * of a pull request start (git merge-base), and a merge, squash or push of
@@ -685,9 +686,9 @@ function newestHeld(repository: string, ref: string): string | undefined {
     else low = middle + 1;
   }
   for (let index = 0; index < low; index += 1) {
-    const shared = gitMaybe(repository, ['merge-base', chain[index] as string, 'HEAD']);
+    const shared = (gitMaybe(repository, ['merge-base', '--all', chain[index] as string, 'HEAD']) ?? '').split('\n').filter((sha) => sha !== '');
     const before = chain[index + 1] as string;
-    if (shared !== undefined && spawnSync('git', ['merge-base', '--is-ancestor', shared, before], { cwd: repository }).status !== 0) return chain[index];
+    if (shared.some((base) => spawnSync('git', ['merge-base', '--is-ancestor', base, before], { cwd: repository }).status !== 0)) return chain[index];
   }
   return chain[low];
 }

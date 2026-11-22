@@ -244,6 +244,36 @@ describe('mainRevision', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it('should count a merge that brought a commit of HEAD where the histories cross, whichever merge base git puts first', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'map-history-crossed-'));
+    const at = (day: number) => ({ GIT_AUTHOR_DATE: `2026-01-0${day}T10:00:00Z`, GIT_COMMITTER_DATE: `2026-01-0${day}T10:00:00Z` });
+    try {
+      git(directory, ['init', '-q', '-b', 'main']);
+      git(directory, ['config', 'user.name', 'Maintainer']);
+      git(directory, ['config', 'user.email', 'maintainer@example.com']);
+      git(directory, ['config', 'commit.gpgsign', 'false']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'A'], at(1));
+      git(directory, ['checkout', '-q', '-b', 'work']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'W1'], at(2));
+      git(directory, ['checkout', '-q', 'main']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'B'], at(3));
+      const b = git(directory, ['rev-parse', 'HEAD']).trim();
+      // The branch merges main (B) back before it fetches the merge of its first pull request.
+      git(directory, ['checkout', '-q', 'work']);
+      git(directory, ['merge', '-q', '--no-ff', '-m', 'Merge stale main', b], at(4));
+      git(directory, ['checkout', '-q', 'main']);
+      git(directory, ['merge', '-q', '--no-ff', '-m', 'Merge pull request #1', 'work~1'], at(5));
+      const merge = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', merge]);
+      git(directory, ['checkout', '-q', 'work']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'W3'], at(6));
+      // git merge-base gives B (the newer of B and W1), which main had already.
+      expect([git(directory, ['merge-base', merge, 'HEAD']).trim() === b, mainRevision(directory)]).toEqual([true, { revision: merge, from: 'origin/main' }]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('readHistory', () => {

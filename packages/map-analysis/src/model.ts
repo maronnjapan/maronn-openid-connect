@@ -408,6 +408,39 @@ export interface SourceDocument {
   foreground: string;
   background: string;
   tokens: Array<Array<{ content: string; color: string }>>;
+  /** The names of the code and the declarations they go to (symbols.ts); absent in older data. */
+  links?: SourceLinks;
+  /**
+   * The places that use each declaration of the file: `line:column` of the
+   * declaration's name → the uses as [file, line, column]. A declaration
+   * nothing else uses has none.
+   */
+  uses?: Record<string, Array<[string, number, number]>>;
+}
+
+/** The kind of declaration a name of the code goes to. */
+export type LinkKind = 'function' | 'method' | 'property' | 'interface' | 'type' | 'class' | 'enum' | 'enum-member' | 'variable' | 'parameter' | 'type-parameter' | 'module' | 'other';
+
+/** A declaration a name of the code goes to (symbols.ts). */
+export interface LinkTarget {
+  /** The source file of the declaration, a key of MapData.sources. */
+  file: string;
+  /** The line (1-based) and the column (0-based, in UTF-16 code units) of the declaration's name; a module is its first line. */
+  line: number;
+  column: number;
+  name: string;
+  kind: LinkKind;
+  /** The function of the catalog it declares. */
+  function?: string;
+  /** The member of an interface it declares, a key of MapData.members. */
+  member?: string;
+}
+
+/** The names of a source file and the declarations they go to. */
+export interface SourceLinks {
+  targets: LinkTarget[];
+  /** Each name as four numbers: its line (1-based), its column (0-based), its length, and the index of its target. */
+  refs: number[];
 }
 
 /** A registration or a constructed value whose endpoint destination needs its own evidence, rather than an invented call edge. */

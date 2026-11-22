@@ -10,7 +10,9 @@
  * - in the map of a pull request (MAP_BASE), every change that reaches an
  *   endpoint, and every change of an endpoint body, has a change note;
  * - with a measured run, every way the requests name is a ready-made choice
- *   of its root, and every request says the line of its test that sent it.
+ *   of its root, and every request says the line of its test that sent it;
+ * - every link of the code (Ctrl/⌘ + click in the code view) sits on a name
+ *   and goes to the name of a declaration in a file the map carries.
  *
  * It measures the map, not the code it reads: a failure of the first two is
  * a bug of the map. Prints the measures, and exits with 1 on a failure.
@@ -20,7 +22,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkMap } from '@maronn-openid-connect/map-analysis';
+import { checkLinks, checkMap } from '@maronn-openid-connect/map-analysis';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // pnpm passes on the `--` before the arguments of a script.
@@ -46,6 +48,9 @@ console.log(
     `${data.requests === undefined ? 'no measured requests' : `the requests of ${metrics.requests.ways} ways of ${metrics.requests.roots} roots (${metrics.requests.examples} requests, ${metrics.requests.unmatched} ways no choice is)`}`,
 );
 for (const [framework, names] of Object.entries(metrics.token)) console.log(`  /token (${framework}): ${names.join(' | ')}`);
+const links = checkLinks(new Map(Object.entries(data.sources).map(([id, source]) => [id, JSON.parse(readFileSync(fileOf(source.url), 'utf8'))])));
+console.log(`Checked the links of the code: ${links.links} names in ${Object.keys(data.sources).length} files, ${links.broken.length} broken`);
+failures.push(...links.broken.slice(0, 20), ...(links.broken.length > 20 ? [`… and ${links.broken.length - 20} more broken links of the code`] : []));
 if (failures.length > 0) {
   for (const failure of failures) console.error(`✗ ${failure}`);
   process.exit(1);

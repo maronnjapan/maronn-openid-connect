@@ -31,9 +31,9 @@ export interface Fixture {
  * function of them; `endpoints` adds endpoint bodies, `steps` the steps of
  * functions.
  */
-export function compile(files: Record<string, string>, options: { endpoints?: EndpointSource[]; steps?: Record<string, StepMark>; summaries?: Record<string, string> } = {}): Fixture {
+export function compile(files: Record<string, string>, options: { endpoints?: EndpointSource[]; steps?: Record<string, StepMark>; summaries?: Record<string, string>; links?: boolean; compilerOptions?: Record<string, unknown> } = {}): Fixture {
   const directory = mkdtempSync(join(tmpdir(), 'map-analysis-'));
-  writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'bundler', strict: true, noEmit: true, types: [] }, include: ['src/**/*'] }));
+  writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'bundler', strict: true, noEmit: true, types: [], ...options.compilerOptions }, include: ['src/**/*'] }));
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(directory, 'src', path)), { recursive: true });
     writeFileSync(join(directory, 'src', path), text);
@@ -48,6 +48,7 @@ export function compile(files: Record<string, string>, options: { endpoints?: En
     stepOf: (id) => options.steps?.[id],
     joinLines,
     joinLinesFlat: joinLines,
+    ...(options.links === true ? { links: { isFunction: (id: string) => /#[a-z]\w*$/.test(id) } } : {}),
   });
   return {
     revision,

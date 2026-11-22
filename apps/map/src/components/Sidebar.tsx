@@ -17,7 +17,8 @@ export interface SidebarProps {
   onEndpoint: (id: string) => void;
   onChanges: () => void;
   onWiring: () => void;
-  page: 'endpoint' | 'changes' | 'wiring';
+  onHistory: () => void;
+  page: 'endpoint' | 'changes' | 'wiring' | 'history';
 }
 
 /** The tier of a feature in words: on by default, of the experimental package, or a login method of an extension. */
@@ -28,7 +29,7 @@ const TIER_LABELS: Record<MapFeature['tier'], string> = { stable: '既定', expe
  * make the configuration (folded, so the list stays short). In the map of a
  * pull request, an endpoint whose diagram shows a change carries its badge.
  */
-export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint, onChanges, onWiring, page }: SidebarProps) {
+export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint, onChanges, onWiring, onHistory, page }: SidebarProps) {
   const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, endpoint)])), [changes, endpoints]);
   const rows: React.ReactNode[] = [];
   let group: string | null = null;
@@ -75,6 +76,11 @@ export function Sidebar({ data, changes, framework, enabled, endpoints, selected
         <button type="button" aria-current={page === 'wiring' ? 'page' : undefined} onClick={onWiring}>
           追えない配線 <span className="count">{data.wiring?.length ?? 0}</span>
         </button>
+        {data.history !== undefined ? (
+          <button type="button" aria-current={page === 'history' ? 'page' : undefined} onClick={onHistory} title="main に入った PR ごとに、何を変えたか">
+            変更の履歴
+          </button>
+        ) : null}
       </div>
       <details className="features">
         <summary>

@@ -11,6 +11,7 @@ import { Chips, Description } from './Parts';
 import { ScreenHeader } from './ScreenHeader';
 import { Trace } from './Trace';
 import { fetchFrame } from './useFrames';
+import { FunctionHistory } from './HistoryScreen';
 
 export interface FunctionScreenProps {
   data: MapData;
@@ -27,6 +28,8 @@ export interface FunctionScreenProps {
   onOpenStep: (endpoint: string, step: string) => void;
   onOpenEndpoint: (endpoint: string) => void;
   onFramework: (framework: string) => void;
+  /** Open a change of the history of main by its key. */
+  onOpenHistory: (key: string) => void;
 }
 
 /** How a step reaches the function, in words. */
@@ -41,7 +44,7 @@ function wayOf(use: EndpointUse): string {
  * whose file holds it, the steps that reach it, and the functions that call
  * it. Moving up to a caller starts a new trace (a trace goes down).
  */
-function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOpenEndpoint, onFramework }: Omit<FunctionScreenProps, 'changes' | 'trace' | 'enabled' | 'canGoBack' | 'onTrace' | 'onBack'>) {
+function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOpenEndpoint, onFramework }: Omit<FunctionScreenProps, 'changes' | 'trace' | 'enabled' | 'canGoBack' | 'onTrace' | 'onBack' | 'onOpenHistory'>) {
   const uses = useMemo(() => endpointsUsing(data, flow, card.id), [data, flow, card]);
   const homes = useMemo(() => [...new Set([...endpointsRootedAt(flow, card.id), ...endpointsInModule(flow, card)])], [flow, card]);
   const callers = callersOf(data, card);
@@ -206,6 +209,12 @@ export function FunctionScreen(props: FunctionScreenProps) {
                 const shown = data.functions[frameId];
                 return shown === undefined ? <p className="note">図に出しているのはエンドポイントの処理の本体です。</p> : <Callers {...props} card={shown} />;
               },
+            },
+            {
+              id: 'history',
+              label: '変えた PR',
+              // The changes of main that touched the function the diagram shows.
+              content: (frameId) => (data.functions[frameId] === undefined ? <p className="note">図に出しているのはエンドポイントの処理の本体です。</p> : <FunctionHistory data={data} id={frameId} onOpenEntry={props.onOpenHistory} />),
             },
           ]}
         />

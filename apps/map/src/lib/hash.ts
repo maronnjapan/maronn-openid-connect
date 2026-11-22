@@ -5,6 +5,7 @@
  *     #<framework>--fn--<name>[--<package>--<module>][/<frame>]...[;...]
  *     #<framework>--changes   (#changes too)
  *     #<framework>--wiring    (#wiring too)
+ *     #<framework>--history[--<change>]   (#history too; a change is `pr-<number>` or the start of a commit)
  *
  * A frame is the chain of call nodes that opened it, joined with dots
  * (`/s0b1s0/s0b1s0.s2`); a decision is keyed by its frame and node the same
@@ -31,6 +32,8 @@ export interface View {
   changes?: boolean;
   /** The inventory of wiring whose endpoint destination the analysis cannot establish. */
   wiring?: boolean;
+  /** The history of main: '' for the list of its changes, else the key of one change (`pr-207`, the start of a commit). */
+  history?: string;
   trace: TraceState;
   /** A node the trace selects once it shows, keyed like a decision (the changed node a way leads to); not in the hash. */
   target?: string;
@@ -103,6 +106,7 @@ export function buildHash(view: View, data: MapData): string {
   }
   if (view.changes === true) return `${view.framework}--${CHANGES}`;
   if (view.wiring === true) return `${view.framework}--wiring`;
+  if (view.history !== undefined) return `${view.framework}--history${view.history === '' ? '' : `--${view.history}`}`;
   if (view.endpoint !== null) return `${view.framework}--${view.endpoint}${view.step === null ? '' : `--${view.step}`}${trace}`;
   return '';
 }
@@ -119,6 +123,12 @@ function functionOf(data: MapData, parts: readonly string[]): string | undefined
   return cards[0]?.id;
 }
 
+/** The change of the history a hash names after `history`: its key, or '' for the list. */
+function historyKey(parts: readonly string[]): string {
+  const key = parts.join('--');
+  return /^(pr-\d+|[0-9a-f]{7,40})$/.test(key) ? key : '';
+}
+
 /** The view a hash names, over the given defaults; an unknown hash changes nothing. */
 export function parseHash(hash: string, data: MapData, defaults: View): View {
   const text = hash.replace(/^#/, '');
@@ -128,6 +138,7 @@ export function parseHash(hash: string, data: MapData, defaults: View): View {
   const parts = head.split('--').map(decode);
   if (parts[0] === CHANGES && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, changes: true, trace: EMPTY_TRACE };
   if (parts[0] === 'wiring' && parts.length === 1) return { framework: defaults.framework, endpoint: null, step: null, fn: null, wiring: true, trace: EMPTY_TRACE };
+  if (parts[0] === 'history') return { framework: defaults.framework, endpoint: null, step: null, fn: null, history: historyKey(parts.slice(1)), trace: EMPTY_TRACE };
   if (parts[0] === 'fn') {
     const fn = functionOf(data, parts.slice(1));
     return fn === undefined ? defaults : { ...defaults, fn, trace };
@@ -140,6 +151,7 @@ export function parseHash(hash: string, data: MapData, defaults: View): View {
   }
   const view: View = { framework, endpoint: null, step: null, fn: null, trace };
   const flow = data.flows[framework];
+  if (parts[1] === 'history') return { ...view, history: historyKey(parts.slice(2)), trace: EMPTY_TRACE };
   const endpoint = flow?.endpoints.find((candidate) => candidate.id === parts[1]);
   if (endpoint === undefined) return parts[1] === CHANGES ? { ...view, changes: true, trace: EMPTY_TRACE } : parts[1] === 'wiring' ? { ...view, wiring: true, trace: EMPTY_TRACE } : { ...view, trace: EMPTY_TRACE };
   view.endpoint = endpoint.id;

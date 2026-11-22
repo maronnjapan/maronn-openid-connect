@@ -332,6 +332,25 @@ MAP_BASE からの差分で、まだ節の無い関数ごとに見出し（`## �
 MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft
 ```
 
+## 変更の履歴
+
+左の一覧の「変更の履歴」（`#<framework>--history`）は、main に入った変更を新しい順に並べる。
+PR のマージとスカッシュ、PR を通さずに push したコミットとマージで、PR を通さないものは赤い「PR なし」の札で示す。
+別のブランチにマージされた PR（main を pull したマージを push したときなど）は、それを main に入れた変更の中に「この変更で main に入った PR」として並べ、番号でも開ける。
+浅い clone の最も古いコミットは、何を変えたかが分からないので、ファイルと関数を並べない。
+タイトル・関数・ブランチ・番号（`#207`）で絞り込め、関数を変えたものだけ、PR を通さないものだけにも絞れる。
+
+変更を押すと、その変更のページ（`#<framework>--history--pr-207`、PR の無いものはコミットの先頭）を開く。
+生成 AI が作った PR でも、何をしたかを後から追えるよう、次を並べる。
+
+- PR の本文（ビルドに `MAP_PULLS` を渡したとき）と、その PR が足した変更メモ（GitHub のそのコミットのファイルへのリンク）
+- 足した・変えた・消した関数。関数カタログと同じ読み方（行頭の `function` 宣言、JSDoc から本体の終わりまで）で、変更前後のテキストと差分の行から求める。今もある関数は、関数のページとコードを読むページへ開ける
+- 今の地図で、その関数が届くエンドポイント（選んでいるフレームワークの）
+- コミット（ブランチのコミットを古い順に）と、変えたファイル
+
+関数のページの右の欄の「変えた PR」タブは、その関数を変えた変更を新しい順に並べ、押すとその変更のページを開く。
+データは `history/<hash>.json`（後の「データとビルド」）で、ページを開いたときに一度だけ読む。
+
 ## コードの Drawer
 
 エンドポイントの見出しの「コードを見る」や、詳細と関数のページの「コードを見る」で、右からコードの Drawer を開く。
@@ -484,7 +503,8 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/camera.ts`：図を開く倍率と位置、選んだ箱が見える所までの移動
 - `src/lib/playback.ts`：フローの再生。トレースが開いているフレームを通る歩み（`@maronn-openid-connect/map-analysis/walk`）、図の箱ごとの場面、場面の行、場面の時間と速さ、もう一段開く呼び出し
 - `src/lib/flowchart.ts`：フローのフローチャート。図を始まり・処理・ひし形・終端とサブグラフにし、矢印のラベルとステップの間の値を付け、終端を箱の横に置く配置、場面の列が通る箱と矢印
-- `src/lib/hash.ts`：URL のハッシュ（`#hono--token/s4/s4.s2;d=s4.s1:true`、`#hono--token;p`、`#hono--fn--verifyClientSecret`、`#hono--changes`、`#hono--wiring`）
+- `src/lib/history.ts`, `src/components/HistoryScreen.tsx`：変更の履歴（一覧の絞り込み、変更のキー、関数を変えた変更、今の地図で届くエンドポイント、GitHub へのリンク）と、その画面と関数のページのタブ
+- `src/lib/hash.ts`：URL のハッシュ（`#hono--token/s4/s4.s2;d=s4.s1:true`、`#hono--token;p`、`#hono--fn--verifyClientSecret`、`#hono--changes`、`#hono--wiring`、`#hono--history--pr-207`）
 - `src/lib/changes.ts`：PR の変更の札（行と箱で共通）、下の変更の集計、変更に至る道筋の選択、届く経路の名前とまとめ方、失敗が捕まる場所、差分の行番号、変更メモの本文
 - `src/lib/words.ts`：アウトラインの行と図の箱の言葉（JSDoc、コメント、言葉の無い文の続き、`return` が返すもの、決定の側の名前）
 - `src/lib/model.ts`：機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { DiffHunk, HistoryData, HistoryEntry, HistoryFileDiff, MapData } from '../types';
-import { aiMarkdown, changeUrl, changesOf, commitUrl, dayOf, endpointsReached, entryKey, entryOf, filterEntries, functionCounts, omittedWords, withoutPullRequest, type HistoryFilter } from '../lib/history';
+import { changeUrl, changesOf, commitUrl, dayOf, endpointsReached, entryKey, entryOf, filterEntries, functionCounts, omittedWords, withoutPullRequest, type HistoryFilter } from '../lib/history';
 import { codeHash } from '../code/lib';
 import { DiffView } from './ChangeParts';
 import { useHistory, useHistoryDetail } from './useHistory';
@@ -167,66 +167,17 @@ function DiffFold({ summary, hunks, omitted, open, onToggle }: { summary: ReactN
   );
 }
 
-/** The buttons that hand a change to an AI: its intent, where it reaches and the diff of the provider's code only, as Markdown copied or saved. */
-function AiHandoff({ markdown, name, chosen, onScope, scope, ready }: { markdown: string; name: string; chosen: number; scope: 'all' | 'chosen'; onScope: (scope: 'all' | 'chosen') => void; ready: boolean }) {
-  const [copied, setCopied] = useState<'copied' | 'failed' | undefined>(undefined);
-  /** Save the Markdown as a file: a link to it made at the click, and let go of once the browser has it. */
-  const save = () => {
-    const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${name}.md`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  };
-  return (
-    <div className="history-ai" role="group" aria-label="AI に渡す">
-      <div className="seg" role="group" aria-label="AI に渡す差分">
-        <button type="button" aria-pressed={scope === 'all'} onClick={() => onScope('all')}>
-          変更全体
-        </button>
-        <button type="button" aria-pressed={scope === 'chosen'} onClick={() => onScope('chosen')} disabled={chosen === 0} title={chosen === 0 ? '▸ で差分を開いた関数とファイルだけを渡します' : undefined}>
-          開いた差分だけ（{chosen}）
-        </button>
-      </div>
-      <button
-        type="button"
-        className="code-button"
-        disabled={!ready}
-        onClick={() => {
-          navigator.clipboard
-            .writeText(markdown)
-            .then(() => setCopied('copied'))
-            .catch(() => setCopied('failed'));
-        }}
-      >
-        AI に渡す形でコピー
-      </button>
-      <button type="button" className="link" disabled={!ready} onClick={save}>
-        Markdown で保存
-      </button>
-      <span className="note" role="status">
-        {!ready ? '差分を読み込んでから渡せます。' : copied === 'copied' ? 'コピーしました。' : copied === 'failed' ? 'コピーできませんでした。「Markdown で保存」を使ってください。' : `意図（PR の本文、変更メモ）、届くエンドポイント、OSS が出すコードの差分だけを Markdown にします（${Math.ceil(markdown.length / 1000)} 千字）。`}
-      </span>
-    </div>
-  );
-}
-
 /** One change: what it meant, what it did to the provider's code function by function, and where it reaches now. */
 function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, onOpenList, onOpenFunction, onOpenEndpoint }: HistoryScreenProps & { history: HistoryData }) {
   const [allFunctions, setAllFunctions] = useState(false);
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
-  const [scope, setScope] = useState<'all' | 'chosen'>('all');
   const entry = entryOf(history, key);
   const detail = useHistoryDetail(entry?.detail);
   const diff = detail instanceof Error ? undefined : detail;
   const reached = useMemo(() => (entry === undefined ? [] : endpointsReached(data, data.flows[framework], entry)), [data, framework, entry]);
-  const chosen = scope === 'chosen' && opened.size > 0;
-  const markdown = useMemo(() => (entry === undefined ? '' : aiMarkdown(history, entry, diff, reached, framework, chosen ? opened : undefined)), [history, entry, diff, reached, framework, chosen, opened]);
   // Another change starts with its diffs folded.
   useEffect(() => {
     setOpened(new Set());
-    setScope('all');
   }, [key]);
   /** Open or fold the diff of a function (by id) or of a file's changes outside its functions (by path). */
   const toggle = (place: string) =>
@@ -294,7 +245,6 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
         </div>
         {withoutPullRequest(entry) ? <p className="note">PR を通さずに main に入った{entry.kind === 'merge' ? 'マージ' : 'コミット'}です。この変更そのものは、レビューと地図のコメントを経ていません。</p> : null}
         {entry.boundary === true ? <p className="note">浅い clone の最も古いコミットなので、何を変えたかは分かりません（ファイルと関数を並べません）。</p> : null}
-        <AiHandoff markdown={markdown} name={entry.pr === undefined ? entry.commit.slice(0, 10) : `pr-${entry.pr}`} chosen={opened.size} scope={chosen ? 'chosen' : 'all'} onScope={setScope} ready={entry.detail === undefined || diff !== undefined} />
         {detail instanceof Error ? <p className="note">差分を読み込めませんでした: {detail.message}</p> : entry.detail !== undefined && detail === undefined ? <p className="note">差分を読み込んでいます…</p> : null}
       </header>
       <div className="changes-body">

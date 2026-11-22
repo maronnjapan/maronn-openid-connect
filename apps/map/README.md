@@ -470,6 +470,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 `MAP_PULLS` は、GitHub の PR の一覧の JSON ファイル（`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp` の出力）である。
 あれば、履歴の PR のタイトルは GitHub のものになり、PR の本文が付く。
 PR は番号と、その PR をマージしたコミット（`merge_commit_sha`）が変更のコミットと一致するときだけ対応づける。main の履歴には、別のリポジトリから取り込んだコミット（番号がこのリポジトリの別の PR を指す）もあるからである。対応づいた変更だけを GitHub の PR へリンクし、ほか（`MAP_PULLS` の無いビルドでは、すべて）はコミットへリンクする。別のブランチへマージされ、それと一緒に main に入った PR も対応づけるので、CI は base を絞らずに閉じた PR を読む。
+rebase でマージした PR のコミットは番号を持たず、GitHub もどのコミットがその PR のものかを一覧に出さないので、PR を通さない変更として並ぶ。
 `MAP_REPOSITORY` は、履歴がリンクする GitHub のリポジトリ（`owner/name`）である。
 無ければ `GITHUB_REPOSITORY` を、それも無ければ `origin` の URL を使う。
 

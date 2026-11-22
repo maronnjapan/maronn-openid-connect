@@ -6,7 +6,7 @@
  * endpoints a change reaches in the map as it is now, and the links to
  * GitHub. Nothing here touches the DOM.
  */
-import type { FlowEndpoint, HistoryData, HistoryEntry, MapData, OpFlow } from '../types';
+import type { DiffHunk, FlowEndpoint, HistoryData, HistoryDetail, HistoryEntry, HistoryFileDiff, MapData, OpFlow } from '../types';
 import { endpointsInModule, endpointsUsing } from './model';
 
 /** The key of a change in the URL: `pr-<number>` for a pull request, else the first ten characters of its commit. */
@@ -119,4 +119,71 @@ export function commitUrl(history: HistoryData, commit: string, path?: string): 
 /** The date of a change as the page writes it (`2026-11-21`), in the time zone the change was made in. */
 export function dayOf(date: string): string {
   return date.slice(0, 10);
+}
+
+/** Why the map has no diff of a file: its own diff is too long, or the change kept as much as it may before it. */
+export function omittedWords(omitted: HistoryFileDiff['omitted']): string {
+  return omitted === 'change' ? '変更全体の差分が多いので、このファイルの差分は地図に載せていない' : '差分が長いので地図に載せていない';
+}
+
+/** A hunk as the text of a unified diff, its header first (`@@ -12,4 +12,5 @@`). */
+export function unifiedHunk(hunk: DiffHunk): string {
+  const base = hunk.lines.filter((line) => line[0] !== '+').length;
+  const head = hunk.lines.filter((line) => line[0] !== '-').length;
+  return [`@@ -${hunk.base},${base} +${hunk.head},${head} @@`, ...hunk.lines].join('\n');
+}
+
+/** A fence around a text that no run of backquotes in it closes. */
+function fenced(language: string, text: string): string {
+  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = '`'.repeat(longest + 1);
+  return `${fence}${language}\n${text}\n${fence}`;
+}
+
+/** What a change did to a function, in a word. */
+const STATUS_WORDS = { added: '追加', modified: '変更', removed: '削除' } as const;
+
+/**
+ * A change as Markdown to hand to an AI: what it meant (the text of its pull
+ * request and its change notes), where it reaches in the map now, and the
+ * diff of the code the OSS ships only, function by function and then outside
+ * the functions, so the AI reads no test, document or tool it does not need.
+ * With `only`, the diff keeps the functions (by id) and the files (by path,
+ * for their changes outside the functions) the reader chose.
+ */
+export function aiMarkdown(history: HistoryData, entry: HistoryEntry, detail: HistoryDetail | undefined, reached: readonly FlowEndpoint[], framework: string, only?: ReadonlySet<string>): string {
+  const url = changeUrl(history, entry);
+  const lines: string[] = [`# ${entry.pr === undefined ? `${entry.commit.slice(0, 10)}（PR なし）` : `PR #${entry.pr}`}: ${entry.title}`, ''];
+  lines.push(`- main に入った日: ${dayOf(entry.date)}${entry.branch === undefined ? '' : ` · ブランチ: ${entry.branch}`} · 作成者: ${entry.authors.join('、')}${url === undefined ? '' : ` · ${url}`}`);
+  lines.push('- この文書の差分は、OSS が出すコード（関数カタログの根のファイル）だけである。テスト、文書、道具の変更は含まない', '');
+  if (only !== undefined) lines.push(`- 差分は、読み手が選んだ ${only.size} か所（関数と、関数の外の変更のあるファイル）だけである。変更全体の関数は ${entry.functions.length} 個ある`, '');
+  // The texts are fenced, so their own headings do not open sections of this document.
+  if (entry.body !== undefined && entry.body.trim() !== '') lines.push('## PR の本文', '', fenced('markdown', entry.body.trim()), '');
+  for (const pull of entry.carried ?? []) lines.push(`## この変更で main に入った PR #${pull.pr}: ${pull.title}`, '', pull.body === undefined ? '（本文なし）' : fenced('markdown', pull.body.trim()), '');
+  for (const note of detail?.notes ?? []) lines.push(`## 変更メモ ${note.path}`, '', fenced('markdown', note.text.trim()), '');
+  lines.push(`## 今の地図で届くエンドポイント（${framework}）`, '');
+  if (reached.length === 0) lines.push('- なし', '');
+  else lines.push(...reached.map((endpoint) => `- ${endpoint.methods.join(' | ')} ${endpoint.path}（${endpoint.label}）`), '');
+  const counts = functionCounts(entry);
+  lines.push(`## 変えた関数（追加 ${counts.added}・変更 ${counts.modified}・削除 ${counts.removed}）`, '');
+  const omitted: Array<{ path: string; why: string }> = [];
+  const outside: Array<{ path: string; hunks: DiffHunk[] }> = [];
+  for (const file of detail?.files ?? []) {
+    if (file.omitted !== undefined) omitted.push({ path: file.path, why: omittedWords(file.omitted) });
+    for (const fn of file.functions) {
+      if (only !== undefined && !only.has(fn.id)) continue;
+      const change = entry.functions.find((candidate) => candidate.id === fn.id);
+      lines.push(`### ${change === undefined ? '' : `${STATUS_WORDS[change.status]} `}\`${fn.id}\`（${file.path}）`, '');
+      if (fn.hunks.length > 0) lines.push(fenced('diff', fn.hunks.map(unifiedHunk).join('\n')), '');
+      else lines.push(file.omitted === undefined ? '（差分なし）' : `（${omittedWords(file.omitted)}）`, '');
+    }
+    if (file.outside.length > 0 && (only === undefined || only.has(file.path))) outside.push({ path: file.from === undefined ? file.path : `${file.from} → ${file.path}`, hunks: file.outside });
+  }
+  if (outside.length > 0) {
+    lines.push('## 関数の外の変更（import、型、定数など）', '');
+    for (const file of outside) lines.push(`### ${file.path}`, '', fenced('diff', file.hunks.map(unifiedHunk).join('\n')), '');
+  }
+  if (omitted.length > 0) lines.push('## 地図に載せなかった差分', '', ...omitted.map((file) => `- ${file.path}（${file.why}）`), '');
+  if (entry.commits.length > 0) lines.push('## コミット', '', ...entry.commits.map((commit) => `- ${commit.subject}（${commit.sha.slice(0, 7)}、${commit.author}）`), '');
+  return `${lines.join('\n').trimEnd()}\n`;
 }

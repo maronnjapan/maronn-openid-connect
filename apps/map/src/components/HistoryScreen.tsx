@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { DiffHunk, HistoryData, HistoryEntry, HistoryFileDiff, MapData } from '../types';
-import { changeUrl, changesOf, commitUrl, dayOf, endpointsReached, entryKey, entryOf, filterEntries, functionCounts, omittedWords, withoutPullRequest, type HistoryFilter } from '../lib/history';
+import { changeUrl, changesOf, commitUrl, dayOf, endpointsReached, entryOf, filterEntries, functionCounts, keyOf, namesPull, omittedWords, sharingNumber, withoutPullRequest, type HistoryFilter } from '../lib/history';
 import { codeHash } from '../code/lib';
 import { DiffView } from './ChangeParts';
 import { useHistory, useHistoryDetail } from './useHistory';
@@ -121,7 +121,7 @@ function HistoryList({ history, state, onState, onOpenEntry }: { history: Histor
                   className="row"
                   onClick={() => {
                     onState({ ...state, scroll: body.current?.scrollTop ?? 0 });
-                    onOpenEntry(entryKey(entry));
+                    onOpenEntry(keyOf(history, entry));
                   }}
                 >
                   <span className="history-row-head">
@@ -221,12 +221,12 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
             ← 変更の履歴
           </button>
           {newer !== undefined ? (
-            <button type="button" className="link" onClick={() => onOpenEntry(entryKey(newer))} title={newer.title}>
+            <button type="button" className="link" onClick={() => onOpenEntry(keyOf(history, newer))} title={newer.title}>
               ← 新しい変更
             </button>
           ) : null}
           {older !== undefined ? (
-            <button type="button" className="link" onClick={() => onOpenEntry(entryKey(older))} title={older.title}>
+            <button type="button" className="link" onClick={() => onOpenEntry(keyOf(history, older))} title={older.title}>
               古い変更 →
             </button>
           ) : null}
@@ -243,6 +243,16 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
             </a>
           ) : null}
         </div>
+        {sharingNumber(history, entry).length > 0 ? (
+          <p className="note">
+            PR 番号 #{entry.pr} の変更はほかにもあります:{' '}
+            {sharingNumber(history, entry).map((other) => (
+              <button key={other.commit} type="button" className="link" onClick={() => onOpenEntry(keyOf(history, other))}>
+                {dayOf(other.date)} {other.title}
+              </button>
+            ))}
+          </p>
+        ) : null}
         {withoutPullRequest(entry) ? <p className="note">PR を通さずに main に入った{entry.kind === 'merge' ? 'マージ' : 'コミット'}です。この変更そのものは、レビューと地図のコメントを経ていません。</p> : null}
         {entry.boundary === true ? <p className="note">浅い clone の最も古いコミットなので、何を変えたかは分かりません（ファイルと関数を並べません）。</p> : null}
         {detail instanceof Error ? <p className="note">差分を読み込めませんでした: {detail.message}</p> : entry.detail !== undefined && detail === undefined ? <p className="note">差分を読み込んでいます…</p> : null}
@@ -253,7 +263,7 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
             <h3>この変更で main に入った PR {entry.carried.length}</h3>
             <p className="note">別のブランチにマージされた PR で、この変更と一緒に main に入りました。変えた関数とコミットは、この変更の分に含まれます。</p>
             {entry.carried.map((pull) => {
-              const href = history.repository === undefined ? undefined : `https://github.com/${history.repository}/pull/${pull.pr}`;
+              const href = history.repository === undefined ? undefined : namesPull(history, pull) ? `https://github.com/${history.repository}/pull/${pull.pr}` : `https://github.com/${history.repository}/commit/${pull.commit}`;
               return (
                 <details key={pull.pr} className="history-note" open={entry.carried?.length === 1}>
                   <summary>
@@ -272,7 +282,7 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
         ) : null}
         <section aria-label="PR の本文">
           <h3>PR の本文</h3>
-          {entry.body !== undefined && entry.body.trim() !== '' ? <pre className="history-body">{entry.body.trim()}</pre> : <p className="note">{entry.pr === undefined ? 'PR がありません。下のコミットが、何をしたかの記録です。' : 'この地図のデータには PR の本文がありません（ビルドに MAP_PULLS を渡すと載ります）。'}</p>}
+          {entry.body !== undefined && entry.body.trim() !== '' ? <pre className="history-body">{entry.body.trim()}</pre> : <p className="note">{entry.pr === undefined ? 'PR がありません。下のコミットが、何をしたかの記録です。' : history.pulls !== true ? 'この地図のデータには PR の本文がありません（ビルドに MAP_PULLS を渡すと載ります）。' : entry.onGitHub === true ? 'PR に本文がありません。' : `GitHub の PR の一覧に、この変更をマージした PR #${entry.pr} はありません（取り込んだ別のリポジトリの番号のことがあります）。下のコミットが、何をしたかの記録です。`}</p>}
         </section>
         {entry.notes.length > 0 ? (
           <section aria-label="変更メモ">
@@ -444,7 +454,7 @@ export function FunctionHistory({ data, id, onOpenEntry }: { data: MapData; id: 
         <ul className="links">
           {changes.map(({ entry, status }) => (
             <li key={entry.commit}>
-              <button type="button" className="row" onClick={() => onOpenEntry(entryKey(entry))}>
+              <button type="button" className="row" onClick={() => onOpenEntry(keyOf(history, entry))}>
                 <span className="history-row-head">
                   <span className="mono history-date">{dayOf(entry.date)}</span>
                   <KindChip entry={entry} />

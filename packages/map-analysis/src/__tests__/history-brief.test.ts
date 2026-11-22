@@ -95,6 +95,11 @@ describe('the keys of the changes', () => {
     expect(changeBrief(map, shared, older, undefined).split('\n')[2]).toBe('- キー: 9666666666 · main に入った日: 2026-11-21 · 作成者: Claude · https://github.com/owner/name/commit/9666666666666666666666666666666666666666');
     expect(functionBrief(map, shared, 'core:a.ts#verify', new Map()).includes('- キー: 9666666666 · 2026-11-21 · 変更 · 作成者: Claude')).toBe(true);
     expect(changeBrief(map, shared, newer, undefined).split('\n')[5]).toBe('- PR 番号 #19 の変更はほかにもある: 9666666666（2026-11-21 older）');
+    // With the pull requests of GitHub, a number links to its pull request only when GitHub says the change merged it.
+    const confirmed: HistoryData = { ...shared, pulls: true, entries: [{ ...newer, onGitHub: true }, older] };
+    const [mine, imported] = confirmed.entries as [HistoryEntry, HistoryEntry];
+    expect([changeBrief(map, confirmed, mine, undefined).split('\n')[2]?.endsWith('https://github.com/owner/name/pull/19'), changeBrief(map, confirmed, imported, undefined).includes('- GitHub の PR の一覧に、この変更をマージした PR #19 は無い（取り込んだ別のリポジトリの番号のことがある）。本文は無く、題はコミットのもの'), changeBrief(map, confirmed, imported, undefined).includes('PR の本文が無い。コミットのメッセージを読む（下の「コミット」）。')]).toEqual([true, true, true]);
+    expect([listBrief(confirmed).split('\n')[3], functionBrief(map, confirmed, 'core:a.ts#verify', new Map()).includes('## PR #19（GitHub の PR とは対応しない番号）: older')]).toEqual(['- 9666666666 2026-11-21 #19（GitHub の PR とは対応しない番号） older（関数 +0 ~1 -0）', true]);
   });
 });
 
@@ -103,7 +108,7 @@ describe('a change for an AI', () => {
     expect(changeBrief(map, history, merged, detail).split('\n')).toEqual([
       '# PR #209: クライアント認証を足す',
       '',
-      '- キー: pr-209 · main に入った日: 2026-11-21 · ブランチ: claude/auth · 作成者: Claude · https://github.com/owner/name/pull/209',
+      '- キー: pr-209 · main に入った日: 2026-11-21 · ブランチ: claude/auth · 作成者: Claude · https://github.com/owner/name/commit/b111111111111111111111111111111111111111',
       '- 差分は、OSS が出すコード（関数カタログの根のファイル）の、変更したときのもの。判断の前に、各関数の「今のコード」の行を読む',
       '- テストや文書を含む変更全体: `git show --diff-merges=first-parent --format= b11111111111`',
       ...READING,

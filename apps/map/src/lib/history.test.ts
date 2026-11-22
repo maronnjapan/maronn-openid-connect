@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FunctionEntry, HistoryData, HistoryEntry, MapData, OpFlow } from '../types';
-import { changeUrl, changesOf, commitUrl, endpointsReached, entryKey, entryOf, filterEntries, functionCounts } from './history';
+import { changeUrl, changesOf, commitUrl, endpointsReached, entryKey, entryOf, filterEntries, functionCounts, keyOf } from './history';
 
 /** A change that reached main. */
 function change(fields: Partial<HistoryEntry> & Pick<HistoryEntry, 'commit' | 'title' | 'kind'>): HistoryEntry {
@@ -47,12 +47,26 @@ describe('the changes of the history', () => {
 
   it('should link a pull request, a commit and a file at a commit on GitHub, and nothing without the repository', () => {
     const [direct, merged] = history.entries as [HistoryEntry, HistoryEntry];
-    expect([changeUrl(history, merged), changeUrl(history, direct), commitUrl(history, 'abc', 'apps/map/changes/x y.md'), changeUrl({ ...history, repository: undefined } as unknown as HistoryData, merged)]).toEqual([
-      'https://github.com/owner/name/pull/209',
+    // Without the pull requests of GitHub no number is known to name its pull request there (the history holds another repository's numbers too).
+    expect([changeUrl(history, merged), changeUrl(history, direct), commitUrl(history, 'abc', 'apps/map/changes/x y.md'), changeUrl({ ...history, repository: undefined } as unknown as HistoryData, merged), changeUrl({ ...history, pulls: true }, { ...merged, onGitHub: true })]).toEqual([
+      'https://github.com/owner/name/commit/bbbbbbbbbbbb2',
       'https://github.com/owner/name/commit/aaaaaaaaaaaa1',
       'https://github.com/owner/name/blob/abc/apps/map/changes/x%20y.md',
       undefined,
+      'https://github.com/owner/name/pull/209',
     ]);
+  });
+});
+
+describe('two changes with the same pull request number', () => {
+  it('should open each by a key of its own, and link to its commit, as which one the number names on GitHub is not known', () => {
+    const newer = change({ commit: 'ffffffffffff5', title: 'newer', kind: 'merge', pr: 19 });
+    const older = change({ commit: '999999999999a', title: 'older', kind: 'merge', pr: 19 });
+    const shared: HistoryData = { ...history, entries: [newer, ...history.entries, older] };
+    expect([keyOf(shared, newer), keyOf(shared, older), entryOf(shared, keyOf(shared, older))?.title, changeUrl(shared, newer), changeUrl(shared, older)]).toEqual(['pr-19', '9999999999', 'older', 'https://github.com/owner/name/commit/ffffffffffff5', 'https://github.com/owner/name/commit/999999999999a']);
+    // With the pull requests of GitHub, the number links to the pull request GitHub confirmed, and the other to its commit.
+    const confirmed: HistoryData = { ...shared, pulls: true, entries: [{ ...newer, onGitHub: true }, ...history.entries, older] };
+    expect([changeUrl(confirmed, confirmed.entries[0] as HistoryEntry), changeUrl(confirmed, older), changeUrl(confirmed, history.entries[1] as HistoryEntry)]).toEqual(['https://github.com/owner/name/pull/19', 'https://github.com/owner/name/commit/999999999999a', 'https://github.com/owner/name/commit/bbbbbbbbbbbb2']);
   });
 });
 

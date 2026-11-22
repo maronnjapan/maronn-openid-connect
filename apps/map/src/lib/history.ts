@@ -7,10 +7,11 @@
  * GitHub. Nothing here touches the DOM.
  */
 import type { FlowEndpoint, HistoryData, HistoryEntry, MapData, OpFlow } from '../types';
+import { namesPull } from '@maronn-openid-connect/map-analysis/history-brief';
 import { endpointsInModule, endpointsUsing } from './model';
 
-// The keys of the changes and the words of a diff left out are the ones the history command gives an AI.
-export { entryKey, entryOf, omittedWords } from '@maronn-openid-connect/map-analysis/history-brief';
+// The keys of the changes (keyOf opens the change it is for, when two share a pull request number) and the words of a diff left out are the ones the history command gives an AI.
+export { entryKey, entryOf, keyOf, namesPull, omittedWords, sharingNumber } from '@maronn-openid-connect/map-analysis/history-brief';
 
 /** Whether a change reached main without a pull request of its own: a commit pushed to it, or a merge made and pushed by hand. */
 export function withoutPullRequest(entry: HistoryEntry): boolean {
@@ -94,10 +95,10 @@ export function endpointsReached(data: MapData, flow: OpFlow | undefined, entry:
   return flow.endpoints.filter((endpoint) => found.has(endpoint.id));
 }
 
-/** The page of a change on GitHub: its pull request, or its commit; undefined when the repository is not known. */
+/** The page of a change on GitHub: its pull request when its number names it there (namesPull: GitHub confirmed it, or no other change has the number), else its commit; undefined when the repository is not known. */
 export function changeUrl(history: HistoryData, entry: HistoryEntry): string | undefined {
   if (history.repository === undefined) return undefined;
-  return entry.pr === undefined ? `https://github.com/${history.repository}/commit/${entry.commit}` : `https://github.com/${history.repository}/pull/${entry.pr}`;
+  return namesPull(history, entry) ? `https://github.com/${history.repository}/pull/${entry.pr}` : `https://github.com/${history.repository}/commit/${entry.commit}`;
 }
 
 /** The page of a commit, or of a file as a commit left it, on GitHub. */

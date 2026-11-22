@@ -266,6 +266,22 @@ describe('readHistory', () => {
     ]);
   });
 
+  it('should take a pull request only for the commit that merged it, and say which changes GitHub confirmed', () => {
+    const merge = git(directory, ['rev-parse', 'HEAD~1']).trim();
+    const read = readHistory({
+      repository: directory,
+      roots,
+      codeMaskOf: cli.codeMaskOf,
+      pulls: [
+        { number: 3, title: 'Another repository #3', body: 'Not this one.', merge_commit_sha: 'f'.repeat(40) },
+        { number: 4, title: 'Fix it, on GitHub', body: null, merge_commit_sha: null },
+      ],
+    });
+    expect([read.pulls, read.entries.map(({ title, onGitHub }) => ({ title, onGitHub }))]).toEqual([true, [{ title: 'Fix it', onGitHub: undefined }, { title: 'Add the thing', onGitHub: undefined }, { title: 'Say hey', onGitHub: undefined }, { title: 'Start the library', onGitHub: undefined }]]);
+    const matched = readHistory({ repository: directory, roots, codeMaskOf: cli.codeMaskOf, pulls: [{ number: 3, title: 'Add the thing, on GitHub', merge_commit_sha: merge }] });
+    expect(matched.entries.map(({ title, onGitHub }) => ({ title, onGitHub }))[1]).toEqual({ title: 'Add the thing, on GitHub', onGitHub: true });
+  });
+
   it('should read the history of another revision', () => {
     const before = readHistory({ repository: directory, roots, codeMaskOf: cli.codeMaskOf, revision: 'HEAD~1' });
     expect(before.entries.map((entry) => entry.title)).toEqual(['Add the thing', 'Say hey', 'Start the library']);

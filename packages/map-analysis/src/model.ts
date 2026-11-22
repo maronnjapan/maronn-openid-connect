@@ -520,6 +520,13 @@ export interface HistoryData {
   repository?: string;
   /** The history was read from a shallow clone: older changes are missing. */
   shallow?: boolean;
+  /**
+   * The build was given the pull requests on GitHub (MAP_PULLS): a change
+   * whose number GitHub confirms (HistoryEntry.onGitHub) has that pull
+   * request's title and body, and links to it. Another number may name a pull
+   * request of another repository whose history was brought in.
+   */
+  pulls?: true;
   entries: HistoryEntry[];
   /** A function id (present or past) → the indices in `entries` of the changes that touched it, newest first. */
   functions: Record<string, number[]>;
@@ -556,7 +563,9 @@ export interface HistoryEntry {
    * merged into a branch that this change merged (a pull of main pushed as a
    * merge, a pull request into another's branch), newest first.
    */
-  carried?: Array<{ pr: number; title: string; commit: string; body?: string }>;
+  carried?: Array<{ pr: number; title: string; commit: string; body?: string; onGitHub?: true }>;
+  /** GitHub has the pull request of this number with this commit as its merge (or squash): its title and body are that pull request's. */
+  onGitHub?: true;
   /** The oldest commit a shallow clone has: git sees its whole tree as added, so what it changed is not known and it lists no files nor functions. */
   boundary?: true;
   /** The url of its diff of the provider's code (HistoryDetail), read when its page opens; absent when it changed none of that code and wrote no note. */

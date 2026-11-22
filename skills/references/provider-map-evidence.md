@@ -18,6 +18,9 @@
 | `tree.implements` / `members` | interface の実装と、その実装が呼ぶもの |
 | `changes.frames[].reach` | 実際の PR 比較で届く endpoint・道筋・必要な feature |
 | `map.json.wiring` / untraceable target | 追えない配線の場所と理由 |
+| `pnpm map:history`（`history/` のデータ） | main に入った変更ごとの意図（PR の本文、変更メモ）、関数ごとの差分、その関数の今の場所 |
+
+`pnpm map:history --function <名前か id>` は関数を変えた変更を新しい順に、変更メモのその関数の節と差分で並べ、`pnpm map:history pr-<番号>` は変更を関数ごとに並べる（大きな変更は `--summary` で見取り図、`pr-<番号> --function <名前>` でその変更の一つの関数）。差分は変更したときのもので、判断は添えられた今のコードの行を読んで行う。地図をビルドした後に使う。
 
 `FunctionEntry.calls` は deferred を含む。それだけの再帰探索では実行・到達を証明できない。factory 自身の実行と返したメンバーの実行、callback の登録と呼出し、interface 単位の接続と値の構築元をそれぞれ区別する。型が同じだからといって instance や middleware の適用順まで確定しない。
 

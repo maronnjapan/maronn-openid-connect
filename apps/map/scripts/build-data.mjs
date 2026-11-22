@@ -9,8 +9,9 @@
  * MAP_PR_TITLE and MAP_PR_URL name the pull request. The changes in Markdown
  * also go to the summary of the run on GitHub Actions.
  *
- * The history is read from the first-parent history of the base (MAP_BASE)
- * or of HEAD. MAP_PULLS names a JSON file of the pull requests on GitHub
+ * The history is read from the first-parent history of the newest commit
+ * that brought code HEAD has of the base (MAP_BASE), else of the main of a
+ * remote (origin/main, upstream/main), else of HEAD. MAP_PULLS names a JSON file of the pull requests on GitHub
  * (`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp`):
  * the title and body of each join the change whose commit merged it (its
  * merge_commit_sha; a number alone can name another repository's pull

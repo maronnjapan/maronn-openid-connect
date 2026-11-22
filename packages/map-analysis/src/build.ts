@@ -25,7 +25,7 @@ import type { BodyEntry, Failure, FlowEndpoint, FrameFile, FunctionEntry, MapCha
 import { escapingFailures } from './failures.js';
 import { featureOfPath, sourceFeatureRanges } from './features.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
-import { readHistoryWithDiffs, type PullRequestInfo } from './history.js';
+import { heldRevision, mainRevision, readHistoryWithDiffs, type PullRequestInfo } from './history.js';
 import { readRepository, type Repository } from './repository.js';
 import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
@@ -82,8 +82,10 @@ export interface BuildOptions {
   /** The built CLI (packages/cli/dist). */
   cliDist?: string;
   /**
-   * The history of main (history.ts): the revision it is read from (the base
-   * in the map of a pull request, else HEAD), the pull requests on GitHub
+   * The history of main (history.ts): the revision it is read from (as it
+   * is; else the newest commit of the base whose code HEAD has, in the map of a
+   * pull request: heldRevision; else that of the main of a remote: mainRevision;
+   * else HEAD), the pull requests on GitHub
    * (MAP_PULLS) and owner/name there. `false` reads none.
    */
   history?: { revision?: string; pulls?: readonly PullRequestInfo[]; github?: string } | false;
@@ -329,11 +331,13 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   let history: string | undefined;
   if (options.history !== false) {
     try {
+      const exact = options.history?.revision;
+      const { revision, from } = exact !== undefined ? { revision: exact, from: exact } : options.base !== undefined ? heldRevision(options.repository, options.base) : mainRevision(options.repository);
       const { history: read, details } = readHistoryWithDiffs({
         repository: options.repository,
         roots,
         codeMaskOf: cli.codeMaskOf,
-        revision: options.history?.revision ?? options.base ?? 'HEAD',
+        revision,
         ...(options.history?.pulls === undefined ? {} : { pulls: options.history.pulls }),
         ...(options.history?.github === undefined ? {} : { github: options.history.github }),
         diffs: true,
@@ -344,7 +348,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
         if (detail !== undefined) entry.detail = `./data/history/${writeHashed(join(options.out, 'history'), entry.commit, JSON.stringify(detail), written.history)}`;
       }
       history = `./data/history/${writeHashed(join(options.out, 'history'), 'history', JSON.stringify(read), written.history)}`;
-      log.push(`${read.entries.length} history entries (${read.entries.filter((entry) => entry.pr !== undefined).length} pull requests, ${details.size} with a diff of the provider's code)`);
+      log.push(`${read.entries.length} history entries of ${from}${revision === from ? '' : ` at ${revision.slice(0, 10)}`} (${read.entries.filter((entry) => entry.pr !== undefined).length} pull requests, ${details.size} with a diff of the provider's code)`);
     } catch (error) {
       log.push(`No history: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`);
     }

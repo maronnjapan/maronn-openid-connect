@@ -15,7 +15,7 @@ export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeH
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';
 export { escapingFailures } from './failures.js';
 export { featureOfPath, sourceFeatureRanges } from './features.js';
-export { originRepository, readHistory, readHistoryWithDiffs, MAX_CHANGE_DIFF_LINES, MAX_FILE_DIFF_LINES, repositoryOfRemote, type HistoryOptions, type PullRequestInfo } from './history.js';
+export { heldRevision, mainRevision, originRepository, readHistory, readHistoryWithDiffs, MAX_CHANGE_DIFF_LINES, MAX_FILE_DIFF_LINES, repositoryOfRemote, type HistoryOptions, type PullRequestInfo } from './history.js';
 export { CallGraph, catcherIn, reachOf, rootOf, type EndpointRoot, type ReachOptions, type ReachTarget } from './impact.js';
 export { attachNotes, draftHeading, draftSections, draftTestLines, draftTestSections, isNote, NOTES_DIRECTORY, parseNote, referencesOf, resolveReference, withoutComments, type DraftTests } from './notes.js';
 export { readRepository, type Repository } from './repository.js';

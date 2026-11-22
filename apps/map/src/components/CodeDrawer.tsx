@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import type { DiffHunk, LinkTarget, MapData, SourceDocument } from '../types';
 import { allHunks, type ChangeIndex } from '../lib/changes';
 import { codeIndexOf, currentOf, locationOf, replace, startAt, step, usesOf, visit, type CodeHistory, type CodeLocation } from '../lib/links';
@@ -66,7 +66,9 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   const selectId = useId();
   const index = useMemo(() => codeIndexOf(data), [data]);
   const [history, setHistory] = useState<CodeHistory>(() => startAt({ id: initial }));
-  const [modeChoice, setModeChoice] = useState<{ at: CodeLocation; mode: 'diff' | 'full' } | undefined>(undefined);
+  // The reader's choice of the diff or the code holds for a step of the history (the whole file of it, or its lines, alike).
+  const [modeChoice, setModeChoice] = useState<{ at: string; mode: 'diff' | 'full' } | undefined>(undefined);
+  const [reveal, setReveal] = useState(0);
   const [peek, setPeek] = useState<Peek | undefined>(undefined);
   const [loaded, setLoaded] = useState<LoadedSource | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -76,7 +78,8 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   const wholeFile = location.whole === true;
   const changed = changes?.byId.get(selected);
   // A place reached by a name shows the code; a changed frame opened as it is shows its diff first.
-  const mode = modeChoice?.at === location ? modeChoice.mode : location.line === undefined && changed !== undefined && (changed.kind === 'modified' || changed.kind === 'added') ? 'diff' : 'full';
+  const stepKey = `${history.index}:${location.id}`;
+  const mode = modeChoice?.at === stepKey ? modeChoice.mode : location.line === undefined && changed !== undefined && (changed.kind === 'modified' || changed.kind === 'added') ? 'diff' : 'full';
   const target = targetOf(data, targets, selected);
   const source = target === undefined ? undefined : data.sources[target.file];
   const url = source?.url;
@@ -122,6 +125,8 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   const go = (next: CodeLocation, list?: Peek) => {
     setHistory((now) => visit(now, next));
     setPeek(list);
+    // Show the place again even when it is the one the reader is at.
+    setReveal((count) => count + 1);
   };
   /** Follow a name of the code: to its declaration, or, on the declaration itself, list the places that use it. */
   const follow = (link: LinkTarget, at: { line: number; column: number }) => {
@@ -139,16 +144,21 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   };
   const back = history.index > 0;
   const forward = history.index < history.entries.length - 1;
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
-    event.preventDefault();
-    setHistory((now) => step(now, event.key === 'ArrowLeft' ? -1 : 1));
-    setPeek(undefined);
-  };
+  // Alt + ← / → while the drawer is open, wherever the focus is (following a name into another file drops it): never the browser's own back.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+      event.preventDefault();
+      setHistory((now) => step(now, event.key === 'ArrowLeft' ? -1 : 1));
+      setPeek(undefined);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <DetailDrawer title="コード" className="code-drawer" closeLabel="コードを閉じる" onClose={onClose}>
-      <div className="code-drawer-body" onKeyDown={onKeyDown}>
+      <div className="code-drawer-body">
         <header className="code-drawer-head">
           <div className="code-nav">
             <button type="button" className="nav" disabled={!back} onClick={() => setHistory((now) => step(now, -1))} title="戻る（Alt + ←）" aria-label="戻る">
@@ -174,10 +184,10 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
             </p>
             {hunks !== undefined && hunks.length > 0 ? (
               <div className="seg" role="group" aria-label="差分と全文">
-                <button type="button" aria-pressed={mode === 'diff'} onClick={() => setModeChoice({ at: location, mode: 'diff' })}>
+                <button type="button" aria-pressed={mode === 'diff'} onClick={() => setModeChoice({ at: stepKey, mode: 'diff' })}>
                   差分
                 </button>
-                <button type="button" aria-pressed={mode === 'full'} onClick={() => setModeChoice({ at: location, mode: 'full' })}>
+                <button type="button" aria-pressed={mode === 'full'} onClick={() => setModeChoice({ at: stepKey, mode: 'full' })}>
                   変更後の全文
                 </button>
               </div>
@@ -254,6 +264,7 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
             start={shownStart}
             end={shownEnd}
             focus={location.line === undefined ? undefined : { line: location.line, column: location.column, length: location.length }}
+            reveal={reveal}
             onLink={follow}
           />
         )}

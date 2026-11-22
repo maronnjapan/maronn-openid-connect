@@ -33,7 +33,7 @@ function touchOnly(): boolean {
  * touch screen a tap does). The place to show (`focus`) is marked and
  * scrolled into view.
  */
-export function SourceView({ index, document, label, start, end, focus, onLink }: {
+export function SourceView({ index, document, label, start, end, focus, reveal = 0, onLink }: {
   /** The files and the features of the map. */
   index: CodeIndex;
   document: SourceDocument;
@@ -43,6 +43,8 @@ export function SourceView({ index, document, label, start, end, focus, onLink }
   start?: number | undefined;
   end?: number | undefined;
   focus?: { line: number; column?: number | undefined; length?: number | undefined } | undefined;
+  /** A count the page raises each time the reader goes to a place, so the place is shown again even when it is the one already focused (scrolled away from since). */
+  reveal?: number;
   /** The reader follows a name: the declaration it goes to, and where the name is. */
   onLink: (target: LinkTarget, at: { line: number; column: number }) => void;
 }) {
@@ -76,7 +78,7 @@ export function SourceView({ index, document, label, start, end, focus, onLink }
       return;
     }
     element.scrollTop = Math.max(0, line.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop - element.clientHeight / 3);
-  }, [focus?.line, focus?.column, document, start, end]);
+  }, [focus?.line, focus?.column, document, start, end, reveal]);
 
   /** Follow the name under a click, when Ctrl / ⌘ is held or the screen is touch only. */
   const follow = (event: MouseEvent<HTMLPreElement>) => {

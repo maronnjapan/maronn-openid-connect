@@ -506,6 +506,77 @@ export interface MapData {
    * recorded request took has none. Absent without a measured run.
    */
   requests?: Record<string, string>;
+  /** The url of the changes that reached main (HistoryData, `./data/history/<hash>.json`); absent when the build read no git history. */
+  history?: string;
+}
+
+// ---------------------------------------------------------------------------
+// History
+
+/** The changes that reached main, newest first, read from its first-parent history (packages/map-analysis/src/history.ts). */
+export interface HistoryData {
+  version: 1;
+  /** owner/name on GitHub, when known: the numbers and commits link there. */
+  repository?: string;
+  /** The history was read from a shallow clone: older changes are missing. */
+  shallow?: boolean;
+  entries: HistoryEntry[];
+  /** A function id (present or past) → the indices in `entries` of the changes that touched it, newest first. */
+  functions: Record<string, number[]>;
+}
+
+/** A commit of the first-parent history of main and what it brought: a pull request merged or squashed, or a commit pushed without one. */
+export interface HistoryEntry {
+  /** The commit on main (full sha). */
+  commit: string;
+  /** When it reached main: the committer date of that commit, ISO 8601. */
+  date: string;
+  /** A merge of a pull request, a squash of one (`title (#12)`), or a commit pushed without one. */
+  kind: 'merge' | 'squash' | 'direct';
+  pr?: number;
+  title: string;
+  /** The branch a merged pull request came from. */
+  branch?: string;
+  /** The body of the pull request on GitHub, when the build was given it (MAP_PULLS). */
+  body?: string;
+  /** The git author names of its commits, each once (who did it: a person or an agent). */
+  authors: string[];
+  /** Its commits, oldest first: for a merge the commits of the branch (merge commits left out), else the commit itself. */
+  commits: HistoryCommit[];
+  /** The files it changed against the first parent. */
+  files: HistoryFile[];
+  /** The functions of the catalog's roots it added, modified or removed, by the catalog's own reading of the text. */
+  functions: HistoryFunction[];
+  /** The change notes (apps/map/changes/*.md) it added or modified. */
+  notes: string[];
+  additions: number;
+  deletions: number;
+}
+
+/** A commit of a change (HistoryEntry.commits). */
+export interface HistoryCommit {
+  sha: string;
+  subject: string;
+  /** The committer date, ISO 8601. */
+  date: string;
+  author: string;
+}
+
+/** A file a change changed against the first parent (HistoryEntry.files); `from` is the path before a rename. */
+export interface HistoryFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  from?: string;
+  /** The lines added and removed; 0 for a binary file. */
+  additions: number;
+  deletions: number;
+}
+
+/** A function a change added, modified or removed (HistoryEntry.functions), by its id in the catalog (the id it had, for a removed one). */
+export interface HistoryFunction {
+  id: string;
+  name: string;
+  status: 'added' | 'modified' | 'removed';
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
 /**
  * What the analysis takes from the built CLI (packages/cli/dist): the
  * function catalog, the flow of a generation with every feature on, the
- * features of the registry, the frameworks, and how comments are joined.
+ * features of the registry, the frameworks, how comments are joined, and
+ * which characters of a source are code.
  *
  * The CLI publishes only its command line, so the modules are loaded by path
  * (as the map always did). Their shapes are the ones of model.ts.
@@ -49,6 +50,14 @@ export interface Cli {
   parseOwnerBlocks(text: string): Array<{ feature: string | undefined; startLine: number; endLine: number }>;
   /** Read the catalog of other roots (the files of a revision): analyzeFunctions of the CLI. */
   analyzeFunctions(roots: Array<{ name: string; specifier?: string; files: ReadonlyMap<string, string> }>): { catalog: { functions: Record<string, CatalogCard> } };
+  /**
+   * Which characters of a source are code (1) and which are in a comment, a
+   * string, a regular expression or the text of a template (0), as the
+   * catalog reads them: the tokenizer of the CLI (extract/tokens.ts), and for
+   * a source it cannot read the strings and comments only (extract/meta.ts
+   * codeOf), as codeMask of extract/functions.ts does.
+   */
+  codeMaskOf(source: string): Uint8Array;
 }
 
 /** Load the built CLI; throws when it is not built. */
@@ -65,6 +74,8 @@ export async function loadCli(cliDist: string): Promise<Cli> {
   const { analyzeFunctions, specReferencesOf } = await load('extract/functions.js');
   const { joinLines, joinLinesFlat } = await load('extract/prose.js');
   const { parseOwnerBlocks } = await load('extract/source.js');
+  const { codeMaskOf } = await load('extract/tokens.js');
+  const { codeOf } = await load('extract/meta.js');
   const { FEATURE_CONFIG_KEYS, FEATURE_REGISTRY, featureKeyOf } = await load('registry.js');
   const { getAvailableFrameworks } = await load('generator.js');
   const features = Object.fromEntries((FEATURE_CONFIG_KEYS as string[]).map((key) => [key, true]));
@@ -94,5 +105,14 @@ export async function loadCli(cliDist: string): Promise<Cli> {
     specReferencesOf,
     parseOwnerBlocks,
     analyzeFunctions,
+    codeMaskOf(source: string): Uint8Array {
+      try {
+        return codeMaskOf(source) as Uint8Array;
+      } catch {
+        const mask = new Uint8Array(source.length);
+        for (const { index } of codeOf(source, 0) as Iterable<{ index: number }>) mask[index] = 1;
+        return mask;
+      }
+    },
   };
 }

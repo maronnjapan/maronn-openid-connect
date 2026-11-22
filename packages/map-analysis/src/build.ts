@@ -11,6 +11,8 @@
  *   ready-made choices, and for a changed frame its tree before and the diff.
  * - sources/<hash>.json: one file a source file, its code highlighted.
  * - changes.md: the changes in Markdown, for the comment on the pull request.
+ * - history/<hash>.json: the changes that reached main, read from its
+ *   first-parent history (history.ts).
  *
  * With `base` (a git revision), the changes of the working tree since it
  * forked from it (changes.ts) come with it.
@@ -22,6 +24,7 @@ import type { BodyEntry, Failure, FlowEndpoint, FrameFile, FunctionEntry, MapCha
 import { escapingFailures } from './failures.js';
 import { featureOfPath, sourceFeatureRanges } from './features.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
+import { readHistory, type PullRequestInfo } from './history.js';
 import { readRepository, type Repository } from './repository.js';
 import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
@@ -78,6 +81,12 @@ export interface BuildOptions {
   /** The built CLI (packages/cli/dist). */
   cliDist?: string;
   /**
+   * The history of main (history.ts): the revision it is read from (the base
+   * in the map of a pull request, else HEAD), the pull requests on GitHub
+   * (MAP_PULLS) and owner/name there. `false` reads none.
+   */
+  history?: { revision?: string; pulls?: readonly PullRequestInfo[]; github?: string } | false;
+  /**
    * More work on the analysis before map.json and changes.md are written
    * (the tests of packages/test-catalog): it may write files of its own (the
    * data of the tests viewer, apps/tests), add to the changes
@@ -126,7 +135,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   const changes = options.base === undefined ? undefined : collectChanges({ repository, base: options.base, ...(options.pullRequest === undefined ? {} : { pullRequest: options.pullRequest }), failures });
 
   // The files are written in place and the stale ones removed after (see writeHashed, removeStale): a dev server already serving the directory keeps seeing it.
-  const written = { functions: new Set<string>(), sources: new Set<string>() };
+  const written = { functions: new Set<string>(), sources: new Set<string>(), history: new Set<string>() };
 
   // One file a frame.
   const frameUrls = new Map<string, string>();
@@ -315,6 +324,26 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   removeStale(join(options.out, 'functions'), written.functions);
   removeStale(join(options.out, 'sources'), written.sources);
 
+  // The changes that reached main: in the map of a pull request, those of its base. A directory that is no git repository has none, and the build goes on.
+  let history: string | undefined;
+  if (options.history !== false) {
+    try {
+      const read = readHistory({
+        repository: options.repository,
+        roots,
+        codeMaskOf: cli.codeMaskOf,
+        revision: options.history?.revision ?? options.base ?? 'HEAD',
+        ...(options.history?.pulls === undefined ? {} : { pulls: options.history.pulls }),
+        ...(options.history?.github === undefined ? {} : { github: options.history.github }),
+      });
+      history = `./data/history/${writeHashed(join(options.out, 'history'), 'history', JSON.stringify(read), written.history)}`;
+      log.push(`${read.entries.length} history entries (${read.entries.filter((entry) => entry.pr !== undefined).length} pull requests)`);
+    } catch (error) {
+      log.push(`No history: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`);
+    }
+  }
+  removeStale(join(options.out, 'history'), written.history);
+
   const data: MapData = {
     version: 4,
     frameworks: cli.frameworks,
@@ -327,6 +356,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     wiring: head.wiring,
     sources,
     ...(changes === undefined ? {} : { changes: changes.changes }),
+    ...(history === undefined ? {} : { history }),
   };
   const extension = (await options.extend?.({ data, repository, ...(changes === undefined ? {} : { changes }), out: options.out, failures, log })) ?? {};
   writeFileSync(join(options.out, 'map.json'), JSON.stringify(data));

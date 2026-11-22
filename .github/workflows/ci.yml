@@ -277,7 +277,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: mkdir -p work && gh api "repos/${{ github.repository }}/pulls?state=closed&base=main&per_page=100" --paginate --slurp > work/pulls.json
+        run: mkdir -p work && gh api "repos/${{ github.repository }}/pulls?state=closed&per_page=100" --paginate --slurp > work/pulls.json
 
       # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）をビルドし、全関数と
       # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、

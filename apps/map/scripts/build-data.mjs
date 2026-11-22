@@ -12,7 +12,9 @@
  * The history is read from the first-parent history of the base (MAP_BASE)
  * or of HEAD. MAP_PULLS names a JSON file of the pull requests on GitHub
  * (`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp`):
- * their titles and bodies join the history. MAP_REPOSITORY (owner/name, else
+ * the title and body of each join the change whose commit merged it (its
+ * merge_commit_sha; a number alone can name another repository's pull
+ * request in commits brought in from it). MAP_REPOSITORY (owner/name, else
  * GITHUB_REPOSITORY, else the remote origin) is where the history links.
  *
  * The same analysis reads the tests (packages/test-catalog): in the map of a

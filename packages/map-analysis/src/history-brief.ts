@@ -146,10 +146,21 @@ function titleOf(entry: HistoryEntry): string {
   return `${entry.pr === undefined ? `${entry.commit.slice(0, 10)}（PR なし）` : `PR #${entry.pr}`}: ${entry.title}`;
 }
 
-/** The page of a change on GitHub, when the repository is known: its pull request, or its commit when another change of the history has the same number (which of them the number names on GitHub is not known). */
+/**
+ * Whether the number of a change names its pull request on GitHub: only when
+ * GitHub said so (the build was given the pull requests, and the one of this
+ * number has the change's commit as its merge). The history holds commits
+ * brought in from another repository, whose numbers name other pull requests
+ * here, and without GitHub's word no number can be told from those.
+ */
+export function namesPull(history: HistoryData, entry: { pr?: number | undefined; onGitHub?: true | undefined }): boolean {
+  return entry.pr !== undefined && history.pulls === true && entry.onGitHub === true;
+}
+
+/** The page of a change on GitHub, when the repository is known: its pull request when its number names it (namesPull), else its commit. */
 function urlOf(history: HistoryData, entry: HistoryEntry): string | undefined {
   if (history.repository === undefined) return undefined;
-  return entry.pr === undefined || sharingNumber(history, entry).length > 0 ? `https://github.com/${history.repository}/commit/${entry.commit}` : `https://github.com/${history.repository}/pull/${entry.pr}`;
+  return namesPull(history, entry) ? `https://github.com/${history.repository}/pull/${entry.pr}` : `https://github.com/${history.repository}/commit/${entry.commit}`;
 }
 
 /**
@@ -250,6 +261,7 @@ export function changeBrief(map: BriefMap, history: HistoryData, entry: HistoryE
   lines.push(`- キー: ${keyOf(history, entry)} · main に入った日: ${entry.date.slice(0, 10)}${entry.branch === undefined ? '' : ` · ブランチ: ${entry.branch}`} · 作成者: ${entry.authors.join('、')}${url === undefined ? '' : ` · ${url}`}`);
   lines.push('- 差分は、OSS が出すコード（関数カタログの根のファイル）の、変更したときのもの。判断の前に、各関数の「今のコード」の行を読む');
   if (whole !== undefined) lines.push(`- テストや文書を含む変更全体: ${whole}`);
+  if (entry.pr !== undefined && history.pulls === true && entry.onGitHub !== true) lines.push(`- GitHub の PR の一覧に、この変更をマージした PR #${entry.pr} は無い（取り込んだ別のリポジトリの番号のことがある）。本文は無く、題はコミットのもの`);
   const shared = sharingNumber(history, entry);
   if (shared.length > 0) lines.push(`- PR 番号 #${entry.pr} の変更はほかにもある: ${shared.map((other) => `${keyOf(history, other)}（${other.date.slice(0, 10)} ${other.title}）`).join('、')}`);
   lines.push(...READING_NOTES, '');
@@ -274,7 +286,7 @@ export function changeBrief(map: BriefMap, history: HistoryData, entry: HistoryE
   }
   const unreadNotes = entry.notes.filter((path) => detail?.notes.some((note) => note.path === path) !== true);
   if (unreadNotes.length > 0) lines.push('### 変更メモ（本文を読めなかった）', '', ...unreadNotes.map((path) => `- ${path}${entry.boundary === true ? '' : `（\`git show ${entry.commit.slice(0, 12)}:${shellWord(path)}\`）`}`), '');
-  if (lines.length === intent) lines.push(entry.pr === undefined ? 'PR が無い。コミットのメッセージが、何をしたかの記録である（下の「コミット」）。' : '地図のデータに PR の本文が無い（ビルドに MAP_PULLS を渡すと載る）。コミットのメッセージも読む（下の「コミット」）。', '');
+  if (lines.length === intent) lines.push(entry.pr === undefined ? 'PR が無い。コミットのメッセージが、何をしたかの記録である（下の「コミット」）。' : history.pulls === true ? 'PR の本文が無い。コミットのメッセージを読む（下の「コミット」）。' : '地図のデータに PR の本文が無い（ビルドに MAP_PULLS を渡すと載る）。コミットのメッセージも読む（下の「コミット」）。', '');
 
   const counts = { added: 0, modified: 0, removed: 0 };
   for (const change of entry.functions) counts[change.status] += 1;

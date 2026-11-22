@@ -47,6 +47,21 @@ export interface PullRequestInfo {
   title?: string;
   body?: string | null;
   head?: { ref?: string };
+  /** The commit that merged it (or squashed it) into its base; null for a pull request closed without a merge. */
+  merge_commit_sha?: string | null;
+}
+
+/**
+ * The pull request on GitHub a commit of the history merged: the one of its
+ * number whose merge commit it is. A number alone is not enough: the history
+ * can hold commits of another repository brought in, whose numbers name other
+ * pull requests here. A pull request listed without its merge commit is taken
+ * by its number.
+ */
+function pullOf(pulls: ReadonlyMap<number, PullRequestInfo>, number: number, commit: string): PullRequestInfo | undefined {
+  const pull = pulls.get(number);
+  if (pull === undefined) return undefined;
+  return pull.merge_commit_sha === undefined || pull.merge_commit_sha === commit ? pull : undefined;
 }
 
 export interface HistoryOptions {
@@ -620,6 +635,7 @@ function changedFunctions(files: readonly RootFile[], texts: Texts): HistoryFunc
 /** Give an entry what GitHub says of its pull request: the title (it replaces that of git), the body, and the branch when git did not tell it. */
 function withPull(entry: HistoryEntry, pull: PullRequestInfo | undefined): HistoryEntry {
   if (pull === undefined) return entry;
+  entry.onGitHub = true;
   if (typeof pull.title === 'string' && pull.title.trim() !== '') entry.title = pull.title.trim();
   if (typeof pull.body === 'string' && pull.body.trim() !== '') entry.body = pull.body;
   if (entry.branch === undefined && typeof pull.head?.ref === 'string' && pull.head.ref !== '') entry.branch = pull.head.ref;
@@ -705,13 +721,13 @@ export function readHistoryWithDiffs(options: HistoryOptions & { diffs?: boolean
     const carried = (brought?.carried ?? []).flatMap((inner) => {
       const { pr: number, title: innerTitle } = kindOf(inner);
       if (number === undefined || number === pr) return [];
-      const pull = pulls.get(number);
+      const pull = pullOf(pulls, number, inner.sha);
       const body = typeof pull?.body === 'string' && pull.body.trim() !== '' ? pull.body : undefined;
-      return [{ pr: number, title: typeof pull?.title === 'string' && pull.title.trim() !== '' ? pull.title.trim() : innerTitle, commit: inner.sha, ...(body === undefined ? {} : { body }) }];
+      return [{ pr: number, title: typeof pull?.title === 'string' && pull.title.trim() !== '' ? pull.title.trim() : innerTitle, commit: inner.sha, ...(body === undefined ? {} : { body }), ...(pull === undefined ? {} : { onGitHub: true as const }) }];
     });
     if (carried.length > 0) entry.carried = carried;
     if (boundaries.has(commit.sha)) entry.boundary = true;
-    return withPull(entry, pr === undefined ? undefined : pulls.get(pr));
+    return withPull(entry, pr === undefined ? undefined : pullOf(pulls, pr, commit.sha));
   });
   const details = new Map<string, HistoryDetail>();
   if (options.diffs === true) {
@@ -725,6 +741,7 @@ export function readHistoryWithDiffs(options: HistoryOptions & { diffs?: boolean
       version: 1,
       ...(options.github === undefined ? {} : { repository: options.github }),
       ...(shallow ? { shallow: true } : {}),
+      ...(options.pulls === undefined ? {} : { pulls: true as const }),
       entries,
       functions: functionIndex(entries),
     },

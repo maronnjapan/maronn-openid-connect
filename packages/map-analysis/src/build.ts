@@ -26,6 +26,7 @@ import { readRepository, type Repository } from './repository.js';
 import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
 import { collectChanges, changesMarkdown, type ChangeResult } from './changes.js';
+import { usesOf } from './symbols.js';
 
 /**
  * The page shows the text of a JSDoc as it is, so a `{@link Name}` of the
@@ -278,11 +279,14 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
     };
   }
 
-  // The code, highlighted, one file each.
+  // The code, highlighted, one file each: every file of the roots, so a link of the code can open the file it goes to.
   for (const entry of head.wiring) {
     const colon = entry.file.indexOf(':');
     sourceOf(entry.file.slice(0, colon), entry.file.slice(colon + 1));
   }
+  for (const id of head.links.keys()) sourceOf(id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1));
+  const uses = usesOf(head.links);
+  let linkCount = 0;
   const highlighter = await createSourceHighlighter();
   const sources: MapData['sources'] = {};
   // Endpoint metadata also owns route files outside feature directories.
@@ -298,7 +302,12 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   for (const [id, source] of [...sourceFiles].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const features = sourceFeatureRanges(source.path, source.code, cli.features, cli.parseOwnerBlocks, endpointOwners.get(id) ?? featureOfPath(source.path, cli.features));
     const ownership = features.length === 0 ? {} : { features };
-    const name = writeHashed(join(options.out, 'sources'), id, JSON.stringify({ ...highlightSource(highlighter, source), ...ownership }), written.sources);
+    const links = head.links.get(id);
+    // A member link names a member of the map only when the map knows the member (the members the trees call).
+    const linked = links === undefined ? {} : { links: { ...links, targets: links.targets.map((target) => (target.member === undefined || members[target.member] !== undefined ? target : (({ member: _member, ...rest }) => rest)(target))) } };
+    linkCount += (links?.refs.length ?? 0) / 4;
+    const used = uses.get(id);
+    const name = writeHashed(join(options.out, 'sources'), id, JSON.stringify({ ...highlightSource(highlighter, source), ...ownership, ...linked, ...(used === undefined ? {} : { uses: Object.fromEntries(used) }) }), written.sources);
     sources[id] = { path: source.path, url: `./data/sources/${name}`, ...ownership };
   }
   highlighter.dispose();
@@ -329,7 +338,7 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   const untraceable = [...Object.values(functions), ...Object.values(bodies)].reduce((count, entry) => count + (entry.untraceable ?? 0), 0);
   log.push(
     `${cli.frameworks.length} frameworks, ${steps} steps, ${Object.keys(functions).length} functions, ${Object.keys(bodies).length} endpoint bodies, ` +
-      `${Object.keys(members).length} interface members, ${untraceable} untraceable calls, ${head.wiring.length} wiring diagnostics, ${Object.keys(sources).length} source files`,
+      `${Object.keys(members).length} interface members, ${untraceable} untraceable calls, ${head.wiring.length} wiring diagnostics, ${Object.keys(sources).length} source files, ${linkCount} links to declarations`,
   );
   return { data, repository, ...(changes === undefined ? {} : { changes }), log, ...(markdown === undefined ? {} : { markdown }) };
 }

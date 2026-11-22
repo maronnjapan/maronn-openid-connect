@@ -377,7 +377,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 
 - `map.json`：索引。フレームワーク、コマンド、機能、エンドポイントとステップ、関数カタログ（呼び先、呼び出し元、外へ出る失敗）、interface のメンバー（説明、実装、実装が呼ぶもの）、PR の変更の一覧。木は含まない
 - `functions/<hash>.json`：フレーム一つ分。木、よく使う選択、PR の地図では変更前の木、ノードの差分、式の差分、ノードごとの hunk。フレームを開いたときに読む
-- `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む
+- `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む。名前ごとに宣言の場所（`links`）を、宣言ごとにそれを使う場所（`uses`）を持つ（`packages/map-analysis/src/symbols.ts`。型検査器で引き、地図の根の外の宣言は持たない）。リンクの先を開けるよう、地図の根のファイルはすべて書く
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
 
 テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
@@ -393,6 +393,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 ビルドの最後に `scripts/check-map.mjs` が地図の出力を検査し、次の数を出す。
 名前の無い選択（exit ケース）と、同じフレームで重なる名前（番号だけで区別した名前を含む）、ノードに属さない行、PR が変えた行のうちノードに属さないもの、説明の無い変更である。
 全機能オンの `/token` に、refresh_token と authorization_code の名前付きの選択があることも確かめる。
+コードのリンク（`links`）がどれも名前の上にあり、地図が持つファイルの宣言の名前へ行くことも確かめる（`checkLinks`）。
 これは地図の出力に対する検査で、貢献者のコードの形には向けない。
 図の検査（`src/lib/diagram.data.test.ts`）も同じ考えで、ビルドしたデータがあるときだけ走る（`ci.yml` の `map` ジョブでは `build:map` の後のテスト）。
 決定と終わりがどのフレームの図からも欠けないこと、`try` の枠が自分の箱だけを囲むこと、図がステップと守りをアウトラインと同じに畳むこと、幅に合わせて見出しが 11px に届くフレームが 9 割を下回らないことを確かめる。

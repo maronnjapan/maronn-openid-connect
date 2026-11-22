@@ -65,6 +65,7 @@ export async function readRepository(repository: string, cliDist = join(reposito
     stepOf: (id) => steps.get(id),
     joinLines: cli.joinLines,
     joinLinesFlat: cli.joinLinesFlat,
+    links: { isFunction: (id) => cli.catalog[id] !== undefined },
   });
   return { repository, cli, roots, endpoints, steps, head };
 }

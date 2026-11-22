@@ -16,6 +16,8 @@ import { Resolver, readContextKeys, type ContextKeys } from './resolve.js';
 import { buildTree, place, signatureOf, type BuiltTree, type FrameInput } from './tree.js';
 import { shorten } from './words.js';
 import { scanWiring } from './wiring.js';
+import { readLinks, type AliasCache } from './symbols.js';
+import type { SourceLinks } from './model.js';
 
 /** The marker of a step, anywhere in a file: `// [id] ...`. */
 const MARKERS = /^[ \t]*\/\/ \[([a-z0-9-]+)\](?: \(feature: [a-z0-9-]+\))? /gm;
@@ -48,6 +50,8 @@ export interface RevisionInput {
   joinLinesFlat(lines: readonly string[]): string;
   /** The files that differ from the working tree (a base revision). */
   overlay?: Overlay;
+  /** Read the links of every file too (symbols.ts), telling the functions of the catalog by id; the code view of the working tree needs them, a base revision does not. */
+  links?: { isFunction(id: string): boolean };
 }
 
 /** A frame found in a file. */
@@ -80,6 +84,8 @@ export interface Revision {
   texts: Map<string, string>;
   /** Registration and startup diagnostics, including modules with no function declaration. */
   wiring: WiringEntry[];
+  /** root:module → the names of the file and the declarations they go to (when RevisionInput.links). */
+  links: Map<string, SourceLinks>;
 }
 
 /** Every production module of a configured extraction root, including files containing only registrations or startup values. */
@@ -205,7 +211,8 @@ export function readRevision(input: RevisionInput): Revision {
   const configs = overlayConfigs(repository, roots, files);
   const compiler = new Compiler(repository, configs, input.overlay);
   try {
-    const revision: Revision = { frames: new Map(), trees: new Map(), members: new Map(), endpointRoots: new Map(), texts: new Map(), wiring: [] };
+    const revision: Revision = { frames: new Map(), trees: new Map(), members: new Map(), endpointRoots: new Map(), texts: new Map(), wiring: [], links: new Map() };
+    const aliases = new Map<string, AliasCache>();
     const sourceFiles = new Map<string, SourceFile>();
     const fileOf = (root: string, module: string): SourceFile | undefined => {
       const key = `${root}:${module}`;
@@ -391,6 +398,11 @@ export function readRevision(input: RevisionInput): Revision {
         // disappear merely because no catalog function owns their source lines.
         const resolution = resolver.resolve([file]);
         revision.wiring.push(...scanWiring({ file, fileId, resolver, checker: compiler.project(overlayOf(repository, root)).checker, resolution, tracedRanges: frames.map((frame) => [frame.info.start, frame.info.end]) }));
+        if (input.links !== undefined) {
+          const cache = aliases.get(root.project) ?? new Map();
+          aliases.set(root.project, cache);
+          revision.links.set(fileId, readLinks({ repository, roots, project: compiler.project(overlayOf(repository, root)), file, fileId, isFunction: input.links.isFunction }, cache));
+        }
         if (frames.length === 0) continue;
         const context = { file, resolution, summaryOf, stepOf: input.stepOf, joinLines: input.joinLines };
         for (const frame of frames) {

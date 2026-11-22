@@ -22,7 +22,7 @@
  *   flow view finds the request of the way chosen, and every request says
  *   the line of its test that sent it and the code of that line.
  */
-import type { FlowTree, FrameFile, MapData, RootRequests, TreeNode } from './model.js';
+import type { FlowTree, FrameFile, MapData, RootRequests, SourceDocument, TreeNode } from './model.js';
 
 export interface MapMetrics {
   frames: number;
@@ -231,4 +231,42 @@ export async function checkMap(
     );
   }
   return { metrics, failures };
+}
+
+/** What the check of the links of the code measures and fails on. */
+export interface LinkCheck {
+  /** The names with a link, over all the files. */
+  links: number;
+  /** One line each: a link whose file the map has no source of, or whose name or declaration is not where it says. */
+  broken: string[];
+}
+
+/**
+ * Check the links of the code (SourceDocument.links): every declaration they
+ * go to is a file the map carries, and the declaration's name is at its line
+ * and column; every name with a link is a name (an identifier or a module
+ * specifier) at its line and column. A link that points beside its name
+ * would open the code view at the wrong place without anyone noticing.
+ */
+export function checkLinks(documents: ReadonlyMap<string, SourceDocument>): LinkCheck {
+  const result: LinkCheck = { links: 0, broken: [] };
+  const lines = new Map<string, string[]>([...documents].map(([id, document]) => [id, document.code.split('\n')]));
+  for (const [id, document] of documents) {
+    const own = lines.get(id) ?? [];
+    const table = document.links;
+    if (table === undefined) continue;
+    for (const target of table.targets) {
+      const text = lines.get(target.file);
+      if (text === undefined) result.broken.push(`${id}: ${target.name} goes to ${target.file}, which the map has no source of`);
+      else if (target.kind !== 'module' && text[target.line - 1]?.startsWith(target.name, target.column) !== true) result.broken.push(`${id}: ${target.name} is not at ${target.file}:${target.line}:${target.column}`);
+    }
+    for (let index = 0; index < table.refs.length; index += 4) {
+      const [line, column, length] = table.refs.slice(index, index + 3) as [number, number, number];
+      const name = own[line - 1]?.slice(column, column + length) ?? '';
+      result.links += 1;
+      // A name of JSX (`aria-label`) may hold a hyphen.
+      if (!/^(?:[\p{L}\p{Nl}$_][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$-]*|(['"]).*\1)$/u.test(name) || table.targets[table.refs[index + 3] as number] === undefined) result.broken.push(`${id}:${line}:${column}: the link of ${length} characters is on "${name}", not a name`);
+    }
+  }
+  return result;
 }

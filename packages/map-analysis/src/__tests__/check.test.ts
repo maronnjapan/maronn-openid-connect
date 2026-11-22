@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { checkMap } from '../check.js';
-import type { FrameFile, MapChanges, MapData, RootRequests, WayRequest } from '../model.js';
+import { checkLinks, checkMap } from '../check.js';
+import type { FrameFile, MapChanges, MapData, RootRequests, SourceDocument, WayRequest } from '../model.js';
 
 /** A map of one function whose frame offers some choices by name. */
 function mapOf(names: readonly string[]): { data: MapData; frame: FrameFile } {
@@ -187,5 +187,30 @@ describe('checkMap', () => {
     const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined);
     expect(metrics.changedOutside).toEqual([{ frame: 'core:a.ts#f', lines: [3] }]);
     expect(failures).toEqual(['core:a.ts#f: changed lines 3 are in no node']);
+  });
+});
+
+describe('the check of the links of the code', () => {
+  /** A source document of some code with links. */
+  const documentOf = (code: string, links?: SourceDocument['links']): SourceDocument => ({ code, foreground: '', background: '', tokens: [], ...(links === undefined ? {} : { links }) });
+
+  it('should pass links that sit on names and go to declarations of the files', () => {
+    const documents = new Map([
+      ['lib:b.ts', documentOf('export function double() {}\n')],
+      ['lib:a.ts', documentOf("import { double } from './b';\n", { targets: [{ file: 'lib:b.ts', line: 1, column: 16, name: 'double', kind: 'function' }, { file: 'lib:b.ts', line: 1, column: 0, name: 'b.ts', kind: 'module' }], refs: [1, 9, 6, 0, 1, 23, 5, 1] })],
+    ]);
+    expect(checkLinks(documents)).toEqual({ links: 2, broken: [] });
+  });
+
+  it('should fail a link to a file the map has no source of, a declaration not where it says, and a link beside its name', () => {
+    const documents = new Map([
+      ['lib:b.ts', documentOf('export function double() {}\n')],
+      ['lib:a.ts', documentOf('double(1);\n', { targets: [{ file: 'lib:c.ts', line: 1, column: 0, name: 'triple', kind: 'function' }, { file: 'lib:b.ts', line: 1, column: 0, name: 'double', kind: 'function' }], refs: [1, 0, 6, 1, 1, 6, 3, 1] })],
+    ]);
+    expect(checkLinks(documents).broken).toEqual([
+      'lib:a.ts: triple goes to lib:c.ts, which the map has no source of',
+      'lib:a.ts: double is not at lib:b.ts:1:0',
+      'lib:a.ts:1:6: the link of 3 characters is on "(1)", not a name',
+    ]);
   });
 });

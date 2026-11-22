@@ -1,12 +1,19 @@
 /**
  * The data of the map, written to public/data by the analysis
  * (packages/map-analysis): map.json, a file a frame under functions/, a file
- * a source under sources/, and in the map of a pull request changes.md.
+ * a source under sources/, the changes that reached main under history/, and
+ * in the map of a pull request changes.md.
  *
  * With MAP_BASE (a git revision: origin/main, a commit), the data holds the
  * changes of the working tree since it forked from that base; MAP_PR,
  * MAP_PR_TITLE and MAP_PR_URL name the pull request. The changes in Markdown
  * also go to the summary of the run on GitHub Actions.
+ *
+ * The history is read from the first-parent history of the base (MAP_BASE)
+ * or of HEAD. MAP_PULLS names a JSON file of the pull requests on GitHub
+ * (`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp`):
+ * their titles and bodies join the history. MAP_REPOSITORY (owner/name, else
+ * GITHUB_REPOSITORY, else the remote origin) is where the history links.
  *
  * The same analysis reads the tests (packages/test-catalog): in the map of a
  * pull request their diff goes into changes.md and fails the check of a
@@ -20,11 +27,28 @@
  * Reads the built CLI and the built analysis, so run
  * `pnpm run build:map` at the root (it builds both first).
  */
-import { appendFileSync, mkdirSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, pullRequestOf } from '@maronn-openid-connect/map-analysis';
+import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, originRepository, pullRequestOf } from '@maronn-openid-connect/map-analysis';
 import { buildTests } from '@maronn-openid-connect/test-catalog';
+
+/**
+ * The pull requests of the JSON file MAP_PULLS names (an array, or the pages
+ * of `--slurp` as arrays); undefined without the variable, and with a warning
+ * when the file cannot be read as that.
+ */
+function readPulls(file) {
+  if (file === undefined || file.trim() === '') return undefined;
+  try {
+    const pulls = JSON.parse(readFileSync(resolve(file.trim()), 'utf8'));
+    if (!Array.isArray(pulls)) throw new Error('not a JSON array');
+    return pulls.flat().filter((pull) => typeof pull?.number === 'number');
+  } catch (error) {
+    console.warn(`MAP_PULLS (${file}) is left out: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = resolve(appRoot, '../..');
@@ -39,11 +63,14 @@ const base = process.env.MAP_BASE?.trim() || undefined;
 const pullRequest = pullRequestOf(process.env);
 const started = Date.now();
 const reports = process.env.MAP_TEST_REPORTS?.trim() ? resolve(process.env.MAP_TEST_REPORTS.trim()) : undefined;
+const pulls = readPulls(process.env.MAP_PULLS);
+const github = process.env.MAP_REPOSITORY?.trim() || process.env.GITHUB_REPOSITORY?.trim() || originRepository(repository);
 const result = await buildMap({
   repository,
   out,
   ...(base === undefined ? {} : { base }),
   ...(pullRequest === undefined ? {} : { pullRequest }),
+  history: { ...(pulls === undefined ? {} : { pulls }), ...(github === undefined ? {} : { github }) },
   extend: (context) => buildTests(context, { out: testsOut, ...(reports === undefined ? {} : { reports }) }),
 });
 for (const line of result.log) console.log(`Wrote ${join(out, 'map.json')}: ${line} (${((Date.now() - started) / 1000).toFixed(1)}s)`);

@@ -2,8 +2,8 @@
  * The analysis behind the OIDC Provider Map (apps/map): read every function
  * of the catalog and every endpoint body as a flow tree with the TypeScript
  * compiler, diff the trees of a pull request, compute where its changes take
- * effect, read its change notes, and write the data the page shows
- * (model.ts).
+ * effect, read its change notes, read what each change that reached main
+ * did, and write the data the page shows (model.ts).
  */
 export { buildMap, plain, removeStale, writeHashed, type BuildContext, type BuildExtension, type BuildOptions, type BuildResult } from './build.js';
 export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, LINKS_PLACE, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
@@ -14,6 +14,7 @@ export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeH
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';
 export { escapingFailures } from './failures.js';
 export { featureOfPath, sourceFeatureRanges } from './features.js';
+export { originRepository, readHistory, repositoryOfRemote, type HistoryOptions, type PullRequestInfo } from './history.js';
 export { CallGraph, catcherIn, reachOf, rootOf, type EndpointRoot, type ReachOptions, type ReachTarget } from './impact.js';
 export { attachNotes, draftHeading, draftSections, draftTestLines, draftTestSections, isNote, NOTES_DIRECTORY, parseNote, referencesOf, resolveReference, withoutComments, type DraftTests } from './notes.js';
 export { readRepository, type Repository } from './repository.js';

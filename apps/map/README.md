@@ -401,6 +401,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む。名前ごとに宣言の場所（`links`）を、宣言ごとにそれを使う場所（`uses`）を持つ（`packages/map-analysis/src/symbols.ts`。型検査器で引き、地図の根の外の宣言は持たない）。リンクの先を開けるよう、地図の根のファイルはすべて書く
 - `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
+- `history/<hash>.json`：main に入った変更の一覧。main（PR の地図では MAP_BASE）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる
 
 テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
 地図の `public/data` にテストのファイルは無い。
@@ -423,6 +424,10 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 `MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` は、ページに出す PR の番号、タイトル、URL である。
 `MAP_TEST_REPORTS` は、テストの実行が書いたディレクトリ（Vitest と Playwright の JSON、到達の記録）である。
 無ければ、テストの札はコードから読んだものだけになる。
+`MAP_PULLS` は、GitHub の PR の一覧の JSON ファイル（`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp` の出力）である。
+あれば、履歴の PR のタイトルは GitHub のものになり、PR の本文が付く。
+`MAP_REPOSITORY` は、履歴がリンクする GitHub のリポジトリ（`owner/name`）である。
+無ければ `GITHUB_REPOSITORY` を、それも無ければ `origin` の URL を使う。
 
 ```bash
 # ルートで: CLI と解析パッケージをビルドしてから地図をビルドする（dist/ に静的ページ、dist/tests/ にテストの画面）

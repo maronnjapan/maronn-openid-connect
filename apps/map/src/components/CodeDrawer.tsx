@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DiffHunk, LinkTarget, MapData, SourceDocument } from '../types';
 import { allHunks, type ChangeIndex } from '../lib/changes';
 import { codeIndexOf, currentOf, implementationsOf, locationOf, peekOf, replace, startAt, step, visit, type CodeHistory, type CodeLocation, type Peek } from '../lib/links';
@@ -13,10 +13,8 @@ import { codeHash } from '../code/lib';
 
 type LoadedSource = { url: string; document: SourceDocument } | { url: string; error: string };
 
-/** What a place of the code shows: a frame offered by the drawer, a frame of the map, or a whole file. */
-function targetOf(data: MapData, targets: readonly SourceTarget[], id: string): SourceTarget | undefined {
-  const offered = targets.find((item) => item.id === id);
-  if (offered !== undefined) return offered;
+/** What a place of the code shows: a frame of the map (its lines), or a whole file. */
+function targetOf(data: MapData, id: string): SourceTarget | undefined {
   const source = entryOf(data, id)?.source;
   if (source !== undefined) {
     const entry = entryOf(data, id);
@@ -35,14 +33,12 @@ function targetOf(data: MapData, targets: readonly SourceTarget[], id: string): 
  * retrace the steps. For a frame the pull request changed, the reader
  * switches between its diff and its code as it is now.
  */
-export function CodeDrawer({ data, changes, targets, initial, onClose }: {
+export function CodeDrawer({ data, changes, initial, onClose }: {
   data: MapData;
   changes?: ChangeIndex | undefined;
-  targets: SourceTarget[];
   initial: string;
   onClose: () => void;
 }) {
-  const selectId = useId();
   const index = useMemo(() => codeIndexOf(data), [data]);
   const [history, setHistory] = useState<CodeHistory>(() => startAt({ id: initial }));
   // The reader's choice of the diff or the code holds for a step of the history (the whole file of it, or its lines, alike).
@@ -59,7 +55,7 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   // A place reached by a name shows the code; a changed frame opened as it is shows its diff first.
   const stepKey = `${history.index}:${location.id}`;
   const mode = modeChoice?.at === stepKey ? modeChoice.mode : location.line === undefined && changed !== undefined && (changed.kind === 'modified' || changed.kind === 'added') ? 'diff' : 'full';
-  const target = targetOf(data, targets, selected);
+  const target = targetOf(data, selected);
   const source = target === undefined ? undefined : data.sources[target.file];
   const url = source?.url;
   useEffect(() => {
@@ -140,16 +136,7 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
             <button type="button" className="nav" disabled={!forward} onClick={() => setHistory((now) => step(now, 1))} title="進む（Alt + →）" aria-label="進む">
               →
             </button>
-            <label htmlFor={selectId}>一覧から開く</label>
           </div>
-          <select id={selectId} value={targets.some((item) => item.id === selected) ? selected : ''} onChange={(event) => go({ id: event.target.value })}>
-            {targets.some((item) => item.id === selected) ? null : <option value="">{target?.label ?? selected}</option>}
-            {targets.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
           <div className="code-location">
             <p className="where mono">
               {source?.path}

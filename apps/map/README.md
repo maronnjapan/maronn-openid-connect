@@ -368,7 +368,6 @@ interface のメンバーへ移ったときは、その実装を並べる。
 宣言の名前そのものを押すと、それを使う場所を、使う関数の名前と行で並べる。
 ← と → のボタン（Alt + ← / →）で、たどった場所を戻る・進む。
 リンクはビルド時に型検査器で引いた表（後の「データとビルド」の `sources/<hash>.json`）で、地図の根の外（hono、node）の宣言には付かない。
-「一覧から開く」でも、エンドポイントのファイル全体、ステップの関数、そこから呼ぶ関数（core まで）を選んで開ける。
 関数には JSDoc とオーバーロードを含め、元ファイルの行番号を表示する。
 PR の地図で変えた関数は、「差分」と「変更後の全文」を切り替えられる。
 Drawer は関数を単位に開き、アウトラインの一行のコードはその行の `</>` で読む。
@@ -518,7 +517,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/changes.ts`：PR の変更の札（行と箱で共通）、下の変更の集計、変更に至る道筋の選択、届く経路の名前とまとめ方、失敗が捕まる場所、差分の行番号、変更メモの本文
 - `src/lib/words.ts`：アウトラインの行と図の箱の言葉（JSDoc、コメント、言葉の無い文の続き、`return` が返すもの、決定の側の名前）
 - `src/lib/model.ts`：機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
-- `src/lib/source.ts`, `src/components/CodeDrawer.tsx`：コードの選択肢とソースを読む Drawer
+- `src/lib/source.ts`, `src/components/CodeDrawer.tsx`：ソースの行と、コードを読む Drawer
 - `code/index.html`, `src/code/`：コードを読むページ（ファイルの一覧、名前で開く検索、URL のハッシュは `src/code/lib.ts`）
 - `src/lib/links.ts`, `src/components/SourceView.tsx`：コードの名前のリンク（行を名前で切る、移る先、使う場所、戻る・進むの履歴）と、リンク付きのコードの表示
 - `src/components/Trace.tsx`, `TraceView.tsx`, `SelectionBar.tsx`：アウトライン、決定のボタン、よく使う選択、図・差分・詳細のタブ

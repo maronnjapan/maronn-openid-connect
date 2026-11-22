@@ -5,8 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadCli, type Cli } from '../cli.js';
-import { isoDate, originRepository, readHistory, repositoryOfRemote } from '../history.js';
-import type { HistoryData } from '../model.js';
+import { isoDate, MAX_FILE_DIFF_LINES, originRepository, readHistory, readHistoryWithDiffs, repositoryOfRemote, splitHunks } from '../history.js';
+import type { HistoryData, HistoryDetail } from '../model.js';
 import type { AnalysisRoot } from '../roots.js';
 
 const roots: AnalysisRoot[] = [{ name: 'lib', directory: 'src', exclude: [], project: '.' }];
@@ -364,5 +364,126 @@ describe('the pull requests off the first-parent history, and a shallow clone', 
 describe('isoDate', () => {
   it('should write UTC as +00:00 whichever git wrote the date, and keep any other offset', () => {
     expect([isoDate('2026-01-06T10:00:00Z'), isoDate('2026-01-06T10:00:00+00:00'), isoDate('2026-11-20T18:38:57+09:00')]).toEqual(['2026-01-06T10:00:00+00:00', '2026-01-06T10:00:00+00:00', '2026-11-20T18:38:57+09:00']);
+  });
+});
+
+describe('readHistoryWithDiffs', () => {
+  let details: Map<string, HistoryDetail>;
+  beforeAll(() => {
+    details = readHistoryWithDiffs({ repository: directory, roots, codeMaskOf: cli.codeMaskOf, diffs: true }).details;
+  });
+
+  it('should keep the diff of the files of the roots only, with the hunks of each function the change touched', () => {
+    const squash = details.get(history.entries[0]?.commit as string);
+    const a = squash?.files.find((file) => file.path === 'src/a.ts');
+    expect([squash?.files.map((file) => [file.path, file.status]), a?.functions.map((fn) => [fn.id, fn.hunks.length > 0])]).toEqual([
+      [
+        ['src/a.ts', 'modified'],
+        ['src/b.ts', 'modified'],
+        ['src/gone.ts', 'deleted'],
+      ],
+      [
+        ['lib:a.ts#shout', true],
+        ['lib:a.ts#parse', true],
+      ],
+    ]);
+  });
+
+  it('should write each hunk as a unified diff with its lines from the text before and after', () => {
+    const merge = details.get(history.entries[1]?.commit as string);
+    const a = merge?.files.find((file) => file.path === 'src/a.ts');
+    const hunk = a?.functions.find((fn) => fn.id === 'lib:a.ts#hello')?.hunks[0];
+    expect([hunk?.base, hunk?.head, hunk?.lines]).toEqual([1, 1, ['/** Say hello to someone. */', 'export function hello(name: string): string {', '-  return `hello ${name}`;', '+  return `hello, ${name}`;', '}', '', 'const greeting = \'hey\';'].map((line) => (line[0] === '-' || line[0] === '+' ? line : ` ${line}`))]);
+  });
+
+  it('should leave a hunk that changes no function to the file, and give a removed function the lines it lost', () => {
+    const merge = details.get(history.entries[1]?.commit as string);
+    const direct = details.get(history.entries[2]?.commit as string);
+    const a = direct?.files.find((file) => file.path === 'src/a.ts');
+    const squash = details.get(history.entries[0]?.commit as string);
+    const helper = squash?.files.find((file) => file.path === 'src/b.ts')?.functions.find((fn) => fn.id === 'lib:b.ts#helper');
+    const helperLines = helper?.hunks.flatMap((hunk) => hunk.lines).filter((line) => line[0] === '-');
+    const outside = squash?.files.find((file) => file.path === 'src/b.ts')?.outside.flatMap((hunk) => hunk.lines).filter((line) => line[0] === '-');
+    expect([a?.functions, a?.outside.length, helperLines, outside, merge?.files.find((file) => file.path === 'src/renamed.ts')?.from]).toEqual([[], 1, ['-/** A helper the fix removes. */', '-function helper(): string {', "-  return 'help';", '-}'], ['-'], 'src/old.ts']);
+  });
+
+  it('should carry the text of the change notes a change wrote, and nothing for a change of no root file or note', () => {
+    const merge = details.get(history.entries[1]?.commit as string);
+    expect([merge?.notes, details.has(history.entries[3]?.commit as string)]).toEqual([[{ path: 'apps/map/changes/thing.md', text: '# The thing\n\nWhy it is made.\n' }], true]);
+  });
+
+  it('should leave out the hunks of a file whose diff is too long, keeping its functions', () => {
+    const big = mkdtempSync(join(tmpdir(), 'map-history-big-'));
+    try {
+      git(big, ['init', '-q', '-b', 'main']);
+      git(big, ['config', 'user.name', 'Someone']);
+      git(big, ['config', 'user.email', 'someone@example.com']);
+      write(big, { 'src/big.ts': `/** Count. */\nexport function count(): number {\n${Array.from({ length: MAX_FILE_DIFF_LINES }, (_, index) => `  // ${index}`).join('\n')}\n  return 1;\n}\n` });
+      commit(big, ['Add a big file'], 1, 'Someone');
+      const read = readHistoryWithDiffs({ repository: big, roots, codeMaskOf: cli.codeMaskOf, diffs: true });
+      const file = read.details.get(read.history.entries[0]?.commit as string)?.files[0];
+      expect([file?.omitted, file?.outside, file?.functions]).toEqual(['file', [], [{ id: 'lib:big.ts#count', hunks: [] }]]);
+    } finally {
+      rmSync(big, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('splitHunks', () => {
+  const spans = (entries: Record<string, [number, number]>) => new Map(Object.entries(entries).map(([name, [start, end]]) => [name, { start, end }]));
+  const ids = (names: string[]) => new Map(names.map((name) => [name, `lib:a.ts#${name}`]));
+
+  it('should cut a hunk that crosses from one function to the next into a piece for each, with the context around each', () => {
+    const hunk = { base: 1, head: 1, lines: [' /** F. */', ' function f() {', '-  return 1;', '+  return 2;', ' }', ' ', ' /** G. */', ' function g() {', '-  return 3;', '+  return 4;', ' }'] };
+    const split = splitHunks([hunk], spans({ f: [1, 4], g: [6, 9] }), spans({ f: [1, 4], g: [6, 9] }), ids(['f', 'g']), ids(['f', 'g']));
+    expect([split.functions.get('lib:a.ts#f'), split.functions.get('lib:a.ts#g'), split.outside]).toEqual([
+      [{ base: 1, head: 1, lines: [' /** F. */', ' function f() {', '-  return 1;', '+  return 2;', ' }', ' ', ' /** G. */'] }],
+      [{ base: 5, head: 5, lines: [' ', ' /** G. */', ' function g() {', '-  return 3;', '+  return 4;', ' }'] }],
+      [],
+    ]);
+  });
+
+  it('should give each function of an added file its own lines, and the rest to the file', () => {
+    const hunk = { base: 0, head: 1, lines: ["+import { x } from './x';", '+', '+/** F. */', '+export function f() {}', '+', '+/** G. */', '+export function g() {}'] };
+    const split = splitHunks([hunk], new Map(), spans({ f: [3, 4], g: [6, 7] }), new Map(), ids(['f', 'g']));
+    expect([split.functions.get('lib:a.ts#f')?.[0]?.lines.filter((line) => line[0] === '+'), split.functions.get('lib:a.ts#g')?.[0]?.lines, split.outside.flatMap((piece) => piece.lines)]).toEqual([
+      ['+/** F. */', '+export function f() {}'],
+      ['+/** G. */', '+export function g() {}'],
+      ["+import { x } from './x';", '+', '+'],
+    ]);
+  });
+});
+
+describe('the diff git gives', () => {
+  let repo: string;
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), 'map-history-git-'));
+    git(repo, ['init', '-q', '-b', 'main']);
+    git(repo, ['config', 'user.name', 'Someone']);
+    git(repo, ['config', 'user.email', 'someone@example.com']);
+    git(repo, ['config', 'commit.gpgsign', 'false']);
+    write(repo, { 'src/a.ts': '/**\n * F.\n */\nexport function f(): number {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  const d = 4;\n  return a;\n}' });
+    commit(repo, ['Start'], 1, 'Someone');
+    // A constant with its JSDoc added above f, and one line of f changed further down; then the final newline added.
+    write(repo, { 'src/a.ts': '/**\n * K.\n */\nexport const K = 1;\n\n/**\n * F.\n */\nexport function f(): number {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  const d = 4;\n  return b;\n}' });
+    commit(repo, ['Add K and change f'], 2, 'Someone');
+    write(repo, { 'src/a.ts': '/**\n * K.\n */\nexport const K = 1;\n\n/**\n * F.\n */\nexport function f(): number {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  const d = 4;\n  return b;\n}\n' });
+    commit(repo, ['End the file with a newline'], 3, 'Someone');
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  it('should keep a declaration added above a function out of that function, as git places it', () => {
+    const read = readHistoryWithDiffs({ repository: repo, roots, codeMaskOf: cli.codeMaskOf, diffs: true });
+    const file = read.details.get(read.history.entries[1]?.commit as string)?.files[0];
+    expect([file?.functions.map((fn) => fn.hunks.flatMap((hunk) => hunk.lines).filter((line) => line[0] !== ' ')), file?.outside.flatMap((hunk) => hunk.lines).filter((line) => line[0] !== ' ')]).toEqual([
+      [['-  return a;', '+  return b;']],
+      ['+/**', '+ * K.', '+ */', '+export const K = 1;', '+'],
+    ]);
+  });
+
+  it('should show the change of the last line when only its newline was added', () => {
+    const read = readHistoryWithDiffs({ repository: repo, roots, codeMaskOf: cli.codeMaskOf, diffs: true });
+    const file = read.details.get(read.history.entries[0]?.commit as string)?.files[0];
+    expect(file?.functions).toEqual([{ id: 'lib:a.ts#f', hunks: [{ base: 12, head: 12, lines: ['   const c = 3;', '   const d = 4;', '   return b;', '-}', '+}'] }] }]);
   });
 });

@@ -12,7 +12,8 @@
  * - sources/<hash>.json: one file a source file, its code highlighted.
  * - changes.md: the changes in Markdown, for the comment on the pull request.
  * - history/<hash>.json: the changes that reached main, read from its
- *   first-parent history (history.ts).
+ *   first-parent history (history.ts), and one file a change with its diff
+ *   of the provider's code (HistoryDetail).
  *
  * With `base` (a git revision), the changes of the working tree since it
  * forked from it (changes.ts) come with it.
@@ -24,7 +25,7 @@ import type { BodyEntry, Failure, FlowEndpoint, FrameFile, FunctionEntry, MapCha
 import { escapingFailures } from './failures.js';
 import { featureOfPath, sourceFeatureRanges } from './features.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
-import { readHistory, type PullRequestInfo } from './history.js';
+import { readHistoryWithDiffs, type PullRequestInfo } from './history.js';
 import { readRepository, type Repository } from './repository.js';
 import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
@@ -328,16 +329,22 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   let history: string | undefined;
   if (options.history !== false) {
     try {
-      const read = readHistory({
+      const { history: read, details } = readHistoryWithDiffs({
         repository: options.repository,
         roots,
         codeMaskOf: cli.codeMaskOf,
         revision: options.history?.revision ?? options.base ?? 'HEAD',
         ...(options.history?.pulls === undefined ? {} : { pulls: options.history.pulls }),
         ...(options.history?.github === undefined ? {} : { github: options.history.github }),
+        diffs: true,
       });
+      // The diff of the provider's code of each change, one file a change, read when its page opens.
+      for (const entry of read.entries) {
+        const detail = details.get(entry.commit);
+        if (detail !== undefined) entry.detail = `./data/history/${writeHashed(join(options.out, 'history'), entry.commit, JSON.stringify(detail), written.history)}`;
+      }
       history = `./data/history/${writeHashed(join(options.out, 'history'), 'history', JSON.stringify(read), written.history)}`;
-      log.push(`${read.entries.length} history entries (${read.entries.filter((entry) => entry.pr !== undefined).length} pull requests)`);
+      log.push(`${read.entries.length} history entries (${read.entries.filter((entry) => entry.pr !== undefined).length} pull requests, ${details.size} with a diff of the provider's code)`);
     } catch (error) {
       log.push(`No history: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`);
     }

@@ -559,6 +559,41 @@ export interface HistoryEntry {
   carried?: Array<{ pr: number; title: string; commit: string; body?: string }>;
   /** The oldest commit a shallow clone has: git sees its whole tree as added, so what it changed is not known and it lists no files nor functions. */
   boundary?: true;
+  /** The url of its diff of the provider's code (HistoryDetail), read when its page opens; absent when it changed none of that code and wrote no note. */
+  detail?: string;
+}
+
+/**
+ * What a change did to the provider's code, as a diff kept apart from the
+ * rest (history.ts): the files of the catalog's roots it changed, each with
+ * its hunks and the functions they belong to, and the text of the change
+ * notes it wrote. The page of the change shows it function by function, and
+ * hands it to an AI as it is: only the code the OSS ships, not its tests,
+ * documents or tools.
+ */
+export interface HistoryDetail {
+  version: 1;
+  commit: string;
+  notes: Array<{ path: string; text: string }>;
+  files: HistoryFileDiff[];
+}
+
+/** A file of the provider's code a change changed (HistoryDetail.files), with its diff. */
+export interface HistoryFileDiff {
+  path: string;
+  /** The path before a rename. */
+  from?: string;
+  status: HistoryFile['status'];
+  /**
+   * The functions of HistoryEntry.functions in this file, each with the hunks
+   * of its own lines: git's hunks (three lines of context) cut where the lines
+   * of another function or of the file around them change.
+   */
+  functions: Array<{ id: string; hunks: DiffHunk[] }>;
+  /** The hunks of the changes outside the functions (imports, types, constants). */
+  outside: DiffHunk[];
+  /** Why the hunks are left out: the file's diff is too long to keep ('file', a package added at once), or the change kept as much as it may before this file ('change'). The counts of HistoryEntry.files stay. */
+  omitted?: 'file' | 'change';
 }
 
 /** A commit of a change (HistoryEntry.commits). */

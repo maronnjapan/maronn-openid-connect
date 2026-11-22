@@ -37,7 +37,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, posix } from 'node:path';
-import type { HistoryCommit, HistoryData, HistoryEntry, HistoryFile, HistoryFunction } from './model.js';
+import type { DiffHunk, HistoryCommit, HistoryData, HistoryDetail, HistoryEntry, HistoryFile, HistoryFileDiff, HistoryFunction } from './model.js';
 import { isNote } from './notes.js';
 import { moduleOf, type AnalysisRoot } from './roots.js';
 
@@ -317,6 +317,64 @@ function readHunks(repository: string, tip: string, paths: readonly string[], pa
   return hunks;
 }
 
+/** The sha of no blob: the side of an added or deleted file in a patch. */
+const NO_BLOB = '0'.repeat(40);
+
+/** The key of the patch of a file change: its blobs before and after (`<before>..<after>`, a missing side as NO_BLOB). */
+function patchKey(change: FileChange): string {
+  return `${change.beforeBlob ?? NO_BLOB}..${change.afterBlob ?? NO_BLOB}`;
+}
+
+/** Read the hunks with their lines of a patch output into a map by the blobs of each file (`index <before>..<after>`), or all under one key. */
+function readPatchesInto(output: string, patches: Map<string, DiffHunk[]>, key?: string): void {
+  let current: DiffHunk[] | undefined = key === undefined ? undefined : [];
+  if (key !== undefined && current !== undefined) patches.set(key, current);
+  let hunk: DiffHunk | undefined;
+  for (const line of output.split('\n')) {
+    if (line.startsWith('@@ -')) {
+      const head = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      hunk = head === null || current === undefined ? undefined : { base: Math.max(1, Number(head[1])), head: Math.max(1, Number(head[2])), lines: [] };
+      if (hunk !== undefined) current?.push(hunk);
+      continue;
+    }
+    if (hunk !== undefined && (line[0] === ' ' || line[0] === '-' || line[0] === '+')) {
+      hunk.lines.push(line);
+      continue;
+    }
+    // `\ No newline at end of file` belongs to the line before it; anything else ends the hunk.
+    if (line.startsWith('\\')) continue;
+    hunk = undefined;
+    if (key !== undefined) continue;
+    if (line.startsWith('diff --git ') || line.startsWith('\u0001')) current = undefined;
+    else if (line.startsWith('index ')) {
+      const pair = /^index ([0-9a-f]+)\.\.([0-9a-f]+)/.exec(line);
+      const found = pair === null ? undefined : `${pair[1]}..${pair[2]}`;
+      current = found === undefined || patches.has(found) ? undefined : [];
+      if (found !== undefined && current !== undefined) patches.set(found, current);
+    }
+  }
+}
+
+/**
+ * The hunks git gives each change of a file under some paths, with three
+ * lines of context and their lines (`git log -p -U3` of the first-parent
+ * history, read at once), by the blobs of the change (patchKey); a pair of
+ * blobs that history did not show (a rename git paired otherwise there) is
+ * diffed on its own. The diff is git's, so it is the one GitHub shows.
+ */
+function readPatches(repository: string, tip: string, paths: readonly string[], keys: ReadonlySet<string>): Map<string, DiffHunk[]> {
+  const patches = new Map<string, DiffHunk[]>();
+  const options = ['-U3', '--full-index', '--no-color', '--no-ext-diff', '--no-textconv'];
+  readPatchesInto(gitText(repository, ['log', '--first-parent', '--diff-merges=first-parent', '-M', ...options, '--root', '--format=%x01%H', tip, '--', ...paths]), patches);
+  for (const key of keys) {
+    if (patches.has(key)) continue;
+    const [before, after] = key.split('..') as [string, string];
+    if (before === NO_BLOB || after === NO_BLOB) continue;
+    readPatchesInto(gitText(repository, ['diff', ...options, before, after]), patches, key);
+  }
+  return patches;
+}
+
 /** The texts of some blobs (`git cat-file --batch`), by sha; a blob git does not have is left out. */
 function readBlobs(repository: string, blobs: readonly string[]): Map<string, string> {
   const texts = new Map<string, string>();
@@ -519,6 +577,8 @@ function rootFilesOf(changes: readonly FileChange[], roots: readonly AnalysisRoo
 /** What the functions of the changes are read from: the texts of the blobs, their functions once read, and the hunks of each pair of blobs. */
 interface Texts {
   texts: ReadonlyMap<string, string>;
+  /** The hunks with their lines of each change of a file of the roots (readPatches), when the diffs are read. */
+  patches?: ReadonlyMap<string, DiffHunk[]>;
   spans: Map<string, Map<string, Span>>;
   hunks: ReadonlyMap<string, Hunk[]>;
   codeMaskOf(source: string): Uint8Array;
@@ -581,6 +641,15 @@ function functionIndex(entries: readonly HistoryEntry[]): Record<string, number[
 
 /** Read the first-parent history of a revision (see the module comment). Throws when git cannot read it (not a git repository, an unknown revision). */
 export function readHistory(options: HistoryOptions): HistoryData {
+  return readHistoryWithDiffs({ ...options, diffs: false }).history;
+}
+
+/**
+ * Read the history of a revision (readHistory) and, with `diffs`, the diff
+ * of the provider's code of each change (HistoryDetail, by the commit on
+ * main) for the changes that changed some of it or wrote a change note.
+ */
+export function readHistoryWithDiffs(options: HistoryOptions & { diffs?: boolean }): { history: HistoryData; details: Map<string, HistoryDetail> } {
   const { repository, roots } = options;
   const tip = gitText(repository, ['rev-parse', '--verify', `${options.revision ?? 'HEAD'}^{commit}`]).trim();
   const shallow = gitText(repository, ['rev-parse', '--is-shallow-repository']).trim() === 'true';
@@ -596,6 +665,8 @@ export function readHistory(options: HistoryOptions): HistoryData {
   const rootFiles = new Map(chain.map((commit) => [commit.sha, rootFilesOf(changes.get(commit.sha) ?? [], roots)]));
   const blobs = new Set<string>();
   const pairs = new Set<string>();
+  // The change notes a change wrote, whose text its diff carries.
+  if (options.diffs === true) for (const commit of chain) for (const change of changes.get(commit.sha) ?? []) if (change.after !== undefined && change.afterBlob !== undefined && isNote(change.after)) blobs.add(change.afterBlob);
   for (const { change, before, after } of [...rootFiles.values()].flat()) {
     if (before !== undefined) blobs.add(change.beforeBlob as string);
     if (after !== undefined) blobs.add(change.afterBlob as string);
@@ -605,6 +676,7 @@ export function readHistory(options: HistoryOptions): HistoryData {
     texts: readBlobs(repository, [...blobs]),
     spans: new Map(),
     hunks: pairs.size === 0 ? new Map() : readHunks(repository, tip, rootPaths(roots), pairs),
+    ...(options.diffs === true ? { patches: readPatches(repository, tip, rootPaths(roots), new Set([...rootFiles.values()].flat().map(({ change }) => patchKey(change)))) } : {}),
     codeMaskOf: options.codeMaskOf,
   };
 
@@ -641,13 +713,159 @@ export function readHistory(options: HistoryOptions): HistoryData {
     if (boundaries.has(commit.sha)) entry.boundary = true;
     return withPull(entry, pr === undefined ? undefined : pulls.get(pr));
   });
+  const details = new Map<string, HistoryDetail>();
+  if (options.diffs === true) {
+    for (const entry of entries) {
+      const detail = detailOf(entry, rootFiles.get(entry.commit) ?? [], changes.get(entry.commit) ?? [], texts, roots);
+      if (detail.files.length > 0 || detail.notes.length > 0) details.set(entry.commit, detail);
+    }
+  }
   return {
-    version: 1,
-    ...(options.github === undefined ? {} : { repository: options.github }),
-    ...(shallow ? { shallow: true } : {}),
-    entries,
-    functions: functionIndex(entries),
+    history: {
+      version: 1,
+      ...(options.github === undefined ? {} : { repository: options.github }),
+      ...(shallow ? { shallow: true } : {}),
+      entries,
+      functions: functionIndex(entries),
+    },
+    details,
   };
+}
+
+/** The lines of a diff of one file past which its hunks are not kept (a package added at once is read on GitHub, not in the map). */
+export const MAX_FILE_DIFF_LINES = 2000;
+
+/** The lines of the diffs of one change past which the hunks of its further files are not kept. */
+export const MAX_CHANGE_DIFF_LINES = 20000;
+
+/** Which function (by its id) or nothing (null: outside the functions) each line of a hunk belongs to, and the line of the text before and after it stands at. */
+interface HunkLine {
+  text: string;
+  op: ' ' | '-' | '+';
+  owner: string | null;
+  base: number;
+  head: number;
+}
+
+/** The function of a span list a line is in, by its id; null outside every one. */
+function ownerAt(spans: ReadonlyMap<string, Span>, ids: ReadonlyMap<string, string>, line: number): string | null {
+  for (const [name, span] of spans) if (line >= span.start && line <= span.end) return ids.get(name) ?? null;
+  return null;
+}
+
+/**
+ * Cut the hunks of a file into those of each function it changed and those
+ * outside them, so a function's diff holds its own lines only (an added file
+ * is one hunk, a hunk can cross from one function to the next): a removed
+ * line goes by the function it was in before, an added line by the one it
+ * is in after, and the lines changed elsewhere split a hunk. Each piece keeps
+ * up to `context` unchanged lines around its changes, as git's do.
+ */
+export function splitHunks(hunks: readonly DiffHunk[], before: ReadonlyMap<string, Span>, after: ReadonlyMap<string, Span>, idsBefore: ReadonlyMap<string, string>, idsAfter: ReadonlyMap<string, string>, context = 3): { functions: Map<string, DiffHunk[]>; outside: DiffHunk[] } {
+  const functions = new Map<string, DiffHunk[]>();
+  const outside: DiffHunk[] = [];
+  for (const hunk of hunks) {
+    let base = hunk.base;
+    let head = hunk.head;
+    const lines: HunkLine[] = hunk.lines.map((text) => {
+      const op = (text[0] === '-' || text[0] === '+' ? text[0] : ' ') as HunkLine['op'];
+      const owner = op === '-' ? ownerAt(before, idsBefore, base) : op === '+' ? ownerAt(after, idsAfter, head) : null;
+      const line = { text, op, owner, base, head };
+      if (op !== '+') base += 1;
+      if (op !== '-') head += 1;
+      return line;
+    });
+    const owners = new Set(lines.filter((line) => line.op !== ' ').map((line) => line.owner));
+    for (const owner of owners) {
+      // The changes of this owner, split where another owner's change comes or the unchanged lines between two run past twice the context.
+      const changed = lines.flatMap((line, index) => (line.op !== ' ' && line.owner === owner ? [index] : []));
+      const groups: number[][] = [];
+      for (const index of changed) {
+        const group = groups[groups.length - 1];
+        const previous = group?.[group.length - 1];
+        const between = previous === undefined ? [] : lines.slice(previous + 1, index);
+        if (group !== undefined && previous !== undefined && between.every((line) => line.op === ' ') && between.length <= context * 2) group.push(index);
+        else groups.push([index]);
+      }
+      for (const group of groups) {
+        let from = group[0] as number;
+        let to = group[group.length - 1] as number;
+        for (let step = 0; step < context && from > 0 && lines[from - 1]?.op === ' '; step += 1) from -= 1;
+        for (let step = 0; step < context && to < lines.length - 1 && lines[to + 1]?.op === ' '; step += 1) to += 1;
+        const piece = lines.slice(from, to + 1);
+        const first = piece[0] as HunkLine;
+        const cut: DiffHunk = { base: first.base, head: first.head, lines: piece.map((line) => line.text) };
+        if (owner === null) outside.push(cut);
+        else functions.set(owner, [...(functions.get(owner) ?? []), cut]);
+      }
+    }
+  }
+  return { functions, outside };
+}
+
+/** The lines of a text as the lines of a hunk with one sign (an added file whose patch git did not give, as a whole). */
+function wholeHunk(text: string | undefined, sign: '+' | '-'): DiffHunk[] {
+  if (text === undefined || text === '') return [];
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return [{ base: sign === '-' ? 1 : 0, head: sign === '+' ? 1 : 0, lines: lines.map((line) => `${sign}${line}`) }];
+}
+
+/** The lines of hunks, all of them. */
+function sizeOf(hunks: readonly DiffHunk[]): number {
+  return hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
+}
+
+/**
+ * The diff of the provider's code of a change (HistoryDetail): each file of
+ * the roots it changed, with git's hunks cut into those of each function of
+ * the entry (splitHunks) and those outside them, and the text of the change
+ * notes it wrote. The files of the libraries come first, so a change too long
+ * to keep whole keeps the diff of core before that of the apps.
+ */
+function detailOf(entry: HistoryEntry, files: readonly RootFile[], changes: readonly FileChange[], texts: Texts, roots: readonly AnalysisRoot[]): HistoryDetail {
+  const diffs: HistoryFileDiff[] = [];
+  const library = (file: RootFile) => roots.find((root) => root.name === (file.after ?? file.before)?.root)?.library !== undefined;
+  const ordered = [...files].sort((a, b) => Number(library(b)) - Number(library(a)));
+  let kept = 0;
+  for (const rootFile of ordered) {
+    const { change, before, after } = rootFile;
+    const file = fileOf(change);
+    const hunks = texts.patches?.get(patchKey(change)) ?? (before === undefined ? wholeHunk(texts.texts.get(change.afterBlob as string), '+') : after === undefined ? wholeHunk(texts.texts.get(change.beforeBlob as string), '-') : []);
+    const old = before === undefined ? new Map<string, Span>() : spansOf(texts, change.beforeBlob);
+    const now = after === undefined ? new Map<string, Span>() : spansOf(texts, change.afterBlob);
+    const idsBefore = new Map<string, string>();
+    const idsAfter = new Map<string, string>();
+    // A function goes by the id of its module after the change (one removed, before): its lines after are where it adds, and before where it removes.
+    for (const fn of entry.functions) {
+      if (fn.status === 'removed') {
+        if (before !== undefined && fn.id === `${before.root}:${before.module}#${fn.name}`) idsBefore.set(fn.name, fn.id);
+        continue;
+      }
+      if (after === undefined || fn.id !== `${after.root}:${after.module}#${fn.name}`) continue;
+      idsAfter.set(fn.name, fn.id);
+      if (fn.status === 'modified') idsBefore.set(fn.name, fn.id);
+    }
+    const ids = [...new Set([...idsAfter.values(), ...idsBefore.values()])];
+    const split = splitHunks(hunks, old, now, idsBefore, idsAfter);
+    const size = sizeOf(split.outside) + [...split.functions.values()].reduce((sum, list) => sum + sizeOf(list), 0);
+    const omitted = size > MAX_FILE_DIFF_LINES ? 'file' : kept + size > MAX_CHANGE_DIFF_LINES ? 'change' : undefined;
+    if (omitted === undefined) kept += size;
+    diffs.push({
+      path: file.path,
+      ...(file.from === undefined ? {} : { from: file.from }),
+      status: file.status,
+      functions: ids.map((id) => ({ id, hunks: omitted === undefined ? (split.functions.get(id) ?? []) : [] })),
+      outside: omitted === undefined ? split.outside : [],
+      ...(omitted === undefined ? {} : { omitted }),
+    });
+  }
+  const notes = entry.notes.flatMap((path) => {
+    const change = changes.find((candidate) => candidate.after === path);
+    const text = change?.afterBlob === undefined ? undefined : texts.texts.get(change.afterBlob);
+    return text === undefined ? [] : [{ path, text }];
+  });
+  return { version: 1, commit: entry.commit, notes, files: diffs };
 }
 
 /**

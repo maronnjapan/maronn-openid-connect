@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import type { FlowEndpoint, MapData } from '../types';
 import { frameMark, waySelections, type ChangeIndex } from '../lib/changes';
 import { generatedWhen } from '../lib/model';
-import { endpointSources } from '../lib/source';
 import { entryOf, sourceOf, type TraceState } from '../lib/trace';
 import { Badge } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
@@ -36,7 +35,6 @@ export interface EndpointScreenProps {
  */
 export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, step = null, target = null, onTrace, onOpenFunction }: EndpointScreenProps) {
   const [code, setCode] = useState<string | null>(null);
-  const sources = useMemo(() => endpointSources(data, endpoint), [data, endpoint]);
   const extra = useMemo(() => waySelections(data, changes, framework, endpoint.id, enabled), [data, changes, framework, endpoint.id, enabled]);
   const root = entryOf(data, endpoint.root);
   const mark = frameMark(changes, endpoint.root);
@@ -96,7 +94,7 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
           }}
         />
       )}
-      {code !== null ? <CodeDrawer key={code} data={data} changes={changes} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}
+      {code !== null ? <CodeDrawer key={code} data={data} changes={changes} initial={code} onClose={() => setCode(null)} /> : null}
     </section>
   );
 }

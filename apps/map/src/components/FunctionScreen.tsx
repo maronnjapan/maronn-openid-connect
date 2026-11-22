@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import type { DiffHunk, FunctionEntry, MapData, OpFlow } from '../types';
 import { allHunks, frameMark, markOf, type ChangeIndex } from '../lib/changes';
 import { callersOf, endpointsInModule, endpointsRootedAt, endpointsUsing, locationOf, type EndpointUse } from '../lib/model';
-import { frameSources } from '../lib/source';
 import type { TraceState } from '../lib/trace';
 import { Badge, ChangeDetail } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
@@ -127,7 +126,6 @@ function Callers({ data, framework, flow, card, onOpenFunction, onOpenStep, onOp
 export function FunctionScreen(props: FunctionScreenProps) {
   const { data, changes, card, trace, enabled, onTrace, onBack, onOpenFunction, canGoBack } = props;
   const [code, setCode] = useState<string | null>(null);
-  const sources = useMemo(() => frameSources(data, card.id), [data, card]);
   const change = changes?.byId.get(card.id);
   const mark = frameMark(changes, card.id);
   const [hunks, setHunks] = useState<DiffHunk[] | undefined>(undefined);
@@ -219,7 +217,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
           ]}
         />
       )}
-      {code !== null ? <CodeDrawer data={data} changes={changes} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}
+      {code !== null ? <CodeDrawer data={data} changes={changes} initial={code} onClose={() => setCode(null)} /> : null}
     </section>
   );
 }

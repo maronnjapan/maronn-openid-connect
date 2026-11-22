@@ -270,6 +270,15 @@ jobs:
           name: test-reports
           path: work/test-reports
 
+      # 地図の「変更の履歴」に PR の本文を載せるため、閉じた PR を GitHub の API から読む（MAP_PULLS）。
+      # 生成 AI が作った PR でも、何をしたかを後から地図で追えるようにする。読めなくても地図は作り、
+      # 履歴は git のタイトルとコミットだけになる。
+      - name: Fetch the pull requests for the history
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mkdir -p work && gh api "repos/${{ github.repository }}/pulls?state=closed&base=main&per_page=100" --paginate --slurp > work/pulls.json
+
       # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）をビルドし、全関数と
       # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、
       # 地図のデータとページを作り、テストのページ（apps/tests、データは apps/tests/public/data）をビルドして
@@ -286,6 +295,7 @@ jobs:
           MAP_PR_TITLE: ${{ github.event.pull_request.title }}
           MAP_PR_URL: ${{ github.event.pull_request.html_url }}
           MAP_TEST_REPORTS: ${{ github.workspace }}/work/test-reports
+          MAP_PULLS: ${{ github.workspace }}/work/pulls.json
         run: pnpm run build:map
 
       - name: Check map types and layout

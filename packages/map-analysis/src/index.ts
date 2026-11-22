@@ -8,6 +8,7 @@
 export { buildMap, plain, removeStale, writeHashed, type BuildContext, type BuildExtension, type BuildOptions, type BuildResult } from './build.js';
 export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, LINKS_PLACE, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
 export { codeIndexOf } from './code-index.js';
+export { changeBrief, changeNamed, entryKey, entryOf, functionBrief, functionsNamed, keyOf, keyOfInput, listBrief, omittedWords, placeOf, unifiedHunk, type BriefMap } from './history-brief.js';
 export { checkLinks, checkMap, uncoveredLines, type CheckResult, type LinkCheck, type MapMetrics } from './check.js';
 export { readLinks, usesOf, type AliasCache, type LinkInput } from './symbols.js';
 export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeHunks } from './diff.js';

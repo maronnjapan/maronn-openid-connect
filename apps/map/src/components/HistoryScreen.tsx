@@ -1,13 +1,25 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { HistoryData, HistoryEntry, MapData } from '../types';
-import { changeUrl, changesOf, commitUrl, dayOf, endpointsReached, entryKey, entryOf, filterEntries, functionCounts } from '../lib/history';
+import { changeUrl, changesOf, commitUrl, dayOf, endpointsReached, entryKey, entryOf, filterEntries, functionCounts, withoutPullRequest, type HistoryFilter } from '../lib/history';
 import { codeHash } from '../code/lib';
 import { useHistory } from './useHistory';
 
 /** How a change reached main, in a word. */
 function kindWord(entry: HistoryEntry): string {
-  if (entry.kind === 'direct') return 'PR なし';
-  return entry.pr === undefined ? 'マージ' : `#${entry.pr}`;
+  if (entry.pr !== undefined) return `#${entry.pr}`;
+  return entry.kind === 'merge' ? 'PR なし（マージ）' : 'PR なし';
+}
+
+/** The chip of how a change reached main: red when it reached main without a pull request of its own. */
+function KindChip({ entry }: { entry: HistoryEntry }) {
+  return <span className={`chip${withoutPullRequest(entry) ? ' history-direct' : ''}`}>{entry.kind === 'squash' ? `#${entry.pr}（スカッシュ）` : kindWord(entry)}</span>;
+}
+
+/** What the list keeps while the reader reads a change: the filter, how many changes it shows, and how far it was scrolled. */
+interface ListState {
+  filter: HistoryFilter;
+  shown: number;
+  scroll: number;
 }
 
 /** What a change did to a function. */
@@ -41,6 +53,8 @@ export interface HistoryScreenProps {
  */
 export function HistoryScreen(props: HistoryScreenProps) {
   const history = useHistory(props.data.history);
+  // The list as the reader left it, kept while a change is open, so going back finds it the same.
+  const [list, setList] = useState<ListState>({ filter: { query: '', code: false, direct: false }, shown: PAGE, scroll: 0 });
   return (
     <section className="screen changes-screen history-screen" aria-label="変更の履歴">
       {props.data.history === undefined ? (
@@ -54,7 +68,7 @@ export function HistoryScreen(props: HistoryScreenProps) {
           履歴を読み込んでいます…
         </p>
       ) : props.entry === '' ? (
-        <HistoryList history={history} onOpenEntry={props.onOpenEntry} />
+        <HistoryList history={history} state={list} onState={setList} onOpenEntry={props.onOpenEntry} />
       ) : (
         <HistoryEntryView {...props} history={history} />
       )}
@@ -63,13 +77,17 @@ export function HistoryScreen(props: HistoryScreenProps) {
 }
 
 /** The list of the changes, filtered by words, by the changes of code and by the pushes without a pull request. */
-function HistoryList({ history, onOpenEntry }: { history: HistoryData; onOpenEntry: (key: string) => void }) {
-  const [query, setQuery] = useState('');
-  const [code, setCode] = useState(false);
-  const [direct, setDirect] = useState(false);
-  const [shown, setShown] = useState(PAGE);
-  const entries = useMemo(() => filterEntries(history, { query, code, direct }), [history, query, code, direct]);
-  const pulls = history.entries.filter((entry) => entry.pr !== undefined).length;
+function HistoryList({ history, state, onState, onOpenEntry }: { history: HistoryData; state: ListState; onState: (next: ListState) => void; onOpenEntry: (key: string) => void }) {
+  const { filter, shown } = state;
+  const { query, code, direct } = filter;
+  const body = useRef<HTMLDivElement>(null);
+  const entries = useMemo(() => filterEntries(history, filter), [history, filter]);
+  const pulls = history.entries.filter((entry) => !withoutPullRequest(entry)).length;
+  const setFilter = (next: Partial<HistoryFilter>) => onState({ ...state, filter: { ...filter, ...next }, shown: PAGE, scroll: 0 });
+  // Back from a change: the list where the reader left it.
+  useLayoutEffect(() => {
+    if (body.current !== null) body.current.scrollTop = state.scroll;
+  }, []);
   return (
     <>
       <header className="screen-head">
@@ -77,13 +95,13 @@ function HistoryList({ history, onOpenEntry }: { history: HistoryData; onOpenEnt
         <p className="lead">main に入った変更を新しい順に並べます。PR ごとに、PR の本文、変更メモ、足した・変えた・消した関数、コミット、ファイルと、その関数が今の地図で届くエンドポイントを読めます。</p>
         <div className="history-filters">
           <label className="wiring-search">
-            タイトル・関数・ブランチ・番号で絞る <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" />
+            タイトル・関数・ブランチ・番号で絞る <input value={query} onChange={(event) => setFilter({ query: event.target.value })} type="search" />
           </label>
           <label>
-            <input type="checkbox" checked={code} onChange={(event) => setCode(event.target.checked)} /> 関数を変えたものだけ
+            <input type="checkbox" checked={code} onChange={(event) => setFilter({ code: event.target.checked })} /> 関数を変えたものだけ
           </label>
           <label>
-            <input type="checkbox" checked={direct} onChange={(event) => setDirect(event.target.checked)} /> PR を通さずに入ったものだけ
+            <input type="checkbox" checked={direct} onChange={(event) => setFilter({ direct: event.target.checked })} /> PR を通さずに入ったものだけ
           </label>
         </div>
         <p className="note">
@@ -91,17 +109,25 @@ function HistoryList({ history, onOpenEntry }: { history: HistoryData; onOpenEnt
           {history.shallow === true ? '浅い clone から作ったので、古い変更が欠けています。' : ''}
         </p>
       </header>
-      <div className="changes-body">
+      <div className="changes-body" ref={body}>
         <ul className="links history-list">
           {entries.slice(0, shown).map((entry) => {
             const counts = functionCounts(entry);
             return (
               <li key={entry.commit}>
-                <button type="button" className="row" onClick={() => onOpenEntry(entryKey(entry))}>
+                <button
+                  type="button"
+                  className="row"
+                  onClick={() => {
+                    onState({ ...state, scroll: body.current?.scrollTop ?? 0 });
+                    onOpenEntry(entryKey(entry));
+                  }}
+                >
                   <span className="history-row-head">
                     <span className="mono history-date">{dayOf(entry.date)}</span>
-                    <span className={`chip${entry.kind === 'direct' ? ' history-direct' : ''}`}>{kindWord(entry)}</span>
+                    <KindChip entry={entry} />
                     <span className="row-title">{entry.title}</span>
+                    {entry.carried !== undefined ? <span className="note">（{entry.carried.map((pull) => `#${pull.pr}`).join('、')} を含む）</span> : null}
                   </span>
                   <span className="row-text">
                     {entry.functions.length > 0 ? `関数 追加 ${counts.added}・変更 ${counts.modified}・削除 ${counts.removed} · ` : ''}
@@ -114,7 +140,7 @@ function HistoryList({ history, onOpenEntry }: { history: HistoryData; onOpenEnt
           })}
         </ul>
         {entries.length > shown ? (
-          <button type="button" className="link" onClick={() => setShown(shown + PAGE)}>
+          <button type="button" className="link" onClick={() => onState({ ...state, shown: shown + PAGE })}>
             さらに {Math.min(PAGE, entries.length - shown)} 件を表示
           </button>
         ) : null}
@@ -165,7 +191,7 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
         </div>
         <h2>{entry.title}</h2>
         <div className="facts-row">
-          <span className={`chip${entry.kind === 'direct' ? ' history-direct' : ''}`}>{entry.kind === 'squash' ? `#${entry.pr}（スカッシュ）` : kindWord(entry)}</span>
+          <KindChip entry={entry} />
           <span className="chip mono">{dayOf(entry.date)}</span>
           {entry.branch !== undefined ? <span className="chip mono">{entry.branch}</span> : null}
           <span className="chip">{entry.authors.join('、')}</span>
@@ -175,9 +201,32 @@ function HistoryEntryView({ data, framework, entry: key, history, onOpenEntry, o
             </a>
           ) : null}
         </div>
-        {entry.kind === 'direct' ? <p className="note">PR を通さずに main に入ったコミットです。レビューと地図のコメントを経ていません。</p> : null}
+        {withoutPullRequest(entry) ? <p className="note">PR を通さずに main に入った{entry.kind === 'merge' ? 'マージ' : 'コミット'}です。この変更そのものは、レビューと地図のコメントを経ていません。</p> : null}
+        {entry.boundary === true ? <p className="note">浅い clone の最も古いコミットなので、何を変えたかは分かりません（ファイルと関数を並べません）。</p> : null}
       </header>
       <div className="changes-body">
+        {entry.carried !== undefined ? (
+          <section aria-label="この変更で main に入った PR">
+            <h3>この変更で main に入った PR {entry.carried.length}</h3>
+            <p className="note">別のブランチにマージされた PR で、この変更と一緒に main に入りました。変えた関数とコミットは、この変更の分に含まれます。</p>
+            {entry.carried.map((pull) => {
+              const href = history.repository === undefined ? undefined : `https://github.com/${history.repository}/pull/${pull.pr}`;
+              return (
+                <details key={pull.pr} className="history-note" open={entry.carried?.length === 1}>
+                  <summary>
+                    #{pull.pr} {pull.title}
+                  </summary>
+                  {pull.body === undefined ? <p className="note">この地図のデータには PR の本文がありません。</p> : <pre className="history-body">{pull.body.trim()}</pre>}
+                  {href === undefined ? null : (
+                    <a className="link small" href={href} target="_blank" rel="noopener">
+                      GitHub で開く ↗
+                    </a>
+                  )}
+                </details>
+              );
+            })}
+          </section>
+        ) : null}
         <section aria-label="PR の本文">
           <h3>PR の本文</h3>
           {entry.body !== undefined && entry.body.trim() !== '' ? <pre className="history-body">{entry.body.trim()}</pre> : <p className="note">{entry.pr === undefined ? 'PR がありません。下のコミットが、何をしたかの記録です。' : 'この地図のデータには PR の本文がありません（ビルドに MAP_PULLS を渡すと載ります）。'}</p>}
@@ -313,7 +362,7 @@ export function FunctionHistory({ data, id, onOpenEntry }: { data: MapData; id: 
               <button type="button" className="row" onClick={() => onOpenEntry(entryKey(entry))}>
                 <span className="history-row-head">
                   <span className="mono history-date">{dayOf(entry.date)}</span>
-                  <span className={`chip${entry.kind === 'direct' ? ' history-direct' : ''}`}>{kindWord(entry)}</span>
+                  <KindChip entry={entry} />
                   <span className="chip">{STATUS_WORDS[status]}</span>
                 </span>
                 <span className="row-title">{entry.title}</span>

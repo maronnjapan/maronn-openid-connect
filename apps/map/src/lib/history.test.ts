@@ -19,6 +19,12 @@ const history: HistoryData = {
 };
 
 describe('the changes of the history', () => {
+  it('should find a pull request another change brought by its key, and count a merge without a pull request as one without', () => {
+    const carrier = change({ commit: 'ddddddddddd4', title: "Merge branch 'main'", kind: 'merge', carried: [{ pr: 182, title: 'Add hashed secrets', commit: 'eeee' }] });
+    const withCarrier = { ...history, entries: [...history.entries, carrier] };
+    expect([entryOf(withCarrier, 'pr-182')?.commit, filterEntries(withCarrier, { query: '#182', code: false, direct: false }).length, filterEntries(withCarrier, { query: '', code: false, direct: true }).map((entry) => entry.commit)]).toEqual(['ddddddddddd4', 1, ['aaaaaaaaaaaa1', 'ddddddddddd4']]);
+  });
+
   it('should key a pull request by its number and a push by its commit, and find either key', () => {
     const [direct, merged] = history.entries as [HistoryEntry, HistoryEntry];
     expect([entryKey(direct), entryKey(merged), entryOf(history, 'pr-209')?.title, entryOf(history, 'aaaaaaaaaa')?.title, entryOf(history, 'aaaaaaa')?.title, entryOf(history, 'pr-1')]).toEqual(['aaaaaaaaaa', 'pr-209', 'クライアント認証を足す', 'fix(map): slow the playback down', 'fix(map): slow the playback down', undefined]);
@@ -63,5 +69,19 @@ describe('the endpoints a change reaches now', () => {
     } as unknown as OpFlow;
     const entry = change({ commit: 'd', title: 't', kind: 'direct', functions: [{ id: 'core:a.ts#verify', name: 'verify', status: 'modified' }, { id: 'hono:p.ts#handle', name: 'handle', status: 'added' }, { id: 'core:a.ts#gone', name: 'gone', status: 'removed' }] });
     expect(endpointsReached(data, flow, entry).map((endpoint) => endpoint.id)).toEqual(['token', 'userinfo']);
+  });
+
+  it('should reach an endpoint whose body calls the function, and one whose own file holds it, as the page of a function does', () => {
+    const card = (id: string, calledBy: string[], module: string) => ({ id, name: id.slice(id.indexOf('#') + 1), package: 'nextjs', module, calledBy }) as unknown as FunctionEntry;
+    const data = { functions: { 'nextjs:app/userinfo/route.ts#extractAccessToken': card('nextjs:app/userinfo/route.ts#extractAccessToken', ['endpoint:nextjs:userinfo'], 'app/userinfo/route.ts'), 'core:t.ts#check': card('core:t.ts#check', ['nextjs:app/token/helpers.ts#read'], 't.ts'), 'nextjs:app/token/helpers.ts#read': card('nextjs:app/token/helpers.ts#read', ['endpoint:nextjs:token'], 'app/token/helpers.ts') } } as unknown as MapData;
+    const flow = {
+      endpoints: [
+        { id: 'userinfo', root: 'endpoint:nextjs:userinfo', module: 'userinfo/route.ts', steps: [] },
+        { id: 'token', root: 'endpoint:nextjs:token', module: 'token/route.ts', steps: [] },
+        { id: 'jwks', root: 'endpoint:nextjs:jwks', module: 'jwks/route.ts', steps: [] },
+      ],
+    } as unknown as OpFlow;
+    const entry = change({ commit: 'e', title: 't', kind: 'merge', pr: 167, functions: [{ id: 'nextjs:app/userinfo/route.ts#extractAccessToken', name: 'extractAccessToken', status: 'modified' }, { id: 'core:t.ts#check', name: 'check', status: 'modified' }] });
+    expect(endpointsReached(data, flow, entry).map((endpoint) => endpoint.id)).toEqual(['userinfo', 'token']);
   });
 });

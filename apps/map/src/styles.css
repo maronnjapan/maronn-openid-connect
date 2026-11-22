@@ -836,3 +836,5 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .history-group h4 { margin: 8px 0 2px; font-size: 13px; color: var(--muted); }
 .history-commits { margin: 4px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
 .history-files summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.history-note { margin: 4px 0; }
+.history-note summary { cursor: pointer; font-size: 13px; }

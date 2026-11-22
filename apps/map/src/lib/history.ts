@@ -7,16 +7,24 @@
  * GitHub. Nothing here touches the DOM.
  */
 import type { FlowEndpoint, HistoryData, HistoryEntry, MapData, OpFlow } from '../types';
-import { endpointsRootedAt, endpointsUsing } from './model';
+import { endpointsInModule, endpointsUsing } from './model';
 
 /** The key of a change in the URL: `pr-<number>` for a pull request, else the first ten characters of its commit. */
 export function entryKey(entry: HistoryEntry): string {
   return entry.pr === undefined ? entry.commit.slice(0, 10) : `pr-${entry.pr}`;
 }
 
-/** The change a key names; a commit key matches the start of the commit. */
+/** The change a key names; a commit key matches the start of the commit, and the key of a pull request another change brought (HistoryEntry.carried) names that change. */
 export function entryOf(history: HistoryData, key: string): HistoryEntry | undefined {
-  return history.entries.find((entry) => entryKey(entry) === key) ?? (/^[0-9a-f]{7,}$/.test(key) ? history.entries.find((entry) => entry.commit.startsWith(key)) : undefined);
+  const own = history.entries.find((entry) => entryKey(entry) === key) ?? (/^[0-9a-f]{7,}$/.test(key) ? history.entries.find((entry) => entry.commit.startsWith(key)) : undefined);
+  if (own !== undefined) return own;
+  const number = /^pr-(\d+)$/.exec(key)?.[1];
+  return number === undefined ? undefined : history.entries.find((entry) => entry.carried?.some((pull) => pull.pr === Number(number)) === true);
+}
+
+/** Whether a change reached main without a pull request of its own: a commit pushed to it, or a merge made and pushed by hand. */
+export function withoutPullRequest(entry: HistoryEntry): boolean {
+  return entry.pr === undefined;
 }
 
 /** What the reader narrows the list to. */
@@ -25,7 +33,7 @@ export interface HistoryFilter {
   query: string;
   /** Only the changes that added, changed or removed a function of the catalog. */
   code: boolean;
-  /** Only the commits pushed to main without a pull request. */
+  /** Only the changes that reached main without a pull request of their own (withoutPullRequest). */
   direct: boolean;
 }
 
@@ -34,9 +42,10 @@ export function filterEntries(history: HistoryData, filter: HistoryFilter): Hist
   const words = filter.query.trim().toLowerCase().split(/\s+/).filter((word) => word !== '');
   return history.entries.filter((entry) => {
     if (filter.code && entry.functions.length === 0) return false;
-    if (filter.direct && entry.kind !== 'direct') return false;
+    if (filter.direct && !withoutPullRequest(entry)) return false;
     if (words.length === 0) return true;
-    const text = [entry.title, entry.branch ?? '', entry.pr === undefined ? '' : `#${entry.pr}`, entry.commit.slice(0, 10), ...entry.authors, ...entry.functions.map((change) => change.name), ...entry.notes, ...entry.commits.map((commit) => commit.subject)].join('\n').toLowerCase();
+    const carried = (entry.carried ?? []).flatMap((pull) => [`#${pull.pr}`, pull.title]);
+    const text = [entry.title, entry.branch ?? '', entry.pr === undefined ? '' : `#${entry.pr}`, entry.commit.slice(0, 10), ...carried, ...entry.authors, ...entry.functions.map((change) => change.name), ...entry.notes, ...entry.commits.map((commit) => commit.subject)].join('\n').toLowerCase();
     return words.every((word) => text.includes(word));
   });
 }
@@ -57,18 +66,40 @@ export function changesOf(history: HistoryData, id: string): Array<{ entry: Hist
   });
 }
 
+/** How many calls up from a changed function the history looks for the root of an endpoint (as endpointsUsing looks for its steps). */
+const REACH_DEPTH = 8;
+
 /**
  * The endpoints of a framework that the functions a change touched reach in
- * the map as it is now (a function since removed reaches none): their trace
- * starts from one, or one of their steps calls one, down to a few calls.
+ * the map as it is now (a function since removed reaches none), as the page
+ * of a function counts them: the trace of the endpoint starts from one or
+ * from a function or endpoint body that calls it (down to a few calls), one
+ * of its steps calls one, or its own file (route.ts, pipeline.ts) holds one.
  */
 export function endpointsReached(data: MapData, flow: OpFlow | undefined, entry: HistoryEntry): FlowEndpoint[] {
   if (flow === undefined) return [];
-  const found = new Map<string, FlowEndpoint>();
+  const found = new Set<string>();
+  // The functions and the endpoint bodies that call a changed function, up to REACH_DEPTH calls.
+  const callers = new Set<string>();
+  let frontier = entry.functions.map((change) => change.id).filter((id) => data.functions[id] !== undefined);
+  for (const id of frontier) callers.add(id);
+  for (let depth = 0; depth < REACH_DEPTH && frontier.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const caller of data.functions[id]?.calledBy ?? []) {
+        if (callers.has(caller)) continue;
+        callers.add(caller);
+        if (data.functions[caller] !== undefined) next.push(caller);
+      }
+    }
+    frontier = next;
+  }
+  for (const endpoint of flow.endpoints) if (callers.has(endpoint.root)) found.add(endpoint.id);
   for (const change of entry.functions) {
-    if (data.functions[change.id] === undefined) continue;
-    for (const endpoint of endpointsRootedAt(flow, change.id)) found.set(endpoint.id, endpoint);
-    for (const use of endpointsUsing(data, flow, change.id)) found.set(use.endpoint.id, use.endpoint);
+    const card = data.functions[change.id];
+    if (card === undefined) continue;
+    for (const endpoint of endpointsInModule(flow, card)) found.add(endpoint.id);
+    for (const use of endpointsUsing(data, flow, change.id)) found.add(use.endpoint.id);
   }
   return flow.endpoints.filter((endpoint) => found.has(endpoint.id));
 }

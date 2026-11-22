@@ -137,9 +137,18 @@ function readCommits(repository: string, tip: string): Map<string, Commit> {
   const commits = new Map<string, Commit>();
   for (let index = 0; index + 7 <= fields.length; index += 7) {
     const [sha, parents, time, date, author, subject, body] = fields.slice(index, index + 7) as [string, string, string, string, string, string, string];
-    commits.set(sha, { sha, parents: parents === '' ? [] : parents.split(' '), time: Number(time), date, author, subject, body });
+    commits.set(sha, { sha, parents: parents === '' ? [] : parents.split(' '), time: Number(time), date: isoDate(date), author, subject, body });
   }
   return commits;
+}
+
+/**
+ * A date as `git log` writes it (`%cI`), the same whichever git reads it:
+ * newer gits write UTC as `Z`, older ones as `+00:00`; the history writes
+ * `+00:00`, keeping any other offset as it is.
+ */
+export function isoDate(date: string): string {
+  return date.endsWith('Z') ? `${date.slice(0, -1)}+00:00` : date;
 }
 
 /** The commits of the first-parent history of a commit, newest first (`git log --first-parent`); in a shallow clone, those it has. */

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadCli, type Cli } from '../cli.js';
-import { originRepository, readHistory, repositoryOfRemote } from '../history.js';
+import { isoDate, originRepository, readHistory, repositoryOfRemote } from '../history.js';
 import type { HistoryData } from '../model.js';
 import type { AnalysisRoot } from '../roots.js';
 
@@ -358,5 +358,11 @@ describe('the pull requests off the first-parent history, and a shallow clone', 
     } finally {
       rmSync(shallow, { recursive: true, force: true });
     }
+  });
+});
+
+describe('isoDate', () => {
+  it('should write UTC as +00:00 whichever git wrote the date, and keep any other offset', () => {
+    expect([isoDate('2026-01-06T10:00:00Z'), isoDate('2026-01-06T10:00:00+00:00'), isoDate('2026-11-20T18:38:57+09:00')]).toEqual(['2026-01-06T10:00:00+00:00', '2026-01-06T10:00:00+00:00', '2026-11-20T18:38:57+09:00']);
   });
 });

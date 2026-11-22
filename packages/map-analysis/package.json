@@ -19,6 +19,10 @@
     "./code-index": {
       "types": "./src/code-index.ts",
       "import": "./src/code-index.ts"
+    },
+    "./history-brief": {
+      "types": "./src/history-brief.ts",
+      "import": "./src/history-brief.ts"
     }
   },
   "scripts": {

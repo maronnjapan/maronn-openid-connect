@@ -6,21 +6,11 @@
  * endpoints a change reaches in the map as it is now, and the links to
  * GitHub. Nothing here touches the DOM.
  */
-import type { FlowEndpoint, HistoryData, HistoryEntry, HistoryFileDiff, MapData, OpFlow } from '../types';
+import type { FlowEndpoint, HistoryData, HistoryEntry, MapData, OpFlow } from '../types';
 import { endpointsInModule, endpointsUsing } from './model';
 
-/** The key of a change in the URL: `pr-<number>` for a pull request, else the first ten characters of its commit. */
-export function entryKey(entry: HistoryEntry): string {
-  return entry.pr === undefined ? entry.commit.slice(0, 10) : `pr-${entry.pr}`;
-}
-
-/** The change a key names; a commit key matches the start of the commit, and the key of a pull request another change brought (HistoryEntry.carried) names that change. */
-export function entryOf(history: HistoryData, key: string): HistoryEntry | undefined {
-  const own = history.entries.find((entry) => entryKey(entry) === key) ?? (/^[0-9a-f]{7,}$/.test(key) ? history.entries.find((entry) => entry.commit.startsWith(key)) : undefined);
-  if (own !== undefined) return own;
-  const number = /^pr-(\d+)$/.exec(key)?.[1];
-  return number === undefined ? undefined : history.entries.find((entry) => entry.carried?.some((pull) => pull.pr === Number(number)) === true);
-}
+// The keys of the changes and the words of a diff left out are the ones the history command gives an AI.
+export { entryKey, entryOf, omittedWords } from '@maronn-openid-connect/map-analysis/history-brief';
 
 /** Whether a change reached main without a pull request of its own: a commit pushed to it, or a merge made and pushed by hand. */
 export function withoutPullRequest(entry: HistoryEntry): boolean {
@@ -119,9 +109,4 @@ export function commitUrl(history: HistoryData, commit: string, path?: string): 
 /** The date of a change as the page writes it (`2026-11-21`), in the time zone the change was made in. */
 export function dayOf(date: string): string {
   return date.slice(0, 10);
-}
-
-/** Why the map has no diff of a file: its own diff is too long, or the change kept as much as it may before it. */
-export function omittedWords(omitted: HistoryFileDiff['omitted']): string {
-  return omitted === 'change' ? '変更全体の差分が多いので、このファイルの差分は地図に載せていない' : '差分が長いので地図に載せていない';
 }

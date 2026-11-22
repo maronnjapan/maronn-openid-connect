@@ -568,8 +568,8 @@ export interface HistoryEntry {
  * rest (history.ts): the files of the catalog's roots it changed, each with
  * its hunks and the functions they belong to, and the text of the change
  * notes it wrote. The page of the change shows it function by function, and
- * hands it to an AI as it is: only the code the OSS ships, not its tests,
- * documents or tools.
+ * an AI reads it beside the code as it is now (history-brief.ts): only the
+ * code the OSS ships, not its tests, documents or tools.
  */
 export interface HistoryDetail {
   version: 1;

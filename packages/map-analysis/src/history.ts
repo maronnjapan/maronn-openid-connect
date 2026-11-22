@@ -655,6 +655,77 @@ function functionIndex(entries: readonly HistoryEntry[]): Record<string, number[
   return Object.fromEntries([...indexed].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+/** Run git and return what it printed, trimmed; undefined when it fails. */
+function gitMaybe(repository: string, args: readonly string[]): string | undefined {
+  const result = spawnSync('git', args, { cwd: repository, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+/**
+ * The newest commit of the first-parent history of a ref that brought code
+ * HEAD has: after the newest commit that is HEAD's (found by halves: the older
+ * ones are HEAD's too), the newest that brought a commit of HEAD's (its merge
+ * base with HEAD is not in the commit before it), as a merge of a branch that
+ * goes on without merging main back, or of a branch stacked on HEAD's. So the
+ * history reaches every commit of HEAD's that main has, as far as the changes
+ * of a pull request start (git merge-base), and a merge, squash or push of
+ * other branches between them is read with it though HEAD lacks it; a branch
+ * that fell behind main, or a base that moved on, brought none. Undefined when
+ * HEAD has none of the ref.
+ */
+function newestHeld(repository: string, ref: string): string | undefined {
+  const chain = (gitMaybe(repository, ['rev-list', '--first-parent', ref]) ?? '').split('\n').filter((sha) => sha !== '');
+  const held = (commit: string) => spawnSync('git', ['merge-base', '--is-ancestor', commit, 'HEAD'], { cwd: repository }).status === 0;
+  if (chain.length === 0 || !held(chain[chain.length - 1] as string)) return undefined;
+  let low = 0;
+  let high = chain.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (held(chain[middle] as string)) high = middle;
+    else low = middle + 1;
+  }
+  for (let index = 0; index < low; index += 1) {
+    const shared = gitMaybe(repository, ['merge-base', chain[index] as string, 'HEAD']);
+    const before = chain[index + 1] as string;
+    if (shared !== undefined && spawnSync('git', ['merge-base', '--is-ancestor', shared, before], { cwd: repository }).status !== 0) return chain[index];
+  }
+  return chain[low];
+}
+
+/**
+ * Where the history of a base (MAP_BASE: origin/main) is read from: its
+ * newest commit whose code HEAD has (newestHeld), so a base that moved on
+ * after the code being built left it (a pull request merged while CI waited)
+ * brings no change that code does not have; the base itself when HEAD shares
+ * none of it.
+ */
+export function heldRevision(repository: string, base: string): { revision: string; from: string } {
+  return { revision: newestHeld(repository, base) ?? base, from: base };
+}
+
+/**
+ * Where the history of main is read from when the build is given no base:
+ * the newest commit of the main of a remote (origin/main, upstream/main) whose
+ * code HEAD has (newestHeld). So the commits of a branch not merged yet do
+ * not read as changes that reached main, a main that moved on since the
+ * branch left it brings no change the code being built does not have, and the
+ * main of an upstream counts as much as that of a fork. A remote's HEAD is
+ * not read: a clone of a working copy points it at whatever branch was out.
+ * HEAD when no remote has a main HEAD shares history with. `from` names the
+ * remote branch.
+ */
+export function mainRevision(repository: string): { revision: string; from: string } {
+  const refs = (gitMaybe(repository, ['for-each-ref', '--format=%(refname)', 'refs/remotes']) ?? '').split('\n').filter((ref) => /^refs\/remotes\/[^/]+\/main$/.test(ref));
+  let best: { revision: string; from: string; count: number } | undefined;
+  for (const ref of refs) {
+    const commit = newestHeld(repository, ref);
+    if (commit === undefined) continue;
+    const count = Number(gitMaybe(repository, ['rev-list', '--count', commit]) ?? '0');
+    if (best === undefined || count > best.count) best = { revision: commit, from: ref.slice('refs/remotes/'.length), count };
+  }
+  return best === undefined ? { revision: 'HEAD', from: 'HEAD' } : { revision: best.revision, from: best.from };
+}
+
 /** Read the first-parent history of a revision (see the module comment). Throws when git cannot read it (not a git repository, an unknown revision). */
 export function readHistory(options: HistoryOptions): HistoryData {
   return readHistoryWithDiffs({ ...options, diffs: false }).history;

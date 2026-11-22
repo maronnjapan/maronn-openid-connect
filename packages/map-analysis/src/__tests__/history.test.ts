@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadCli, type Cli } from '../cli.js';
-import { isoDate, MAX_FILE_DIFF_LINES, originRepository, readHistory, readHistoryWithDiffs, repositoryOfRemote, splitHunks } from '../history.js';
+import { heldRevision, isoDate, mainRevision, MAX_FILE_DIFF_LINES, originRepository, readHistory, readHistoryWithDiffs, repositoryOfRemote, splitHunks } from '../history.js';
 import type { HistoryData, HistoryDetail } from '../model.js';
 import type { AnalysisRoot } from '../roots.js';
 
@@ -152,6 +152,98 @@ beforeAll(async () => {
 
 afterAll(() => {
   if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
+});
+
+describe('mainRevision', () => {
+  it('should read the newest commit of a remote main that HEAD has: not a branch not merged yet, not a main gone ahead, and the main of an upstream past a stale fork', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'map-history-main-'));
+    try {
+      git(directory, ['init', '-q', '-b', 'main']);
+      git(directory, ['config', 'user.name', 'Maintainer']);
+      git(directory, ['config', 'user.email', 'maintainer@example.com']);
+      git(directory, ['config', 'commit.gpgsign', 'false']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'A']);
+      const a = git(directory, ['rev-parse', 'HEAD']).trim();
+      const alone = mainRevision(directory);
+      git(directory, ['checkout', '-q', '-b', 'feature']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Not merged']);
+      git(directory, ['checkout', '-q', 'main']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'B']);
+      const b = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', b]);
+      git(directory, ['checkout', '-q', 'feature']);
+      // origin/main went on to B since the branch left it at A: the branch's code has A only, also with origin/main given as the base.
+      const behind = mainRevision(directory);
+      expect([heldRevision(directory, 'origin/main'), heldRevision(directory, 'no-such-base')]).toEqual([{ revision: a, from: 'origin/main' }, { revision: 'no-such-base', from: 'no-such-base' }]);
+      git(directory, ['merge', '-q', '--no-edit', 'main']);
+      // A fork whose main stayed at A, and the upstream at B that the branch merged.
+      git(directory, ['update-ref', 'refs/remotes/origin/main', a]);
+      git(directory, ['update-ref', 'refs/remotes/upstream/main', b]);
+      const upstream = mainRevision(directory);
+      // A remote HEAD that points at a branch (a clone of a working copy) is no main.
+      git(directory, ['update-ref', 'refs/remotes/upstream/feature', 'HEAD']);
+      git(directory, ['symbolic-ref', 'refs/remotes/upstream/HEAD', 'refs/remotes/upstream/feature']);
+      expect([alone, behind, upstream, mainRevision(directory)]).toEqual([{ revision: 'HEAD', from: 'HEAD' }, { revision: a, from: 'origin/main' }, { revision: b, from: 'upstream/main' }, { revision: b, from: 'upstream/main' }]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('should count a merge of main whose branch HEAD has, as on a branch that goes on without merging main back', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'map-history-held-'));
+    try {
+      git(directory, ['init', '-q', '-b', 'main']);
+      git(directory, ['config', 'user.name', 'Maintainer']);
+      git(directory, ['config', 'user.email', 'maintainer@example.com']);
+      git(directory, ['config', 'commit.gpgsign', 'false']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'A']);
+      git(directory, ['checkout', '-q', '-b', 'work']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'First pull request']);
+      git(directory, ['checkout', '-q', 'main']);
+      git(directory, ['merge', '-q', '--no-ff', '-m', 'Merge pull request #1', 'work']);
+      const merge = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', merge]);
+      git(directory, ['checkout', '-q', 'work']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Second pull request']);
+      const first = mainRevision(directory);
+      // main goes on with another branch's squash, then merges the second pull request of the branch, which still does not merge main back.
+      git(directory, ['checkout', '-q', 'main']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Other (#2)']);
+      git(directory, ['merge', '-q', '--no-ff', '-m', 'Merge pull request #3', 'work']);
+      const second = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', second]);
+      git(directory, ['checkout', '-q', 'work']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Third pull request, not merged yet']);
+      expect([first, mainRevision(directory), heldRevision(directory, 'origin/main')]).toEqual([{ revision: merge, from: 'origin/main' }, { revision: second, from: 'origin/main' }, { revision: second, from: 'origin/main' }]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('should reach a commit of HEAD that main has through the merge of a branch stacked on it', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'map-history-stacked-'));
+    try {
+      git(directory, ['init', '-q', '-b', 'main']);
+      git(directory, ['config', 'user.name', 'Maintainer']);
+      git(directory, ['config', 'user.email', 'maintainer@example.com']);
+      git(directory, ['config', 'commit.gpgsign', 'false']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'A']);
+      git(directory, ['checkout', '-q', '-b', 'lower']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'W1']);
+      git(directory, ['checkout', '-q', '-b', 'upper']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Z1']);
+      git(directory, ['checkout', '-q', 'main']);
+      git(directory, ['merge', '-q', '--no-ff', '-m', 'Merge pull request #2 (the upper one, first)', 'upper']);
+      const merge = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', merge]);
+      git(directory, ['checkout', '-q', 'lower']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'W2']);
+      // The changes of the lower pull request start at W1 (git merge-base), which main has through the merge of the upper one.
+      expect(heldRevision(directory, 'origin/main')).toEqual({ revision: merge, from: 'origin/main' });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('readHistory', () => {

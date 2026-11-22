@@ -418,6 +418,33 @@ export interface SourceDocument {
   uses?: Record<string, Array<[string, number, number]>>;
 }
 
+/**
+ * What following the code needs of the map (apps/map src/lib/links.ts): the
+ * files, the frames by their lines, the members of the interfaces and their
+ * implementations, and the features. The code page reads it as
+ * data/code.json, so it does not load map.json; the drawer derives it from
+ * map.json.
+ */
+export interface CodeIndex {
+  version: 1;
+  sources: MapData['sources'];
+  features: MapFeature[];
+  /** The functions of the catalog and the endpoint bodies, by id. */
+  frames: Record<string, CodeFrame>;
+  members: Record<string, { type: string; member: string; implementedBy?: string[] }>;
+}
+
+/** A function of the catalog or an endpoint body, as the code names and finds it. */
+export interface CodeFrame {
+  /** `authenticateTokenClient`, or `POST /token` for an endpoint body. */
+  name: string;
+  kind: 'function' | 'body';
+  /** The first paragraph of its JSDoc. */
+  summary?: string;
+  /** Its file (a key of `sources`) and lines, its JSDoc included. */
+  source?: { file: string; start: number; end: number };
+}
+
 /** The kind of declaration a name of the code goes to. */
 export type LinkKind = 'function' | 'method' | 'property' | 'interface' | 'type' | 'class' | 'enum' | 'enum-member' | 'variable' | 'parameter' | 'type-parameter' | 'module' | 'other';
 

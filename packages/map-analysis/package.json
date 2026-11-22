@@ -15,6 +15,10 @@
     "./walk": {
       "types": "./src/walk.ts",
       "import": "./src/walk.ts"
+    },
+    "./code-index": {
+      "types": "./src/code-index.ts",
+      "import": "./src/code-index.ts"
     }
   },
   "scripts": {

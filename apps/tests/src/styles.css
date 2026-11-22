@@ -1596,6 +1596,12 @@ button.row:hover,
   background: var(--surface);
 }
 
+.code-bar > .code-open {
+  flex: none;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .code-bar > .segmented {
   flex: none;
 }

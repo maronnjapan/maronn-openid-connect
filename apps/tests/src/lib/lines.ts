@@ -60,3 +60,18 @@ export function codeWindow(lines: readonly [number, number] | undefined, total: 
   const range = lineWindow(mark, last, options.context ?? 0);
   return options.markRange === true ? { ...range, mark, outside: false } : { ...range, outside: false };
 }
+
+/**
+ * The link to the code page of the map (`../code/`, served beside the
+ * tests under the root of the map) that opens a file at some lines, where
+ * Ctrl/⌘ + click follows its names to their declarations. A test, a test
+ * helper or a fixture is not a file of the map's roots, so it gets none.
+ */
+export function codePageHref(path: string, lines?: readonly [number, number]): string | undefined {
+  if (/\.(test|spec)\.[cm]?[jt]sx?$|\.feature$/.test(path) || /(^|\/)(tests|test-support|__tests__|__fixtures__|__mocks__)\//.test(path) || /(^|\/)(test-helpers|test-utils|fixtures?)\.[cm]?[jt]sx?$/.test(path)) return undefined;
+  const hash = path.split('/').map(encodeURIComponent).join('/');
+  if (lines === undefined) return `../code/#${hash}`;
+  const from = Math.min(lines[0], lines[1]);
+  const to = Math.max(lines[0], lines[1]);
+  return `../code/#${hash}:L${from}${to > from ? `-L${to}` : ''}`;
+}

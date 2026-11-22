@@ -1,23 +1,17 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import type { DiffHunk, LinkTarget, MapData, SourceDocument } from '../types';
 import { allHunks, type ChangeIndex } from '../lib/changes';
-import { codeIndexOf, currentOf, locationOf, replace, startAt, step, usesOf, visit, type CodeHistory, type CodeLocation } from '../lib/links';
+import { codeIndexOf, currentOf, implementationsOf, locationOf, peekOf, replace, startAt, step, visit, type CodeHistory, type CodeLocation, type Peek } from '../lib/links';
 import { featureSourceLines, type SourceTarget } from '../lib/source';
 import { entryOf } from '../lib/trace';
 import { DiffView } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
 import { fetchFrame } from './useFrames';
 import { FeatureBadge } from './FeatureBadge';
-import { LINK_KIND_WORDS, SourceView } from './SourceView';
+import { SourceView } from './SourceView';
+import { codeHash } from '../code/lib';
 
 type LoadedSource = { url: string; document: SourceDocument } | { url: string; error: string };
-
-/** A list the reader asked for beside the code: the places that use a declaration, or the implementations of a member. */
-interface Peek {
-  title: string;
-  items: Array<{ label: string; where: string; location: CodeLocation }>;
-  empty: string;
-}
 
 /** What a place of the code shows: a frame offered by the drawer, a frame of the map, or a whole file. */
 function targetOf(data: MapData, targets: readonly SourceTarget[], id: string): SourceTarget | undefined {
@@ -31,21 +25,6 @@ function targetOf(data: MapData, targets: readonly SourceTarget[], id: string): 
   }
   const file = data.sources[id];
   return file === undefined ? undefined : { id, label: file.path, file: id };
-}
-
-/** The implementations of a member of an interface, as places of the code. */
-function implementationsOf(data: MapData, target: LinkTarget): Peek | undefined {
-  const member = target.member === undefined ? undefined : data.members[target.member];
-  if (member === undefined) return undefined;
-  return {
-    title: `${member.type}.${member.member} の実装`,
-    empty: '地図の中に実装はありません。',
-    items: (member.implementedBy ?? []).map((id) => {
-      const entry = entryOf(data, id);
-      const source = entry?.source;
-      return { label: entry === undefined ? id : 'endpoint' in entry ? entry.name : `${entry.name}()`, where: source === undefined ? id : `${data.sources[source.file]?.path ?? source.file}:${source.start}`, location: { id } };
-    }),
-  };
 }
 
 /**
@@ -131,16 +110,10 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
   /** Follow a name of the code: to its declaration, or, on the declaration itself, list the places that use it. */
   const follow = (link: LinkTarget, at: { line: number; column: number }) => {
     if (link.file === target?.file && link.line === at.line && link.column === at.column) {
-      const uses = usesOf(index, document, at.line, at.column);
-      const implementations = implementationsOf(data, link);
-      setPeek(
-        implementations !== undefined && implementations.items.length > 0
-          ? implementations
-          : { title: `${LINK_KIND_WORDS[link.kind]} ${link.name} を使う場所（${uses.length}）`, empty: '地図の根の中で、ほかに使う場所はありません。', items: uses.map((use) => ({ label: use.label, where: `${use.path}:${use.line}`, location: use.location })) },
-      );
+      setPeek(peekOf(index, document, link, at));
       return;
     }
-    go(locationOf(index, link), implementationsOf(data, link));
+    go(locationOf(index, link), implementationsOf(index, link));
   };
   const back = history.index > 0;
   const forward = history.index < history.entries.length - 1;
@@ -197,6 +170,11 @@ export function CodeDrawer({ data, changes, targets, initial, onClose }: {
                 {wholeFile ? '関数だけを見る' : 'ファイル全体を見る'}
               </button>
             ) : null}
+            {source === undefined ? null : (
+              <a className="link" href={`./code/#${codeHash({ path: source.path, ...(location.line !== undefined ? { line: location.line } : shownStart !== undefined ? { line: shownStart, ...(shownEnd === undefined ? {} : { end: shownEnd }) } : {}) })}`} target="_blank" rel="noopener">
+                別タブで読む ↗
+              </a>
+            )}
           </div>
           <p className="note">名前を Ctrl/⌘ + クリック（タッチではタップ）で宣言へ移ります。宣言の名前では、それを使う場所を並べます。リポジトリのソースで、機能や選んだ道筋にかかわらず全機能を含みます。</p>
           {!showDiff && features.length > 0 ? (

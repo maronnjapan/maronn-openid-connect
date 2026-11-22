@@ -1,25 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
-import type { CodeIndex, LinkKind, LinkTarget, SourceDocument } from '../types';
-import { linksByLine, segmentsOf } from '../lib/links';
+import type { CodeIndex, LinkTarget, SourceDocument } from '../types';
+import { LINK_KIND_WORDS, linksByLine, segmentsOf } from '../lib/links';
 import { featureSourceLines } from '../lib/source';
 import { FeatureBadge } from './FeatureBadge';
-
-/** What a kind of declaration is called on the page. */
-export const LINK_KIND_WORDS: Record<LinkKind, string> = {
-  function: '関数',
-  method: 'メソッド',
-  property: 'プロパティ',
-  interface: 'インターフェース',
-  type: '型',
-  class: 'クラス',
-  enum: '列挙',
-  'enum-member': '列挙の値',
-  variable: '変数',
-  parameter: '引数',
-  'type-parameter': '型引数',
-  module: 'モジュール',
-  other: '宣言',
-};
 
 /** Whether the page is used by touch only (no Ctrl/⌘ to hold): there a tap on a name follows it. */
 function touchOnly(): boolean {
@@ -33,7 +16,7 @@ function touchOnly(): boolean {
  * touch screen a tap does). The place to show (`focus`) is marked and
  * scrolled into view.
  */
-export function SourceView({ index, document, label, start, end, focus, reveal = 0, onLink }: {
+export function SourceView({ index, document, label, start, end, range, focus, reveal = 0, onLink }: {
   /** The files and the features of the map. */
   index: CodeIndex;
   document: SourceDocument;
@@ -42,6 +25,8 @@ export function SourceView({ index, document, label, start, end, focus, reveal =
   /** The lines to show; without them the whole file. */
   start?: number | undefined;
   end?: number | undefined;
+  /** Lines to mark (the frame the reader opened, in its whole file). */
+  range?: [number, number] | undefined;
   focus?: { line: number; column?: number | undefined; length?: number | undefined } | undefined;
   /** A count the page raises each time the reader goes to a place, so the place is shown again even when it is the one already focused (scrolled away from since). */
   reveal?: number;
@@ -78,7 +63,7 @@ export function SourceView({ index, document, label, start, end, focus, reveal =
       return;
     }
     element.scrollTop = Math.max(0, line.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop - element.clientHeight / 3);
-  }, [focus?.line, focus?.column, document, start, end, reveal]);
+  }, [focus?.line, focus?.column, document, start, end, range?.[0], reveal]);
 
   /** Follow the name under a click, when Ctrl / ⌘ is held or the screen is touch only. */
   const follow = (event: MouseEvent<HTMLPreElement>) => {
@@ -108,8 +93,9 @@ export function SourceView({ index, document, label, start, end, focus, reveal =
       <code>
         {lines.map((line) => {
           const focused = focus?.line === line.number;
+          const marked = range !== undefined && range[0] <= line.number && line.number <= range[1];
           return (
-            <span key={line.number} data-line={line.number} className={`source-line${line.features.length > 0 ? ' source-feature-line' : ''}${focused ? ' source-line-focus' : ''}`} title={line.features.length === 0 ? undefined : `${line.features.join('、')} の実装`}>
+            <span key={line.number} data-line={line.number} className={`source-line${line.features.length > 0 ? ' source-feature-line' : ''}${marked ? ' source-line-range' : ''}${focused ? ' source-line-focus' : ''}`} title={line.features.length === 0 ? undefined : `${line.features.join('、')} の実装`}>
               <span className="source-line-number" aria-hidden="true">
                 {line.number}
               </span>

@@ -774,6 +774,14 @@ function numberWords(value: number): string {
 }
 
 /**
+ * The lines of code a pull request adds past which its comment asks to split
+ * it: a reader (and a reviewer who has little time) follows a small pull
+ * request of one purpose, and the history of the map lists what each did.
+ * Only said in the comment, never a failure of the check.
+ */
+export const LARGE_PULL_REQUEST = 400;
+
+/**
  * The changes in Markdown (see the module comment), in this order: what
  * fails the check of the map (the changes that need a note and have none,
  * with a draft of the sections to add, then the `failing` sections of the
@@ -812,7 +820,10 @@ export function changesMarkdown(changes: MapChanges, { limit = 40, failing = [],
   ];
   if (warnings.length > 0) lines.push(...warnings, '');
   lines.push('**確かめること**', `- 説明の無い変更 ${undocumented.length}${changes.untested === undefined ? '' : ` · テストを変えていない変更 ${changes.untested.length}`}`);
-  if (changes.addedLines !== undefined) lines.push(`- コメント +${numberWords(changes.addedLines.comment)} 行、コード +${numberWords(changes.addedLines.code)} 行`);
+  if (changes.addedLines !== undefined) {
+    const large = changes.addedLines.code > LARGE_PULL_REQUEST ? `（コードが ${LARGE_PULL_REQUEST} 行を超えています。目的ごとに PR を分けられないか見直してください）` : '';
+    lines.push(`- コメント +${numberWords(changes.addedLines.comment)} 行、コード +${numberWords(changes.addedLines.code)} 行${large}`);
+  }
   lines.push('', LINKS_PLACE, '');
 
   const counted = changes.frames.filter((entry) => entry.kind !== 'noted');

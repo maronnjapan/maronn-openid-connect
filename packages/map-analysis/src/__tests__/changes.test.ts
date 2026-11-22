@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { changesMarkdown, changeTargets, diffLines, hunksOf, LINKS_PLACE, memberCounts, parseNameStatus, pullRequestOf, targetLabels, touchedLines } from '../changes.js';
+import { changesMarkdown, changeTargets, diffLines, hunksOf, LARGE_PULL_REQUEST, LINKS_PLACE, memberCounts, parseNameStatus, pullRequestOf, targetLabels, touchedLines } from '../changes.js';
 import type { FlowTree, FrameChangeEntry, MapChanges, TreeNode } from '../model.js';
 
 describe('parseNameStatus', () => {
@@ -170,10 +170,15 @@ describe('changesMarkdown', () => {
       addedLines: { comment: 1889, code: 2171 },
       outside: [{ file: 'core:a.ts', lines: [1, 2] }],
     });
-    expect(markdown.split('\n').slice(0, 7)).toEqual([`**DPoP を足す** — ${'あ'.repeat(299)}…`, '', '**確かめること**', '- 説明の無い変更 0 · テストを変えていない変更 0', '- コメント +1,889 行、コード +2,171 行', '', LINKS_PLACE]);
+    expect(markdown.split('\n').slice(0, 7)).toEqual([`**DPoP を足す** — ${'あ'.repeat(299)}…`, '', '**確かめること**', '- 説明の無い変更 0 · テストを変えていない変更 0', '- コメント +1,889 行、コード +2,171 行（コードが 400 行を超えています。目的ごとに PR を分けられないか見直してください）', '', LINKS_PLACE]);
     expect(markdown).toContain('\n<details><summary>変わった関数 2（追加 1 · 変更 1）</summary>\n\n| 札 | 関数 | 場所 | 自動要約 | 届くエンドポイント | メモ |\n');
     expect(markdown).toContain('\n関数の外（import、型、定数など）の変更: 1 ファイル、2 行（地図の「このPRの変更」にあります）\n\n</details>\n');
     expect(markdown).not.toContain('二段落目');
+  });
+
+  it('should not ask to split a pull request whose code stays within the limit', () => {
+    const markdown = changesMarkdown({ ...changes([]), addedLines: { comment: 12, code: LARGE_PULL_REQUEST } });
+    expect(markdown).toContain(`\n- コメント +12 行、コード +${LARGE_PULL_REQUEST} 行\n`);
   });
 
   it('should leave the place of the links by the line the comment of the pull request replaces', () => {

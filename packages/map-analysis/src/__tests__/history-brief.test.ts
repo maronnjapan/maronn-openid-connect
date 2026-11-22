@@ -77,6 +77,12 @@ describe('the keys of the changes', () => {
     expect([changeNamed(history, '#209')?.title, changeNamed(history, 'c2222222')?.title, changeNamed(history, 'f0000000')]).toEqual(['クライアント認証を足す', 'クライアント認証を足す', undefined]);
   });
 
+  it('should read the commit git blame marks with ^, and name a change by the merge of a pull request it brought', () => {
+    const carrier = change({ commit: `3${'3'.repeat(39)}`, carried: [{ pr: 182, title: 'Add hashed secrets', commit: `2${'1'.repeat(39)}` }] });
+    const carriedHistory: HistoryData = { version: 1, entries: [carrier, ...history.entries], functions: {} };
+    expect([keyOfInput('^D3333333'), changeNamed(history, '^d3333333')?.title, changeNamed(carriedHistory, '21111111') === carrier]).toEqual(['d3333333', 'typo', true]);
+  });
+
   it('should key by its commit a change whose pull request number a newer change has too, and link it to its commit', () => {
     const newer = change({ commit: `f${'5'.repeat(39)}`, pr: 19, title: 'newer' });
     const older = change({ commit: `9${'6'.repeat(39)}`, pr: 19, title: 'older', functions: [{ id: 'core:a.ts#verify', name: 'verify', status: 'modified' }] });
@@ -85,6 +91,7 @@ describe('the keys of the changes', () => {
     expect(listBrief(shared).split('\n').slice(2, 4)).toEqual(['- pr-19 2026-11-21 #19 newer（関数の変更なし）', '- 9666666666 2026-11-21 #19 older（関数 +0 ~1 -0）']);
     expect(changeBrief(map, shared, older, undefined).split('\n')[2]).toBe('- キー: 9666666666 · main に入った日: 2026-11-21 · 作成者: Claude · https://github.com/owner/name/commit/9666666666666666666666666666666666666666');
     expect(functionBrief(map, shared, 'core:a.ts#verify', new Map()).includes('- キー: 9666666666 · 2026-11-21 · 変更 · 作成者: Claude')).toBe(true);
+    expect(changeBrief(map, shared, newer, undefined).split('\n')[5]).toBe('- PR 番号 #19 の変更はほかにもある: 9666666666（2026-11-21 older）');
   });
 });
 
@@ -171,15 +178,20 @@ describe('a change for an AI', () => {
       '',
       '- c222222222 verify を直す（Claude）',
       '',
+      "メッセージの本文（なぜそうしたかを書いていることが多い）: `git log --no-merges --format='%h %s%n%n%b' b11111111111^1..b11111111111`",
+      '',
     ]);
   });
 
   it('should say why a change has no intent nor function, and when its diff and its notes could not be read', () => {
     const direct = history.entries[0] as HistoryEntry;
     const brief = changeBrief(map, history, direct, undefined);
-    expect([brief.includes('PR が無い。コミットの件名が、何をしたかの記録である。'), brief.includes('関数カタログの関数は変えていない。')]).toEqual([true, true]);
+    expect([brief.includes('PR が無い。コミットのメッセージが、何をしたかの記録である（下の「コミット」）。'), brief.includes('関数カタログの関数は変えていない。')]).toEqual([true, true]);
     const unread = changeBrief(map, history, merged, undefined);
     expect([unread.includes('（差分を読めなかった）'), unread.includes('- apps/map/changes/auth.md（`git show b11111111111:apps/map/changes/auth.md`）')]).toEqual([true, true]);
+    const outsideOnly = change({ commit: `6${'6'.repeat(39)}`, kind: 'direct', commits: [{ sha: `6${'6'.repeat(39)}`, subject: 's', date: '2026-11-21T09:00:00+09:00', author: 'Claude' }], detail: './z.json' });
+    const unreadOutside = changeBrief(map, history, outsideOnly, undefined);
+    expect([unreadOutside.includes('この変更の差分（地図のデータ）を読めなかった。関数ごとの差分と関数の外の変更は、上の git のコマンドで読む。'), unreadOutside.includes('`git log -1 --format=%B 666666666666`')]).toEqual([true, true]);
   });
 
   it('should give no git command for the oldest commit of a shallow clone, whose parent git does not have', () => {
@@ -296,8 +308,14 @@ describe('a function for an AI', () => {
     expect(functionBrief(map, history, 'core:a.ts#verify', new Map(), { only: history.entries[0] as HistoryEntry })).toContain('この変更は、この関数を変えていない。');
   });
 
-  it('should send an endpoint body, which the history does not follow, to the history of its lines in git', () => {
-    expect(functionBrief(map, history, 'hono:token#body', new Map())).toContain('エンドポイントの処理は、変更の履歴が関数ごとには追わない（変更のブリーフでは「関数の外の変更」に入る）。この行の履歴は `git log --first-parent -L 5,40:apps/hono/src/oidc-provider/endpoints/token/pipeline.ts` で読める。');
+  it('should give an endpoint body, which the history does not follow, the changes of its file with their notes about it and their diff outside the functions', () => {
+    const path = 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts';
+    const touching = change({ commit: `4${'4'.repeat(39)}`, pr: 180, title: 'RAR を外す', files: [{ path, status: 'modified', additions: 1, deletions: 1 }], notes: ['remove.md'], detail: './w.json' });
+    const bodyDetail: HistoryDetail = { version: 1, commit: touching.commit, notes: [{ path: 'remove.md', text: '## token <!-- hono:token#body -->\n\nRAR のステップを外した。\n\n## verify\n\n別。\n' }], files: [{ path, status: 'modified', functions: [], outside: [{ base: 50, head: 50, lines: ['-  rar(c),', '+  next(c),'] }] }] };
+    const withBody: HistoryData = { version: 1, entries: [touching, ...history.entries], functions: {} };
+    const brief = functionBrief(map, withBody, 'hono:token#body', new Map([[touching.commit, bodyDetail]]));
+    expect(brief).toContain('エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイルを変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。この行だけの履歴は `git log --first-parent -L 5,40:apps/hono/src/oidc-provider/endpoints/token/pipeline.ts` で読める。');
+    expect([brief.includes('- このファイルを変えた変更: 1（新しい順）'), brief.includes('RAR のステップを外した。'), brief.includes('別。'), brief.includes('-  rar(c),\n+  next(c),')]).toEqual([true, true, false, true]);
   });
 });
 

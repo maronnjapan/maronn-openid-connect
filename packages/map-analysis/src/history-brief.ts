@@ -56,19 +56,29 @@ export function keyOf(history: HistoryData, entry: HistoryEntry): string {
   return entryOf(history, key) === entry ? key : entry.commit.slice(0, 10);
 }
 
-/** The key a person or an AI types for a change: `#219` and `219` name the pull request as `pr-219` does; a commit stays as it is. */
+/** The key a person or an AI types for a change: `#219` and `219` name the pull request as `pr-219` does; a commit stays as it is, without the `^` git blame puts before the oldest commit. */
 export function keyOfInput(text: string): string {
-  const trimmed = text.trim();
+  const trimmed = text.trim().replace(/^\^/, '');
   const number = /^(?:#|pr-?)?(\d{1,6})$/i.exec(trimmed)?.[1];
   return number === undefined ? trimmed.toLowerCase() : `pr-${number}`;
 }
 
-/** The change a person or an AI names: by its key (keyOfInput), or by any commit it brought (one of a merged branch, as `git log` and `git blame` give it). */
+/**
+ * The change a person or an AI names: by its key (keyOfInput), by a commit of
+ * its merged branch (the history keeps those that are no merge), or by the
+ * merge of a pull request it brought. A merge inside a branch is not in the
+ * data: the history command finds its change with git.
+ */
 export function changeNamed(history: HistoryData, text: string): HistoryEntry | undefined {
   const key = keyOfInput(text);
   const entry = entryOf(history, key);
   if (entry !== undefined || !/^[0-9a-f]{7,}$/.test(key)) return entry;
-  return history.entries.find((candidate) => candidate.commits.some((commit) => commit.sha.startsWith(key)));
+  return history.entries.find((candidate) => candidate.commits.some((commit) => commit.sha.startsWith(key)) || candidate.carried?.some((pull) => pull.commit.startsWith(key)) === true);
+}
+
+/** The other changes of the history with the same pull request number as a change (`pr-<number>` opens the newest of them). */
+export function sharingNumber(history: HistoryData, entry: HistoryEntry): HistoryEntry[] {
+  return entry.pr === undefined ? [] : history.entries.filter((other) => other !== entry && other.pr === entry.pr);
 }
 
 /** A hunk as the text of a unified diff, its header first (`@@ -12,4 +12,5 @@`). */
@@ -139,8 +149,7 @@ function titleOf(entry: HistoryEntry): string {
 /** The page of a change on GitHub, when the repository is known: its pull request, or its commit when another change of the history has the same number (which of them the number names on GitHub is not known). */
 function urlOf(history: HistoryData, entry: HistoryEntry): string | undefined {
   if (history.repository === undefined) return undefined;
-  const shared = entry.pr !== undefined && history.entries.some((other) => other !== entry && other.pr === entry.pr);
-  return entry.pr === undefined || shared ? `https://github.com/${history.repository}/commit/${entry.commit}` : `https://github.com/${history.repository}/pull/${entry.pr}`;
+  return entry.pr === undefined || sharingNumber(history, entry).length > 0 ? `https://github.com/${history.repository}/commit/${entry.commit}` : `https://github.com/${history.repository}/pull/${entry.pr}`;
 }
 
 /**
@@ -153,6 +162,13 @@ function gitShow(entry: HistoryEntry, files: ReadonlyArray<Pick<HistoryFileDiff,
   if (entry.boundary === true) return undefined;
   const paths = files.flatMap((file) => (file.from === undefined ? [file.path] : [file.from, file.path]));
   return `\`git show --diff-merges=first-parent --format= ${entry.commit.slice(0, 12)}${paths.length === 0 ? '' : ` -- ${paths.map(shellWord).join(' ')}`}\``;
+}
+
+/** The git command that shows the messages of the commits a change brought (their bodies often say why); undefined for the oldest commit of a shallow clone. */
+function gitMessages(entry: HistoryEntry): string | undefined {
+  if (entry.boundary === true) return undefined;
+  const commit = entry.commit.slice(0, 12);
+  return entry.kind === 'merge' ? `\`git log --no-merges --format='%h %s%n%n%b' ${commit}^1..${commit}\`` : `\`git log -1 --format=%B ${commit}\``;
 }
 
 /** Where to read a diff the map left out, in words. */
@@ -183,8 +199,8 @@ function namedOf(id: string, name: string): Named {
  * changed function one of its references resolves to (by id, by name, by
  * `root:name` or `module#name`).
  */
-function notesOn(detail: HistoryDetail | undefined, entry: HistoryEntry, id: string): Array<{ path: string; heading: string; text: string }> {
-  const changed = entry.functions.map((change) => namedOf(change.id, change.name));
+function notesOn(detail: HistoryDetail | undefined, entry: HistoryEntry, id: string, also: readonly Named[] = []): Array<{ path: string; heading: string; text: string }> {
+  const changed = [...entry.functions.map((change) => namedOf(change.id, change.name)), ...also];
   const found: Array<{ path: string; heading: string; text: string }> = [];
   for (const note of detail?.notes ?? []) {
     for (const section of parseNote(note.text).sections) {
@@ -232,8 +248,11 @@ export function changeBrief(map: BriefMap, history: HistoryData, entry: HistoryE
   lines.push(`- キー: ${keyOf(history, entry)} · main に入った日: ${entry.date.slice(0, 10)}${entry.branch === undefined ? '' : ` · ブランチ: ${entry.branch}`} · 作成者: ${entry.authors.join('、')}${url === undefined ? '' : ` · ${url}`}`);
   lines.push('- 差分は、OSS が出すコード（関数カタログの根のファイル）の、変更したときのもの。判断の前に、各関数の「今のコード」の行を読む');
   if (whole !== undefined) lines.push(`- テストや文書を含む変更全体: ${whole}`);
+  const shared = sharingNumber(history, entry);
+  if (shared.length > 0) lines.push(`- PR 番号 #${entry.pr} の変更はほかにもある: ${shared.map((other) => `${keyOf(history, other)}（${other.date.slice(0, 10)} ${other.title}）`).join('、')}`);
   lines.push(...READING_NOTES, '');
   if (entry.boundary === true) lines.push('浅い clone の最も古いコミットなので、何を変えたかは分からない。', '');
+  if (unread) lines.push('この変更の差分（地図のデータ）を読めなかった。関数ごとの差分と関数の外の変更は、上の git のコマンドで読む。', '');
 
   lines.push('## 意図', '');
   const intent = lines.length;
@@ -253,7 +272,7 @@ export function changeBrief(map: BriefMap, history: HistoryData, entry: HistoryE
   }
   const unreadNotes = entry.notes.filter((path) => detail?.notes.some((note) => note.path === path) !== true);
   if (unreadNotes.length > 0) lines.push('### 変更メモ（本文を読めなかった）', '', ...unreadNotes.map((path) => `- ${path}${entry.boundary === true ? '' : `（\`git show ${entry.commit.slice(0, 12)}:${shellWord(path)}\`）`}`), '');
-  if (lines.length === intent) lines.push(entry.pr === undefined ? 'PR が無い。コミットの件名が、何をしたかの記録である。' : '地図のデータに PR の本文が無い（ビルドに MAP_PULLS を渡すと載る）。', '');
+  if (lines.length === intent) lines.push(entry.pr === undefined ? 'PR が無い。コミットのメッセージが、何をしたかの記録である（下の「コミット」）。' : '地図のデータに PR の本文が無い（ビルドに MAP_PULLS を渡すと載る）。コミットのメッセージも読む（下の「コミット」）。', '');
 
   const counts = { added: 0, modified: 0, removed: 0 };
   for (const change of entry.functions) counts[change.status] += 1;
@@ -288,8 +307,10 @@ export function changeBrief(map: BriefMap, history: HistoryData, entry: HistoryE
   }
   if (entry.commits.length > 0) {
     const shown = outline ? entry.commits.slice(0, 10) : entry.commits;
+    const messages = gitMessages(entry);
     lines.push(`## コミット ${entry.commits.length}`, '', ...shown.map((commit) => `- ${commit.sha.slice(0, 10)} ${commit.subject}（${commit.author}）`), '');
     if (shown.length < entry.commits.length) lines.push(`ほか ${entry.commits.length - shown.length} コミット。`, '');
+    if (messages !== undefined) lines.push(`メッセージの本文（なぜそうしたかを書いていることが多い）: ${messages}`, '');
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }
@@ -350,32 +371,57 @@ export function functionsNamed(map: BriefMap, history: HistoryData, text: string
 }
 
 /**
+ * The changes a function brief is about, newest first: those the history
+ * lists for a function; for an endpoint body, which the history does not
+ * follow by itself, those that changed the file it is in now.
+ */
+export function changesFor(map: BriefMap, history: HistoryData, id: string): HistoryEntry[] {
+  const listed = own(history.functions, id);
+  if (listed !== undefined) return listed.map((index) => history.entries[index]).filter((entry): entry is HistoryEntry => entry !== undefined);
+  const place = own(map.bodies, id) === undefined ? undefined : placeOf(map, id);
+  if (place === undefined) return [];
+  return history.entries.filter((entry) => entry.files.some((file) => file.path === place.path || file.from === place.path));
+}
+
+/** The changes a change made to a file outside its functions (where an endpoint body is) as the lines of a brief. */
+function outsideLines(entry: HistoryEntry, detail: HistoryDetail | undefined, unread: boolean, path: string): string[] {
+  const file = detail?.files.find((candidate) => candidate.path === path || candidate.from === path);
+  if (file !== undefined && file.outside.length > 0) return [fenced('diff', file.outside.map(unifiedHunk).join('\n')), ''];
+  if (file?.omitted !== undefined) return [omittedWhere(entry, file), ''];
+  if (unread) return ['（差分を読めなかった）', ''];
+  return ['（このファイルの関数の外の差分なし）', ''];
+}
+
+/**
  * A function for an AI: where it is now and who calls it, and the changes
  * that touched it, newest first, each with the gist of its intent, the
  * sections of its change notes about the function (why it changed), and its
  * diff of the function (`details` by commit; a change whose detail is missing
  * says it could not be read). Up to `limit` changes, the rest counted; with
  * `only`, that change alone. An endpoint body has no history of its own (the
- * history follows the functions of the catalog), so its brief says how to
- * read the history of its lines with git.
+ * history follows the functions of the catalog), so its brief takes the
+ * changes of its file (changesFor), with their notes about the body and their
+ * diff of the file outside its functions, and says how to read the history of
+ * its lines with git.
  */
 export function functionBrief(map: BriefMap, history: HistoryData, id: string, details: ReadonlyMap<string, HistoryDetail>, options: { limit?: number; only?: HistoryEntry } = {}): string {
   const limit = options.limit ?? 10;
-  const all = (own(history.functions, id) ?? []).map((index) => history.entries[index]).filter((entry): entry is HistoryEntry => entry !== undefined);
+  const all = changesFor(map, history, id);
   const entries = options.only === undefined ? all : all.filter((entry) => entry === options.only);
-  const body = own(map.bodies, id);
-  const name = (own(map.functions, id) ?? body)?.name ?? all.flatMap((entry) => entry.functions).find((change) => change.id === id)?.name ?? id;
+  const body = own(history.functions, id) === undefined ? own(map.bodies, id) : undefined;
+  const place = placeOf(map, id);
+  const name = (own(map.functions, id) ?? own(map.bodies, id))?.name ?? all.flatMap((entry) => entry.functions).find((change) => change.id === id)?.name ?? id;
   const lines: string[] = [`# \`${name}${body === undefined ? '()' : ''}\` の変更の履歴${options.only === undefined ? '' : `（${titleOf(options.only)}）`}`, '', `- id: \`${id}\``, `- 今のコード: ${placeWords(map, id)}`];
   const callers = callersWords(map, id);
   if (callers !== undefined) lines.push(`- 今これを呼ぶもの: ${callers}`);
-  if (body !== undefined && all.length === 0) {
-    const place = placeOf(map, id);
-    lines.push(...READING_NOTES, '', `エンドポイントの処理は、変更の履歴が関数ごとには追わない（変更のブリーフでは「関数の外の変更」に入る）。${place === undefined ? '' : `この行の履歴は \`git log --first-parent -L ${place.start},${place.end}:${shellWord(place.path)}\` で読める。`}`);
-    return `${lines.join('\n').trimEnd()}\n`;
+  if (body === undefined) lines.push(`- 変えた変更: ${all.length}（新しい順）。差分は変更したときのもので、今のコードとは行がずれていることがある`, ...READING_NOTES, '');
+  else {
+    lines.push(`- このファイルを変えた変更: ${all.length}（新しい順）`, ...READING_NOTES, '');
+    lines.push(`エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイルを変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。${place === undefined ? '' : `この行だけの履歴は \`git log --first-parent -L ${place.start},${place.end}:${shellWord(place.path)}\` で読める。`}`, '');
   }
-  lines.push(`- 変えた変更: ${all.length}（新しい順）。差分は変更したときのもので、今のコードとは行がずれていることがある`, ...READING_NOTES, '');
   if (history.shallow === true) lines.push('浅い clone から読んだ履歴なので、古い変更は無い。', '');
-  if (options.only !== undefined && entries.length === 0) lines.push('この変更は、この関数を変えていない。', '');
+  if (options.only !== undefined && entries.length === 0) lines.push(body === undefined ? 'この変更は、この関数を変えていない。' : 'この変更は、このファイルを変えていない。', '');
+  const named = body === undefined ? [] : [{ id, name: body.name, package: body.package, module: body.module }];
   for (const entry of entries.slice(0, limit)) {
     const change = entry.functions.find((candidate) => candidate.id === id);
     lines.push(`## ${titleOf(entry)}`, '', `- キー: ${keyOf(history, entry)} · ${entry.date.slice(0, 10)} · ${change === undefined ? '' : `${STATUS_WORDS[change.status]} · `}作成者: ${entry.authors.join('、')}`);
@@ -385,8 +431,8 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
     const detail = details.get(entry.commit);
     const unread = detail === undefined && entry.detail !== undefined;
     if (unread && entry.notes.length > 0) lines.push(`変更メモ（${entry.notes.join('、')}）を読めなかった。`, '');
-    for (const section of notesOn(detail, entry, id)) lines.push(`変更メモ ${section.path} の「${section.heading}」:`, '', fenced('markdown', section.text), '');
-    lines.push(...diffLines(entry, detail, unread, id));
+    for (const section of notesOn(detail, entry, id, named)) lines.push(`変更メモ ${section.path} の「${section.heading}」:`, '', fenced('markdown', section.text), '');
+    lines.push(...(body === undefined || place === undefined ? diffLines(entry, detail, unread, id) : outsideLines(entry, detail, unread, place.path)));
   }
   if (entries.length > limit) lines.push(`ほか ${entries.length - limit} 件の古い変更（--limit で増やせる）。`, '');
   return `${lines.join('\n').trimEnd()}\n`;

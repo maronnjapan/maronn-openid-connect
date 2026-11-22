@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { FlowEndpoint, FunctionEntry, HistoryData, HistoryDetail, HistoryEntry, MapData, OpFlow } from '../types';
-import { aiMarkdown, changeUrl, changesOf, commitUrl, endpointsReached, entryKey, entryOf, filterEntries, functionCounts, unifiedHunk } from './history';
+import type { FunctionEntry, HistoryData, HistoryEntry, MapData, OpFlow } from '../types';
+import { changeUrl, changesOf, commitUrl, endpointsReached, entryKey, entryOf, filterEntries, functionCounts } from './history';
 
 /** A change that reached main. */
 function change(fields: Partial<HistoryEntry> & Pick<HistoryEntry, 'commit' | 'title' | 'kind'>): HistoryEntry {
@@ -83,108 +83,5 @@ describe('the endpoints a change reaches now', () => {
     } as unknown as OpFlow;
     const entry = change({ commit: 'e', title: 't', kind: 'merge', pr: 167, functions: [{ id: 'nextjs:app/userinfo/route.ts#extractAccessToken', name: 'extractAccessToken', status: 'modified' }, { id: 'core:t.ts#check', name: 'check', status: 'modified' }] });
     expect(endpointsReached(data, flow, entry).map((endpoint) => endpoint.id)).toEqual(['userinfo', 'token']);
-  });
-});
-
-describe('the diff of a change for a reader and an AI', () => {
-  const detail: HistoryDetail = {
-    version: 1,
-    commit: 'bbbbbbbbbbbb2',
-    notes: [{ path: 'apps/map/changes/auth.md', text: '# 認証\n\nなぜ変えたか。\n' }],
-    files: [
-      {
-        path: 'packages/core/src/a.ts',
-        status: 'modified',
-        functions: [{ id: 'core:a.ts#verify', hunks: [{ base: 10, head: 10, lines: [' export function verify() {', '-  return 1;', '+  return 2;', ' }'] }] }, { id: 'core:a.ts#gone', hunks: [] }],
-        outside: [{ base: 1, head: 1, lines: ["-import { x } from './x';", "+import { x, y } from './y';"] }],
-      },
-      { path: 'packages/core/src/big.ts', status: 'added', functions: [], outside: [], omitted: 'file' },
-    ],
-  };
-  const merged = history.entries[1] as HistoryEntry;
-
-  it('should write a hunk as a unified diff', () => {
-    expect(unifiedHunk(detail.files[0]?.functions[0]?.hunks[0] as HistoryDetail['files'][number]['outside'][number])).toEqual('@@ -10,3 +10,3 @@\n export function verify() {\n-  return 1;\n+  return 2;\n }');
-  });
-
-  it('should write the intent, the endpoints and the diff of the provider\'s code only, function by function, as Markdown', () => {
-    const endpoint = { id: 'token', methods: ['POST'], path: '/token', label: 'トークンエンドポイント' } as unknown as FlowEndpoint;
-    const markdown = aiMarkdown(history, { ...merged, body: '## 概要\n認証を足す。' }, detail, [endpoint], 'hono');
-    expect(markdown.split('\n')).toEqual([
-      '# PR #209: クライアント認証を足す',
-      '',
-      '- main に入った日: 2026-11-21 · ブランチ: claude/auth · 作成者: Claude · https://github.com/owner/name/pull/209',
-      '- この文書の差分は、OSS が出すコード（関数カタログの根のファイル）だけである。テスト、文書、道具の変更は含まない',
-      '',
-      '## PR の本文',
-      '',
-      '```markdown',
-      '## 概要',
-      '認証を足す。',
-      '```',
-      '',
-      '## 変更メモ apps/map/changes/auth.md',
-      '',
-      '```markdown',
-      '# 認証',
-      '',
-      'なぜ変えたか。',
-      '```',
-      '',
-      '## 今の地図で届くエンドポイント（hono）',
-      '',
-      '- POST /token（トークンエンドポイント）',
-      '',
-      '## 変えた関数（追加 0・変更 1・削除 1）',
-      '',
-      '### 変更 `core:a.ts#verify`（packages/core/src/a.ts）',
-      '',
-      '```diff',
-      '@@ -10,3 +10,3 @@',
-      ' export function verify() {',
-      '-  return 1;',
-      '+  return 2;',
-      ' }',
-      '```',
-      '',
-      '### 削除 `core:a.ts#gone`（packages/core/src/a.ts）',
-      '',
-      '（差分なし）',
-      '',
-      '## 関数の外の変更（import、型、定数など）',
-      '',
-      '### packages/core/src/a.ts',
-      '',
-      '```diff',
-      '@@ -1,1 +1,1 @@',
-      "-import { x } from './x';",
-      "+import { x, y } from './y';",
-      '```',
-      '',
-      '## 地図に載せなかった差分',
-      '',
-      '- packages/core/src/big.ts（差分が長いので地図に載せていない）',
-      '',
-    ]);
-  });
-});
-
-describe('the pull requests a change brought, for an AI', () => {
-  it('should write the text of each pull request the change brought with its intent', () => {
-    const carrier = change({ commit: 'f', title: "Merge branch 'main'", kind: 'merge', carried: [{ pr: 182, title: 'Add hashed secrets', commit: 'e', body: 'Why hashed.' }] });
-    expect(aiMarkdown(history, carrier, undefined, [], 'hono').split('\n').slice(4, 10)).toEqual(['', '## この変更で main に入った PR #182: Add hashed secrets', '', '```markdown', 'Why hashed.', '```']);
-  });
-});
-
-describe('the diff of the places the reader chose', () => {
-  it('should keep in the Markdown only the functions and the files chosen, and say so', () => {
-    const detail: HistoryDetail = {
-      version: 1,
-      commit: 'c',
-      notes: [],
-      files: [{ path: 'packages/core/src/a.ts', status: 'modified', functions: [{ id: 'core:a.ts#verify', hunks: [{ base: 9, head: 9, lines: ['-c', '+d'] }] }, { id: 'core:a.ts#gone', hunks: [] }], outside: [{ base: 1, head: 1, lines: ['-a', '+b'] }] }],
-    };
-    const markdown = aiMarkdown(history, history.entries[1] as HistoryEntry, detail, [], 'hono', new Set(['core:a.ts#verify']));
-    expect([markdown.includes('`core:a.ts#verify`'), markdown.includes('`core:a.ts#gone`'), markdown.includes('## 関数の外の変更'), markdown.includes('読み手が選んだ 1 か所')]).toEqual([true, false, false, true]);
   });
 });

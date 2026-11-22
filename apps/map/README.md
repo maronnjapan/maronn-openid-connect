@@ -335,7 +335,14 @@ MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft
 ## コードの Drawer
 
 エンドポイントの見出しの「コードを見る」や、詳細と関数のページの「コードを見る」で、右からコードの Drawer を開く。
-「表示するコード」で、エンドポイントのファイル全体、ステップの関数、そこから呼ぶ関数（core まで）を切り替える。
+コードはエディタと同じようにたどる。
+Ctrl（Mac では ⌘）を押している間、宣言へ移れる名前に下線が付き、押すとその宣言を開く（タッチだけの画面ではタップで開く）。
+関数カタログの関数はその関数として開き、ほかの宣言（型、interface のメンバー、定数、引数など）はファイル全体をその行で開いて、名前に印を付ける。
+interface のメンバーへ移ったときは、その実装を並べる。
+宣言の名前そのものを押すと、それを使う場所を、使う関数の名前と行で並べる。
+← と → のボタン（Alt + ← / →）で、たどった場所を戻る・進む。
+リンクはビルド時に型検査器で引いた表（後の「データとビルド」の `sources/<hash>.json`）で、地図の根の外（hono、node）の宣言には付かない。
+「一覧から開く」でも、エンドポイントのファイル全体、ステップの関数、そこから呼ぶ関数（core まで）を選んで開ける。
 関数には JSDoc とオーバーロードを含め、元ファイルの行番号を表示する。
 PR の地図で変えた関数は、「差分」と「変更後の全文」を切り替えられる。
 Drawer は関数を単位に開き、アウトラインの一行のコードはその行の `</>` で読む。
@@ -462,6 +469,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/words.ts`：アウトラインの行と図の箱の言葉（JSDoc、コメント、言葉の無い文の続き、`return` が返すもの、決定の側の名前）
 - `src/lib/model.ts`：機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
 - `src/lib/source.ts`, `src/components/CodeDrawer.tsx`：コードの選択肢とソースを読む Drawer
+- `src/lib/links.ts`, `src/components/SourceView.tsx`：コードの名前のリンク（行を名前で切る、移る先、使う場所、戻る・進むの履歴）と、リンク付きのコードの表示
 - `src/components/Trace.tsx`, `TraceView.tsx`, `SelectionBar.tsx`：アウトライン、決定のボタン、よく使う選択、図・差分・詳細のタブ
 - `src/components/FlowPlayer.tsx`：フローの再生の操作、場面の説明。`FlowRequest.tsx` が選んだケースのリクエスト（`src/lib/requests.ts`、データは `useRequests.ts` が読む）を出す。フローチャート（`FlowChart.tsx`）は、再生の位置を受け取って矢印を流し、印を動かす
 - `src/components/useDiagramCards.tsx`：図とフローチャートが共有する、箱のカード（重ねる、フォーカス、タップ）

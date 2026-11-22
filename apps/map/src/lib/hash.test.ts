@@ -81,3 +81,18 @@ describe('the view in a hash', () => {
     expect(parseHash('#nextjs--tests', data, defaults)).toEqual({ ...defaults, framework: 'nextjs' });
   });
 });
+
+describe('the history in a hash', () => {
+  it('should write the list and a change, and read them back with or without the framework', () => {
+    const list: View = { ...defaults, history: '' };
+    const one: View = { ...defaults, framework: 'nextjs', history: 'pr-207' };
+    expect([buildHash(list, data), buildHash(one, data), parseHash('#nextjs--history--pr-207', data, defaults).history, parseHash('#history--7eef525b', data, defaults).history, parseHash('#hono--history', data, defaults).history, parseHash('#hono--history--nonsense', data, defaults).history]).toEqual([
+      'hono--history',
+      'nextjs--history--pr-207',
+      'pr-207',
+      '7eef525b',
+      '',
+      '',
+    ]);
+  });
+});

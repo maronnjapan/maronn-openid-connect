@@ -6,6 +6,7 @@ import { MobileMenu, MobileMenuSection, useMobileMenu } from './components/Mobil
 import { Search } from './components/Search';
 import { Sidebar } from './components/Sidebar';
 import { WiringScreen } from './components/WiringScreen';
+import { HistoryScreen } from './components/HistoryScreen';
 import { indexChanges } from './lib/changes';
 import { buildHash, parseHash, plainView, type View } from './lib/hash';
 import { defaultEnabled, enabledMarkers, featuresMissing, featuresToShow, visibleEndpoints, type SearchHit } from './lib/model';
@@ -102,7 +103,7 @@ function ProviderMap({ data }: { data: MapData }) {
     (framework: string): View => {
       const view = parseHash(location.hash, data, { framework, endpoint: null, step: null, fn: null, trace: EMPTY_TRACE });
       if (view.changes === true && anyChanges === undefined) view.changes = false;
-      if (view.endpoint === null && view.fn === null && view.changes !== true && view.wiring !== true) {
+      if (view.endpoint === null && view.fn === null && view.changes !== true && view.wiring !== true && view.history === undefined) {
         if (anyChanges !== undefined) view.changes = true;
         else view.endpoint = fallbackEndpoint(view.framework);
       }
@@ -169,18 +170,30 @@ function ProviderMap({ data }: { data: MapData }) {
   }, [flow, data.features, enabled, view]);
   const card = view.fn === null ? undefined : data.functions[view.fn];
   const onWiring = card === undefined && view.wiring === true;
-  const onChanges = card === undefined && !onWiring && view.changes === true && changes !== undefined;
-  const endpoint = onChanges || onWiring ? undefined : (endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined));
+  const onHistory = card === undefined && !onWiring && view.history !== undefined;
+  const onChanges = card === undefined && !onWiring && !onHistory && view.changes === true && changes !== undefined;
+  const endpoint = onChanges || onWiring || onHistory ? undefined : (endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined));
   const narrow = () => !window.matchMedia('(min-width: 900px)').matches;
 
+  /** The view to go from to another page: without the node its trace was to select, nor the change of the history it showed. */
+  const leave = (): View => {
+    const next = plainView(view);
+    delete next.history;
+    return next;
+  };
   const openEndpoint = (id: string) => {
-    navigate({ ...plainView(view), endpoint: id, step: null, fn: null, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
+    navigate({ ...leave(), endpoint: id, step: null, fn: null, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
     if (narrow()) setSidebar(false);
   };
-  const openStep = (endpointId: string, step: string) => navigate({ ...plainView(view), endpoint: endpointId, step, fn: null, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
-  const openFunction = (id: string) => navigate({ ...plainView(view), fn: id, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
-  const openChanges = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: true, wiring: false, trace: EMPTY_TRACE }, 'push');
-  const openWiring = () => navigate({ ...plainView(view), endpoint: null, step: null, fn: null, changes: false, wiring: true, trace: EMPTY_TRACE }, 'push');
+  const openStep = (endpointId: string, step: string) => navigate({ ...leave(), endpoint: endpointId, step, fn: null, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
+  const openFunction = (id: string) => navigate({ ...leave(), fn: id, changes: false, wiring: false, trace: EMPTY_TRACE }, 'push');
+  const openChanges = () => navigate({ ...leave(), endpoint: null, step: null, fn: null, changes: true, wiring: false, trace: EMPTY_TRACE }, 'push');
+  const openWiring = () => navigate({ ...leave(), endpoint: null, step: null, fn: null, changes: false, wiring: true, trace: EMPTY_TRACE }, 'push');
+  /** Open the history of main: its list, or one change by its key. */
+  const openHistory = (key = '') => {
+    navigate({ ...leave(), endpoint: null, step: null, fn: null, changes: false, wiring: false, history: key, trace: EMPTY_TRACE }, 'push');
+    if (narrow()) setSidebar(false);
+  };
   /** Open an endpoint's trace along a way to a change: its frames open, its sides chosen, the features it needs on, the diagram on the changed frame. */
   const openWay = (way: Reach) => {
     // A way through a feature that is off turns it on: the trace shows only the frames of the features that are on.
@@ -251,7 +264,8 @@ function ProviderMap({ data }: { data: MapData }) {
               onEndpoint={openEndpoint}
               onChanges={openChanges}
               onWiring={openWiring}
-              page={onChanges ? 'changes' : onWiring ? 'wiring' : 'endpoint'}
+              onHistory={() => openHistory()}
+              page={onChanges ? 'changes' : onWiring ? 'wiring' : onHistory ? 'history' : 'endpoint'}
             />
           </MobileMenuSection>
         ) : null}
@@ -273,7 +287,10 @@ function ProviderMap({ data }: { data: MapData }) {
               onOpenStep={openStep}
               onOpenEndpoint={openEndpoint}
               onFramework={(framework) => navigate({ ...view, framework }, 'replace')}
+              onOpenHistory={openHistory}
             />
+          ) : onHistory ? (
+            <HistoryScreen data={data} framework={view.framework} entry={view.history ?? ''} onOpenEntry={openHistory} onOpenList={() => openHistory()} onOpenFunction={openFunction} onOpenEndpoint={openEndpoint} />
           ) : onWiring ? (
             <WiringScreen data={data} framework={view.framework} onOpenFunction={openFunction} />
           ) : onChanges ? (

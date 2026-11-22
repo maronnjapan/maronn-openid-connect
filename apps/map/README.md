@@ -359,6 +359,20 @@ TypeScript と TSX のハイライトは [Shiki](https://shiki.style/) でビル
 Drawer の上には、そのコードに含まれる機能の生成条件を並べる。機能専用のライブラリも「機能の実装」として示す。
 閉じるボタン、Escape キー、Drawer の外側のクリックで閉じ、開いたボタンにフォーカスを戻す。
 
+## コードを読むページ
+
+地図と同じ Worker の `./code/` に、コードをエディタのように読むページを置く（`code/index.html`、`src/code/`）。
+Drawer の「別タブで読む ↗」と、テストの画面のコードの欄の「コードを読む ↗」から、そのファイルの行を指して開く。
+
+- 左はファイルの一覧（地図の根のファイル。ファイルが一つも無く、下のディレクトリが一つだけのディレクトリは、`packages/core/src` のように一行にまとめる）。開いているファイルの上のディレクトリは開いておく
+- 上の検索（Ctrl/⌘ + P）は、ファイルと関数を名前で探す。名前がそのままのもの、名前の始まりが合うもの、名前の中に含むもの、パスに含むものの順に並べる
+- コードの名前の移り方は Drawer と同じで、Ctrl/⌘ + クリックで宣言へ、宣言の名前では、それを使う場所か、interface のメンバーなら実装を、下の欄に並べる
+- ファイルは常に全体を表示する。関数へ移ったときは、その関数の行に線を引き、その行から見せる。パンくずは、パスと、見ている行を含む関数を示す
+- ← と → のボタン（Alt + ← / →）で、たどった場所を戻る・進む
+- 見ている場所は URL のハッシュに書く（`#packages/core/src/client-auth.ts:L142-L235`）。行の範囲を書いたリンクは、その範囲に線を引いて開く。地図の根に無いファイル（テストなど）は、その旨を出す
+
+ページは `map.json` を読まず、データの段が書く索引 `code.json`（ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能）と、`sources/<hash>.json` だけを読む。
+
 ## スマートフォン
 
 幅 900px 未満の画面では、アウトラインだけを表示する。
@@ -385,6 +399,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `map.json`：索引。フレームワーク、コマンド、機能、エンドポイントとステップ、関数カタログ（呼び先、呼び出し元、外へ出る失敗）、interface のメンバー（説明、実装、実装が呼ぶもの）、PR の変更の一覧。木は含まない
 - `functions/<hash>.json`：フレーム一つ分。木、よく使う選択、PR の地図では変更前の木、ノードの差分、式の差分、ノードごとの hunk。フレームを開いたときに読む
 - `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む。名前ごとに宣言の場所（`links`）を、宣言ごとにそれを使う場所（`uses`）を持つ（`packages/map-analysis/src/symbols.ts`。型検査器で引き、地図の根の外の宣言は持たない）。リンクの先を開けるよう、地図の根のファイルはすべて書く
+- `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
 
 テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
@@ -469,6 +484,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/words.ts`：アウトラインの行と図の箱の言葉（JSDoc、コメント、言葉の無い文の続き、`return` が返すもの、決定の側の名前）
 - `src/lib/model.ts`：機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
 - `src/lib/source.ts`, `src/components/CodeDrawer.tsx`：コードの選択肢とソースを読む Drawer
+- `code/index.html`, `src/code/`：コードを読むページ（ファイルの一覧、名前で開く検索、URL のハッシュは `src/code/lib.ts`）
 - `src/lib/links.ts`, `src/components/SourceView.tsx`：コードの名前のリンク（行を名前で切る、移る先、使う場所、戻る・進むの履歴）と、リンク付きのコードの表示
 - `src/components/Trace.tsx`, `TraceView.tsx`, `SelectionBar.tsx`：アウトライン、決定のボタン、よく使う選択、図・差分・詳細のタブ
 - `src/components/FlowPlayer.tsx`：フローの再生の操作、場面の説明。`FlowRequest.tsx` が選んだケースのリクエスト（`src/lib/requests.ts`、データは `useRequests.ts` が読む）を出す。フローチャート（`FlowChart.tsx`）は、再生の位置を受け取って矢印を流し、印を動かす

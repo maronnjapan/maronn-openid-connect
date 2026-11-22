@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { codeWindow, inRange, lineWindow } from './lines';
+import { codePageHref, codeWindow, inRange, lineWindow } from './lines';
 
 describe('lineWindow', () => {
   it('should show the lines of a test with three lines around them', () => {
@@ -54,5 +54,19 @@ describe('codeWindow', () => {
   it('should show the whole file without a range', () => {
     expect(codeWindow(undefined, 40, 'range')).toEqual({ start: 1, end: 40, outside: false });
     expect(codeWindow(undefined, 0, 'file')).toEqual({ start: 1, end: 1, outside: false });
+  });
+});
+
+describe('codePageHref', () => {
+  it('should open a file of the provider on the code page of the map at its lines', () => {
+    expect([codePageHref('packages/core/src/client-auth.ts', [190, 167]), codePageHref('apps/nextjs/src/app/(par)/par/route.ts', [3, 3]), codePageHref('apps/hono/src/oidc-provider/views.tsx')]).toEqual([
+      '../code/#packages/core/src/client-auth.ts:L167-L190',
+      '../code/#apps/nextjs/src/app/(par)/par/route.ts:L3',
+      '../code/#apps/hono/src/oidc-provider/views.tsx',
+    ]);
+  });
+
+  it('should give no link to a test, a helper of the tests or a fixture, which the map does not carry', () => {
+    expect(['apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts', 'tests/steps/token.steps.ts', 'apps/hono/src/test-support/app.ts', 'packages/core/src/__fixtures__/keys.ts', 'tests/features/authorize.feature'].map((path) => codePageHref(path, [1, 2]))).toEqual([undefined, undefined, undefined, undefined, undefined]);
   });
 });

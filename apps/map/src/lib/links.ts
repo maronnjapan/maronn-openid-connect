@@ -6,7 +6,9 @@
  * and the back / forward history of the places the reader went to. Nothing
  * here touches the DOM.
  */
-import type { CodeIndex, LinkTarget, MapData, SourceDocument } from '../types';
+import type { CodeIndex, LinkKind, LinkTarget, SourceDocument } from '../types';
+
+export { codeIndexOf } from '@maronn-openid-connect/map-analysis/code-index';
 
 /** A name of a line with a link: its column (0-based), its length and the index of its target. */
 export interface LineLink {
@@ -86,16 +88,8 @@ export interface CodeLocation {
   length?: number;
   /** For a frame, the whole file of it instead of its lines. */
   whole?: boolean;
-}
-
-/** What following the code needs of the map, from map.json (the code page reads the same from data/code.json). */
-export function codeIndexOf(data: MapData): CodeIndex {
-  const frames: CodeIndex['frames'] = {};
-  for (const entry of Object.values(data.functions)) frames[entry.id] = { name: entry.name, kind: 'function', ...(entry.summary === '' ? {} : { summary: entry.summary }), ...(entry.source === undefined ? {} : { source: entry.source }) };
-  for (const entry of Object.values(data.bodies)) frames[entry.id] = { name: entry.name, kind: 'body', ...(entry.summary === '' ? {} : { summary: entry.summary }), ...(entry.source === undefined ? {} : { source: entry.source }) };
-  const members: CodeIndex['members'] = {};
-  for (const [id, member] of Object.entries(data.members)) members[id] = { type: member.type, member: member.member, ...(member.implementedBy === undefined ? {} : { implementedBy: member.implementedBy }) };
-  return { version: 1, sources: data.sources, features: data.features, frames, members };
+  /** The last line of a range of lines to mark from `line` (a link to some lines of a file). */
+  end?: number;
 }
 
 /** The name of a frame as the page writes it: `name()` for a function, the route for an endpoint body. */
@@ -128,7 +122,7 @@ export function currentOf(history: CodeHistory): CodeLocation {
 /** Go to a place: the places ahead are dropped, as in a browser. */
 export function visit(history: CodeHistory, location: CodeLocation): CodeHistory {
   const current = currentOf(history);
-  if (current.id === location.id && current.line === location.line && current.column === location.column && current.whole === location.whole) return history;
+  if (current.id === location.id && current.line === location.line && current.column === location.column && current.whole === location.whole && current.end === location.end) return history;
   const entries = [...history.entries.slice(0, history.index + 1), location];
   return { entries, index: entries.length - 1 };
 }
@@ -177,4 +171,55 @@ export function usesOf(index: CodeIndex, document: SourceDocument | undefined, l
       return { location: { id: frame?.id ?? file, line: at, column: from }, label: frame?.name ?? `${path.slice(path.lastIndexOf('/') + 1)}（関数の外）`, path, line: at };
     })
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line));
+}
+
+/** What a kind of declaration is called on the page. */
+export const LINK_KIND_WORDS: Record<LinkKind, string> = {
+  function: '関数',
+  method: 'メソッド',
+  property: 'プロパティ',
+  interface: 'インターフェース',
+  type: '型',
+  class: 'クラス',
+  enum: '列挙',
+  'enum-member': '列挙の値',
+  variable: '変数',
+  parameter: '引数',
+  'type-parameter': '型引数',
+  module: 'モジュール',
+  other: '宣言',
+};
+
+/** A list the reader asked for beside the code: the places that use a declaration, or the implementations of a member. */
+export interface Peek {
+  title: string;
+  items: Array<{ label: string; where: string; location: CodeLocation }>;
+  /** What to say when the list is empty. */
+  empty: string;
+}
+
+/** The implementations of the member of an interface a link goes to, as places of the code; undefined for any other link. */
+export function implementationsOf(index: CodeIndex, target: LinkTarget): Peek | undefined {
+  const member = target.member === undefined ? undefined : index.members[target.member];
+  if (member === undefined) return undefined;
+  return {
+    title: `${member.type}.${member.member} の実装`,
+    empty: '地図の中に実装はありません。',
+    items: (member.implementedBy ?? []).map((id) => {
+      const frame = index.frames[id];
+      const source = frame?.source;
+      return { label: frame === undefined ? id : frameName(frame), where: source === undefined ? id : `${index.sources[source.file]?.path ?? source.file}:${source.start}`, location: { id } };
+    }),
+  };
+}
+
+/**
+ * The list to show when the reader follows a declaration's own name: the
+ * implementations of a member that has some, else the places that use it.
+ */
+export function peekOf(index: CodeIndex, document: SourceDocument | undefined, target: LinkTarget, at: { line: number; column: number }): Peek {
+  const implementations = implementationsOf(index, target);
+  if (implementations !== undefined && implementations.items.length > 0) return implementations;
+  const uses = usesOf(index, document, at.line, at.column);
+  return { title: `${LINK_KIND_WORDS[target.kind]} ${target.name} を使う場所（${uses.length}）`, empty: '地図の根の中で、ほかに使う場所はありません。', items: uses.map((use) => ({ label: use.label, where: `${use.path}:${use.line}`, location: use.location })) };
 }

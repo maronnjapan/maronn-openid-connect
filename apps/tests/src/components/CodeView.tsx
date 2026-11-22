@@ -8,7 +8,7 @@
  * once, when a view first needs it, and highlighted once.
  */
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { codeWindow, inRange, type CodeMode } from '../lib/lines';
+import { codePageHref, codeWindow, inRange, type CodeMode } from '../lib/lines';
 import { featureCondition, featureLabel, featuresAt, startsFeature } from '../lib/features';
 import { highlight, languageOf, type Token } from '../lib/tokenize';
 import { useApp, useSource } from './app-context';
@@ -51,6 +51,7 @@ export function CodeView({ path, lines, mark, spot, fill, scope = 'test', captio
   const span = tokens === undefined ? undefined : lines === undefined ? codeWindow(mark, tokens.length, 'file') : codeWindow(lines, tokens.length, shown, scope === 'test' ? { context: 3, markRange: true } : {});
   const from = span?.mark?.[0];
   const to = span?.mark?.[1];
+  const href = codePageHref(path, lines ?? mark);
 
   // Scroll the box, not the page, to put the line pointed at (else the first marked line) near its top: measured in the box, wherever the box is (the panel is fixed).
   useLayoutEffect(() => {
@@ -75,10 +76,15 @@ export function CodeView({ path, lines, mark, spot, fill, scope = 'test', captio
   }
   return (
     <div className={`code${fill === true ? ' code-fill' : ''}`}>
-      {(lines !== undefined || caption !== undefined) && (
+      {(lines !== undefined || caption !== undefined || href !== undefined) && (
         <div className="code-bar">
           {caption !== undefined && <div className="code-caption">{caption}</div>}
           {lines !== undefined && <Segmented size="small" label="コードの範囲" options={MODES[scope]} value={mode} onChange={setMode} />}
+          {href !== undefined && (
+            <a className="code-open" href={href} target="_blank" rel="noopener" title="地図のコードのページで、名前を Ctrl/⌘ + クリックして宣言へたどれます">
+              コードを読む ↗
+            </a>
+          )}
         </div>
       )}
       {span?.outside === true && lines !== undefined && (

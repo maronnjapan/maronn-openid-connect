@@ -27,6 +27,7 @@ import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
 import { collectChanges, changesMarkdown, type ChangeResult } from './changes.js';
 import { usesOf } from './symbols.js';
+import { codeIndexOf } from './code-index.js';
 
 /**
  * The page shows the text of a JSDoc as it is, so a `{@link Name}` of the
@@ -329,6 +330,8 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   };
   const extension = (await options.extend?.({ data, repository, ...(changes === undefined ? {} : { changes }), out: options.out, failures, log })) ?? {};
   writeFileSync(join(options.out, 'map.json'), JSON.stringify(data));
+  // The index of the code page (apps/map code/), so it does not load map.json.
+  writeFileSync(join(options.out, 'code.json'), JSON.stringify(codeIndexOf(data)));
   const changesFile = join(options.out, 'changes.md');
   const markdown = changes === undefined ? undefined : changesMarkdown(changes.changes, { failing: extension.failing ?? [], sections: extension.sections ?? [] });
   if (markdown === undefined) rmSync(changesFile, { force: true });

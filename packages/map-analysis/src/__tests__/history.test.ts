@@ -305,3 +305,58 @@ describe('repositoryOfRemote', () => {
     expect(originRepository(join(directory, 'missing'))).toBeUndefined();
   });
 });
+
+describe('the pull requests off the first-parent history, and a shallow clone', () => {
+  let other: string;
+  beforeAll(() => {
+    other = mkdtempSync(join(tmpdir(), 'map-history-other-'));
+    git(other, ['init', '-q', '-b', 'main']);
+    git(other, ['config', 'user.name', 'Maintainer']);
+    git(other, ['config', 'user.email', 'maintainer@example.com']);
+    git(other, ['config', 'commit.gpgsign', 'false']);
+    write(other, { 'src/a.ts': '/** One. */\nexport function one(): number {\n  return 1;\n}\n' });
+    commit(other, ['Start'], 1, 'Alice');
+    // A pull request merged into main on GitHub, while a local commit waits to be pushed.
+    git(other, ['checkout', '-q', '-b', 'upstream']);
+    git(other, ['checkout', '-q', '-b', 'feature']);
+    write(other, { 'src/b.ts': '/** Two. */\nexport function two(): number {\n  return 2;\n}\n' });
+    commit(other, ['Add two'], 2, 'Agent');
+    git(other, ['checkout', '-q', 'upstream']);
+    git(other, ['merge', '-q', '--no-ff', '-m', 'Merge pull request #12 from someone/feature', '-m', 'Add the second function', 'feature'], on(3, 'Maintainer'));
+    git(other, ['checkout', '-q', 'main']);
+    write(other, { 'README.md': '# Local\n' });
+    commit(other, ['Write a readme'], 4, 'Alice');
+    // `git pull` merges main of GitHub into the local commit, and the merge is pushed.
+    git(other, ['merge', '-q', '--no-ff', '-m', "Merge branch 'main' of github.com:someone/library", 'upstream'], on(5, 'Alice'));
+    // A merge whose message is the title of its pull request.
+    git(other, ['checkout', '-q', '-b', 'third']);
+    write(other, { 'src/c.ts': '/** Three. */\nexport function three(): number {\n  return 3;\n}\n' });
+    commit(other, ['Add three'], 6, 'Agent');
+    git(other, ['checkout', '-q', 'main']);
+    git(other, ['merge', '-q', '--no-ff', '-m', 'Add the third function (#13)', 'third'], on(7, 'Maintainer'));
+  });
+  afterAll(() => rmSync(other, { recursive: true, force: true }));
+
+  it('should list a pull request a pushed merge brought under that merge, with the text GitHub gives', () => {
+    const read = readHistory({ repository: other, roots, codeMaskOf: cli.codeMaskOf, pulls: [{ number: 12, title: 'Add two', body: 'Why two.' }] });
+    const pulled = read.entries.find((entry) => entry.title.startsWith("Merge branch 'main'"));
+    expect([read.entries.map((entry) => entry.pr ?? null), pulled?.kind, pulled?.carried?.map(({ pr, title, body }) => ({ pr, title, body })), pulled?.functions.map((fn) => fn.id)]).toEqual([[13, null, null, null], 'merge', [{ pr: 12, title: 'Add two', body: 'Why two.' }], ['lib:b.ts#two']]);
+  });
+
+  it('should read a merge whose message is the title of its pull request as a merge, with the commits of its branch', () => {
+    const merged = readHistory({ repository: other, roots, codeMaskOf: cli.codeMaskOf }).entries[0];
+    expect([merged?.kind, merged?.pr, merged?.title, merged?.commits.map((one) => one.subject), merged?.authors]).toEqual(['merge', 13, 'Add the third function', ['Add three'], ['Agent']]);
+  });
+
+  it('should list no files nor functions for the oldest commit of a shallow clone', () => {
+    const shallow = mkdtempSync(join(tmpdir(), 'map-history-shallow-'));
+    try {
+      git(tmpdir(), ['clone', '-q', '--depth', '2', `file://${other}`, shallow]);
+      const read = readHistory({ repository: shallow, roots, codeMaskOf: cli.codeMaskOf });
+      const oldest = read.entries[read.entries.length - 1];
+      expect([read.shallow, read.entries.length, oldest?.boundary, oldest?.files, oldest?.functions, Object.keys(read.functions)]).toEqual([true, 2, true, [], [], ['lib:c.ts#three']]);
+    } finally {
+      rmSync(shallow, { recursive: true, force: true });
+    }
+  });
+});

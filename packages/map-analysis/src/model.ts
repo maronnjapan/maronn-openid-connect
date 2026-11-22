@@ -551,6 +551,14 @@ export interface HistoryEntry {
   notes: string[];
   additions: number;
   deletions: number;
+  /**
+   * The pull requests it brought to main that are no change of their own: one
+   * merged into a branch that this change merged (a pull of main pushed as a
+   * merge, a pull request into another's branch), newest first.
+   */
+  carried?: Array<{ pr: number; title: string; commit: string; body?: string }>;
+  /** The oldest commit a shallow clone has: git sees its whole tree as added, so what it changed is not known and it lists no files nor functions. */
+  boundary?: true;
 }
 
 /** A commit of a change (HistoryEntry.commits). */

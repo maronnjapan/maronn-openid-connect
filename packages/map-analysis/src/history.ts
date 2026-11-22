@@ -7,6 +7,14 @@
  * reads it to trace, after the fact, what each pull request (often made by
  * an agent) implemented.
  *
+ * A pull request merged into a branch that a change then merged (a pull of
+ * main pushed as a merge, a pull request into another's branch) is no change
+ * of its own on the first-parent history: the change that brought it lists it
+ * (HistoryEntry.carried). A merge whose message is the title of its pull
+ * request (`Title (#12)`) is a merge, not a squash. In a shallow clone the
+ * oldest commit lists no files nor functions (HistoryEntry.boundary): git
+ * sees its whole tree as added.
+ *
  * git is asked a few times, whatever the length of the history: once for the
  * commits, once for the files of every change (raw and numstat), once for the
  * lines each change of a file under the roots touched (`-U0`, the hunks keyed
@@ -27,7 +35,8 @@
  * added.
  */
 import { spawnSync } from 'node:child_process';
-import { posix } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, posix } from 'node:path';
 import type { HistoryCommit, HistoryData, HistoryEntry, HistoryFile, HistoryFunction } from './model.js';
 import { isNote } from './notes.js';
 import { moduleOf, type AnalysisRoot } from './roots.js';
@@ -184,17 +193,25 @@ function oldestFirst(commits: readonly Commit[]): Commit[] {
  * of every ancestor of the commit reached, so each merge walks only what it
  * brought.
  */
-function branchCommits(chain: readonly Commit[], commits: ReadonlyMap<string, Commit>): Map<string, Commit[]> {
+function branchCommits(chain: readonly Commit[], commits: ReadonlyMap<string, Commit>): Map<string, { own: Commit[]; carried: Commit[] }> {
   const seen = new Set<string>();
-  const branches = new Map<string, Commit[]>();
+  const branches = new Map<string, { own: Commit[]; carried: Commit[] }>();
   for (const commit of [...chain].reverse()) {
     commit.parents.slice(1).forEach((parent, index) => {
       const reached = oldestFirst(reachedOutside(parent, seen, commits));
-      if (index === 0) branches.set(commit.sha, reached.filter((candidate) => candidate.parents.length < 2));
+      // The pull requests merged or squashed on the way: in a branch this merge brought, they reach main with it.
+      if (index === 0) branches.set(commit.sha, { own: reached.filter((candidate) => candidate.parents.length < 2), carried: reached.filter((candidate) => kindOf(candidate).pr !== undefined).reverse() });
     });
     seen.add(commit.sha);
   }
   return branches;
+}
+
+/** The commits a shallow clone has without their parents (the lines of `.git/shallow`); none in a full clone. */
+function shallowBoundaries(repository: string): Set<string> {
+  const path = gitText(repository, ['rev-parse', '--git-path', 'shallow']).trim();
+  const file = isAbsolute(path) ? path : join(repository, path);
+  return existsSync(file) ? new Set(readFileSync(file, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line !== '')) : new Set();
 }
 
 /**
@@ -444,8 +461,9 @@ function kindOf(commit: Commit): Pick<HistoryEntry, 'kind' | 'pr' | 'title' | 'b
     const title = commit.body.split('\n').map((line) => line.trim()).find((line) => line !== '') ?? commit.subject;
     return { kind: 'merge', pr: Number(merge[1]), title, branch: slash === -1 ? from : from.slice(slash + 1) };
   }
-  const squash = SQUASH_SUBJECT.exec(commit.subject);
-  if (squash !== null) return { kind: 'squash', pr: Number(squash[2]), title: (squash[1] as string).trim() };
+  // `Title (#12)`: a squash, or a merge whose message is the title of its pull request (GitHub's setting).
+  const titled = SQUASH_SUBJECT.exec(commit.subject);
+  if (titled !== null) return { kind: commit.parents.length >= 2 ? 'merge' : 'squash', pr: Number(titled[2]), title: (titled[1] as string).trim() };
   return { kind: commit.parents.length >= 2 ? 'merge' : 'direct', title: commit.subject };
 }
 
@@ -557,10 +575,13 @@ export function readHistory(options: HistoryOptions): HistoryData {
   const { repository, roots } = options;
   const tip = gitText(repository, ['rev-parse', '--verify', `${options.revision ?? 'HEAD'}^{commit}`]).trim();
   const shallow = gitText(repository, ['rev-parse', '--is-shallow-repository']).trim() === 'true';
+  const boundaries = shallow ? shallowBoundaries(repository) : new Set<string>();
   const commits = readCommits(repository, tip);
   const chain = firstParents(tip, commits);
   const branches = branchCommits(chain, commits);
   const changes = readFiles(repository, tip);
+  // git diffs the oldest commit of a shallow clone against nothing, as if it added the whole tree: what it changed is not known.
+  for (const sha of boundaries) changes.delete(sha);
 
   // The files of the roots each change touched, and the texts and hunks they need, read at once.
   const rootFiles = new Map(chain.map((commit) => [commit.sha, rootFilesOf(changes.get(commit.sha) ?? [], roots)]));
@@ -582,7 +603,8 @@ export function readHistory(options: HistoryOptions): HistoryData {
   const entries = chain.map((commit) => {
     const { kind, pr, title, branch } = kindOf(commit);
     // A merge brings the commits of its branch; the history says who wrote them, or who merged when it brought none.
-    const own = kind === 'merge' && commit.parents.length >= 2 ? (branches.get(commit.sha) ?? []) : [commit];
+    const brought = kind === 'merge' && commit.parents.length >= 2 ? branches.get(commit.sha) : undefined;
+    const own = brought === undefined ? [commit] : brought.own;
     const files = (changes.get(commit.sha) ?? []).map(fileOf);
     const entry: HistoryEntry = {
       commit: commit.sha,
@@ -599,6 +621,15 @@ export function readHistory(options: HistoryOptions): HistoryData {
       additions: files.reduce((sum, file) => sum + file.additions, 0),
       deletions: files.reduce((sum, file) => sum + file.deletions, 0),
     };
+    const carried = (brought?.carried ?? []).flatMap((inner) => {
+      const { pr: number, title: innerTitle } = kindOf(inner);
+      if (number === undefined || number === pr) return [];
+      const pull = pulls.get(number);
+      const body = typeof pull?.body === 'string' && pull.body.trim() !== '' ? pull.body : undefined;
+      return [{ pr: number, title: typeof pull?.title === 'string' && pull.title.trim() !== '' ? pull.title.trim() : innerTitle, commit: inner.sha, ...(body === undefined ? {} : { body }) }];
+    });
+    if (carried.length > 0) entry.carried = carried;
+    if (boundaries.has(commit.sha)) entry.boundary = true;
     return withPull(entry, pr === undefined ? undefined : pulls.get(pr));
   });
   return {

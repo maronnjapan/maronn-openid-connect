@@ -280,6 +280,10 @@ describe('readHistory', () => {
     expect([read.pulls, read.entries.map(({ title, onGitHub }) => ({ title, onGitHub }))]).toEqual([true, [{ title: 'Fix it', onGitHub: undefined }, { title: 'Add the thing', onGitHub: undefined }, { title: 'Say hey', onGitHub: undefined }, { title: 'Start the library', onGitHub: undefined }]]);
     const matched = readHistory({ repository: directory, roots, codeMaskOf: cli.codeMaskOf, pulls: [{ number: 3, title: 'Add the thing, on GitHub', merge_commit_sha: merge }] });
     expect(matched.entries.map(({ title, onGitHub }) => ({ title, onGitHub }))[1]).toEqual({ title: 'Add the thing, on GitHub', onGitHub: true });
+    // A commit GitHub names as the merge of a pull request (merged by rebasing) is that pull request, though its subject has no number.
+    const hey = git(directory, ['rev-parse', 'HEAD~2']).trim();
+    const rebased = readHistory({ repository: directory, roots, codeMaskOf: cli.codeMaskOf, pulls: [{ number: 2, title: 'Say hey, rebased', body: 'Why hey.', merge_commit_sha: hey }] });
+    expect(rebased.entries.map(({ pr, title, body, onGitHub }) => ({ pr, title, body, onGitHub }))[2]).toEqual({ pr: 2, title: 'Say hey, rebased', body: 'Why hey.', onGitHub: true });
   });
 
   it('should read the history of another revision', () => {

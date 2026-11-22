@@ -142,8 +142,13 @@ export function omittedWords(omitted: HistoryFileDiff['omitted']): string {
 }
 
 /** The heading of a change: `PR #219: …`, or its commit when it had no pull request. */
-function titleOf(entry: HistoryEntry): string {
-  return `${entry.pr === undefined ? `${entry.commit.slice(0, 10)}（PR なし）` : `PR #${entry.pr}`}: ${entry.title}`;
+function titleOf(history: HistoryData, entry: HistoryEntry): string {
+  return `${entry.pr === undefined ? `${entry.commit.slice(0, 10)}（PR なし）` : `PR ${numberWords(history, entry)}`}: ${entry.title}`;
+}
+
+/** The number of a change in words: `#19`, with a word when GitHub was asked and did not confirm it (the number may name another repository's pull request). */
+function numberWords(history: HistoryData, entry: HistoryEntry): string {
+  return history.pulls === true && entry.onGitHub !== true ? `#${entry.pr}（GitHub の PR とは対応しない番号）` : `#${entry.pr}`;
 }
 
 /**
@@ -257,7 +262,7 @@ export function changeBrief(map: BriefMap, history: HistoryData, entry: HistoryE
   const unread = detail === undefined && entry.detail !== undefined;
   const url = urlOf(history, entry);
   const whole = gitShow(entry);
-  const lines: string[] = [`# ${titleOf(entry)}${outline ? '（見取り図）' : ''}`, ''];
+  const lines: string[] = [`# ${titleOf(history, entry)}${outline ? '（見取り図）' : ''}`, ''];
   lines.push(`- キー: ${keyOf(history, entry)} · main に入った日: ${entry.date.slice(0, 10)}${entry.branch === undefined ? '' : ` · ブランチ: ${entry.branch}`} · 作成者: ${entry.authors.join('、')}${url === undefined ? '' : ` · ${url}`}`);
   lines.push('- 差分は、OSS が出すコード（関数カタログの根のファイル）の、変更したときのもの。判断の前に、各関数の「今のコード」の行を読む');
   if (whole !== undefined) lines.push(`- テストや文書を含む変更全体: ${whole}`);
@@ -443,7 +448,7 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
   const place = placeOf(map, id);
   const bodyPath = body === undefined ? undefined : bodyPathOf(map, id);
   const name = (own(map.functions, id) ?? own(map.bodies, id))?.name ?? all.flatMap((entry) => entry.functions).find((change) => change.id === id)?.name ?? id;
-  const lines: string[] = [`# \`${name}${body === undefined ? '()' : ''}\` の変更の履歴${options.only === undefined ? '' : `（${titleOf(options.only)}）`}`, '', `- id: \`${id}\``, `- 今のコード: ${placeWords(map, id)}`];
+  const lines: string[] = [`# \`${name}${body === undefined ? '()' : ''}\` の変更の履歴${options.only === undefined ? '' : `（${titleOf(history, options.only)}）`}`, '', `- id: \`${id}\``, `- 今のコード: ${placeWords(map, id)}`];
   const callers = callersWords(map, id);
   if (callers !== undefined) lines.push(`- 今これを呼ぶもの: ${callers}`);
   if (body === undefined) lines.push(`- 変えた変更: ${all.length}（新しい順）。差分は変更したときのもので、今のコードとは行がずれていることがある`, ...READING_NOTES, '');
@@ -458,7 +463,7 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
   if (options.only !== undefined && entries.length === 0) lines.push(body === undefined ? 'この変更は、この関数を変えていない。' : 'この変更は、このファイルを変えていない。', '');
   for (const entry of entries.slice(0, limit)) {
     const change = entry.functions.find((candidate) => candidate.id === id);
-    lines.push(`## ${titleOf(entry)}`, '', `- キー: ${keyOf(history, entry)} · ${entry.date.slice(0, 10)} · ${change === undefined ? '' : `${STATUS_WORDS[change.status]} · `}作成者: ${entry.authors.join('、')}`);
+    lines.push(`## ${titleOf(history, entry)}`, '', `- キー: ${keyOf(history, entry)} · ${entry.date.slice(0, 10)} · ${change === undefined ? '' : `${STATUS_WORDS[change.status]} · `}作成者: ${entry.authors.join('、')}`);
     const gist = gistOf(entry.body);
     if (gist.length > 0) lines.push(`- 意図（PR の本文から）: ${gist.join(' ')}`);
     lines.push('');
@@ -480,7 +485,7 @@ export function listBrief(history: HistoryData, limit = 20): string {
     const counts = { added: 0, modified: 0, removed: 0 };
     for (const change of entry.functions) counts[change.status] += 1;
     const touched = entry.functions.length === 0 ? '関数の変更なし' : `関数 +${counts.added} ~${counts.modified} -${counts.removed}`;
-    lines.push(`- ${keyOf(history, entry)} ${entry.date.slice(0, 10)} ${entry.pr === undefined ? '（PR なし）' : `#${entry.pr}`} ${entry.title}（${touched}）`);
+    lines.push(`- ${keyOf(history, entry)} ${entry.date.slice(0, 10)} ${entry.pr === undefined ? '（PR なし）' : numberWords(history, entry)} ${entry.title}（${touched}）`);
   }
   if (history.shallow === true) lines.push('', '浅い clone から読んだ履歴なので、古い変更は無い。');
   return `${lines.join('\n').trimEnd()}\n`;

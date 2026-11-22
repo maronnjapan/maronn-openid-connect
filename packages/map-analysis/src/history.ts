@@ -697,8 +697,12 @@ export function readHistoryWithDiffs(options: HistoryOptions & { diffs?: boolean
   };
 
   const pulls = new Map((options.pulls ?? []).map((pull) => [pull.number, pull]));
+  // A pull request merged by rebasing (or by a push of its branch) leaves no number in its subjects: GitHub names the commit it merged as.
+  const mergedAs = new Map((options.pulls ?? []).flatMap((pull) => (typeof pull.merge_commit_sha === 'string' ? [[pull.merge_commit_sha, pull] as const] : [])));
   const entries = chain.map((commit) => {
-    const { kind, pr, title, branch } = kindOf(commit);
+    const read = kindOf(commit);
+    const rebased = read.pr === undefined ? mergedAs.get(commit.sha) : undefined;
+    const { kind, pr, title, branch } = rebased === undefined ? read : { ...read, pr: rebased.number };
     // A merge brings the commits of its branch; the history says who wrote them, or who merged when it brought none.
     const brought = kind === 'merge' && commit.parents.length >= 2 ? branches.get(commit.sha) : undefined;
     const own = brought === undefined ? [commit] : brought.own;

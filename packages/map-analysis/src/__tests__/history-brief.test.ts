@@ -99,6 +99,7 @@ describe('the keys of the changes', () => {
     const confirmed: HistoryData = { ...shared, pulls: true, entries: [{ ...newer, onGitHub: true }, older] };
     const [mine, imported] = confirmed.entries as [HistoryEntry, HistoryEntry];
     expect([changeBrief(map, confirmed, mine, undefined).split('\n')[2]?.endsWith('https://github.com/owner/name/pull/19'), changeBrief(map, confirmed, imported, undefined).includes('- GitHub の PR の一覧に、この変更をマージした PR #19 は無い（取り込んだ別のリポジトリの番号のことがある）。本文は無く、題はコミットのもの'), changeBrief(map, confirmed, imported, undefined).includes('PR の本文が無い。コミットのメッセージを読む（下の「コミット」）。')]).toEqual([true, true, true]);
+    expect([listBrief(confirmed).split('\n')[3], functionBrief(map, confirmed, 'core:a.ts#verify', new Map()).includes('## PR #19（GitHub の PR とは対応しない番号）: older')]).toEqual(['- 9666666666 2026-11-21 #19（GitHub の PR とは対応しない番号） older（関数 +0 ~1 -0）', true]);
   });
 });
 

@@ -352,6 +352,29 @@ PR のマージとスカッシュ、PR を通さずに push したコミット�
 関数のページの右の欄の「変えた PR」タブは、その関数を変えた変更を新しい順に並べ、押すとその変更のページを開く。
 データは `history/<hash>.json`（後の「データとビルド」）で、ページを開いたときに一度だけ読む。
 
+### AI が読む変更の履歴
+
+同じデータを、AI（Claude Code、のちに地図に載せる AI）が直接読めるよう、コマンドで Markdown にする。
+差分だけを渡すと AI は渡された差分しか見ないので、変えた関数ごとに、差分と並べて**今のコードの場所**（ファイルと行）と今それを呼ぶものを書き、AI がそのコードを開いて、差分を手がかりに判断する形にする。
+
+```sh
+pnpm map:history                                  # 最近の変更を、開くキー（pr-219 など）と変えた関数の数で並べる
+pnpm map:history pr-219                           # 変更の意図、関数ごとの差分と今の場所、関数の外の変更
+pnpm map:history pr-219 --summary                 # 大きな変更の見取り図：本文の要旨、今のファイルごとの関数と行、差分の行数
+pnpm map:history pr-219 --function verify         # その変更の一つの関数
+pnpm map:history --function verifyClientSecret    # 関数を変えた変更を新しい順に、変更メモのその関数の節と、その関数の差分で
+```
+
+- 変更は `pr-219`、`219`、`'#219'`（シェルでは `#` から後がコメントになるので囲む）、変更のコミット、マージしたブランチのコミット（`git log` や `git blame` が出すもの。データに無いブランチの中のマージは、git でそれを含む変更を探す）で指す。履歴には同じ PR 番号を持つ変更があるので、新しい方を `pr-<番号>` で、ほかをコミットの先頭で出し（出したキーは必ずその変更を開く）、番号で開いた変更には同じ番号のほかの変更を並べる
+- 関数は名前、`root:name`、`module#name`、id で指す（変更メモの見出しと同じ読み方）。同じ名前が複数あれば id の一覧を出す。エンドポイントの処理は履歴が関数ごとには追わないので、そのファイルを変えた変更を、変更メモのうちその処理を id（`<!-- endpoint:token -->`）で挙げた節と、ファイルの関数の外の差分で並べ、その処理が呼ぶ関数と、その行（行の無い処理はファイル）の履歴を読む `git log` も出す
+- 意図は、PR の本文（ビルドに `MAP_PULLS` を渡したとき）と変更メモである。関数の履歴では、変更メモのうちその関数を見出しに挙げた節を、地図と同じ読み方（id、名前、`root:name`、`module#name`）で並べる（エンドポイントの処理は id で挙げた節だけ）。コミットのメッセージの本文を読む `git log` も出す
+- 差分は OSS が出すコードだけで、テストや文書を含む変更全体と、地図に載せなかったファイルの差分は、ブリーフに書いた `git show` で読む
+- 「今のコード」の行は地図をビルドしたときのコードのもので、「今これを呼ぶもの」は型で辿れる呼び出しだけである（登録・初期化からの呼び出しは入らない）。ブリーフの冒頭にもそう書く
+- 読む地図は、既定でビルドした `apps/map/public`（`pnpm run build:map` か `pnpm --filter @maronn-openid-connect/map data` で作る）で、`--site`（または `MAP_SITE`）にデプロイした地図の URL も渡せる
+- `--limit <n>` で、一覧と関数の履歴の件数を変える。大きな変更をそのまま出すと、`--summary` か `--function` を使うよう標準エラーに出す
+
+Markdown にするのは `packages/map-analysis/src/history-brief.ts` で、型と変更メモの読み方だけを読み込むので、地図のページからも同じものを使える。
+
 ## コードの Drawer
 
 エンドポイントの見出しの「コードを見る」や、詳細と関数のページの「コードを見る」で、右からコードの Drawer を開く。
@@ -421,7 +444,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
 - `history/<hash>.json`：main に入った変更の一覧。main（PR の地図では MAP_BASE）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる
-- `history/<hash>.json`（変更ごと）：変更の、OSS が出すコード（関数カタログの根のファイル）だけの差分（`HistoryDetail`）。git の差分（前後 3 行の文脈、GitHub と同じもの）を、変更した関数ごとと関数の外とに切り分けて持つ（ほかの関数の行が変わるところで hunk を切るので、一つの関数の差分にはその関数の行だけが入る）。変更が書いた変更メモの本文も持つ。テスト、文書、道具の変更は入れない。変更のページを開いたときに読む。差分が長すぎるファイル（2,000 行を超えるもの）と、変更全体で 20,000 行を超えた後のファイルは hunk を持たず、どちらの理由かを残す（ライブラリのファイルを先に入れる）
+- `history/<hash>.json`（変更ごと）：変更の、OSS が出すコード（関数カタログの根のファイル）だけの差分（`HistoryDetail`）。git の差分（前後 3 行の文脈、GitHub と同じもの）を、変更した関数ごとと関数の外とに切り分けて持つ（ほかの関数の行が変わるところで hunk を切るので、一つの関数の差分にはその関数の行だけが入る）。変更が書いた変更メモの本文も持つ。テスト、文書、道具の変更は入れない。変更のページを開いたときと、`pnpm map:history` が読む。差分が長すぎるファイル（2,000 行を超えるもの）と、変更全体で 20,000 行を超えた後のファイルは hunk を持たず、どちらの理由かを残す（ライブラリのファイルを先に入れる）
 
 テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
 地図の `public/data` にテストのファイルは無い。
@@ -521,4 +544,5 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/types.ts`：データの形（`@maronn-openid-connect/map-analysis/model` の再輸出）
 - `scripts/build-data.mjs`, `scripts/check-map.mjs`, `scripts/draft-notes.mjs`：解析パッケージを呼ぶデータのビルド（テストの画面のデータも）、地図の出力の検査、変更メモの雛形
 - `scripts/copy-tests-viewer.mjs`：ビルドしたテストの画面を `dist/tests/` に写す
+- `scripts/history.mjs`：AI が読む変更の履歴（`pnpm map:history`。Markdown は `packages/map-analysis/src/history-brief.ts`）
 - `changes/`：PR ごとの変更メモ（[書き方](changes/README.md)）

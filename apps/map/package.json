@@ -11,6 +11,7 @@
     "viewer": "pnpm --filter @maronn-openid-connect/tests build && node scripts/copy-tests-viewer.mjs",
     "check": "node scripts/check-map.mjs",
     "changes:draft": "node scripts/draft-notes.mjs",
+    "history": "node scripts/history.mjs",
     "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
     "deploy": "pnpm run build && wrangler deploy",
     "deploy:preview": "pnpm run build && wrangler versions upload",

@@ -480,6 +480,8 @@ Worker の名前は `wrangler.jsonc` の `name` で変える。
 `.github/workflows/ci.yml` の `map` ジョブが、`test` ジョブの後に、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
 `test` ジョブが書いたテストの結果と到達（`work/test-reports` の artifact `test-reports`）を `MAP_TEST_REPORTS` で受け取り、テストの画面に載せる。
 テストが落ちても、そこまでの結果で作る。
+閉じた PR の一覧を `gh api`（`GITHUB_TOKEN`）で `work/pulls.json` に読み、`MAP_PULLS` で渡して、変更の履歴に PR の本文を載せる。
+読めなくても地図は作り、履歴は git のタイトルとコミットだけになる。
 テストの画面は地図の `dist/tests/` に入るので、どのデプロイでも地図の URL の `/tests/` で開く。
 
 - **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。プレビューへのリンクと、畳んだ変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更か、関連するテストの変わらない変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする

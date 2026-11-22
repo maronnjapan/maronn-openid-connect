@@ -362,12 +362,30 @@ function gistOf(body: string | undefined, limit = 4): string[] {
 export function functionsNamed(map: BriefMap, history: HistoryData, text: string, within?: HistoryEntry): string[] {
   const reference = text.trim().replace(/\(\)$/, '');
   const candidates = new Map<string, Named>();
-  if (within !== undefined) for (const change of within.functions) candidates.set(change.id, namedOf(change.id, change.name));
-  else {
+  if (within !== undefined) {
+    for (const change of within.functions) candidates.set(change.id, namedOf(change.id, change.name));
+    // An endpoint body is no function of the change: the change touched it when it changed its file.
+    for (const body of Object.values(map.bodies)) {
+      const path = bodyPathOf(map, body.id);
+      if (path !== undefined && changedFile(within, path)) candidates.set(body.id, { id: body.id, name: body.name, package: body.package, module: body.module });
+    }
+  } else {
     for (const entry of [...Object.values(map.functions), ...Object.values(map.bodies)]) candidates.set(entry.id, { id: entry.id, name: entry.name, package: entry.package, module: entry.module });
     for (const entry of history.entries) for (const change of entry.functions) if (!candidates.has(change.id)) candidates.set(change.id, namedOf(change.id, change.name));
   }
   return [...new Set(resolveReference(reference, [...candidates.values()]).map((named) => named.id))].sort();
+}
+
+/** The path of the file an endpoint body is in now: the file of its lines, else of its module (a body the map has no lines of, as one that only hands the request to its functions). */
+function bodyPathOf(map: BriefMap, id: string): string | undefined {
+  const body = own(map.bodies, id);
+  if (body === undefined) return undefined;
+  return placeOf(map, id)?.path ?? own(map.sources, `${body.package}:${body.module}`)?.path;
+}
+
+/** Whether a change changed a file (by its path now, or by its path before a rename). */
+function changedFile(entry: HistoryEntry, path: string): boolean {
+  return entry.files.some((file) => file.path === path || file.from === path);
 }
 
 /**
@@ -378,9 +396,8 @@ export function functionsNamed(map: BriefMap, history: HistoryData, text: string
 export function changesFor(map: BriefMap, history: HistoryData, id: string): HistoryEntry[] {
   const listed = own(history.functions, id);
   if (listed !== undefined) return listed.map((index) => history.entries[index]).filter((entry): entry is HistoryEntry => entry !== undefined);
-  const place = own(map.bodies, id) === undefined ? undefined : placeOf(map, id);
-  if (place === undefined) return [];
-  return history.entries.filter((entry) => entry.files.some((file) => file.path === place.path || file.from === place.path));
+  const path = bodyPathOf(map, id);
+  return path === undefined ? [] : history.entries.filter((entry) => changedFile(entry, path));
 }
 
 /** The changes a change made to a file outside its functions (where an endpoint body is) as the lines of a brief. */
@@ -410,6 +427,7 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
   const entries = options.only === undefined ? all : all.filter((entry) => entry === options.only);
   const body = own(history.functions, id) === undefined ? own(map.bodies, id) : undefined;
   const place = placeOf(map, id);
+  const bodyPath = body === undefined ? undefined : bodyPathOf(map, id);
   const name = (own(map.functions, id) ?? own(map.bodies, id))?.name ?? all.flatMap((entry) => entry.functions).find((change) => change.id === id)?.name ?? id;
   const lines: string[] = [`# \`${name}${body === undefined ? '()' : ''}\` の変更の履歴${options.only === undefined ? '' : `（${titleOf(options.only)}）`}`, '', `- id: \`${id}\``, `- 今のコード: ${placeWords(map, id)}`];
   const callers = callersWords(map, id);
@@ -417,11 +435,15 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
   if (body === undefined) lines.push(`- 変えた変更: ${all.length}（新しい順）。差分は変更したときのもので、今のコードとは行がずれていることがある`, ...READING_NOTES, '');
   else {
     lines.push(`- このファイルを変えた変更: ${all.length}（新しい順）`, ...READING_NOTES, '');
-    lines.push(`エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイルを変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。${place === undefined ? '' : `この行だけの履歴は \`git log --first-parent -L ${place.start},${place.end}:${shellWord(place.path)}\` で読める。`}`, '');
+    const lineHistory = place !== undefined ? `この行だけの履歴は \`git log --first-parent -L ${place.start},${place.end}:${shellWord(place.path)}\` で読める。` : bodyPath !== undefined ? `このファイルの履歴は \`git log --first-parent -p -- ${shellWord(bodyPath)}\` で読める。` : '';
+    lines.push(`エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイル${bodyPath === undefined ? '' : `（${bodyPath}）`}を変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。${lineHistory}`, '');
+    const handlers = body.calls.filter((call) => own(map.functions, call) !== undefined);
+    if (handlers.length > 0) lines.push(`この処理が呼ぶ関数には、関数ごとの履歴がある: ${handlers.slice(0, 8).map((call) => `\`${call}\``).join('、')}${handlers.length > 8 ? ` ほか ${handlers.length - 8}` : ''}`, '');
   }
   if (history.shallow === true) lines.push('浅い clone から読んだ履歴なので、古い変更は無い。', '');
   if (options.only !== undefined && entries.length === 0) lines.push(body === undefined ? 'この変更は、この関数を変えていない。' : 'この変更は、このファイルを変えていない。', '');
-  const named = body === undefined ? [] : [{ id, name: body.name, package: body.package, module: body.module }];
+  // The map names the frame of an endpoint body by its endpoint (`## token`), as the change notes do.
+  const named = body === undefined ? [] : [{ id, name: body.endpoint, package: body.package, module: body.module }];
   for (const entry of entries.slice(0, limit)) {
     const change = entry.functions.find((candidate) => candidate.id === id);
     lines.push(`## ${titleOf(entry)}`, '', `- キー: ${keyOf(history, entry)} · ${entry.date.slice(0, 10)} · ${change === undefined ? '' : `${STATUS_WORDS[change.status]} · `}作成者: ${entry.authors.join('、')}`);
@@ -432,7 +454,7 @@ export function functionBrief(map: BriefMap, history: HistoryData, id: string, d
     const unread = detail === undefined && entry.detail !== undefined;
     if (unread && entry.notes.length > 0) lines.push(`変更メモ（${entry.notes.join('、')}）を読めなかった。`, '');
     for (const section of notesOn(detail, entry, id, named)) lines.push(`変更メモ ${section.path} の「${section.heading}」:`, '', fenced('markdown', section.text), '');
-    lines.push(...(body === undefined || place === undefined ? diffLines(entry, detail, unread, id) : outsideLines(entry, detail, unread, place.path)));
+    lines.push(...(bodyPath === undefined ? diffLines(entry, detail, unread, id) : outsideLines(entry, detail, unread, bodyPath)));
   }
   if (entries.length > limit) lines.push(`ほか ${entries.length - limit} 件の古い変更（--limit で増やせる）。`, '');
   return `${lines.join('\n').trimEnd()}\n`;

@@ -25,8 +25,11 @@ const map: BriefMap = {
     'core:b.ts#token': fn('core:b.ts#token', 'token', { file: 's2', start: 3, end: 9 }),
     'experimental:c.ts#verify': fn('experimental:c.ts#verify', 'verify', { file: 's3', start: 1, end: 2 }),
   },
-  bodies: { 'hono:token#body': { id: 'hono:token#body', name: 'POST /token', package: 'hono', module: 'token', endpoint: 'token', source: { file: 's4', start: 5, end: 40 } } as unknown as BriefMap['bodies'][string] },
-  sources: { s1: { path: 'packages/core/src/a.ts', url: '' }, s2: { path: 'packages/core/src/b.ts', url: '' }, s3: { path: 'packages/experimental/src/c.ts', url: '' }, s4: { path: 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts', url: '' } },
+  bodies: {
+    'hono:token#body': { id: 'hono:token#body', name: 'POST /token', package: 'hono', module: 'token', endpoint: 'token', calls: [], source: { file: 's4', start: 5, end: 40 } } as unknown as BriefMap['bodies'][string],
+    'endpoint:consent': { id: 'endpoint:consent', name: 'GET | POST /consent', package: 'hono', module: 'endpoints/consent/pipeline.ts', endpoint: 'consent', calls: ['core:b.ts#token', 'hono:none#x'] } as unknown as BriefMap['bodies'][string],
+  },
+  sources: { s1: { path: 'packages/core/src/a.ts', url: '' }, s2: { path: 'packages/core/src/b.ts', url: '' }, s3: { path: 'packages/experimental/src/c.ts', url: '' }, s4: { path: 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts', url: '' }, 'hono:endpoints/consent/pipeline.ts': { path: 'apps/hono/src/oidc-provider/endpoints/consent/pipeline.ts', url: '' } },
 };
 
 const merged = change({
@@ -311,11 +314,23 @@ describe('a function for an AI', () => {
   it('should give an endpoint body, which the history does not follow, the changes of its file with their notes about it and their diff outside the functions', () => {
     const path = 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts';
     const touching = change({ commit: `4${'4'.repeat(39)}`, pr: 180, title: 'RAR を外す', files: [{ path, status: 'modified', additions: 1, deletions: 1 }], notes: ['remove.md'], detail: './w.json' });
-    const bodyDetail: HistoryDetail = { version: 1, commit: touching.commit, notes: [{ path: 'remove.md', text: '## token <!-- hono:token#body -->\n\nRAR のステップを外した。\n\n## verify\n\n別。\n' }], files: [{ path, status: 'modified', functions: [], outside: [{ base: 50, head: 50, lines: ['-  rar(c),', '+  next(c),'] }] }] };
+    const bodyDetail: HistoryDetail = { version: 1, commit: touching.commit, notes: [{ path: 'remove.md', text: '## token <!-- hono:token#body -->\n\nRAR のステップを外した。\n\n## verify\n\n別。\n\n## token\n\n名前だけの節。\n' }], files: [{ path, status: 'modified', functions: [], outside: [{ base: 50, head: 50, lines: ['-  rar(c),', '+  next(c),'] }] }] };
     const withBody: HistoryData = { version: 1, entries: [touching, ...history.entries], functions: {} };
     const brief = functionBrief(map, withBody, 'hono:token#body', new Map([[touching.commit, bodyDetail]]));
-    expect(brief).toContain('エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイルを変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。この行だけの履歴は `git log --first-parent -L 5,40:apps/hono/src/oidc-provider/endpoints/token/pipeline.ts` で読める。');
-    expect([brief.includes('- このファイルを変えた変更: 1（新しい順）'), brief.includes('RAR のステップを外した。'), brief.includes('別。'), brief.includes('-  rar(c),\n+  next(c),')]).toEqual([true, true, false, true]);
+    expect(brief).toContain('エンドポイントの処理は、変更の履歴が関数ごとには追わない。このファイル（apps/hono/src/oidc-provider/endpoints/token/pipeline.ts）を変えた変更を、変更メモのこの処理の節と、このファイルの関数の外の差分（import や型を含む）で並べる。この行だけの履歴は `git log --first-parent -L 5,40:apps/hono/src/oidc-provider/endpoints/token/pipeline.ts` で読める。');
+    expect([brief.includes('- このファイルを変えた変更: 1（新しい順）'), brief.includes('RAR のステップを外した。'), brief.includes('別。'), brief.includes('名前だけの節。'), brief.includes('-  rar(c),\n+  next(c),')]).toEqual([true, true, false, true, true]);
+    expect([functionsNamed(map, withBody, 'POST /token', touching), functionsNamed(map, withBody, 'POST /token', merged)]).toEqual([['hono:token#body'], []]);
+  });
+
+  it('should find the file of an endpoint body the map has no lines of by its module, and point at the functions it calls', () => {
+    const path = 'apps/hono/src/oidc-provider/endpoints/consent/pipeline.ts';
+    const touching = change({ commit: `2${'2'.repeat(39)}`, pr: 90, title: '同意', files: [{ path, status: 'modified', additions: 1, deletions: 0 }] });
+    const withConsent: HistoryData = { version: 1, entries: [touching, ...history.entries], functions: {} };
+    const brief = functionBrief(map, withConsent, 'endpoint:consent', new Map());
+    expect(brief).toContain('- このファイルを変えた変更: 1（新しい順）');
+    expect(brief).toContain('このファイル（apps/hono/src/oidc-provider/endpoints/consent/pipeline.ts）を変えた変更を');
+    expect(brief).toContain('このファイルの履歴は `git log --first-parent -p -- apps/hono/src/oidc-provider/endpoints/consent/pipeline.ts` で読める。');
+    expect(brief).toContain('この処理が呼ぶ関数には、関数ごとの履歴がある: `core:b.ts#token`\n');
   });
 });
 

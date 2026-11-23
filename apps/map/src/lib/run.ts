@@ -166,7 +166,9 @@ export function failingCalls(walked: Pick<FlowWalk, 'stops'>, hasFrame: (id: str
 /**
  * The ready-made way a walk ended by: for a failure, the way of that
  * failure (its target is the throw the walk reached); else the way of the
- * end of the root frame it reached (its return). Undefined for none.
+ * end of the root frame it reached (its return), or for an end no way
+ * names, the way into the step it is in (a step that answers itself).
+ * Undefined for none.
  */
 export function endingWay(selections: readonly Selection[], walked: Pick<FlowWalk, 'stops'>): Selection | undefined {
   const thrown = walked.stops.find((stop) => stop.event === 'throws');
@@ -175,7 +177,13 @@ export function endingWay(selections: readonly Selection[], walked: Pick<FlowWal
     return selections.find((selection) => selection.kind === 'failure' && selection.target === key);
   }
   const end = [...walked.stops].reverse().find((stop) => stop.depth === 0 && (stop.event === 'returns' || stop.event === 'ends'));
-  return end === undefined ? undefined : selections.find((selection) => selection.kind === 'exit' && selection.target === end.node.id);
+  if (end === undefined) return undefined;
+  const exit = selections.find((selection) => selection.kind === 'exit' && selection.target === end.node.id);
+  if (exit !== undefined) return exit;
+  // An end no exit names (a step that answers itself): the way into the innermost step it is in.
+  const within = (target: string) => end.node.id === target || (end.node.id.startsWith(target) && !/^\d/.test(end.node.id.slice(target.length)));
+  const steps = selections.filter((selection) => selection.kind === 'step' && !selection.target.includes('.') && within(selection.target));
+  return steps.sort((a, b) => b.target.length - a.target.length)[0];
 }
 
 /** A ready-made way in words, as the list of the ways names it: a failure by its error (and the function that throws it below the root), an end by its name. */

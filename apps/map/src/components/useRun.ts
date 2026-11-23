@@ -68,18 +68,17 @@ function fetchLines(url: string): Promise<string[]> {
   return pending;
 }
 
-/** The lines of some source files (repository path and url), once all of them are read; undefined until then, and for one that could not be read. */
+/** The lines of some source files (repository path and url), once all of them are read or failed; undefined until then. A file that could not be read is left out: its decisions are not seen, and the walk takes them on an assumed side. */
 function useLines(files: ReadonlyArray<{ path: string; url: string }>): ReadonlyMap<string, readonly string[]> | undefined {
   const key = files.map((file) => `${file.path}\t${file.url}`).join('\n');
   const [loaded, setLoaded] = useState<{ key: string; lines: Map<string, string[]> } | undefined>(undefined);
   useEffect(() => {
     let live = true;
     const wanted = key === '' ? [] : key.split('\n').map((line) => line.split('\t') as [string, string]);
-    Promise.all(wanted.map(async ([path, url]) => [path, await fetchLines(url)] as const))
-      .then((entries) => {
-        if (live) setLoaded({ key, lines: new Map(entries) });
-      })
-      .catch(() => undefined);
+    void Promise.allSettled(wanted.map(async ([path, url]) => [path, await fetchLines(url)] as const)).then((settled) => {
+      const entries = settled.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+      if (live) setLoaded({ key, lines: new Map(entries) });
+    });
     return () => {
       live = false;
     };

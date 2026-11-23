@@ -234,6 +234,31 @@ describe('endingWay', () => {
   });
 });
 
+describe('endingWay, of a step that answers itself', () => {
+  it('should name the way into the innermost step the end is in, and not a step whose id only starts the same', () => {
+    const answering: FlowTree = {
+      ...ROOT,
+      nodes: [
+        {
+          id: 's2',
+          kind: 'block',
+          lines: [2, 3],
+          code: '[dispatch]',
+          step: { id: 'dispatch', label: 'dispatch' },
+          branches: [side('body', 'dispatch', [{ id: 's2s0', kind: 'if', lines: [3, 3], code: 'if (early)', form: 'guard', branches: [side('true', '成立', [{ id: 's2s0t0', kind: 'return', lines: [3, 3], code: 'return early' }]), side('false', '不成立')] }])],
+        },
+        { id: 's21', kind: 'return', lines: [4, 4], code: 'return respond(c)' },
+      ],
+    };
+    const steps: Selection[] = [
+      { kind: 'step', name: 'dispatch', decisions: {}, target: 's2' },
+      { kind: 'step', name: 'other', decisions: {}, target: 's21' },
+    ];
+
+    expect([endingWay(steps, walkFlow(answering, { s2s0: 'true' }))?.name, endingWay([steps[0] as Selection], walkFlow(answering, { s2s0: 'false' }))]).toEqual(['dispatch', undefined]);
+  });
+});
+
 describe('oauthErrorOf', () => {
   it('should read the error of a JSON body, else of the URL a response redirects to', () => {
     expect([

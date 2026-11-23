@@ -76,11 +76,13 @@ describe('runRequest', () => {
     expect(JSON.parse(run.response?.body ?? '{}')).toMatchObject({ error: 'invalid_client' });
   });
 
-  it('should give the clock back after the request', async () => {
+  it('should give the clock and the fetch of the global scope back after the request', async () => {
+    const fetchBefore = globalThis.fetch;
     await runRequest(EXCHANGE_CODE);
 
     expect(Date.now()).not.toBe(PREMISES.now * 1000);
     expect(new Date().getTime()).not.toBe(PREMISES.now * 1000);
+    expect(globalThis.fetch).toBe(fetchBefore);
   });
 
   it('should refuse a request that cannot be made', async () => {

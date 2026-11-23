@@ -55,6 +55,28 @@ describe('runRequest', () => {
     expect(run.ran[PIPELINE]?.b).toContainEqual([lineOf(PIPELINE, 'if (clientCredentialsResponse) return'), 4, 'if', [0, 1]]);
   });
 
+  it('should note the records the exchange read (its client and its code) and those it wrote (the code used, the tokens issued)', async () => {
+    const run = await runRequest(EXCHANGE_CODE);
+    const body = JSON.parse(run.response?.body ?? '{}') as { access_token: string; refresh_token: string };
+
+    expect(run.store.read).toEqual([
+      { collection: 'clients', key: CLIENT_ID, found: true },
+      { collection: 'codes', key: 'code-1', found: true },
+    ]);
+    expect(run.store.wrote.map(({ collection, key, change, fields }) => ({ collection, key, change, fields }))).toEqual([
+      { collection: 'codes', key: 'code-1', change: 'changed', fields: ['used'] },
+      { collection: 'accessTokens', key: body.access_token, change: 'added', fields: undefined },
+      { collection: 'refreshTokens', key: body.refresh_token, change: 'added', fields: undefined },
+    ]);
+  });
+
+  it('should note a code the OP does not hold as a record read and not found, and no record written', async () => {
+    const run = await runRequest({ ...EXCHANGE_CODE, body: EXCHANGE_CODE.body?.replace('code=code-1', 'code=code-9') });
+
+    expect(run.response?.status).toBe(400);
+    expect(run.store).toEqual({ read: [{ collection: 'clients', key: CLIENT_ID, found: true }, { collection: 'codes', key: 'code-9', found: false }], wrote: [] });
+  });
+
   it('should find the premises as they are in every request, the code a request exchanged included', async () => {
     const first = await runRequest(EXCHANGE_CODE);
     const second = await runRequest(EXCHANGE_CODE);

@@ -16,6 +16,10 @@
       "types": "./src/walk.ts",
       "import": "./src/walk.ts"
     },
+    "./observe": {
+      "types": "./src/observe.ts",
+      "import": "./src/observe.ts"
+    },
     "./code-index": {
       "types": "./src/code-index.ts",
       "import": "./src/code-index.ts"

@@ -21,7 +21,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { MapData } from '@maronn-openid-connect/map-analysis';
+import { FrameLocator, type MapData } from '@maronn-openid-connect/map-analysis';
 import type { RawExchange, RawExchanges, RawReach, TestCase, TestReach, TestResult, TestRun, TestStatus } from './model.js';
 
 /**
@@ -141,29 +141,8 @@ export interface JoinedRun {
   measured: boolean;
 }
 
-/** Where the functions and the bodies of the map are, to name the function a position of a source is in. */
-export class FrameLocator {
-  private readonly byPath = new Map<string, Array<{ id: string; start: number; end: number }>>();
-
-  constructor(data: MapData) {
-    for (const entry of [...Object.values(data.functions), ...Object.values(data.bodies)]) {
-      if (entry.source === undefined) continue;
-      const path = data.sources[entry.source.file]?.path;
-      if (path === undefined) continue;
-      this.byPath.set(path, [...(this.byPath.get(path) ?? []), { id: entry.id, start: entry.source.start, end: entry.source.end }]);
-    }
-  }
-
-  /** The frame a line of a source is in: the innermost one (a bundler may rename a function, so the place decides, not the name). */
-  frameAt(path: string, line: number): string | undefined {
-    let best: { id: string; start: number; end: number } | undefined;
-    for (const frame of this.byPath.get(path) ?? []) {
-      if (line < frame.start || line > frame.end) continue;
-      if (best === undefined || frame.end - frame.start < best.end - best.start) best = frame;
-    }
-    return best?.id;
-  }
-}
+// Where the functions and the bodies of the map are is map-analysis's to say (observe.ts, which the page of the map shares); the catalog names it as before.
+export { FrameLocator };
 
 /** The endpoint a requested URL is, by its path. */
 export type EndpointOf = (path: string) => string | undefined;

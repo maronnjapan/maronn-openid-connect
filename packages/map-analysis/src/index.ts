@@ -29,4 +29,6 @@ export { failureSelections, frameSelections, inFrame, wayTo } from './selections
 export { buildTree, ends, nodesOf } from './tree.js';
 // The walk of one request through a tree: plain data, shared with the page (`@maronn-openid-connect/map-analysis/walk`).
 export { assumedSide, FAILS, stepsOf, walkFlow, type FlowWalk, type WalkEvent, type WalkOptions, type WalkStop } from './walk.js';
+// The reading of a measured request against the trees: shared with the page too (`@maronn-openid-connect/map-analysis/observe`).
+export { BOTH, FrameLocator, GOES, locate, nodeRan, placesOf, RequestRun, seenDecisions, seenSide, throughTries, type Located, type Place, type RanInFile, type RanRequest, type RunSources } from './observe.js';
 export type * from './model.js';

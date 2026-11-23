@@ -94,8 +94,8 @@ export const PREMISES: Premises = {
     { clientId: 'client-1', clientSecret: 'client-1-secret-value', authMethod: 'client_secret_basic', grantTypes: ['authorization_code', 'refresh_token'], redirectUris: [REDIRECT_URI] },
     // Another client of the code flow, which sends its secret in the body: the codes and tokens of client-1 are not its own.
     { clientId: 'client-2', clientSecret: 'client-2-secret-value', authMethod: 'client_secret_post', grantTypes: ['authorization_code', 'refresh_token'], redirectUris: [REDIRECT_URI] },
-    // The client of the client_credentials tests (features/client-credentials), with the scopes of its resource server.
-    { clientId: 'service-1', clientSecret: 'service-1-secret-value', authMethod: 'client_secret_basic', grantTypes: ['client_credentials'], redirectUris: [], scope: ['reports.read', 'reports.write'] },
+    // The client of the client_credentials and token exchange tests (features/client-credentials, features/token-exchange), with the scopes of its resource server.
+    { clientId: 'service-1', clientSecret: 'service-1-secret-value', authMethod: 'client_secret_basic', grantTypes: ['client_credentials', 'urn:ietf:params:oauth:grant-type:token-exchange'], redirectUris: [], scope: ['reports.read', 'reports.write'] },
   ],
   // The development users of apps/hono (oidc-provider/development.ts).
   users: [

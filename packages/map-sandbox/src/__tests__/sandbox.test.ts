@@ -224,6 +224,18 @@ describe('candidateRequests', () => {
     ]);
   });
 
+  it('should try a token exchange of the access token the premises hold, by the service registered for it, which the OP answers with a token after reading that access token', async () => {
+    const premises = await premisesMade();
+    const exchanged = premises.grants.find((grant) => grant.id === 'exchanged');
+    const exchange = candidateRequests('token', premises).find((request) => new URLSearchParams(request.body).get('grant_type') === 'urn:ietf:params:oauth:grant-type:token-exchange');
+    const run = await runRequest(exchange as Api.SandboxRequest, premises);
+
+    expect(new URLSearchParams(exchange?.body).get('subject_token')).toBe(exchanged?.tokens?.access_token);
+    expect(exchange?.headers).toContainEqual(['authorization', `Basic ${btoa('service-1:service-1-secret-value')}`]);
+    expect(run.response?.status).toBe(200);
+    expect(run.store.read).toContainEqual({ collection: 'accessTokens', key: exchanged?.tokens?.access_token, found: true });
+  });
+
   it('should find the code exchanged already, and a client that is not the one of a code, among the requests the OP answers with their errors', async () => {
     const premises = await premisesMade();
     const requests = candidateRequests('token', premises);

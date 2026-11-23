@@ -98,6 +98,8 @@ function tokenTemplates(premises: PreparedPremises): FormTemplate[] {
   const refresh = premises.grants.map((grant) => grant.tokens?.refresh_token).find((token) => typeof token === 'string');
   const codeFields = codeFieldsOf(code);
   const refreshFields: Array<[string, string]> = refresh === undefined ? [] : [['grant_type', 'refresh_token'], ['refresh_token', refresh]];
+  const subjectToken = tokensOf(premises).access;
+  const exchangeFields: Array<[string, string]> = subjectToken === undefined ? [] : [['grant_type', 'urn:ietf:params:oauth:grant-type:token-exchange'], ['subject_token', subjectToken], ['subject_token_type', 'urn:ietf:params:oauth:token-type:access_token']];
   const templates: FormTemplate[] = [
     { path: '/token', fields: codeFields, client: client1 },
     // The other codes of the premises, and a verifier PKCE cannot be (shorter than 43 characters).
@@ -116,15 +118,9 @@ function tokenTemplates(premises: PreparedPremises): FormTemplate[] {
     { path: '/token', fields: [['grant_type', 'client_credentials'], ['scope', 'reports.delete']], client: service },
     { path: '/token', fields: [['grant_type', 'urn:ietf:params:oauth:grant-type:device_code'], ['device_code', 'device-code-1']], client: client1 },
     { path: '/token', fields: [['grant_type', 'urn:openid:params:grant-type:ciba'], ['auth_req_id', 'auth-req-1']], client: client1 },
-    {
-      path: '/token',
-      fields: [
-        ['grant_type', 'urn:ietf:params:oauth:grant-type:token-exchange'],
-        ['subject_token', 'subject-token-1'],
-        ['subject_token_type', 'urn:ietf:params:oauth:token-type:access_token'],
-      ],
-      client: client1,
-    },
+    // A token exchange (RFC 8693 §2.1) of the access token the premises hold, by the service registered for it and by a client that is not.
+    { path: '/token', fields: exchangeFields, client: service },
+    { path: '/token', fields: exchangeFields, client: client1 },
     { path: '/token', fields: [['grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer'], ['assertion', 'assertion-1']], client: client1 },
     { path: '/token', fields: [['grant_type', 'unknown_grant']], client: client1 },
   ];

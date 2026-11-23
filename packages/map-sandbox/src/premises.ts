@@ -11,6 +11,12 @@
  * endpoints/token/pipeline.test.ts), so a request one of those tests sends
  * takes the same way here. This module imports nothing: the page reads it
  * without the OP (`@maronn-openid-connect/map-sandbox/premises`).
+ *
+ * The grants are the authorizations the OP gives by requests instead
+ * (prepare.ts): the authorization request of a client, the login and the
+ * consent of a user, and the exchange of the code, run on the OP, so the
+ * codes and tokens it holds are those its own requests issued, each with the
+ * request that stored it.
  */
 
 /** A client registered with the OP. */
@@ -60,6 +66,28 @@ export interface PremiseUser {
   password: string;
 }
 
+/**
+ * An authorization the OP of the map gives before any request a reader
+ * runs, by the requests that give it (prepare.ts): the authorization request
+ * a client sends, then what a browser does on the OP's pages after it (the
+ * login form submitted as the user, the consent approved), up to the
+ * redirect back to the client with a code; with `exchange`, the code is then
+ * exchanged at the token endpoint, so the OP holds the code used and the
+ * tokens it issued.
+ */
+export interface PremiseGrant {
+  /** What the map calls it. */
+  id: string;
+  /** The query of the authorization request the client sends (OAuth 2.0 §4.1.1, OIDC Core 1.0 §3.1.2.1, RFC 7636 §4.3). */
+  authorize: Record<string, string>;
+  /** The PKCE verifier of its code_challenge (RFC 7636 §4.1), sent with the code to the token endpoint. */
+  codeVerifier: string;
+  /** The user who signs in at the login page and approves at the consent page (a username of the users). */
+  username: string;
+  /** Exchange the code at the token endpoint with the client's credentials. */
+  exchange: boolean;
+}
+
 /** What the OP of the map holds (see the module comment). */
 export interface Premises {
   issuer: string;
@@ -69,9 +97,28 @@ export interface Premises {
   codes: PremiseCode[];
   refreshTokens: PremiseRefreshToken[];
   users: PremiseUser[];
+  /** The authorizations the OP gives by requests before a request of the reader, in order. */
+  grants: PremiseGrant[];
 }
 
 const REDIRECT_URI = 'https://rp.example.com/callback';
+/** RFC 7636 §4.1 / §4.2: a 46-character verifier and its S256 challenge. */
+const PKCE = { verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz', challenge: 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU' };
+
+/** The authorization request of client-1 for testuser with PKCE (S256), asking for the scopes given; with offline_access, prompt=consent too, without which the OP drops offline_access (OIDC Core 1.0 §11). */
+function authorizationOf(scope: string, state: string, nonce: string): Record<string, string> {
+  return {
+    response_type: 'code',
+    client_id: 'client-1',
+    redirect_uri: REDIRECT_URI,
+    scope,
+    state,
+    nonce,
+    ...(scope.split(' ').includes('offline_access') ? { prompt: 'consent' } : {}),
+    code_challenge: PKCE.challenge,
+    code_challenge_method: 'S256',
+  };
+}
 
 /** What the OP of the map holds (see the module comment). */
 export const PREMISES: Premises = {
@@ -116,5 +163,11 @@ export const PREMISES: Premises = {
   users: [
     { username: 'testuser', password: 'password' },
     { username: 'otheruser', password: 'password' },
+  ],
+  grants: [
+    // A code no request has exchanged yet, which a refresh token comes with (offline_access).
+    { id: 'unused', authorize: authorizationOf('openid offline_access', 'state-1', 'nonce-1'), codeVerifier: PKCE.verifier, username: 'testuser', exchange: false },
+    // A code exchanged already, and the access token and the refresh token its exchange issued.
+    { id: 'exchanged', authorize: authorizationOf('openid profile offline_access', 'state-2', 'nonce-2'), codeVerifier: PKCE.verifier, username: 'testuser', exchange: true },
   ],
 };

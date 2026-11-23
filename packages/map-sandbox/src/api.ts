@@ -7,7 +7,7 @@ import type { RanInFile } from '@maronn-openid-connect/test-reach/exchanges';
 import type { Premises } from './premises.js';
 
 export type { RanInFile };
-export type { PremiseClient, PremiseCode, PremiseRefreshToken, PremiseUser, Premises } from './premises.js';
+export type { PremiseClient, PremiseCode, PremiseGrant, PremiseRefreshToken, PremiseUser, Premises } from './premises.js';
 
 /** A request to run on the OP of the map, as the page writes it. */
 export interface SandboxRequest {
@@ -79,13 +79,86 @@ export interface SandboxRun {
   store: StoreAccess;
 }
 
+/** A request run on the OP of the map to make its premises (prepare.ts), with what it gave and the records it wrote. */
+export interface PremiseStep {
+  /** The grant it was run for (PremiseGrant.id). */
+  grant: string;
+  /** The request as sent: its method and absolute URL, its headers (the cookies of the browser among them) and body. */
+  request: SandboxMessage & { method: string; url: string };
+  /** What the OP answered; the body of a page (HTML) is left out. */
+  response: SandboxMessage & { status: number; statusText?: string };
+  /** The records it added, changed or removed. */
+  wrote: StoreChange[];
+}
+
+/** A record the OP of the map holds when a request starts, and how it came there. */
+export interface PremiseRecord {
+  collection: string;
+  key: string;
+  /** The record as plain JSON. */
+  value: unknown;
+  /** The step that added it last, by index of PreparedPremises.steps; absent for a record of the OP's configuration (a client, a user). */
+  addedBy?: number;
+  /** The steps that changed it after it was added, by index. */
+  changedBy?: number[];
+}
+
+/** What a grant of the premises left for a request to use. */
+export interface PreparedGrant {
+  /** PremiseGrant.id. */
+  id: string;
+  clientId: string;
+  redirectUri: string;
+  /** The code the OP redirected back to the client with. */
+  code: string;
+  /** The PKCE verifier of its code_challenge. */
+  codeVerifier: string;
+  /** The token response of its exchange, for a grant exchanged. */
+  tokens?: Record<string, unknown>;
+}
+
+/** A value encoded for JSON (encodeValue): a Map as `{ $map: [[key, value], …] }`, a Set as `{ $set: […] }`, the rest member by member. */
+export type EncodedValue = unknown;
+
 /**
- * Run a request on the OP of the map: a new OP on a memory database seeded
- * with the premises, its clock stopped at theirs, with what ran counted.
- * Requests asked for together run one after another. It rejects when the
- * request cannot be made (a body on a GET, a header name that is not one).
+ * The premises of the OP of the map as made by requests (prepare.ts): the
+ * requests run, the records they left with how each came there, what each
+ * grant left to use, and what the OP needs to take a request on them, the
+ * database and the key it signed with. Plain JSON: the build writes it
+ * beside the map, and the page hands it to the OP it runs a request on.
  */
-export declare function runRequest(request: SandboxRequest): Promise<SandboxRun>;
+export interface PreparedPremises {
+  version: 1;
+  issuer: string;
+  /** The clock of the requests, in Unix seconds. */
+  now: number;
+  steps: PremiseStep[];
+  records: PremiseRecord[];
+  grants: PreparedGrant[];
+  /** The memory database as the steps left it, encoded (EncodedValue). */
+  database: EncodedValue;
+  /** The key the OP signed the tokens of the premises with, as JWKs, so they verify on the OP a request runs on. */
+  signingKey: { keyId: string; privateJwk: JsonWebKey; publicJwk: JsonWebKey };
+}
+
+/**
+ * Run a request on the OP of the map: a new OP on a memory database holding
+ * the premises, its clock stopped at theirs, with what ran counted. Given
+ * premises made by requests (preparePremises), it holds them and signs with
+ * their key; else it holds the records of the tests (seed.ts). Requests
+ * asked for together run one after another. It rejects when the request
+ * cannot be made (a body on a GET, a header name that is not one).
+ */
+export declare function runRequest(request: SandboxRequest, premises?: PreparedPremises): Promise<SandboxRun>;
+
+/**
+ * Make the premises by requests (prepare.ts): the OP configured with the
+ * clients and the users, then the requests of each grant run on it; those
+ * of the map (PREMISES) unless others are given. Run it in Node: a browser
+ * drops the cookies and the Origin of a request a page makes, so the login
+ * and the consent would fail there.
+ */
+export declare function preparePremises(premises?: Premises): Promise<PreparedPremises>;
 
 /** What the OP of the map holds when a request starts. */
 export declare const PREMISES: Premises;

@@ -82,6 +82,9 @@ importers:
       '@maronn-openid-connect/map-analysis':
         specifier: workspace:*
         version: link:../../packages/map-analysis
+      '@maronn-openid-connect/map-sandbox':
+        specifier: workspace:*
+        version: link:../../packages/map-sandbox
       '@maronn-openid-connect/test-catalog':
         specifier: workspace:*
         version: link:../../packages/test-catalog

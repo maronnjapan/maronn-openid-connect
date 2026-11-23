@@ -27,6 +27,7 @@
   "devDependencies": {
     "@dagrejs/dagre": "^3.1.3",
     "@maronn-openid-connect/map-analysis": "workspace:*",
+    "@maronn-openid-connect/map-sandbox": "workspace:*",
     "@maronn-openid-connect/test-catalog": "workspace:*",
     "@maronn-openid-connect/test-reach": "workspace:*",
     "@types/node": "^26.6.6",

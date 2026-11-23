@@ -36,6 +36,15 @@ export function ends(nodes: readonly TreeNode[]): boolean {
   return nodes.some(endsNode);
 }
 
+/** Every node of a tree, depth first, each with the list it is in. */
+export function* nodesOf(nodes: readonly TreeNode[]): Generator<TreeNode> {
+  for (const node of nodes) {
+    yield node;
+    if (node.pre !== undefined) yield* nodesOf(node.pre);
+    for (const branch of node.branches ?? []) yield* nodesOf(branch.nodes);
+  }
+}
+
 /** Whether a node ends the frame whatever its decisions choose. */
 function endsNode(node: TreeNode): boolean {
   switch (node.kind) {

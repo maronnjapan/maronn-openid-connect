@@ -27,11 +27,11 @@ import type { Branch, CallTarget, FlowTree, StepMark, TreeNode } from './model.j
 import { SyntaxKind, getLeadingCommentRanges, type Node, type SourceFile } from './ts.js';
 import { any, codeText, endLine, is, isFunctionLike, lineAt, nameOf, startLine, stringOf, textOf, unwrap, walk } from './ast.js';
 import type { FileResolution } from './resolve.js';
-import { ends } from './walk.js';
+import { ends, nodesOf } from './walk.js';
 import { SIDE_WORDS, actionWords, bindingNames, conditionWords, errorWords, predicateWords, shorten } from './words.js';
 
-// Whether a list ends its frame is the walk's to say (walk.ts, which the page shares); the analysis reads it from here as before.
-export { ends };
+// Whether a list ends its frame, and the nodes of a tree, are the walk's to say (walk.ts, which the page shares); the analysis reads them from here as before.
+export { ends, nodesOf };
 
 /** A marker line: `// [id] (feature: f) Label — Spec`. */
 const MARKER = /^\/\/ \[([a-z0-9-]+)\](?: \(feature: ([a-z0-9-]+)\))? (.*)$/;
@@ -1124,13 +1124,4 @@ export function buildTree(context: TreeContext, input: FrameInput): BuiltTree {
   if (builder.implementations.length > 0) tree.implements = builder.implementations;
   if (builder.deferred.size > 0) tree.deferred = [...builder.deferred].sort();
   return { tree, uses: builder.uses, own: builder.own };
-}
-
-/** Every node of a tree, depth first, each with the list it is in. */
-export function* nodesOf(nodes: readonly TreeNode[]): Generator<TreeNode> {
-  for (const node of nodes) {
-    yield node;
-    if (node.pre !== undefined) yield* nodesOf(node.pre);
-    for (const branch of node.branches ?? []) yield* nodesOf(branch.nodes);
-  }
 }

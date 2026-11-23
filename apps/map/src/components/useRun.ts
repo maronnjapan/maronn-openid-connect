@@ -140,6 +140,8 @@ function sameChoice(a: Decisions | undefined, b: Decisions | undefined): boolean
  */
 export function useRequestRun({ data, rootId, root, trees, state, onState, enabled, hasFrame }: RequestRunInput): RequestRun {
   const [runState, setRunState] = useState<RequestRunState | undefined>(undefined);
+  // The id of the last run: never given again, so a run after one forgotten is not taken for it.
+  const lastRun = useRef(0);
   // The choice the run last gave the trace, and the frames it opened, for the run it was given for.
   const applied = useRef<{ id: number; choice: Decisions | undefined; opened: Set<string> }>({ id: 0, choice: undefined, opened: new Set() });
   const done = runState?.status === 'done' ? runState : undefined;
@@ -175,7 +177,8 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
     walked: following ? walked : undefined,
     run: (draft) => {
       const request = sandboxRequestOf(draft);
-      const id = (runState?.id ?? 0) + 1;
+      lastRun.current += 1;
+      const id = lastRun.current;
       setRunState({ status: 'running', id, request });
       runInSandbox(request).then(
         (run) => setRunState((current) => (current?.id === id ? { status: 'done', id, request, run, follow: true } : current)),

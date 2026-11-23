@@ -32,13 +32,15 @@ export interface SandboxMessage {
 /** The records of the OP's memory database as plain JSON (a Map as an object, a Set as an array), by collection (`codes`, `clients`, …), then by key. */
 export type PlainDatabase = Record<string, Record<string, unknown>>;
 
-/** A record a request read from the OP's memory database, or, without a key, a collection it went through whole. */
+/** A record a request read from the OP's memory database, a member of a record that is a Map itself, or, without a key, a collection it went through whole. */
 export interface StoreRead {
   /** The collection of the database (`codes`, `refreshTokens`, `clients`, …). */
   collection: string;
   /** The key it looked up (the code, the token, the client_id, …); absent for a walk over the whole collection. */
   key?: string;
-  /** Whether the database held the record (for a walk, any record) when the request read it. */
+  /** The member of the record it looked up, for a record that is a Map itself (the client_id of a user's consents: `consentScopes`, `consentGrants`). */
+  member?: string;
+  /** Whether the database held the record (the member; for a walk, any record) when the request read it. */
   found: boolean;
 }
 

@@ -39,6 +39,31 @@ describe('watchDatabase', () => {
     ]);
   });
 
+  it('should note a lookup inside a record that is a Map itself (the consent of a user to a client) by the record and the member, found or not', () => {
+    const db = databaseWithCode();
+    const reads = watchDatabase(db);
+    db.consentScopes.get('testuser')?.get('client-1');
+    db.consentScopes.get('testuser')?.get('client-2');
+
+    expect(reads).toEqual([
+      { collection: 'consentScopes', key: 'testuser', found: true },
+      { collection: 'consentScopes', key: 'testuser', member: 'client-1', found: true },
+      { collection: 'consentScopes', key: 'testuser', member: 'client-2', found: false },
+    ]);
+  });
+
+  it('should tell a walk over a collection from a lookup of the key `*`', () => {
+    const db = databaseWithCode();
+    const reads = watchDatabase(db);
+    [...db.accessTokens.keys()];
+    db.accessTokens.get('*');
+
+    expect(reads).toEqual([
+      { collection: 'accessTokens', found: false },
+      { collection: 'accessTokens', key: '*', found: false },
+    ]);
+  });
+
   it('should not note the read of a record the request wrote before it read it', () => {
     const db = databaseWithCode();
     const reads = watchDatabase(db);
@@ -82,6 +107,17 @@ describe('changesBetween', () => {
     const db = databaseWithCode();
 
     expect(changesBetween(plainDatabase(db), plainDatabase(databaseWithCode()))).toEqual([]);
+  });
+});
+
+describe('changesBetween, on records before that many requests start from', () => {
+  it('should give each request its own copy of a record as it was, so changing one leaves the records before as they are', () => {
+    const before = { codes: { 'code-1': { used: false } } };
+    const [change] = changesBetween(before, { codes: { 'code-1': { used: true } } });
+    (change?.before as { used: boolean }).used = true;
+
+    expect(before.codes['code-1'].used).toBe(false);
+    expect(changesBetween(before, { codes: {} })).toEqual([{ collection: 'codes', key: 'code-1', change: 'removed', before: { used: false } }]);
   });
 });
 

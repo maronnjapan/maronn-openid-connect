@@ -1,0 +1,30 @@
+{
+  "name": "@maronn-openid-connect/map-sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The OpenID Provider the map runs a request on: the Hono OP of apps/hono with every feature, on a memory database with the clients, codes and tokens of the tests and a clock stopped where theirs is, bundled with the Istanbul counters the measured tests count with, so the map reads the way a request took with the rules of the test catalog",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/api.ts",
+      "import": "./dist/sandbox.js"
+    },
+    "./premises": {
+      "types": "./src/premises.ts",
+      "import": "./src/premises.ts"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vite build && vitest run"
+  },
+  "devDependencies": {
+    "@maronn-openid-connect/test-reach": "workspace:*",
+    "@types/node": "^26.6.6",
+    "@vitest/istanbul-lib-instrument": "1.0.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

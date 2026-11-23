@@ -7,9 +7,9 @@
  *   directory they are in: a test of apps/hono/src/app.ts is a test of hono.
  * - tests/e2e/specs belongs to e2e, and the feature files of tests/features
  *   to features.
- * - The tests of the tools belong to the tool (cli, map-analysis, map,
- *   test-catalog, test-reach, tests-viewer for apps/tests, scripts for
- *   .github/scripts); they are listed, never under an endpoint.
+ * - The tests of the tools belong to the tool (cli, map-analysis,
+ *   map-sandbox, map, test-catalog, test-reach, tests-viewer for apps/tests,
+ *   scripts for .github/scripts); they are listed, never under an endpoint.
  * - The OpenID Conformance Suite (tests/conformance) is a check of its own
  *   that runs outside plans in Docker: it is not in the catalog.
  *
@@ -37,6 +37,7 @@ export interface TestFile {
 export const TOOL_ROOTS: ReadonlyArray<{ directory: string; root: string }> = [
   { directory: 'packages/cli/', root: 'cli' },
   { directory: 'packages/map-analysis/', root: 'map-analysis' },
+  { directory: 'packages/map-sandbox/', root: 'map-sandbox' },
   { directory: 'packages/test-catalog/', root: 'test-catalog' },
   { directory: 'packages/test-reach/', root: 'test-reach' },
   { directory: 'apps/map/', root: 'map' },

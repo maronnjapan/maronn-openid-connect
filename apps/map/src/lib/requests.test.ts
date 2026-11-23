@@ -1,33 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import type { RootRequests, WayRequest } from '../types';
-import { basicCredentials, fileName, statusLine, statusTone, testsLink, wayRequestsOf } from './requests';
+import type { RootRequests, WaySample } from '../types';
+import { basicCredentials, statusLine, statusTone, wayRequestsOf } from './requests';
 
-const example: WayRequest = {
-  test: { id: 't-1', title: 'should rotate the refresh token', file: 'apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts', line: 378, code: "const whileLoggedIn = await refresh(first.refresh_token ?? '');" },
+const sample: WaySample = {
   method: 'POST',
   path: '/token',
   params: [
     { name: 'grant_type', value: 'refresh_token', in: 'form' },
-    { name: 'refresh_token', value: 'rt-1', in: 'form' },
+    { name: 'refresh_token', value: 'refresh-1', in: 'form' },
   ],
   headers: [['content-type', 'application/x-www-form-urlencoded']],
   status: 200,
 };
 
 const requests: RootRequests = {
-  version: 1,
+  version: 2,
   root: 'endpoint:token',
   source: 'hono',
   endpoint: 'token',
   ways: [
-    { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', count: 3, examples: [example] },
-    { id: 'c-exit-a', kind: 'exit', name: 'return a', target: 's0b9s0', count: 1, examples: [example] },
-    { id: 'c-exit-b', kind: 'exit', name: 'return b', target: 's0b9s0', count: 1, examples: [example] },
+    { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', sample },
+    { id: 'c-exit-a', kind: 'exit', name: 'return a', target: 's0b9s0', sample },
+    { id: 'c-exit-b', kind: 'exit', name: 'return b', target: 's0b9s0', sample },
   ],
 };
 
 describe('wayRequestsOf', () => {
-  it('should find the requests of a way by its kind and target, by its name too when several share them', () => {
+  it('should find the request of a way by its kind and target, by its name too when several share them', () => {
     expect([
       wayRequestsOf(requests, { kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9' })?.id,
       wayRequestsOf(requests, { kind: 'step', name: 'a name the catalog said otherwise', target: 's0b9' })?.id,
@@ -61,12 +60,5 @@ describe('basicCredentials', () => {
       undefined,
       undefined,
     ]);
-  });
-});
-
-describe('testsLink and fileName', () => {
-  it('should open the case on the tests page with the test in the panel and its line marked', () => {
-    expect(testsLink(requests, { id: 'c-refresh' }, example)).toBe('./tests/#/endpoint/hono/token?case=c-refresh&test=t-1&line=378');
-    expect(fileName(example.test.file)).toBe('pipeline.test.ts');
   });
 });

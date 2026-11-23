@@ -12,11 +12,11 @@
 import { FrameLocator, RequestRun, seenDecisions, throughTries, type RanInFile, type RunSources } from '@maronn-openid-connect/map-analysis/observe';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
 import type { SandboxRequest } from '@maronn-openid-connect/map-sandbox';
-import type { Decisions, FlowTree, MapData, Selection, WayRequest } from '../types';
+import type { Decisions, FlowTree, MapData, RequestParam, Selection, WaySample } from '../types';
 import { decisionKey, frameIds } from './trace';
 
 /** Where a parameter is sent: the query of the URL, a field of a form body, a member of a JSON body. */
-export type ParamPlace = WayRequest['params'][number]['in'];
+export type ParamPlace = RequestParam['in'];
 
 /** The body a request sends: a form (`application/x-www-form-urlencoded`), a JSON object, or none. */
 export type BodyKind = 'form' | 'json' | 'none';
@@ -54,8 +54,8 @@ function bodyKindOf(method: string, params: RequestDraft['params'], headers: Rea
   return bodiless(method) ? 'none' : 'form';
 }
 
-/** A request a test sent, to write on: its method, path, parameters and headers. */
-export function draftOf(example: Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'>): RequestDraft {
+/** A request to write on (the one the OP of the map took a way with): its method, path, parameters and headers. */
+export function draftOf(example: Pick<WaySample, 'method' | 'path' | 'params' | 'headers'>): RequestDraft {
   const params = example.params.map((param) => ({ ...param }));
   const headers = example.headers.map(([name, value]): [string, string] => [name, value]);
   return { method: example.method, path: example.path, body: bodyKindOf(example.method, params, headers), params, headers };

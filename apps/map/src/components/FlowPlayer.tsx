@@ -94,7 +94,7 @@ export interface FlowPlayerProps {
   walked: FlowWalk;
   scenes: readonly Scene[];
   playback: Playback;
-  /** The requests the code of the API tests sent that took the ways of the root (useRootRequests): the one of the way chosen is shown. */
+  /** The requests the OP of the map took the ways of the root with (useRootRequests): the request of the way chosen starts from its one. */
   requests: RootRequestsState;
   /** The framework the map shows (TraceProps.framework). */
   framework: string;

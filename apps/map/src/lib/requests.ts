@@ -1,15 +1,16 @@
 /**
- * The requests of the flow view: what the code of an API test actually sent
- * that took the way played (RootRequests, written by the test catalog from
- * the measured run), found for a ready-made way, and the words the view
- * shows them with. Nothing here touches the DOM or fetches.
+ * The requests of the flow view: the request the OP of the map took the way
+ * played with (RootRequests, which the build finds by running requests on
+ * that OP), found for a ready-made way, and the words the view shows a
+ * request and an answer with. Nothing here touches the DOM or fetches.
  */
-import type { RootRequests, Selection, WayRequest, WayRequests } from '../types';
+import type { RequestParam, RootRequests, Selection, WayRequests, WaySample } from '../types';
 
 /**
- * The requests that took a ready-made way: the entry of its kind and target,
- * of its name too when more than one has them; none for no way (おまかせ, a
- * way the reader chose side by side), or for a way no request took.
+ * The request the OP of the map took a ready-made way with: the entry of
+ * its kind and target, of its name too when more than one has them; none
+ * for no way (おまかせ, a way the reader chose side by side), or for a way no
+ * request took.
  */
 export function wayRequestsOf(requests: RootRequests | undefined, selection: Pick<Selection, 'kind' | 'name' | 'target'> | undefined): WayRequests | undefined {
   if (requests === undefined || selection === undefined) return undefined;
@@ -18,7 +19,7 @@ export function wayRequestsOf(requests: RootRequests | undefined, selection: Pic
 }
 
 /** Where a parameter was sent, in words. */
-export const PARAM_PLACES: Record<WayRequest['params'][number]['in'], string> = { query: 'クエリ', form: 'フォーム', json: 'JSON' };
+export const PARAM_PLACES: Record<RequestParam['in'], string> = { query: 'クエリ', form: 'フォーム', json: 'JSON' };
 
 /** The reason phrases of the statuses an OP answers with. */
 const REASONS: Readonly<Record<number, string>> = {
@@ -39,7 +40,7 @@ const REASONS: Readonly<Record<number, string>> = {
 };
 
 /** The status of a response with its reason phrase: its own, else the usual one (`401 Unauthorized`). */
-export function statusLine(example: Pick<WayRequest, 'status' | 'statusText'>): string {
+export function statusLine(example: Pick<WaySample, 'status' | 'statusText'>): string {
   const reason = example.statusText !== undefined && example.statusText !== '' ? example.statusText : REASONS[example.status];
   return reason === undefined ? String(example.status) : `${example.status} ${reason}`;
 }
@@ -50,11 +51,6 @@ export function statusTone(status: number): 'ok' | 'redirect' | 'error' {
   return status >= 300 ? 'redirect' : 'ok';
 }
 
-/** The page of the tests that shows a request: the case of the way, the test that sent it in the panel, the line that sent it marked. */
-export function testsLink(requests: Pick<RootRequests, 'source' | 'endpoint'>, way: Pick<WayRequests, 'id'>, example: WayRequest): string {
-  const query = new URLSearchParams({ case: way.id, test: example.test.id, line: String(example.test.line) });
-  return `./tests/#/endpoint/${requests.source}/${encodeURIComponent(requests.endpoint)}?${query.toString()}`;
-}
 
 /** The client a Basic Authorization header names, decoded (`Basic Y2xpZW50LTE6…` → client-1); none for another scheme or a value that is not Basic credentials. */
 export function basicCredentials(value: string): { client: string } | undefined {
@@ -76,7 +72,3 @@ export function basicCredentials(value: string): { client: string } | undefined 
   }
 }
 
-/** The name of a file from its path. */
-export function fileName(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1);
-}

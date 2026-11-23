@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { walkFlow } from '@maronn-openid-connect/map-analysis/walk';
-import type { Branch, FlowTree, MapData, Selection, TreeNode, WayRequest } from '../types';
+import type { Branch, FlowTree, MapData, Selection, TreeNode, WaySample } from '../types';
 import { blankDraft, draftOf, draftProblem, endingWay, failingCalls, filesOf, jsonValueOf, oauthErrorOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from './run';
 
-const example: Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'> = {
+const example: Pick<WaySample, 'method' | 'path' | 'params' | 'headers'> = {
   method: 'POST',
   path: '/token',
   params: [
@@ -17,7 +17,7 @@ const example: Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'> = {
 };
 
 describe('draftOf', () => {
-  it('should write on the parameters and headers a test sent, with the kind of its body', () => {
+  it('should write on the parameters and headers of a request, with the kind of its body', () => {
     const json = draftOf({ method: 'POST', path: '/register', params: [{ name: 'redirect_uris', value: '["https://rp.example.com/cb"]', in: 'json' }], headers: [['content-type', 'application/json']] });
     const query = draftOf({ method: 'GET', path: '/authorize', params: [{ name: 'client_id', value: 'client-1', in: 'query' }], headers: [] });
 

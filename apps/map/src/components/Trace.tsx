@@ -220,7 +220,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const loading = rows.some((row) => row.kind === 'loading');
   const root = frames.trees.get(rootId);
   const selections = useMemo(() => [...(frames.selections.get(rootId) ?? []).filter((selection) => selection.kind !== 'change'), ...extraSelections], [frames.selections, rootId, extraSelections]);
-  // The requests the code of the API tests sent that took the ways of the root: the flow view shows the one of the way chosen.
+  // The requests the OP of the map took the ways of the root with: the flow view starts the request of the way chosen from its one.
   const requests = useRootRequests(data, rootId);
   // The request the reader runs in the flow view on the OP of the map: while the playback follows it, the sides it was seen to take are the trace's choice.
   const requestRun = useRequestRun({ data, rootId, root, trees: frames.trees, state, onState, enabled, hasFrame });

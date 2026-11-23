@@ -1,29 +1,13 @@
 import { useId, useState, type FormEvent } from 'react';
 import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
-import { basicCredentials, fileName, statusLine, statusTone, testsLink, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
+import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
 import { blankDraft, bodiless, draftOf, draftProblem, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
-import type { RootRequests, Selection, WayRequest, WaySample } from '../types';
+import type { RootRequests, Selection, WaySample } from '../types';
 import type { RootRequestsState } from './useRequests';
 import type { RequestRunState } from './useRun';
 
 /** The words of the body of a request, by its kind. */
 const BODY_WORDS: Record<RequestDraft['body'], string> = { form: 'ボディ（フォーム）', json: 'ボディ（JSON）', none: 'ボディ' };
-
-/** The test and the line of its code that sent a request, which open the tests page on that line. */
-function SentBy({ example, link }: { example: WayRequest; link: string }) {
-  return (
-    <div className="req-from">
-      <span className="flow-label">送ったテスト</span>
-      <a href={link} title="テストの画面で、このテストのコードを、リクエストを送った行に印を付けて開く">
-        {example.test.title}
-      </a>
-      <span className="req-at">
-        {fileName(example.test.file)} {example.test.line} 行目
-      </span>
-      <code className="req-code mono">{example.test.code}</code>
-    </div>
-  );
-}
 
 /** The rows of one place of a request (its query, its body, or its headers), each a name and a value to write, with a row to add. */
 function Rows({ label, rows, onChange, onAdd, onRemove, note }: { label: string; rows: ReadonlyArray<{ name: string; value: string }>; onChange: (index: number, name: string, value: string) => void; onAdd: () => void; onRemove: (index: number) => void; note?: (row: { name: string; value: string }) => string | undefined }) {
@@ -53,8 +37,8 @@ function Rows({ label, rows, onChange, onAdd, onRemove, note }: { label: string;
   );
 }
 
-/** Where the request of a way starts from: a request the OP of the map took the way with, one a test sent, or for a way neither took, the request the OP answered the endpoint with. */
-type Origin = { kind: 'sample'; request: WaySample } | { kind: 'test'; request: WayRequest } | { kind: 'base'; request: WaySample; way: string };
+/** Where the request of a way starts from: the request the OP of the map took the way with, or for a way no request took, the request the OP answered the endpoint with. */
+type Origin = { kind: 'sample'; request: WaySample } | { kind: 'base'; request: WaySample; way: string };
 
 /** The request the OP of the map answered the endpoint with, to start a way no request is known for: the sample of an end it answered without an error, else the first sample. */
 function baseSample(requests: RootRequests | undefined): { request: WaySample; way: string } | undefined {
@@ -183,13 +167,13 @@ function RunResult({ run, ending, assumed, onFollow }: { run: RequestRunState; e
 
 /** What the flow view shows of the request of the way played (see FlowRequest). */
 export interface FlowRequestProps {
-  /** The requests of the root (useRootRequests). */
+  /** The requests the OP of the map took the ways of the root with (useRootRequests). */
   state: RootRequestsState;
   /** The ready-made way chosen; undefined for おまかせ, a way the reader chose side by side, or the way of a request run. */
   selection: Selection | undefined;
   /** How many decisions the way played takes on an assumed side. */
   assumed: number;
-  /** The framework the map shows: the requests of another source (express and fastify, generated from hono) say whose they are. */
+  /** The framework the map shows: express and fastify, generated from hono, run on the OP of hono, and say so. */
   framework: string;
   /** The method and the path of the endpoint the trace starts from; absent for the trace of a function, which takes no request of its own. */
   endpoint: { method: string; path: string } | undefined;
@@ -207,48 +191,39 @@ export interface FlowRequestProps {
 
 /**
  * The request of the way the flow view plays, to read and to run. For a
- * ready-made way (a case of the tests page) it starts as the request the OP
- * of the map was seen to take it with (its sample), then as what the code of
- * an API test actually sent that took it (the measured run's record: the
- * test and the line of its code that sent it open the tests page on that
- * line), one at a time (例 n / m); for a way neither took, as the request
- * the OP answered the endpoint with, else with no parameters. The reader
- * writes its query, its body and its headers and runs it on the OP of the
- * map: the response comes back, and the playback follows the way the
- * request took there (useRun.ts). The values the OP holds (its clients,
- * codes and tokens) are listed to write with.
+ * ready-made way (a case) it starts as the request the OP of the map was
+ * seen to take it with; for a way no request took, as the request the OP
+ * answered the endpoint with, else with no parameters. The reader writes its
+ * query, its body and its headers and runs it on the OP of the map: the
+ * response comes back, and the playback follows the way the request took
+ * there (useRun.ts). The values the OP holds (its clients, codes and tokens)
+ * are listed to write with. The tests play no part here: what a test sent is
+ * the tests page's to show.
  */
 export function FlowRequest({ state, selection, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
   const headingId = useId();
   // The way the request was taken from: a ready-made way picked later takes its place, while the way of a run (no ready-made way) keeps it.
-  const [base, setBase] = useState<{ selection: Selection | undefined; index: number }>({ selection, index: 0 });
-  if (selection !== undefined && selection !== base.selection) setBase({ selection, index: 0 });
+  const [base, setBase] = useState<{ selection: Selection | undefined }>({ selection });
+  if (selection !== undefined && selection !== base.selection) setBase({ selection });
   const requests = state.kind === 'ready' ? state.requests : undefined;
   const way = wayRequestsOf(requests, base.selection);
-  // The requests of the way: the one the OP of the map took it with first, then those the tests sent; for a way neither took, the endpoint's own.
-  const known: Origin[] = [...(way?.sample === undefined ? [] : [{ kind: 'sample' as const, request: way.sample }]), ...(way?.examples ?? []).map((request) => ({ kind: 'test' as const, request }))];
-  const fallback = base.selection === undefined ? undefined : baseSample(requests);
-  const origins: Origin[] = known.length > 0 ? known : fallback === undefined ? [] : [{ kind: 'base', ...fallback }];
-  const at = Math.min(base.index, Math.max(0, origins.length - 1));
-  const shown = origins[at];
-  const example = shown?.kind === 'test' ? shown.request : undefined;
-  const originKey = `${base.selection?.kind ?? ''}|${base.selection?.target ?? ''}|${way?.id ?? ''}|${at}`;
+  // The request the OP of the map took the way with; for a way no request took, the one it answered the endpoint with.
+  const fallback = base.selection === undefined || way !== undefined ? undefined : baseSample(requests);
+  const shown: Origin | undefined = way !== undefined ? { kind: 'sample', request: way.sample } : fallback === undefined ? undefined : { kind: 'base', ...fallback };
+  const originKey = `${base.selection?.kind ?? ''}|${base.selection?.target ?? ''}|${way?.id ?? ''}`;
   const origin = shown !== undefined ? draftOf(shown.request) : endpoint !== undefined ? blankDraft(endpoint.method, endpoint.path) : undefined;
   const [edited, setEdited] = useState<{ key: string; draft: RequestDraft } | undefined>(undefined);
   const draft = edited?.key === originKey ? edited.draft : origin;
   const changed = edited?.key === originKey;
   const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next });
 
-  let note: string | undefined;
+  let note: string;
   if (base.selection === undefined) note = '「道筋」からケースを選ぶと、そのケースを通るリクエストから始めます。値を書いて実行すると、地図の OP で動かし、通った道筋を再生します。';
   else if (state.kind === 'loading') note = '読み込んでいます…';
-  else if (state.kind === 'failed') note = `リクエストの記録を読み込めませんでした: ${state.message}`;
+  else if (state.kind === 'failed') note = `このケースを通るリクエストを読み込めませんでした: ${state.message}`;
   else if (shown?.kind === 'sample') note = '地図の OP で、このケースを通ると確かめたリクエストです。値を書き換えて実行すると、通る道筋がどう変わるかを再生します。';
-  else if (shown?.kind === 'test') note = 'このケースを通ったテストが送ったリクエストです。値を書き換えて実行すると、地図の OP で動かし、通った道筋を再生します。';
   else if (shown?.kind === 'base') note = `このケースを通るリクエストは見つかっていないので、地図の OP が「${shown.way}」で応えたリクエストから始めます。値を書き換えて、このケースを通るか確かめられます。`;
   else note = 'このケースを通るリクエストは見つかっていません。値を書いて実行すると、通った道筋を再生します。';
-  if (base.selection !== undefined && state.kind === 'ready' && requests?.measured !== true && example === undefined) note += '（このビルドには、テストを計測して実行した記録がありません）';
-  else if (base.selection !== undefined && state.kind === 'unmeasured') note += '（このビルドには、テストを計測して実行した記録も、地図の OP で確かめたリクエストもありません）';
 
   if (draft === undefined) {
     return (
@@ -271,31 +246,15 @@ export function FlowRequest({ state, selection, assumed, framework, endpoint, un
     <section className="flow-request" aria-labelledby={headingId}>
       <div className="flow-request-head">
         <h4 id={headingId}>リクエスト</h4>
-        {origins.length > 1 ? (
-          <span className="req-nav" role="group" aria-label="リクエストの例">
-            {/* aria-disabled, not disabled: a button that turns disabled under the keyboard drops its focus to the page. */}
-            <button type="button" className="icon req-step" aria-label="前の例" aria-disabled={at === 0} onClick={() => setBase({ ...base, index: Math.max(0, at - 1) })}>
-              ‹
-            </button>
-            <span className="req-count" aria-live="polite">
-              例 {at + 1} / {origins.length}
-            </span>
-            <button type="button" className="icon req-step" aria-label="次の例" aria-disabled={at >= origins.length - 1} onClick={() => setBase({ ...base, index: Math.min(origins.length - 1, at + 1) })}>
-              ›
-            </button>
-          </span>
-        ) : null}
       </div>
       <p className="note req-empty">{note}</p>
-      {shown?.kind === 'test' && requests !== undefined && requests.source !== framework ? <p className="note">{requests.source} のアプリへ送ったテストの記録です（{framework} の OP は {requests.source} の OP から生成したもので、このエンドポイントの処理は同じです）。</p> : null}
-      {way !== undefined && way.count > way.examples.length ? <p className="note">このケースを通ったテストのリクエストは全部で {way.count} 件（例は {way.examples.length} 件）</p> : null}
       <form className="req" onSubmit={submit} aria-label="実行するリクエスト">
         <p className="req-line">
           <span className="req-method">{draft.method}</span>
           <code className="req-path">{draft.path}</code>
           {shown !== undefined && !changed ? (
             <span className={`req-status req-${statusTone(shown.request.status)}`}>
-              → {statusLine(shown.request)}（{shown.kind === 'test' ? 'テストのとき' : '地図の OP'}）
+              → {statusLine(shown.request)}（地図の OP）
             </span>
           ) : null}
         </p>
@@ -340,7 +299,6 @@ export function FlowRequest({ state, selection, assumed, framework, endpoint, un
       </form>
       {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} /> : null}
       <Premises />
-      {example !== undefined && requests !== undefined && way !== undefined ? <SentBy example={example} link={testsLink(requests, way, example)} /> : null}
     </section>
   );
 }

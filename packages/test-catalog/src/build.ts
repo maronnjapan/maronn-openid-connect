@@ -38,7 +38,7 @@ import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from '.
 import { requestsByEndpoint, type ExampleCounts } from './examples.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown, untestedMarkdown } from './markdown.js';
-import type { FlowTree, MapData, RootRequests, WayRequest, WayRequests } from '@maronn-openid-connect/map-analysis';
+import type { FlowTree, MapData, RootRequests, WayRequests, WaySample } from '@maronn-openid-connect/map-analysis';
 import type { CodeRef, EndpointCases, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { FrameLocator, readRun, type JoinedRun } from './run.js';
 import type { SampleRun } from './samples.js';
@@ -363,8 +363,8 @@ export function caseRequests(data: MapData, run: Pick<JoinedRun, 'exchanges'>, t
   return { byEndpoint: requestsByEndpoint(run.exchanges, byId, endpointOf, reading.linesOf), ...reading };
 }
 
-/** A request of an example or a sample as the flow view of the map shows it: the path without the query, the parameters it sent, the headers but Host and Content-Length. */
-function shownRequest(request: { method: string; path: string; headers: Array<[string, string]>; body?: string; truncated?: true }): Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'> {
+/** A request as the flow view of the map shows it: the path without the query, the parameters it sent, the headers but Host and Content-Length. */
+function shownRequest(request: { method: string; path: string; headers: Array<[string, string]>; body?: string; truncated?: true }): Pick<WaySample, 'method' | 'path' | 'params' | 'headers'> {
   const { method, path, headers, body, truncated } = request;
   return {
     method,
@@ -375,14 +375,13 @@ function shownRequest(request: { method: string; path: string; headers: Array<[s
 }
 
 /**
- * The requests that took the ways of each root, for the flow view of the
- * map (RootRequests): the examples of the cases of each endpoint, with the
- * test and the line of its code that sent each, and the parameters it sent,
- * and the sample the OP of the map took the case with. Only the cases some
- * request took; only the endpoints with one. `measured` says the build read
- * a measured run (a way without examples took no recorded request).
+ * The requests the OP of the map took the ways of each root with, for the
+ * flow view of the map (RootRequests): the sample of each case that has one
+ * (samples.ts), with the parameters it sent and the status the OP answered
+ * with. Only the cases with a sample; only the endpoints with one. What the
+ * tests sent stays with the tests page (the examples of its cases).
  */
-export function rootRequests(data: MapData, found: ReadonlyArray<readonly [string, EndpointCases]>, tests: ReadonlyMap<string, TestCase>, measured = true): RootRequests[] {
+export function rootRequests(data: MapData, found: ReadonlyArray<readonly [string, EndpointCases]>): RootRequests[] {
   const roots: RootRequests[] = [];
   for (const [key, endpoint] of found) {
     const colon = key.indexOf(':');
@@ -392,17 +391,11 @@ export function rootRequests(data: MapData, found: ReadonlyArray<readonly [strin
     if (root === undefined) continue;
     const ways: WayRequests[] = [];
     for (const item of endpoint.cases) {
-      const examples: WayRequest[] = [];
-      for (const example of item.examples ?? []) {
-        const test = tests.get(example.test);
-        if (test === undefined) continue;
-        const { status, statusText } = example.response;
-        examples.push({ test: { id: test.id, title: test.title, file: test.source.file, line: example.line, code: example.code }, ...shownRequest(example.request), status, ...(statusText === undefined ? {} : { statusText }) });
-      }
-      const sample = item.sample === undefined ? undefined : { ...shownRequest(item.sample.request), status: item.sample.response.status, ...(item.sample.response.statusText === undefined ? {} : { statusText: item.sample.response.statusText }) };
-      if (examples.length > 0 || sample !== undefined) ways.push({ id: item.id, kind: item.kind, name: item.name, target: item.target, count: Math.max(item.exampleCount ?? 0, examples.length), examples, ...(sample === undefined ? {} : { sample }) });
+      if (item.sample === undefined) continue;
+      const { status, statusText } = item.sample.response;
+      ways.push({ id: item.id, kind: item.kind, name: item.name, target: item.target, sample: { ...shownRequest(item.sample.request), status, ...(statusText === undefined ? {} : { statusText }) } });
     }
-    if (ways.length > 0) roots.push({ version: 1, root, source, endpoint: id, ...(measured ? { measured: true as const } : {}), ways });
+    if (ways.length > 0) roots.push({ version: 2, root, source, endpoint: id, ways });
   }
   return roots;
 }
@@ -524,12 +517,11 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
       cases[key] = `./data/tests/cases/${writeHashed(join(out, 'tests', 'cases'), key, JSON.stringify(endpoint), writtenCases)}`;
     }
     removeStale(join(out, 'tests', 'cases'), writtenCases);
-    // The requests of the ways of each root, beside map.json: the flow view of the map shows the one of the way chosen.
+    // The requests the OP of the map took the ways of each root with, beside map.json: the flow view of the map starts the request of the way chosen from it.
     const writtenRequests = new Set<string>();
-    if (requests !== undefined || samples !== undefined) {
-      const byId = new Map(tests.map((test) => [test.id, test]));
+    if (samples !== undefined) {
       const urls: Record<string, string> = {};
-      for (const root of rootRequests(data, found, byId, requests !== undefined)) urls[root.root] = `./data/requests/${writeHashed(join(context.out, 'requests'), root.root, JSON.stringify(root), writtenRequests)}`;
+      for (const root of rootRequests(data, found)) urls[root.root] = `./data/requests/${writeHashed(join(context.out, 'requests'), root.root, JSON.stringify(root), writtenRequests)}`;
       data.requests = urls;
     }
     if (samples !== undefined) {

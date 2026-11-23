@@ -117,67 +117,15 @@ const e2e = card('login', { kind: 'e2e', root: 'e2e', source: { file: 'tests/e2e
 const tool = card('tool', { kind: 'tool', root: 'map', subjects: [{ kind: 'function', id: VERIFY, how: 'describe' }] });
 
 describe('rootRequests', () => {
-  it('should give the root of each endpoint the requests of its cases that have some, with their test, line and parameters, the host and length left out', () => {
-    const test = { id: 't-1', title: 'should refresh', source: { file: 'apps/hono/src/token.test.ts', lines: [370, 390], form: 'code' } } as TestCase;
+  it('should give the root of each endpoint the requests the OP of the map took its cases with, the host and length left out, and leave the requests of the tests out', () => {
     const example: CaseExample = {
       test: 't-1',
       line: 378,
       code: "const whileLoggedIn = await refresh(first.refresh_token ?? '');",
-      request: { method: 'POST', path: '/token?x=1', host: 'op.example.com', headers: [['host', 'op.example.com'], ['Content-Length', '40'], ['content-type', 'application/x-www-form-urlencoded']], body: 'grant_type=refresh_token&refresh_token=rt' },
+      request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [['content-type', 'application/x-www-form-urlencoded']], body: 'grant_type=refresh_token&refresh_token=rt' },
       response: { status: 200, statusText: 'OK', headers: [] },
       steps: [],
     };
-    const cases: EndpointCases = {
-      version: 1,
-      key: 'hono:token',
-      cases: [
-        { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', steps: [], end: 'response', examples: [example, { ...example, test: 'gone' }], exampleCount: 5 },
-        { id: 'c-none', kind: 'exit', name: 'return x', target: 's0b9s0', steps: [], end: 'response' },
-      ],
-    };
-    const found: Array<[string, EndpointCases]> = [
-      ['hono:token', cases],
-      ['hono:nowhere', { ...cases, key: 'hono:nowhere' }],
-      ['nextjs:token', { version: 1, key: 'nextjs:token', cases: [{ ...cases.cases[1], id: 'n' } as EndpointCases['cases'][number]] }],
-    ];
-    expect(rootRequests(DATA, found, new Map([[test.id, test]]))).toEqual([
-      {
-        version: 1,
-        root: 'endpoint:token',
-        source: 'hono',
-        endpoint: 'token',
-        measured: true,
-        ways: [
-          {
-            id: 'c-refresh',
-            kind: 'step',
-            name: 'refresh_token グラントを検証する',
-            target: 's0b9',
-            count: 5,
-            examples: [
-              {
-                test: { id: 't-1', title: 'should refresh', file: 'apps/hono/src/token.test.ts', line: 378, code: "const whileLoggedIn = await refresh(first.refresh_token ?? '');" },
-                method: 'POST',
-                path: '/token',
-                params: [
-                  { name: 'x', value: '1', in: 'query' },
-                  { name: 'grant_type', value: 'refresh_token', in: 'form' },
-                  { name: 'refresh_token', value: 'rt', in: 'form' },
-                ],
-                headers: [['content-type', 'application/x-www-form-urlencoded']],
-                status: 200,
-                statusText: 'OK',
-              },
-            ],
-          },
-        ],
-      },
-    ]);
-  });
-});
-
-describe('rootRequests, with the samples of the OP of the map', () => {
-  it('should give a case the OP of the map took its sample, without a request of a test, and say no run was measured', () => {
     const cases: EndpointCases = {
       version: 1,
       key: 'hono:token',
@@ -190,17 +138,23 @@ describe('rootRequests, with the samples of the OP of the map', () => {
           steps: [],
           end: 'response',
           sample: {
-            request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [['content-type', 'application/x-www-form-urlencoded'], ['content-length', '30']], body: 'grant_type=authorization_code' },
-            response: { status: 200, headers: [['content-type', 'application/json']] },
+            request: { method: 'POST', path: '/token?x=1', host: 'op.example.com', headers: [['host', 'op.example.com'], ['Content-Length', '40'], ['content-type', 'application/x-www-form-urlencoded']], body: 'grant_type=authorization_code&code=code-1' },
+            response: { status: 200, statusText: 'OK', headers: [['content-type', 'application/json']] },
           },
         },
+        { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', steps: [], end: 'response', examples: [example], exampleCount: 5 },
         { id: 'c-none', kind: 'exit', name: 'return x', target: 's0b9s0', steps: [], end: 'response' },
       ],
     };
+    const found: Array<[string, EndpointCases]> = [
+      ['hono:token', cases],
+      ['hono:nowhere', { ...cases, key: 'hono:nowhere' }],
+      ['nextjs:token', { version: 1, key: 'nextjs:token', cases: [{ ...cases.cases[1], id: 'n' } as EndpointCases['cases'][number]] }],
+    ];
 
-    expect(rootRequests(DATA, [['hono:token', cases]], new Map(), false)).toEqual([
+    expect(rootRequests(DATA, found)).toEqual([
       {
-        version: 1,
+        version: 2,
         root: 'endpoint:token',
         source: 'hono',
         endpoint: 'token',
@@ -210,9 +164,18 @@ describe('rootRequests, with the samples of the OP of the map', () => {
             kind: 'step',
             name: 'authorization_code グラントを検証する',
             target: 's0b10',
-            count: 0,
-            examples: [],
-            sample: { method: 'POST', path: '/token', params: [{ name: 'grant_type', value: 'authorization_code', in: 'form' }], headers: [['content-type', 'application/x-www-form-urlencoded']], status: 200 },
+            sample: {
+              method: 'POST',
+              path: '/token',
+              params: [
+                { name: 'x', value: '1', in: 'query' },
+                { name: 'grant_type', value: 'authorization_code', in: 'form' },
+                { name: 'code', value: 'code-1', in: 'form' },
+              ],
+              headers: [['content-type', 'application/x-www-form-urlencoded']],
+              status: 200,
+              statusText: 'OK',
+            },
           },
         ],
       },

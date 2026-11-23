@@ -9,9 +9,8 @@
  *   so is every line a pull request changes in a frame;
  * - in the map of a pull request (MAP_BASE), every change that reaches an
  *   endpoint, and every change of an endpoint body, has a change note;
- * - with a measured run or the requests run on the OP of the map, every way
- *   the requests name is a ready-made choice of its root, and every request
- *   of a test says the line of its test that sent it;
+ * - every way the requests of the OP of the map name is a ready-made choice
+ *   of its root;
  * - every link of the code (Ctrl/⌘ + click in the code view) sits on a name
  *   and goes to the name of a declaration in a file the map carries.
  *
@@ -46,7 +45,7 @@ console.log(
   `Checked the map: ${metrics.frames} frames, ${metrics.selections} ready-made choices (${metrics.unnamed} without a name, ${metrics.duplicateNames.length} repeated), ` +
     `${metrics.wiring.entries} wiring entries (${metrics.wiring.untraceable} untraceable, ${metrics.wiring.invalid} invalid), ` +
     `${metrics.uncovered.length} frames with lines in no node, ${metrics.changedOutside.length} frames with changed lines in no node, ${metrics.undocumented.length} changes without a note, ${metrics.untested.length} changes whose tests did not change without a reason, ` +
-    `${data.requests === undefined ? 'no requests' : `the requests of ${metrics.requests.ways} ways of ${metrics.requests.roots} roots (${metrics.requests.examples} of tests, ${metrics.requests.samples} the OP of the map took, ${metrics.requests.unmatched} ways no choice is)`}`,
+    `${data.requests === undefined ? 'no requests of the OP of the map' : `the requests the OP of the map took ${metrics.requests.ways} ways of ${metrics.requests.roots} roots with (${metrics.requests.unmatched} ways no choice is)`}`,
 );
 for (const [framework, names] of Object.entries(metrics.token)) console.log(`  /token (${framework}): ${names.join(' | ')}`);
 const links = checkLinks(new Map(Object.entries(data.sources).map(([id, source]) => [id, JSON.parse(readFileSync(fileOf(source.url), 'utf8'))])));

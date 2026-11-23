@@ -18,19 +18,14 @@ function fetchRequests(url: string): Promise<RootRequests> {
   return pending;
 }
 
-/** What the map has of the requests of a root: loading, none (and why), the requests, or why they could not be read. */
-export type RootRequestsState =
-  | { kind: 'loading' }
-  | { kind: 'unmeasured' }
-  | { kind: 'unrecorded' }
-  | { kind: 'ready'; requests: RootRequests }
-  | { kind: 'failed'; message: string };
+/** What the map has of the requests of a root: loading, none, the requests, or why they could not be read. */
+export type RootRequestsState = { kind: 'loading' } | { kind: 'none' } | { kind: 'ready'; requests: RootRequests } | { kind: 'failed'; message: string };
 
 /**
- * The requests that took the ways of a root (MapData.requests), read when
- * the flow view first needs them: none when the build ran no measured test
- * (`unmeasured`) or no request of a test's code took a way of this root
- * (`unrecorded`).
+ * The requests the OP of the map took the ways of a root with
+ * (MapData.requests), read when the flow view first needs them: none when
+ * the build ran no request on the OP of the map, or none took a way of this
+ * root.
  */
 export function useRootRequests(data: MapData, root: string): RootRequestsState {
   const url = data.requests?.[root];
@@ -49,7 +44,6 @@ export function useRootRequests(data: MapData, root: string): RootRequestsState 
       live = false;
     };
   }, [url]);
-  if (data.requests === undefined) return { kind: 'unmeasured' };
-  if (url === undefined) return { kind: 'unrecorded' };
+  if (url === undefined) return { kind: 'none' };
   return loaded?.url === url ? loaded.state : { kind: 'loading' };
 }

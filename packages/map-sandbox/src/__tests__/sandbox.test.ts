@@ -340,9 +340,25 @@ describe('preparePremises, of other grants', () => {
     expect([lineOfStep(last as Api.PremiseStep), last?.response.status]).toEqual(['POST /consent', 200]);
   });
 
-  it('should refuse to make premises whose grant the OP gives no code for', async () => {
-    const [grant] = PREMISES.grants;
+  it('should keep the code of a grant whose exchange the OP refused, without tokens, and say the exchange was refused', async () => {
+    const [, exchanged] = PREMISES.grants;
+    const premises = await preparePremises({ ...PREMISES, grants: [{ ...(exchanged as Api.PremiseGrant), codeVerifier: 'verifier-that-is-not-the-one-of-the-challenge-0123' }] });
+    const last = premises.steps.at(-1);
 
-    await expect(preparePremises({ ...PREMISES, grants: [{ ...(grant as Api.PremiseGrant), id: 'no-pkce', authorize: { ...grant?.authorize, code_challenge: '' } }] })).rejects.toThrow('The OP did not give the code of the grant no-pkce');
+    expect(premises.failures).toEqual([{ grant: 'exchanged', stage: 'exchange', message: expect.stringContaining('The OP did not exchange the code of the grant exchanged') }]);
+    expect(premises.grants).toEqual([expect.objectContaining({ id: 'exchanged', code: expect.any(String) })]);
+    expect(premises.grants[0]?.tokens).toBeUndefined();
+    expect([lineOfStep(last as Api.PremiseStep), last?.response.status]).toEqual(['POST /token', 400]);
+  });
+
+  it('should say which grant the OP gave no code for, keeping the requests it sent up to the one the OP refused, and make the other grants', async () => {
+    const [grant, other] = PREMISES.grants;
+    const premises = await preparePremises({ ...PREMISES, grants: [{ ...(grant as Api.PremiseGrant), id: 'no-pkce', authorize: { ...grant?.authorize, code_challenge: '' } }, other as Api.PremiseGrant] });
+    const refused = premises.steps.filter((step) => step.grant === 'no-pkce');
+
+    expect(premises.failures).toEqual([{ grant: 'no-pkce', stage: 'authorization', message: expect.stringContaining('The OP did not give the code of the grant no-pkce') }]);
+    expect(refused.map((step) => [lineOfStep(step), step.response.status])).toEqual([['GET /authorize', 302]]);
+    expect(new URL(headerOf(refused[0]?.response ?? { headers: [] }, 'location') ?? '').searchParams.get('error')).toBe('invalid_request');
+    expect(premises.grants.map((made) => made.id)).toEqual([other?.id]);
   });
 });

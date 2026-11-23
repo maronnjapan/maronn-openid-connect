@@ -135,6 +135,13 @@ export interface PreparedPremises {
   steps: PremiseStep[];
   records: PremiseRecord[];
   grants: PreparedGrant[];
+  /**
+   * The grants that are not what they ask for, with why, their requests
+   * among the steps: the OP gave no code (`authorization`; the grant is not
+   * among the grants), or did not exchange the code (`exchange`; the grant
+   * is among them, with its code and no tokens).
+   */
+  failures?: Array<{ grant: string; stage: 'authorization' | 'exchange'; message: string }>;
   /** The memory database as the steps left it, encoded (EncodedValue). */
   database: EncodedValue;
   /** The key the OP signed the tokens of the premises with, as JWKs, so they verify on the OP a request runs on. */
@@ -156,10 +163,11 @@ export declare function runRequest(request: SandboxRequest, premises?: PreparedP
  * Make the premises by requests (prepare.ts): the OP configured with the
  * clients of the premises and the development users (whose names and
  * passwords the users of the premises are), then the requests of each grant
- * run on it; those
- * of the map (PREMISES) unless others are given. Run it in Node: a browser
- * drops the cookies and the Origin of a request a page makes, so the login
- * and the consent would fail there.
+ * run on it; those of the map (PREMISES) unless others are given (the
+ * grants a reader changed in the page). It runs in Node and in a page alike
+ * (the browser of the premises keeps the cookies a page would drop). A
+ * grant the OP gives no code for, or whose code it does not exchange, is
+ * among the failures.
  */
 export declare function preparePremises(premises?: Premises): Promise<PreparedPremises>;
 

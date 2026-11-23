@@ -16,16 +16,17 @@
  * the request that added it: the map says of a record a request reads
  * which request stored it, with no record of the premises written by hand.
  *
- * Made in Node (the build of the map, the tests): a browser drops the
- * Cookie and the Origin of a request a page makes and the Set-Cookie of a
- * response it reads, so the login and the consent fail there, and the page
- * takes the premises made here instead (index.ts runRequest).
+ * The build of the map makes them in Node, and the page makes them again
+ * when the reader changes a grant: a page drops the Cookie and the Origin
+ * of a request it makes and the Set-Cookie of a response it reads, so the
+ * browser here gives the OP its requests with their headers whole and
+ * keeps the cookies the OP's responses are made with (op.ts).
  */
 import type { MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/memory/database.js';
 import { rs256Key } from '../../../apps/hono/src/test-support/keys.js';
 import type { PlainDatabase, PremiseRecord, PremiseStep, PreparedGrant, PreparedPremises, SandboxMessage } from './api.js';
 import { encodeValue } from './codec.js';
-import { exportSigningKey, mapOp, onDatabase } from './op.js';
+import { exportSigningKey, mapOp, onDatabase, responseHeaders, setCookiesOf, wholeRequest } from './op.js';
 import type { PremiseClient, PremiseGrant, Premises } from './premises.js';
 import { configuredDatabase } from './seed.js';
 import { changesBetween, plainDatabase } from './store.js';
@@ -49,7 +50,7 @@ type CookieJar = Map<string, string>;
 
 /** Keep the cookies a response sets, and forget those it clears (an empty value, or Max-Age=0). */
 function keepCookies(jar: CookieJar, response: Response): void {
-  for (const cookie of response.headers.getSetCookie()) {
+  for (const cookie of setCookiesOf(response)) {
     const [pair = ''] = cookie.split(';');
     const equals = pair.indexOf('=');
     if (equals <= 0) continue;
@@ -58,11 +59,6 @@ function keepCookies(jar: CookieJar, response: Response): void {
     if (value === '' || /;\s*max-age=0\s*(;|$)/i.test(cookie)) jar.delete(name);
     else jar.set(name, value);
   }
-}
-
-/** The headers of a message as an exchange keeps them: lower-case names in the order Headers gives them. */
-function headersOf(headers: Headers): Array<[string, string]> {
-  return [...headers].map(([name, value]): [string, string] => [name.toLowerCase(), value]);
 }
 
 /** A body as a step keeps it: absent when empty, cut at BODY_LIMIT characters. */
@@ -80,7 +76,7 @@ function bodyOf(text: string | undefined): Pick<SandboxMessage, 'body' | 'trunca
 async function send(making: Making, grant: string, jar: CookieJar | undefined, method: string, url: string, init: { headers?: Array<[string, string]>; body?: string } = {}): Promise<{ response: Response; text: string }> {
   const headers: Array<[string, string]> = [...(init.headers ?? [])];
   if (jar !== undefined && jar.size > 0) headers.push(['cookie', [...jar].map(([name, value]) => `${name}=${value}`).join('; ')]);
-  const request = new Request(new URL(url, making.issuer), { method, headers, ...(init.body === undefined ? {} : { body: init.body }) });
+  const request = wholeRequest(new URL(url, making.issuer), { method, headers, ...(init.body === undefined ? {} : { body: init.body }) });
   const before = plainDatabase(making.db);
   const response = await making.op.fetch(request);
   const text = await response.text();
@@ -88,8 +84,8 @@ async function send(making: Making, grant: string, jar: CookieJar | undefined, m
   const page = (response.headers.get('content-type') ?? '').startsWith('text/html');
   making.steps.push({
     grant,
-    request: { method, url: request.url, headers: headersOf(request.headers), ...bodyOf(init.body) },
-    response: { status: response.status, ...(response.statusText === '' ? {} : { statusText: response.statusText }), headers: headersOf(response.headers), ...(page ? {} : bodyOf(text)) },
+    request: { method, url: request.url, headers: [...request.headers].map(([name, value]): [string, string] => [name.toLowerCase(), value]), ...bodyOf(init.body) },
+    response: { status: response.status, ...(response.statusText === '' ? {} : { statusText: response.statusText }), headers: responseHeaders(response), ...(page ? {} : bodyOf(text)) },
     wrote: changesBetween(before, plainDatabase(making.db)),
   });
   return { response, text };
@@ -155,13 +151,20 @@ function codeOf(response: Response, text: string, issuer: string, redirectUri: s
   return form?.action === redirectUri ? form.fields.find(([name]) => name === 'code')?.[1] : undefined;
 }
 
+/** What running a grant gave: what it left to use (none when the OP gave no code), and why it is not what the grant asked for (the OP gave no code, or did not exchange it). */
+interface GrantOutcome {
+  prepared?: PreparedGrant;
+  failure?: NonNullable<PreparedPremises['failures']>[number];
+}
+
 /**
  * Run the requests of a grant (see the module comment) and return what it
- * left to use. It throws when the OP does not redirect back to the client
- * with a code, or does not answer the exchange with tokens: the premises
- * would not be what they say.
+ * left to use, and the failure when the OP does not redirect back to the
+ * client with a code (nothing left), or does not answer the exchange with
+ * tokens (the code left, unexchanged): the premises would not be what they
+ * say. It throws for a grant that names no user or client of the premises.
  */
-async function runGrant(making: Making, premises: Premises, grant: PremiseGrant): Promise<PreparedGrant> {
+async function runGrant(making: Making, premises: Premises, grant: PremiseGrant): Promise<GrantOutcome> {
   const user = premises.users.find((candidate) => candidate.username === grant.username);
   const clientId = grant.authorize.client_id ?? '';
   const client = premises.clients.find((candidate) => candidate.clientId === clientId);
@@ -179,16 +182,16 @@ async function runGrant(making: Making, premises: Premises, grant: PremiseGrant)
     else break;
   }
   const code = codeOf(response, text, making.issuer, redirectUri, user);
-  if (code === undefined) throw new Error(`The OP did not give the code of the grant ${grant.id}: it answered ${response.status} ${response.headers.get('location') ?? ''}`);
+  if (code === undefined) return { failure: { grant: grant.id, stage: 'authorization', message: `The OP did not give the code of the grant ${grant.id}: it answered ${response.status} ${response.headers.get('location') ?? ''}` } };
   const prepared: PreparedGrant = { id: grant.id, clientId, redirectUri, code, codeVerifier: grant.codeVerifier };
-  if (!grant.exchange) return prepared;
+  if (!grant.exchange) return { prepared };
   const credentials = clientCredentials(client);
   const exchanged = await send(making, grant.id, undefined, 'POST', '/token', {
     headers: [['content-type', 'application/x-www-form-urlencoded'], ...credentials.headers],
     body: new URLSearchParams([['grant_type', 'authorization_code'], ['code', code], ['redirect_uri', redirectUri], ['code_verifier', grant.codeVerifier], ...credentials.fields]).toString(),
   });
-  if (exchanged.response.status !== 200) throw new Error(`The OP did not exchange the code of the grant ${grant.id}: it answered ${exchanged.response.status} ${exchanged.text}`);
-  return { ...prepared, tokens: JSON.parse(exchanged.text) as Record<string, unknown> };
+  if (exchanged.response.status !== 200) return { prepared, failure: { grant: grant.id, stage: 'exchange', message: `The OP did not exchange the code of the grant ${grant.id}: it answered ${exchanged.response.status} ${exchanged.text}` } };
+  return { prepared: { ...prepared, tokens: JSON.parse(exchanged.text) as Record<string, unknown> } };
 }
 
 /**
@@ -222,9 +225,15 @@ export async function preparePremises(premises: Premises): Promise<PreparedPremi
   const db = await configuredDatabase(premises);
   const key = await rs256Key('map-sandbox-rs256-key');
   const making: Making = { op: mapOp(db, key, premises.issuer), db, issuer: premises.issuer, steps: [] };
+  const failures: NonNullable<PreparedPremises['failures']> = [];
   const grants = await onDatabase(db, premises.now, async () => {
     const made: PreparedGrant[] = [];
-    for (const grant of premises.grants) made.push(await runGrant(making, premises, grant));
+    for (const grant of premises.grants) {
+      // The requests a grant sent stay among the steps, a failed one's too: the reader reads which one the OP refused, and how.
+      const { prepared, failure } = await runGrant(making, premises, grant);
+      if (prepared !== undefined) made.push(prepared);
+      if (failure !== undefined) failures.push(failure);
+    }
     return made;
   });
   return {
@@ -234,6 +243,7 @@ export async function preparePremises(premises: Premises): Promise<PreparedPremi
     steps: making.steps,
     records: recordsOf(making.steps, plainDatabase(db)),
     grants,
+    ...(failures.length === 0 ? {} : { failures }),
     database: encodeValue(db),
     signingKey: await exportSigningKey(key),
   };

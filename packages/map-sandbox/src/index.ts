@@ -6,7 +6,9 @@
  * whatever ran before it: the premises made by requests (prepare.ts) that
  * are given (the page hands over those the build made), with the key their
  * tokens were signed with; without them, the OP as it is configured (its
- * clients and users, seed.ts), as a page cannot make them (prepare.ts). The send is recorded the way a measured test
+ * clients and users, seed.ts). A request keeps every header it is written
+ * with, Cookie and Origin included, and its response the cookies it sets,
+ * in a page too (op.ts). The send is recorded the way a measured test
  * records the requests it sends (test-reach recordExchange): the counters
  * of the files of the function catalog (counted by Istanbul as in the
  * measured tests, istanbul.ts) that went up between the start of the send
@@ -27,7 +29,7 @@ import type * as Api from './api.js';
 import type { PlainDatabase } from './api.js';
 import { candidateRequests, SAMPLED_ENDPOINTS } from './candidates.js';
 import { decodeValue } from './codec.js';
-import { importSigningKey, mapOp, onDatabase, type SigningKey } from './op.js';
+import { importSigningKey, mapOp, onDatabase, responseHeaders, wholeRequest, type SigningKey } from './op.js';
 import { PREMISES } from './premises.js';
 import { preparePremises as prepare } from './prepare.js';
 import { configuredDatabase } from './seed.js';
@@ -103,15 +105,18 @@ async function runAlone(request: Api.SandboxRequest, premises: Api.PreparedPremi
   const db = structuredClone(base.db);
   return onDatabase(db, base.now, async () => {
     const op = mapOp(db, base.key, base.issuer);
-    const sent = new Request(new URL(request.path, base.issuer), { method: request.method, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
+    const sent = wholeRequest(new URL(request.path, base.issuer), { method: request.method, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
     resetExchanges();
     const reads = watchDatabase(db);
-    await recordExchange(sent, (message) => op.fetch(message)).catch(() => undefined);
+    let answered: Response | undefined;
+    await recordExchange(sent, async (message) => (answered = await op.fetch(message))).catch(() => undefined);
     const [exchange] = takeExchanges();
     if (exchange === undefined) throw new Error('The OP of the map recorded no exchange.');
+    // The cookies the response sets, which a page's Response drops from its headers.
+    const response = exchange.response === undefined || answered === undefined ? exchange.response : { ...exchange.response, headers: responseHeaders(answered) };
     return {
       request: exchange.request,
-      ...(exchange.response === undefined ? {} : { response: exchange.response }),
+      ...(response === undefined ? {} : { response }),
       ...(exchange.error === undefined ? {} : { error: exchange.error }),
       ran: byRepositoryPath(exchange.ran),
       store: storeAccess(reads, base.plain, db),

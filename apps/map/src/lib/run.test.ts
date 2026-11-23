@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { walkFlow } from '@maronn-openid-connect/map-analysis/walk';
-import type { Branch, FlowTree, MapData, Selection, TreeNode, WayRequest } from '../types';
+import type { Branch, FlowTree, MapData, Selection, TreeNode, WaySample } from '../types';
 import { blankDraft, draftOf, draftProblem, endingWay, failingCalls, filesOf, jsonValueOf, oauthErrorOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from './run';
 
-const example: Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'> = {
+const example: Pick<WaySample, 'method' | 'path' | 'params' | 'headers'> = {
   method: 'POST',
   path: '/token',
   params: [
@@ -17,7 +17,7 @@ const example: Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'> = {
 };
 
 describe('draftOf', () => {
-  it('should write on the parameters and headers a test sent, with the kind of its body', () => {
+  it('should write on the parameters and headers of a request, with the kind of its body', () => {
     const json = draftOf({ method: 'POST', path: '/register', params: [{ name: 'redirect_uris', value: '["https://rp.example.com/cb"]', in: 'json' }], headers: [['content-type', 'application/json']] });
     const query = draftOf({ method: 'GET', path: '/authorize', params: [{ name: 'client_id', value: 'client-1', in: 'query' }], headers: [] });
 
@@ -231,6 +231,31 @@ describe('endingWay', () => {
     const stepped = walkFlow(ROOT, { s0b0s0: 'fails' });
 
     expect([endingWay(SELECTIONS, failed)?.kind, endingWay(SELECTIONS, answered)?.kind, endingWay(SELECTIONS, stepped)]).toEqual(['failure', 'exit', undefined]);
+  });
+});
+
+describe('endingWay, of a step that answers itself', () => {
+  it('should name the way into the innermost step the end is in, and not a step whose id only starts the same', () => {
+    const answering: FlowTree = {
+      ...ROOT,
+      nodes: [
+        {
+          id: 's2',
+          kind: 'block',
+          lines: [2, 3],
+          code: '[dispatch]',
+          step: { id: 'dispatch', label: 'dispatch' },
+          branches: [side('body', 'dispatch', [{ id: 's2s0', kind: 'if', lines: [3, 3], code: 'if (early)', form: 'guard', branches: [side('true', '成立', [{ id: 's2s0t0', kind: 'return', lines: [3, 3], code: 'return early' }]), side('false', '不成立')] }])],
+        },
+        { id: 's21', kind: 'return', lines: [4, 4], code: 'return respond(c)' },
+      ],
+    };
+    const steps: Selection[] = [
+      { kind: 'step', name: 'dispatch', decisions: {}, target: 's2' },
+      { kind: 'step', name: 'other', decisions: {}, target: 's21' },
+    ];
+
+    expect([endingWay(steps, walkFlow(answering, { s2s0: 'true' }))?.name, endingWay([steps[0] as Selection], walkFlow(answering, { s2s0: 'false' }))]).toEqual(['dispatch', undefined]);
   });
 });
 

@@ -257,51 +257,55 @@ export interface FrameFile {
 }
 
 /**
- * data/requests/<hash>.json: the requests measured API tests sent that took
- * the ready-made ways of a root (an endpoint body), which the flow view
- * shows as the request of the way chosen. The test catalog writes it from
- * the examples of the cases of the tests page (packages/test-catalog
- * examples.ts): only requests a line of their test's own code sent, each
- * with that line.
+ * data/requests/<hash>.json: for the ready-made ways of a root (an endpoint
+ * body), the request the OP of the map (packages/map-sandbox) was seen to
+ * take each with, which the flow view starts the request of the way chosen
+ * from. The build finds them by running the requests the OP tries and
+ * reading each with the rules the test catalog reads a request with
+ * (packages/test-catalog samples.ts); a way none of them took is not listed.
+ * The tests play no part: what a test sent is the tests page's to show.
  */
 export interface RootRequests {
-  version: 1;
+  version: 2;
   /** The root the ways are of, by frame id. */
   root: string;
-  /** The source whose tests sent them (`hono`: express and fastify, generated from it, share its roots). */
+  /** The source of the OP that ran them (`hono`: express and fastify, generated from it, share its roots). */
   source: string;
   /** The endpoint of the source, by id. */
   endpoint: string;
-  /** The ways some request took, in the order of the cases. */
+  /** The ways a request took, in the order of the cases. */
   ways: WayRequests[];
 }
 
-/** The requests that took one ready-made way of a root (a Selection, found by its kind and target). */
+/** The request the OP of the map took one ready-made way of a root with (a Selection, found by its kind and target). */
 export interface WayRequests {
-  /** The case of the tests page it is (`#/endpoint/<source>/<endpoint>?case=<id>`). */
+  /** The case it is (EndpointCase.id of the test catalog). */
   id: string;
   kind: Selection['kind'];
   name: string;
   /** Selection.target. */
   target: string;
-  /** How many recorded requests took it in all (at least examples.length). */
-  count: number;
-  /** The best of them, at most 3 (examples.ts attachExamples). */
-  examples: WayRequest[];
+  /** The first of the requests the build ran on the OP of the map that took it. */
+  sample: WaySample;
 }
 
-/** A request a test's own code sent that took a way, as the flow view shows it. */
-export interface WayRequest {
-  /** The test that sent it, and the line of its code that sent it with that line's code. */
-  test: { id: string; title: string; file: string; line: number; code: string };
+/** A parameter a request sends: in its query, as a field of its form body, or as a top-level member of its JSON body. */
+export interface RequestParam {
+  name: string;
+  value: string;
+  in: 'query' | 'form' | 'json';
+}
+
+/** A request the OP of the map took a way with, as the flow view shows it, and the status the OP answered with. */
+export interface WaySample {
   method: string;
   /** The path of its URL, without the query. */
   path: string;
   /** What it sent in its query and its body: the fields of a form, the top-level members of a JSON object. */
-  params: Array<{ name: string; value: string; in: 'query' | 'form' | 'json' }>;
+  params: RequestParam[];
   /** Its headers (lower-case names, as sent) but Host and Content-Length. */
   headers: Array<[string, string]>;
-  /** The status of the response, and its reason phrase when it had one. */
+  /** The status the OP answered with, and its reason phrase when it had one. */
   status: number;
   statusText?: string;
 }
@@ -501,9 +505,9 @@ export interface MapData {
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
   /**
-   * With a measured run of the tests: the url of the requests that took the
-   * ways of each root (RootRequests), by the root's frame id; a root no
-   * recorded request took has none. Absent without a measured run.
+   * The url of the requests the OP of the map took the ways of each root
+   * with (RootRequests), by the root's frame id; a root no request took has
+   * none. Absent when the build ran no request on the OP of the map.
    */
   requests?: Record<string, string>;
   /** The url of the changes that reached main (HistoryData, `./data/history/<hash>.json`); absent when the build read no git history. */

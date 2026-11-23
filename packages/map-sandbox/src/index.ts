@@ -11,8 +11,9 @@
  * the rules the test catalog reads a test's request with (map-analysis
  * observe.ts).
  *
- * The OP sends no request out: the fetch it would send to a client's
- * jwks_uri or to a request_uri refuses.
+ * The OP sends no request out: the fetch it is given for a client's
+ * jwks_uri or a request_uri refuses, and so does the fetch of the global
+ * scope while a request runs.
  */
 import { recordExchange, resetExchanges, takeExchanges } from '@maronn-openid-connect/test-reach/exchanges';
 import { createApp } from '../../../apps/hono/src/oidc-provider/app.js';
@@ -21,11 +22,12 @@ import type { MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/mem
 import { createProviderStores } from '../../../apps/hono/src/oidc-provider/db/memory/stores.js';
 import { rs256Key, staticKeyProvider } from '../../../apps/hono/src/test-support/keys.js';
 import type * as Api from './api.js';
+import { candidateRequests, SAMPLED_ENDPOINTS } from './candidates.js';
 import { atClock } from './clock.js';
 import { PREMISES } from './premises.js';
 import { seededDatabase } from './seed.js';
 
-export { PREMISES };
+export { candidateRequests, PREMISES, SAMPLED_ENDPOINTS };
 
 /** The global the OP's memory database is kept on (db/memory/database.ts createDatabase): a request's own while it runs. */
 const DATABASE_KEY = '__oidcMemoryDatabase';
@@ -43,9 +45,33 @@ function byRepositoryPath(ran: Record<string, Api.RanInFile>): Record<string, Ap
   return Object.fromEntries(Object.entries(ran).map(([path, counters]) => [path.replace(/^\//, ''), counters]));
 }
 
-/** Run a request on the OP of the map (see the module comment and api.ts). */
-export async function runRequest(request: Api.SandboxRequest): Promise<Api.SandboxRun> {
-  return atClock(PREMISES.now * 1000, async () => {
+/** The run before the next: a request waits for it, as the clock and the counters a run reads are the process's. */
+let previous: Promise<unknown> = Promise.resolve();
+
+/** Run a request on the OP of the map (see the module comment and api.ts), after the runs asked for before it. */
+export function runRequest(request: Api.SandboxRequest): Promise<Api.SandboxRun> {
+  const run = previous.then(
+    () => runAlone(request),
+    () => runAlone(request),
+  );
+  previous = run.catch(() => undefined);
+  return run;
+}
+
+/** Run with the fetch of the global scope refusing, and give it back after: no part of the OP sends a request out. */
+async function withoutFetch<T>(run: () => Promise<T>): Promise<T> {
+  const fetchBefore = globalThis.fetch;
+  globalThis.fetch = refuseFetch;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+}
+
+/** Run a request on the OP of the map, no other running. */
+async function runAlone(request: Api.SandboxRequest): Promise<Api.SandboxRun> {
+  return atClock(PREMISES.now * 1000, () => withoutFetch(async () => {
     seeded ??= seededDatabase(PREMISES);
     key ??= rs256Key('map-sandbox-rs256-key');
     const db = structuredClone(await seeded);
@@ -75,8 +101,10 @@ export async function runRequest(request: Api.SandboxRequest): Promise<Api.Sandb
     } finally {
       global[DATABASE_KEY] = before;
     }
-  });
+  }));
 }
 
 runRequest satisfies typeof Api.runRequest;
 PREMISES satisfies typeof Api.PREMISES;
+candidateRequests satisfies typeof Api.candidateRequests;
+SAMPLED_ENDPOINTS satisfies typeof Api.SAMPLED_ENDPOINTS;

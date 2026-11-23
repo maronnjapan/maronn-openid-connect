@@ -25,6 +25,7 @@ import {
   type TraceState,
 } from '../lib/trace';
 import { locationOf } from '../lib/model';
+import { endingWay, wayName } from '../lib/run';
 import { nodeWords } from '../lib/words';
 import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
@@ -37,6 +38,7 @@ import { SelectionBar } from './SelectionBar';
 import { rootedName, TraceView, type MemberDiff } from './TraceView';
 import { useFrames } from './useFrames';
 import { useRootRequests } from './useRequests';
+import { useRequestRun } from './useRun';
 
 /** What a trace starts from, what it shows and what it tells the page (see Trace). */
 export interface TraceProps {
@@ -69,7 +71,7 @@ export interface TraceProps {
    * way begins, and its steps in their order, whose kinds and values the
    * scenes and the chart say. Absent for the trace of a function.
    */
-  endpoint?: { name: string; steps: readonly FlowStep[] } | undefined;
+  endpoint?: { name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -218,8 +220,10 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const loading = rows.some((row) => row.kind === 'loading');
   const root = frames.trees.get(rootId);
   const selections = useMemo(() => [...(frames.selections.get(rootId) ?? []).filter((selection) => selection.kind !== 'change'), ...extraSelections], [frames.selections, rootId, extraSelections]);
-  // The requests the code of the API tests sent that took the ways of the root: the flow view shows the one of the way chosen.
+  // The requests the OP of the map took the ways of the root with: the flow view starts the request of the way chosen from its one.
   const requests = useRootRequests(data, rootId);
+  // The request the reader runs in the flow view on the OP of the map: while the playback follows it, the sides it was seen to take are the trace's choice.
+  const requestRun = useRequestRun({ data, rootId, root, trees: frames.trees, state, onState, enabled, hasFrame });
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
@@ -757,6 +761,12 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     const on = new Set(nodesBelow(root.nodes, enabled).map((node) => node.id));
     return selections.filter((selection) => on.has(selection.target.split('.')[0] ?? ''));
   }, [selections, root, enabled]);
+  // The ready-made way the request run in the flow view ended by, while the playback follows it.
+  const runEnding = useMemo(() => {
+    if (requestRun.state?.status !== 'done' || !requestRun.state.follow || walked === undefined) return undefined;
+    const ending = endingWay(flowSelections, walked);
+    return ending === undefined ? undefined : wayName(ending);
+  }, [requestRun.state, walked, flowSelections]);
   // The flow view's stage: the frame's diagram drawn as a flowchart (lib/flowchart.ts), the root of an endpoint starting at the endpoint and saying what its steps hand on.
   const chart = useMemo(
     () =>
@@ -825,6 +835,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               endpoint={endpoint}
               hasFrame={hasFrame}
               loading={loading}
+              run={requestRun}
+              ending={runEnding}
+              unrunnable={sourceOf(framework) === 'hono' ? undefined : 'Next.js の OP は、地図の中ではまだ動かせません（動かせるのは hono の OP と、そこから生成した Express・Fastify の OP です）。'}
               deeper={enterable.length}
               canFold={state.open.length > 0}
               onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}

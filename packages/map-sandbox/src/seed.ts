@@ -41,6 +41,7 @@ export async function seededDatabase(premises: Premises): Promise<MemoryDatabase
         subject: code.subject,
         nonce: code.nonce,
         expiresAt: premises.now + code.expiresIn,
+        used: code.used ?? false,
         ...(code.pkce === undefined ? {} : { codeChallenge: code.pkce.challenge, codeChallengeMethod: code.pkce.method }),
       }),
     );

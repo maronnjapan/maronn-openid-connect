@@ -12,11 +12,11 @@
 import { FrameLocator, RequestRun, seenDecisions, throughTries, type RanInFile, type RunSources } from '@maronn-openid-connect/map-analysis/observe';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
 import type { SandboxRequest } from '@maronn-openid-connect/map-sandbox';
-import type { Decisions, FlowTree, MapData, Selection, WayRequest } from '../types';
+import type { Decisions, FlowTree, MapData, RequestParam, Selection, WaySample } from '../types';
 import { decisionKey, frameIds } from './trace';
 
 /** Where a parameter is sent: the query of the URL, a field of a form body, a member of a JSON body. */
-export type ParamPlace = WayRequest['params'][number]['in'];
+export type ParamPlace = RequestParam['in'];
 
 /** The body a request sends: a form (`application/x-www-form-urlencoded`), a JSON object, or none. */
 export type BodyKind = 'form' | 'json' | 'none';
@@ -54,8 +54,8 @@ function bodyKindOf(method: string, params: RequestDraft['params'], headers: Rea
   return bodiless(method) ? 'none' : 'form';
 }
 
-/** A request a test sent, to write on: its method, path, parameters and headers. */
-export function draftOf(example: Pick<WayRequest, 'method' | 'path' | 'params' | 'headers'>): RequestDraft {
+/** A request to write on (the one the OP of the map took a way with): its method, path, parameters and headers. */
+export function draftOf(example: Pick<WaySample, 'method' | 'path' | 'params' | 'headers'>): RequestDraft {
   const params = example.params.map((param) => ({ ...param }));
   const headers = example.headers.map(([name, value]): [string, string] => [name, value]);
   return { method: example.method, path: example.path, body: bodyKindOf(example.method, params, headers), params, headers };
@@ -166,7 +166,9 @@ export function failingCalls(walked: Pick<FlowWalk, 'stops'>, hasFrame: (id: str
 /**
  * The ready-made way a walk ended by: for a failure, the way of that
  * failure (its target is the throw the walk reached); else the way of the
- * end of the root frame it reached (its return). Undefined for none.
+ * end of the root frame it reached (its return), or for an end no way
+ * names, the way into the step it is in (a step that answers itself).
+ * Undefined for none.
  */
 export function endingWay(selections: readonly Selection[], walked: Pick<FlowWalk, 'stops'>): Selection | undefined {
   const thrown = walked.stops.find((stop) => stop.event === 'throws');
@@ -175,7 +177,13 @@ export function endingWay(selections: readonly Selection[], walked: Pick<FlowWal
     return selections.find((selection) => selection.kind === 'failure' && selection.target === key);
   }
   const end = [...walked.stops].reverse().find((stop) => stop.depth === 0 && (stop.event === 'returns' || stop.event === 'ends'));
-  return end === undefined ? undefined : selections.find((selection) => selection.kind === 'exit' && selection.target === end.node.id);
+  if (end === undefined) return undefined;
+  const exit = selections.find((selection) => selection.kind === 'exit' && selection.target === end.node.id);
+  if (exit !== undefined) return exit;
+  // An end no exit names (a step that answers itself): the way into the innermost step it is in.
+  const within = (target: string) => end.node.id === target || (end.node.id.startsWith(target) && !/^\d/.test(end.node.id.slice(target.length)));
+  const steps = selections.filter((selection) => selection.kind === 'step' && !selection.target.includes('.') && within(selection.target));
+  return steps.sort((a, b) => b.target.length - a.target.length)[0];
 }
 
 /** A ready-made way in words, as the list of the ways names it: a failure by its error (and the function that throws it below the root), an end by its name. */

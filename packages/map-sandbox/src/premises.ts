@@ -39,6 +39,8 @@ export interface PremiseCode {
   pkce?: { verifier: string; challenge: string; method: 'S256' };
   /** How many seconds after the clock it expires. */
   expiresIn: number;
+  /** A request exchanged it already. */
+  used?: boolean;
 }
 
 /** A refresh token the OP issued. */
@@ -78,6 +80,10 @@ export const PREMISES: Premises = {
   now: 1767225600,
   clients: [
     { clientId: 'client-1', clientSecret: 'client-1-secret-value', authMethod: 'client_secret_basic', grantTypes: ['authorization_code', 'refresh_token'], redirectUris: [REDIRECT_URI] },
+    // Another client of the code flow, which sends its secret in the body: the codes and tokens of client-1 are not its own.
+    { clientId: 'client-2', clientSecret: 'client-2-secret-value', authMethod: 'client_secret_post', grantTypes: ['authorization_code', 'refresh_token'], redirectUris: [REDIRECT_URI] },
+    // The client of the client_credentials tests (features/client-credentials), with the scopes of its resource server.
+    { clientId: 'service-1', clientSecret: 'service-1-secret-value', authMethod: 'client_secret_basic', grantTypes: ['client_credentials'], redirectUris: [], scope: ['reports.read', 'reports.write'] },
   ],
   codes: [
     {
@@ -90,6 +96,19 @@ export const PREMISES: Premises = {
       // RFC 7636 §4.1 / §4.2: a 46-character verifier and its S256 challenge.
       pkce: { verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz', challenge: 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU', method: 'S256' },
       expiresIn: 300,
+    },
+    // A code issued without PKCE: the OP requires PKCE, so it cannot be exchanged.
+    { code: 'code-2', clientId: 'client-1', redirectUri: REDIRECT_URI, scope: ['openid'], subject: 'user-1', nonce: 'nonce-1', expiresIn: 300 },
+    // A code a request exchanged already.
+    {
+      code: 'code-used',
+      clientId: 'client-1',
+      redirectUri: REDIRECT_URI,
+      scope: ['openid'],
+      subject: 'user-1',
+      pkce: { verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz', challenge: 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU', method: 'S256' },
+      expiresIn: 300,
+      used: true,
     },
   ],
   refreshTokens: [{ token: 'refresh-1', clientId: 'client-1', subject: 'user-1', scope: ['openid', 'profile', 'offline_access'], expiresIn: 86400 }],

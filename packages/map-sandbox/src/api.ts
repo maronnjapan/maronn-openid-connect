@@ -43,11 +43,17 @@ export interface SandboxRun {
 
 /**
  * Run a request on the OP of the map: a new OP on a memory database seeded
- * with the premises, its clock stopped at theirs, with what ran counted. It
- * rejects when the request cannot be made (a body on a GET, a header name
- * that is not one).
+ * with the premises, its clock stopped at theirs, with what ran counted.
+ * Requests asked for together run one after another. It rejects when the
+ * request cannot be made (a body on a GET, a header name that is not one).
  */
 export declare function runRequest(request: SandboxRequest): Promise<SandboxRun>;
 
 /** What the OP of the map holds when a request starts. */
 export declare const PREMISES: Premises;
+
+/** The endpoints the map tries requests at, by id (candidates.ts). */
+export declare const SAMPLED_ENDPOINTS: readonly string[];
+
+/** The requests to try at an endpoint to find a request for each of its ways, in the order to try them (candidates.ts). */
+export declare function candidateRequests(endpoint: string): SandboxRequest[];

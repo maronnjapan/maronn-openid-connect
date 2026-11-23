@@ -237,7 +237,7 @@ function reaches(walked: FlowWalk, way: CaseWay): boolean {
 }
 
 /** The request of an example: the path and the query of its URL, and its host. */
-function requestOf(exchange: RawExchange): CaseExample['request'] | undefined {
+export function requestOf(exchange: Pick<RawExchange, 'request'>): CaseExample['request'] | undefined {
   let url: URL;
   try {
     url = new URL(exchange.request.url);
@@ -334,6 +334,8 @@ export interface ExampleCounts {
   took: number;
   /** The requests left out because no line of their test sent them (SentRequest.sent). */
   unpinned: number;
+  /** The cases that got a sample from the requests run on the OP of the map (samples.ts). */
+  sampled?: number;
 }
 
 /**

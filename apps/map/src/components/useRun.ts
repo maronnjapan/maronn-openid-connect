@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
-import type { PreparedPremises, SandboxRequest, SandboxRun } from '@maronn-openid-connect/map-sandbox';
+import type { PreparedPremises, Premises, SandboxRequest, SandboxRun } from '@maronn-openid-connect/map-sandbox';
 import type { Decisions, FlowTree, MapData, SourceDocument } from '../types';
 import { walkTrace } from '../lib/playback';
 import { failingCalls, filesOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from '../lib/run';
 import type { TraceState } from '../lib/trace';
 import type { SandboxAnswer, SandboxAsk } from '../sandbox-worker';
-import { fetchPremises } from './useRequests';
+import { fetchPremises, madePremises, usePremisesVersion } from './useRequests';
 
 // ---------------------------------------------------------------------------
 // The worker
@@ -14,7 +14,7 @@ import { fetchPremises } from './useRequests';
 /** The worker the OP of the map runs in: made when the first request is run, kept for the page. */
 let worker: Worker | undefined;
 /** The requests sent to the worker and not answered yet, by id. */
-const waiting = new Map<number, { resolve: (run: SandboxRun) => void; reject: (error: Error) => void }>();
+const waiting = new Map<number, { resolve: (answer: SandboxRun | PreparedPremises) => void; reject: (error: Error) => void }>();
 let lastId = 0;
 
 /** The worker, made on first use; a worker that failed to load is dropped, its requests failed, so the next request makes another. */
@@ -26,6 +26,7 @@ function sandboxWorker(): Worker {
     const pending = waiting.get(answer.id);
     waiting.delete(answer.id);
     if ('run' in answer) pending?.resolve(answer.run);
+    else if ('premises' in answer) pending?.resolve(answer.premises);
     else pending?.reject(new Error(answer.error));
   });
   made.addEventListener('error', (event) => {
@@ -38,22 +39,33 @@ function sandboxWorker(): Worker {
   return made;
 }
 
-/** The premises to run a request on (MapData.premises): none for a build that made none, and a failure that says it was they that could not be read. */
+/** The premises to run a request on: those the reader made in the page, else those of the build (MapData.premises; none for a build that made none, and a failure that says it was they that could not be read). */
 function premisesOf(data: MapData): Promise<PreparedPremises | undefined> {
+  const made = madePremises();
+  if (made !== undefined) return Promise.resolve(made.premises);
   if (data.premises === undefined) return Promise.resolve(undefined);
   return fetchPremises(data.premises).catch((error: unknown) => {
     throw new Error(`地図の OP の前提（OP が持っているもの）を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`);
   });
 }
 
-/** Run a request on the OP of the map, in its worker, on the premises given (none: the OP as it is configured). */
-export function runInSandbox(request: SandboxRequest, premises: PreparedPremises | undefined): Promise<SandboxRun> {
+/** Send the worker an ask, and wait for its answer. */
+function ask(question: Omit<SandboxAsk, 'id'>): Promise<SandboxRun | PreparedPremises> {
   return new Promise((resolve, reject) => {
     lastId += 1;
-    const ask: SandboxAsk = { id: lastId, request, ...(premises === undefined ? {} : { premises }) };
-    waiting.set(ask.id, { resolve, reject });
-    sandboxWorker().postMessage(ask);
+    waiting.set(lastId, { resolve, reject });
+    sandboxWorker().postMessage({ id: lastId, ...question } as SandboxAsk);
   });
+}
+
+/** Run a request on the OP of the map, in its worker, on the premises given (none: the OP as it is configured). */
+export function runInSandbox(request: SandboxRequest, premises: PreparedPremises | undefined): Promise<SandboxRun> {
+  return ask({ request, ...(premises === undefined ? {} : { premises }) }) as Promise<SandboxRun>;
+}
+
+/** Make premises from grants the reader changed, on the OP of the map in its worker (the page loads it on the first ask). */
+export function prepareInSandbox(plan: Premises): Promise<PreparedPremises> {
+  return ask({ prepare: plan }) as Promise<PreparedPremises>;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +160,13 @@ function sameChoice(a: Decisions | undefined, b: Decisions | undefined): boolean
  */
 export function useRequestRun({ data, rootId, root, trees, state, onState, enabled, hasFrame }: RequestRunInput): RequestRun {
   const [runState, setRunState] = useState<RequestRunState | undefined>(undefined);
+  // A run is of the premises it ran on: when the premises in use change (made again, or gone back to the build's), it is forgotten, and so is one still running.
+  const version = usePremisesVersion();
+  const [ranVersion, setRanVersion] = useState(version);
+  if (ranVersion !== version) {
+    setRanVersion(version);
+    if (runState !== undefined) setRunState(undefined);
+  }
   // The id of the last run: never given again, so a run after one forgotten is not taken for it.
   const lastRun = useRef(0);
   // The choice the run last gave the trace, and the frames it opened, for the run it was given for.

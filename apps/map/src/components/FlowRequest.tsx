@@ -1,41 +1,22 @@
 import { useId, useState, type FormEvent } from 'react';
 import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
-import { PremisesPanel, StoredReads, StoredWrites } from './StoredRecords';
+import { Rows } from './Rows';
+import { PremisesPanel } from './PremisesPanel';
+import { StoredReads, StoredWrites } from './StoredRecords';
+import { carryOver, valuesBetween } from '../lib/premises';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
 import { blankDraft, bodiless, draftOf, draftProblem, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
 import type { RootRequests, Selection, WaySample } from '../types';
-import type { PremisesState, RootRequestsState } from './useRequests';
+import type { PreparedPremises } from '@maronn-openid-connect/map-sandbox';
+import type { CurrentPremises, RootRequestsState } from './useRequests';
 import type { RequestRunState } from './useRun';
 
 /** The words of the body of a request, by its kind. */
 const BODY_WORDS: Record<RequestDraft['body'], string> = { form: 'ボディ（フォーム）', json: 'ボディ（JSON）', none: 'ボディ' };
 
-/** The rows of one place of a request (its query, its body, or its headers), each a name and a value to write, with a row to add. */
-function Rows({ label, rows, onChange, onAdd, onRemove, note }: { label: string; rows: ReadonlyArray<{ name: string; value: string }>; onChange: (index: number, name: string, value: string) => void; onAdd: () => void; onRemove: (index: number) => void; note?: (row: { name: string; value: string }) => string | undefined }) {
-  return (
-    <fieldset className="req-rows">
-      <legend>{label}</legend>
-      {rows.length === 0 ? <p className="note">ありません。</p> : null}
-      <ul>
-        {rows.map((row, index) => {
-          const said = note?.(row);
-          return (
-            <li key={index} className="req-row">
-              <input className="mono req-name" aria-label={`${label}の${index + 1} 行目の名前`} value={row.name} spellCheck={false} autoComplete="off" onChange={(event) => onChange(index, event.target.value, row.value)} />
-              <input className="mono req-input" aria-label={`${row.name || `${label}の${index + 1} 行目`}の値`} value={row.value} spellCheck={false} autoComplete="off" onChange={(event) => onChange(index, row.name, event.target.value)} />
-              <button type="button" className="icon req-remove" aria-label={`${row.name || `${index + 1} 行目`}を消す`} title="この行を消す" onClick={() => onRemove(index)}>
-                ×
-              </button>
-              {said !== undefined ? <span className="req-note">{said}</span> : null}
-            </li>
-          );
-        })}
-      </ul>
-      <button type="button" className="link small" onClick={onAdd}>
-        + 行を足す
-      </button>
-    </fieldset>
-  );
+/** A request written on some premises, as written on others: their codes and tokens, grant by grant (carryOver); as it is when either is unknown or they are the same. */
+function carried(draft: RequestDraft, from: PreparedPremises | undefined, to: PreparedPremises | undefined): RequestDraft {
+  return from === undefined || to === undefined || from === to ? draft : carryOver(draft, valuesBetween(from, to));
 }
 
 /** The request the OP of the map answered the endpoint with, which the reader may copy to start a way no request is known for: the sample of an end it answered without an error, else the first sample. */
@@ -46,7 +27,7 @@ function baseSample(requests: RootRequests | undefined): { request: WaySample; w
 }
 
 /** What a request run gave: the response, the way it ended by, and whether the playback follows the way it took. */
-function RunResult({ run, ending, assumed, onFollow, premises }: { run: RequestRunState; ending: string | undefined; assumed: number; onFollow: () => void; premises: PremisesState }) {
+function RunResult({ run, ending, assumed, onFollow, premises }: { run: RequestRunState; ending: string | undefined; assumed: number; onFollow: () => void; premises: CurrentPremises['state'] }) {
   if (run.status === 'running') return <p className="note req-result">地図の OP で実行しています…（最初の実行では OP を読み込みます）</p>;
   if (run.status === 'failed') return <p className="note req-result req-problem">実行できませんでした: {run.message}</p>;
   const { response } = run.run;
@@ -102,10 +83,12 @@ function RunResult({ run, ending, assumed, onFollow, premises }: { run: RequestR
 export interface FlowRequestProps {
   /** The requests the OP of the map took the ways of the root with (useRootRequests). */
   state: RootRequestsState;
-  /** What the OP of the map holds before any request (usePremises). */
-  premises: PremisesState;
+  /** What the OP of the map holds before any request: the premises of the build, or those the reader made in the page (useCurrentPremises). */
+  premises: CurrentPremises;
   /** The ready-made way chosen; undefined for おまかせ, a way the reader chose side by side, or the way of a request run. */
   selection: Selection | undefined;
+  /** A request run is played: the request keeps the way it was taken from, whatever way the run took. */
+  keep: boolean;
   /** How many decisions the way played takes on an assumed side. */
   assumed: number;
   /** The framework the map shows: express and fastify, generated from hono, run on the OP of hono, and say so. */
@@ -141,11 +124,11 @@ export interface FlowRequestProps {
  * requests that made them are listed to write with. The tests play no part
  * here: what a test sent is the tests page's to show.
  */
-export function FlowRequest({ state, premises, selection, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
+export function FlowRequest({ state, premises, selection, keep, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
   const headingId = useId();
-  // The way the request was taken from: a ready-made way picked later takes its place, while the way of a run (no ready-made way) keeps it.
+  // The way the request was taken from: a ready-made way picked later takes its place, and so does no way (おまかせ, sides the reader chose), while the way of a run keeps it.
   const [base, setBase] = useState<{ selection: Selection | undefined }>({ selection });
-  if (selection !== undefined && selection !== base.selection) setBase({ selection });
+  if (selection !== base.selection && (selection !== undefined || !keep)) setBase({ selection });
   const requests = state.kind === 'ready' ? state.requests : undefined;
   const way = wayRequestsOf(requests, base.selection);
   // The request the OP of the map took the way with; a way no request took starts from no parameters, as a request of another way would not take it.
@@ -153,17 +136,21 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
   const borrowable = base.selection === undefined || way !== undefined ? undefined : baseSample(requests);
   const originKey = `${base.selection?.kind ?? ''}|${base.selection?.target ?? ''}|${way?.id ?? ''}`;
   const origin = shown !== undefined ? draftOf(shown) : endpoint !== undefined ? blankDraft(endpoint.method, endpoint.path) : undefined;
-  // What the reader wrote over it, and the way of the request it was copied from, when the reader copied one.
-  const [edited, setEdited] = useState<{ key: string; draft: RequestDraft; copiedFrom?: string } | undefined>(undefined);
-  const draft = edited?.key === originKey ? edited.draft : origin;
+  // What the reader wrote over it, the premises it was written on, and the way of the request it was copied from, when the reader copied one.
+  const [edited, setEdited] = useState<{ key: string; draft: RequestDraft; on: PreparedPremises | undefined; copiedFrom?: string } | undefined>(undefined);
+  // The premises a request runs on now: a request written on others (the samples on the build's) is carried over to them, its codes and tokens those of the same grants.
+  const current = premises.made?.premises ?? premises.build;
   const changed = edited?.key === originKey;
+  const draft = changed && edited !== undefined ? carried(edited.draft, edited.on, current) : origin === undefined ? undefined : carried(origin, premises.build, current);
   const copiedFrom = changed ? edited?.copiedFrom : undefined;
-  const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next, ...(copiedFrom === undefined ? {} : { copiedFrom }) });
+  // Once the reader writes over a copy, it is the reader's request, no longer the copy said not to take the case.
+  const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next, on: current });
 
   let note: string;
   if (base.selection === undefined) note = '「道筋」からケースを選ぶと、そのケースを通るリクエストから始めます。値を書いて実行すると、地図の OP で動かし、通った道筋を再生します。';
   else if (state.kind === 'loading') note = '読み込んでいます…';
   else if (state.kind === 'failed') note = `このケースを通るリクエストを読み込めませんでした: ${state.message}`;
+  else if (shown !== undefined && premises.made !== undefined) note = '地図のビルドの前提で、このケースを通ると確かめたリクエストです。コードとトークンは、いまの前提の同じグラントのものに置き換えています。いまの前提でもこのケースを通るかは、実行して確かめます。';
   else if (shown !== undefined) note = '地図の OP で、このケースを通ると確かめたリクエストです。値を書き換えて実行すると、通る道筋がどう変わるかを再生します。';
   else if (copiedFrom !== undefined) note = `地図の OP が「${copiedFrom}」で応えたリクエストを写したものです。このケースは通りません。値を書き換えて実行すると、通った道筋を再生します。`;
   else note = 'このケースを通るリクエストは、地図の OP ではまだ見つかっていません。フローはこのケースの道筋を再生しています（決まらない分岐は仮の側）。リクエストを書いて実行すると、そのリクエストが通った道筋に替わります。';
@@ -182,12 +169,14 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
   // What the request reads of the records the OP holds: that of the request run, else that of the request the view started from.
   const ranStore = run?.status === 'done' ? run.run.store : undefined;
   const sampleStore = shown?.store;
+  // The reads of the sample were seen on the premises of the build: on premises made again they may not be what the request reads.
   const reads =
     ranStore !== undefined
       ? { reads: ranStore.read, title: '実行したリクエストが読んだ、OP の保存済みの情報' }
-      : sampleStore !== undefined
+      : sampleStore !== undefined && premises.made === undefined
         ? { reads: sampleStore.read, title: 'このリクエストが読む、OP の保存済みの情報', note: changed ? '書き換える前のリクエストが読むものです。実行すると、書き換えたリクエストが読んだものに替わります。' : undefined }
         : undefined;
+  const noReads = premises.made !== undefined ? '前提を作り直したので、このリクエストが読むものは、実行して確かめます（ビルドの前提で読んだものは出しません）。実行すると、この前提で読んだもの、保存したものを出します。' : '実行すると、このリクエストが OP の保存済みの情報（認可コード、トークン、クライアントなど）から何を読み、何を保存したかを出します。';
   const groups: Array<{ place: ParamPlace; label: string }> = [{ place: 'query', label: PARAM_PLACES.query }, ...(bodiless(draft.method) ? [] : [{ place: draft.body === 'json' ? ('json' as const) : ('form' as const), label: BODY_WORDS[draft.body] }])];
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -200,20 +189,21 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
         <h4 id={headingId}>リクエスト</h4>
       </div>
       <p className="note req-empty">{note}</p>
-      {reads !== undefined ? <StoredReads reads={reads.reads} premises={premises} title={reads.title} note={reads.note} /> : <p className="note">実行すると、このリクエストが OP の保存済みの情報（認可コード、トークン、クライアントなど）から何を読み、何を保存したかを出します。</p>}
+      {reads !== undefined ? <StoredReads reads={reads.reads} premises={premises.state} title={reads.title} note={reads.note} /> : <p className="note">{noReads}</p>}
+      <p className="note">前提（認可リクエストのスコープ、クライアントの grant_types など）は、下の「地図の OP が持っているもの」で書き換えて作り直せます。</p>
       <form className="req" onSubmit={submit} aria-label="実行するリクエスト">
         <p className="req-line">
           <span className="req-method">{draft.method}</span>
           <code className="req-path">{draft.path}</code>
           {shown !== undefined && !changed ? (
             <span className={`req-status req-${statusTone(shown.status)}`}>
-              → {statusLine(shown)}（地図の OP）
+              → {statusLine(shown)}（{premises.made === undefined ? '地図の OP' : 'ビルドの前提の地図の OP'}）
             </span>
           ) : null}
         </p>
         {borrowable !== undefined && !changed ? (
           <p className="note">
-            <button type="button" className="link small" onClick={() => setEdited({ key: originKey, draft: draftOf(borrowable.request), copiedFrom: borrowable.way })}>
+            <button type="button" className="link small" onClick={() => setEdited({ key: originKey, draft: carried(draftOf(borrowable.request), premises.build, current), on: current, copiedFrom: borrowable.way })}>
               地図の OP が「{borrowable.way}」で応えたリクエストを写して書き始める
             </button>
           </p>
@@ -257,7 +247,7 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
           ) : null}
         </div>
       </form>
-      {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} premises={premises} /> : null}
+      {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} premises={premises.state} /> : null}
       <PremisesPanel premises={premises} />
     </section>
   );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PremiseStep, PreparedPremises } from '@maronn-openid-connect/map-sandbox';
-import { changeWords, collectionWord, originOf, premiseRecordOf, recordsIn, shortKey, stepLine, stepNumber, timeWords, valueRows } from './premises';
+import { carryOver, changeWords, collectionWord, originOf, premiseRecordOf, recordsIn, shortKey, stepLine, stepNumber, timeWords, valueRows, valuesBetween } from './premises';
 
 /** A request of the premises: its method and URL, its headers and body, the status and headers of its answer, and what it wrote. */
 function step(grant: string, method: string, url: string, status: number, wrote: PremiseStep['wrote'], more: { headers?: Array<[string, string]>; body?: string; answer?: Array<[string, string]> } = {}): PremiseStep {
@@ -103,5 +103,20 @@ describe('the words of the premises', () => {
     expect(shortKey('a'.repeat(30) + 'b'.repeat(30))).toBe(`${'a'.repeat(22)}…${'b'.repeat(8)}`);
     expect(shortKey('code-1')).toBe('code-1');
     expect([recordsIn(PREMISES, 'codes').map((record) => record.key), recordsIn(undefined, 'codes')]).toEqual([['c1'], []]);
+  });
+});
+
+describe('carryOver', () => {
+  it('should carry a request written on premises over to premises made again: the code and the tokens of the same grant, whole in a parameter and inside a header, and leave the scope the reader wrote as written', () => {
+    const before: PreparedPremises = { ...PREMISES, grants: [{ id: 'exchanged', clientId: 'client-1', redirectUri: 'https://rp.example.com/callback', code: 'c-old', codeVerifier: 'v', tokens: { access_token: 'at-old', refresh_token: 'rt-old', scope: 'openid offline_access', token_type: 'Bearer' } }] };
+    const after: PreparedPremises = { ...PREMISES, grants: [{ id: 'exchanged', clientId: 'client-1', redirectUri: 'https://rp.example.com/callback', code: 'c-new', codeVerifier: 'v', tokens: { access_token: 'at-new', scope: 'openid', token_type: 'Bearer' } }] };
+    const draft = { method: 'POST', path: '/token', body: 'form' as const, params: [{ name: 'code', value: 'c-old', in: 'form' as const }, { name: 'refresh_token', value: 'rt-old', in: 'form' as const }, { name: 'scope', value: 'openid offline_access', in: 'form' as const }], headers: [['authorization', 'Bearer at-old'] as [string, string]] };
+
+    expect([...valuesBetween(before, after)]).toEqual([
+      ['c-old', 'c-new'],
+      ['at-old', 'at-new'],
+    ]);
+    expect(carryOver(draft, valuesBetween(before, after))).toEqual({ ...draft, params: [{ name: 'code', value: 'c-new', in: 'form' }, { name: 'refresh_token', value: 'rt-old', in: 'form' }, { name: 'scope', value: 'openid offline_access', in: 'form' }], headers: [['authorization', 'Bearer at-new']] });
+    expect(carryOver(draft, new Map())).toBe(draft);
   });
 });

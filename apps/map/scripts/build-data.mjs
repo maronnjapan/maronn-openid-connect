@@ -87,6 +87,8 @@ const { premises, samples } = await (async () => {
     return {};
   }
   const made = await sandbox.preparePremises();
+  // The premises of the map are what its pages say the OP holds: a grant the OP refused fails the build.
+  if (made.failures !== undefined) throw new Error(`The OP of the map gave no code for a grant of its premises: ${made.failures.map((failure) => failure.message).join('; ')}`);
   console.log(`premises: ${made.records.length} records, ${made.records.filter((record) => record.addedBy !== undefined).length} of them stored by the ${made.steps.length} requests that made them`);
   return { premises: made, samples: await runSamples({ endpoints: sandbox.SAMPLED_ENDPOINTS, candidates: (endpoint) => sandbox.candidateRequests(endpoint, made), run: (request) => sandbox.runRequest(request, made) }) };
 })();

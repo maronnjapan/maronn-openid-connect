@@ -1,22 +1,17 @@
 /**
- * What the OP of the map holds when a request starts: its issuer, its clock,
- * and the clients, codes and tokens issued before the request, as plain
- * data. The page shows them beside the request it edits, so the reader
- * writes a request that uses them, and the OP is seeded from them anew for
- * every request (seed.ts): the code one request exchanges is there again for
- * the next.
+ * What the OP of the map is given before any request a reader runs, as
+ * plain data: its issuer and its clock, the clients and the users it is
+ * configured with, and the grants it gives by requests (prepare.ts makes
+ * them: the codes and tokens it holds are those its own requests issued,
+ * each with the request that stored it). Every request a reader runs starts
+ * anew from what they leave: the code one request exchanges is there again
+ * for the next.
  *
- * The values are those of the tests of the token endpoint
- * (apps/hono/src/test-support/token.ts, and the code with PKCE of
- * endpoints/token/pipeline.test.ts), so a request one of those tests sends
- * takes the same way here. This module imports nothing: the page reads it
- * without the OP (`@maronn-openid-connect/map-sandbox/premises`).
- *
- * The grants are the authorizations the OP gives by requests instead
- * (prepare.ts): the authorization request of a client, the login and the
- * consent of a user, and the exchange of the code, run on the OP, so the
- * codes and tokens it holds are those its own requests issued, each with the
- * request that stored it.
+ * The clients, the users and the clock are those of the tests of the token
+ * endpoint (apps/hono/src/test-support/token.ts, the development users), so
+ * a request one of those tests sends with them takes the same way here.
+ * This module imports nothing: the page reads it without the OP
+ * (`@maronn-openid-connect/map-sandbox/premises`).
  */
 
 /** A client registered with the OP. */
@@ -32,35 +27,7 @@ export interface PremiseClient {
   scope?: string[];
 }
 
-/** An authorization code the OP issued that no request has exchanged yet. */
-export interface PremiseCode {
-  code: string;
-  clientId: string;
-  redirectUri: string;
-  scope: string[];
-  /** The user it was issued for. */
-  subject: string;
-  nonce?: string;
-  /** PKCE (RFC 7636): the verifier a request sends, and the challenge kept with the code. */
-  pkce?: { verifier: string; challenge: string; method: 'S256' };
-  /** How many seconds after the clock it expires. */
-  expiresIn: number;
-  /** A request exchanged it already. */
-  used?: boolean;
-}
-
-/** A refresh token the OP issued. */
-export interface PremiseRefreshToken {
-  token: string;
-  clientId: string;
-  /** The user it was issued for. */
-  subject: string;
-  scope: string[];
-  /** How many seconds after the clock it expires. */
-  expiresIn: number;
-}
-
-/** A user who can sign in at the login page. */
+/** A user who can sign in at the login page: one of the development users the OP registers (seed.ts), with the password the login form is sent with. */
 export interface PremiseUser {
   username: string;
   password: string;
@@ -94,8 +61,6 @@ export interface Premises {
   /** The clock while a request runs, in Unix seconds: it stands still there. */
   now: number;
   clients: PremiseClient[];
-  codes: PremiseCode[];
-  refreshTokens: PremiseRefreshToken[];
   users: PremiseUser[];
   /** The authorizations the OP gives by requests before a request of the reader, in order. */
   grants: PremiseGrant[];
@@ -132,40 +97,13 @@ export const PREMISES: Premises = {
     // The client of the client_credentials tests (features/client-credentials), with the scopes of its resource server.
     { clientId: 'service-1', clientSecret: 'service-1-secret-value', authMethod: 'client_secret_basic', grantTypes: ['client_credentials'], redirectUris: [], scope: ['reports.read', 'reports.write'] },
   ],
-  codes: [
-    {
-      code: 'code-1',
-      clientId: 'client-1',
-      redirectUri: REDIRECT_URI,
-      scope: ['openid', 'offline_access'],
-      subject: 'user-1',
-      nonce: 'nonce-1',
-      // RFC 7636 §4.1 / §4.2: a 46-character verifier and its S256 challenge.
-      pkce: { verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz', challenge: 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU', method: 'S256' },
-      expiresIn: 300,
-    },
-    // A code issued without PKCE: the OP requires PKCE, so it cannot be exchanged.
-    { code: 'code-2', clientId: 'client-1', redirectUri: REDIRECT_URI, scope: ['openid'], subject: 'user-1', nonce: 'nonce-1', expiresIn: 300 },
-    // A code a request exchanged already.
-    {
-      code: 'code-used',
-      clientId: 'client-1',
-      redirectUri: REDIRECT_URI,
-      scope: ['openid'],
-      subject: 'user-1',
-      pkce: { verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz', challenge: 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU', method: 'S256' },
-      expiresIn: 300,
-      used: true,
-    },
-  ],
-  refreshTokens: [{ token: 'refresh-1', clientId: 'client-1', subject: 'user-1', scope: ['openid', 'profile', 'offline_access'], expiresIn: 86400 }],
   // The development users of apps/hono (oidc-provider/development.ts).
   users: [
     { username: 'testuser', password: 'password' },
     { username: 'otheruser', password: 'password' },
   ],
   grants: [
-    // A code no request has exchanged yet, which a refresh token comes with (offline_access).
+    // A code no request has exchanged yet; asked with offline_access, its exchange issues a refresh token too.
     { id: 'unused', authorize: authorizationOf('openid offline_access', 'state-1', 'nonce-1'), codeVerifier: PKCE.verifier, username: 'testuser', exchange: false },
     // A code exchanged already, and the access token and the refresh token its exchange issued.
     { id: 'exchanged', authorize: authorizationOf('openid profile offline_access', 'state-2', 'nonce-2'), codeVerifier: PKCE.verifier, username: 'testuser', exchange: true },

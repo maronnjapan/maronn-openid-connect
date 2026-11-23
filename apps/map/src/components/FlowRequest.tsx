@@ -3,7 +3,7 @@ import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
 import { blankDraft, bodiless, draftOf, draftProblem, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
 import type { RootRequests, Selection, WaySample } from '../types';
-import type { RootRequestsState } from './useRequests';
+import type { PremisesState, RootRequestsState } from './useRequests';
 import type { RequestRunState } from './useRun';
 
 /** The words of the body of a request, by its kind. */
@@ -47,8 +47,8 @@ function baseSample(requests: RootRequests | undefined): { request: WaySample; w
   return found?.sample === undefined ? undefined : { request: found.sample, way: found.name.replace(/`/g, '') };
 }
 
-/** What the OP of the map holds when a request starts: what a request can use. */
-function Premises() {
+/** What the OP of the map holds when a request starts: what a request can use, the codes and tokens as the requests that made the premises left them. */
+function Premises({ premises }: { premises: PremisesState }) {
   return (
     <details className="req-premises">
       <summary>地図の OP が持っているもの（リクエストで使える値）</summary>
@@ -72,32 +72,23 @@ function Premises() {
             </dd>
           </div>
         ))}
-        {PREMISES.codes.map((code) => (
-          <div key={code.code}>
-            <dt>
-              認可コード <code className="mono">{code.code}</code>
-            </dt>
-            <dd>
-              {code.clientId} に {code.redirectUri} で、scope {code.scope.join(' ')}
-              {code.pkce !== undefined ? (
-                <>
-                  、PKCE（{code.pkce.method}）の code_verifier <code className="mono">{code.pkce.verifier}</code>
-                </>
-              ) : null}
-              、{code.expiresIn} 秒で失効
-            </dd>
-          </div>
-        ))}
-        {PREMISES.refreshTokens.map((token) => (
-          <div key={token.token}>
-            <dt>
-              リフレッシュトークン <code className="mono">{token.token}</code>
-            </dt>
-            <dd>
-              {token.clientId} に、scope {token.scope.join(' ')}
-            </dd>
-          </div>
-        ))}
+        {premises.kind === 'ready'
+          ? premises.premises.grants.map((grant) => (
+              <div key={grant.id}>
+                <dt>
+                  認可コード <code className="mono">{grant.code}</code>
+                </dt>
+                <dd>
+                  {grant.clientId} に {grant.redirectUri} で、PKCE の code_verifier <code className="mono">{grant.codeVerifier}</code>
+                  {typeof grant.tokens?.refresh_token === 'string' ? (
+                    <>
+                      。引き換え済みで、リフレッシュトークン <code className="mono">{grant.tokens.refresh_token}</code>
+                    </>
+                  ) : null}
+                </dd>
+              </div>
+            ))
+          : null}
         <div>
           <dt>ユーザー</dt>
           <dd>
@@ -109,6 +100,7 @@ function Premises() {
           </dd>
         </div>
       </dl>
+      {premises.kind === 'failed' ? <p className="note req-problem">認可コードとトークンを読み込めませんでした: {premises.message}</p> : null}
     </details>
   );
 }
@@ -169,6 +161,8 @@ function RunResult({ run, ending, assumed, onFollow }: { run: RequestRunState; e
 export interface FlowRequestProps {
   /** The requests the OP of the map took the ways of the root with (useRootRequests). */
   state: RootRequestsState;
+  /** What the OP of the map holds before any request (usePremises). */
+  premises: PremisesState;
   /** The ready-made way chosen; undefined for おまかせ, a way the reader chose side by side, or the way of a request run. */
   selection: Selection | undefined;
   /** How many decisions the way played takes on an assumed side. */
@@ -200,7 +194,7 @@ export interface FlowRequestProps {
  * are listed to write with. The tests play no part here: what a test sent is
  * the tests page's to show.
  */
-export function FlowRequest({ state, selection, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
+export function FlowRequest({ state, premises, selection, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
   const headingId = useId();
   // The way the request was taken from: a ready-made way picked later takes its place, while the way of a run (no ready-made way) keeps it.
   const [base, setBase] = useState<{ selection: Selection | undefined }>({ selection });
@@ -298,7 +292,7 @@ export function FlowRequest({ state, selection, assumed, framework, endpoint, un
         </div>
       </form>
       {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} /> : null}
-      <Premises />
+      <Premises premises={premises} />
     </section>
   );
 }

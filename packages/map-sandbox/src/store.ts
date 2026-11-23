@@ -142,12 +142,12 @@ export function watchDatabase(db: MemoryDatabase): StoreRead[] {
   return log.reads;
 }
 
-/** A value as plain JSON: a Map as an object of its entries by key, a Set as an array of its members, an object and an array member by member. */
+/** A value as plain JSON: a Map as an object of its entries by key, a Set as an array of its members, an object and an array member by member, the members of an object that are undefined left out (as JSON leaves them out). */
 export function plainOf(value: unknown): unknown {
   if (value instanceof Map) return Object.fromEntries([...Map.prototype.entries.call(value)].map(([key, member]) => [String(key), plainOf(member)]));
   if (value instanceof Set) return [...value].map(plainOf);
   if (Array.isArray(value)) return value.map(plainOf);
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, plainOf(member)]));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([, member]) => member !== undefined).map(([key, member]) => [key, plainOf(member)]));
   return value;
 }
 

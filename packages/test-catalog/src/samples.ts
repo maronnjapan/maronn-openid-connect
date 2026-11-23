@@ -9,12 +9,12 @@
  * takes a case is its sample. A case none of them takes has none; nothing
  * here guesses a request.
  */
-import type { FlowTree } from '@maronn-openid-connect/map-analysis';
+import type { FlowTree, StoreAccess } from '@maronn-openid-connect/map-analysis';
 import { RequestRun, requestOf, takes, type CaseSources, type CaseWay } from './examples.js';
 import type { RawExchange } from './model.js';
 
-/** A request run on the OP of the map: what it sent, what came back, and what ran, as a measured test's request (RawExchange). */
-export type SampleRun = Pick<RawExchange, 'request' | 'response' | 'error' | 'ran'>;
+/** A request run on the OP of the map: what it sent, what came back, and what ran, as a measured test's request (RawExchange), and what it read and wrote of the records the OP held. */
+export type SampleRun = Pick<RawExchange, 'request' | 'response' | 'error' | 'ran'> & { store?: StoreAccess };
 
 /** A request to run on the OP of the map (map-sandbox SandboxRequest). */
 export interface SampleRequest {
@@ -68,7 +68,7 @@ export function attachSamples(ways: readonly CaseWay[], runs: readonly SampleRun
     for (const way of ways) {
       if (way.made.sample !== undefined || !takes(way, tree, run, response, sources)) continue;
       const { status, statusText, headers, body, truncated } = response;
-      way.made.sample = { request, response: { status, ...(statusText === undefined || statusText === '' ? {} : { statusText }), headers, ...(body === undefined ? {} : { body }), ...(truncated === true ? { truncated } : {}) } };
+      way.made.sample = { request, response: { status, ...(statusText === undefined || statusText === '' ? {} : { statusText }), headers, ...(body === undefined ? {} : { body }), ...(truncated === true ? { truncated } : {}) }, ...(sampled.store === undefined ? {} : { store: sampled.store }) };
       found += 1;
     }
   }

@@ -2,7 +2,7 @@
   "name": "@maronn-openid-connect/map-sandbox",
   "version": "0.0.0",
   "private": true,
-  "description": "The OpenID Provider the map runs a request on: the Hono OP of apps/hono with every feature, on a memory database with the clients, codes and tokens of the tests and a clock stopped where theirs is, bundled with the Istanbul counters the measured tests count with, so the map reads the way a request took with the rules of the test catalog",
+  "description": "The OpenID Provider the map runs a request on: the Hono OP of apps/hono with every feature, on a memory database holding the clients and users of the tests and the codes and tokens the requests of its grants issued on it (authorization, login, consent, exchange), with a clock stopped where the tests' is, bundled with the Istanbul counters the measured tests count with, so the map reads the way a request took with the rules of the test catalog",
   "type": "module",
   "exports": {
     ".": {

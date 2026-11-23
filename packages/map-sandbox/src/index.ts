@@ -3,9 +3,10 @@
  * feature, as the map shows it), with what ran counted. Each request gets a
  * new OP (op.ts) on a copy of the database of the premises, its clock
  * stopped at theirs (clock.ts), so a request finds the premises as they are
- * whatever ran before it: the premises made by requests when they are given
- * (prepare.ts, with the key their tokens were signed with), else the
- * records of the tests (seed.ts). The send is recorded the way a measured test
+ * whatever ran before it: the premises made by requests (prepare.ts) that
+ * are given (the page hands over those the build made), with the key their
+ * tokens were signed with; without them, the OP as it is configured (its
+ * clients and users, seed.ts), as a page cannot make them (prepare.ts). The send is recorded the way a measured test
  * records the requests it sends (test-reach recordExchange): the counters
  * of the files of the function catalog (counted by Istanbul as in the
  * measured tests, istanbul.ts) that went up between the start of the send
@@ -29,39 +30,40 @@ import { decodeValue } from './codec.js';
 import { importSigningKey, mapOp, onDatabase, type SigningKey } from './op.js';
 import { PREMISES } from './premises.js';
 import { preparePremises as prepare } from './prepare.js';
-import { seededDatabase } from './seed.js';
+import { configuredDatabase } from './seed.js';
 import { plainDatabase, storeAccess, watchDatabase } from './store.js';
 
 export { candidateRequests, PREMISES, SAMPLED_ENDPOINTS };
 
-/** What a request starts from: the database of the premises (copied for each request), its records as plain JSON, the key to sign with, and the clock. */
+/** What a request starts from: the database of the premises (copied for each request), its records as plain JSON, the key to sign with, the issuer and the clock. */
 interface Base {
   db: MemoryDatabase;
   plain: PlainDatabase;
   key: SigningKey;
+  issuer: string;
   now: number;
 }
 
-/** The base of the records of the tests (seed.ts), made once. */
-let seeded: Promise<Base> | undefined;
+/** The base of the OP as it is configured, before any request (seed.ts), made once for the requests given no premises. */
+let configured: Promise<Base> | undefined;
 /** The base of the premises last given, by their JSON, made once for them. */
 let given: { json: string; base: Promise<Base> } | undefined;
 
-/** The base of the records of the tests (seed.ts). */
-async function seededBase(): Promise<Base> {
-  const db = await seededDatabase(PREMISES);
-  return { db, plain: plainDatabase(db), key: await rs256Key('map-sandbox-rs256-key'), now: PREMISES.now };
+/** The base of the OP as it is configured: its clients and users, no code or token, and a key of its own. */
+async function configuredBase(): Promise<Base> {
+  const db = await configuredDatabase(PREMISES);
+  return { db, plain: plainDatabase(db), key: await rs256Key('map-sandbox-rs256-key'), issuer: PREMISES.issuer, now: PREMISES.now };
 }
 
-/** The base of premises made by requests: their database made again, and their key. */
+/** The base of premises made by requests: their database made again, their key, their issuer and their clock. */
 async function preparedBase(premises: Api.PreparedPremises): Promise<Base> {
   const db = decodeValue(premises.database) as MemoryDatabase;
-  return { db, plain: plainDatabase(db), key: await importSigningKey(premises.signingKey), now: premises.now };
+  return { db, plain: plainDatabase(db), key: await importSigningKey(premises.signingKey), issuer: premises.issuer, now: premises.now };
 }
 
-/** The base a request starts from: that of the premises given, else that of the records of the tests. */
-function baseOf(premises: Api.PreparedPremises | undefined): Promise<Base> {
-  if (premises === undefined) return (seeded ??= seededBase());
+/** The base a request starts from: that of the premises given, else that of the OP as it is configured. */
+async function baseOf(premises: Api.PreparedPremises | undefined): Promise<Base> {
+  if (premises === undefined) return (configured ??= configuredBase());
   const json = JSON.stringify(premises);
   if (given?.json !== json) given = { json, base: preparedBase(premises) };
   return given.base;
@@ -86,13 +88,13 @@ export function runRequest(request: Api.SandboxRequest, premises?: Api.PreparedP
 }
 
 /** Make the premises by requests (prepare.ts), those of the map unless others are given, after the runs asked for before, as it stops the clock of the process too. */
-export function preparePremises(premises: Api.Premises = PREMISES): Promise<Api.PreparedPremises> {
-  const made = previous.then(
-    () => prepare(premises),
-    () => prepare(premises),
+export function preparePremises(plan: Api.Premises = PREMISES): Promise<Api.PreparedPremises> {
+  const premises = previous.then(
+    () => prepare(plan),
+    () => prepare(plan),
   );
-  previous = made.catch(() => undefined);
-  return made;
+  previous = premises.catch(() => undefined);
+  return premises;
 }
 
 /** Run a request on the OP of the map, no other running. */
@@ -100,8 +102,8 @@ async function runAlone(request: Api.SandboxRequest, premises: Api.PreparedPremi
   const base = await baseOf(premises);
   const db = structuredClone(base.db);
   return onDatabase(db, base.now, async () => {
-    const op = mapOp(db, base.key, PREMISES.issuer);
-    const sent = new Request(new URL(request.path, PREMISES.issuer), { method: request.method, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
+    const op = mapOp(db, base.key, base.issuer);
+    const sent = new Request(new URL(request.path, base.issuer), { method: request.method, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
     resetExchanges();
     const reads = watchDatabase(db);
     await recordExchange(sent, (message) => op.fetch(message)).catch(() => undefined);

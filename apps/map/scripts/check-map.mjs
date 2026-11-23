@@ -11,6 +11,9 @@
  *   endpoint, and every change of an endpoint body, has a change note;
  * - every way the requests of the OP of the map name is a ready-made choice
  *   of its root;
+ * - every record of the premises of the OP of the map was written by the
+ *   request it names, and every record a sample read is held by them
+ *   exactly when the sample found it (the samples ran on those premises);
  * - every link of the code (Ctrl/⌘ + click in the code view) sits on a name
  *   and goes to the name of a declaration in a file the map carries.
  *
@@ -40,12 +43,14 @@ const { metrics, failures } = await checkMap(
     return source === undefined ? undefined : JSON.parse(readFileSync(fileOf(source.url), 'utf8')).code;
   },
   readJson,
+  readJson,
 );
 console.log(
   `Checked the map: ${metrics.frames} frames, ${metrics.selections} ready-made choices (${metrics.unnamed} without a name, ${metrics.duplicateNames.length} repeated), ` +
     `${metrics.wiring.entries} wiring entries (${metrics.wiring.untraceable} untraceable, ${metrics.wiring.invalid} invalid), ` +
     `${metrics.uncovered.length} frames with lines in no node, ${metrics.changedOutside.length} frames with changed lines in no node, ${metrics.undocumented.length} changes without a note, ${metrics.untested.length} changes whose tests did not change without a reason, ` +
-    `${data.requests === undefined ? 'no requests of the OP of the map' : `the requests the OP of the map took ${metrics.requests.ways} ways of ${metrics.requests.roots} roots with (${metrics.requests.unmatched} ways no choice is)`}`,
+    `${data.requests === undefined ? 'no requests of the OP of the map' : `the requests the OP of the map took ${metrics.requests.ways} ways of ${metrics.requests.roots} roots with (${metrics.requests.unmatched} ways no choice is)`}, ` +
+    `${data.premises === undefined ? 'no premises of the OP of the map' : `premises of ${metrics.premises.records} records (${metrics.premises.made} stored by the ${metrics.premises.steps} requests that made them; ${metrics.premises.reads} records the samples read, ${metrics.premises.unmatched} the premises disagree with)`}`,
 );
 for (const [framework, names] of Object.entries(metrics.token)) console.log(`  /token (${framework}): ${names.join(' | ')}`);
 const links = checkLinks(new Map(Object.entries(data.sources).map(([id, source]) => [id, JSON.parse(readFileSync(fileOf(source.url), 'utf8'))])));

@@ -18,13 +18,15 @@ function tokenHeaders(secret = 'client-1-secret-value'): Array<[string, string]>
   ];
 }
 
-/** The authorization_code grant of code-1 of the premises, with its PKCE verifier. */
-const EXCHANGE_CODE: Api.SandboxRequest = {
-  method: 'POST',
-  path: '/token',
-  headers: tokenHeaders(),
-  body: new URLSearchParams({ grant_type: 'authorization_code', code: 'code-1', redirect_uri: 'https://rp.example.com/callback', code_verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz' }).toString(),
-};
+/** A request to the token endpoint by client-1 (client_secret_basic, with another secret when given) with a form of fields. */
+function tokenRequest(fields: Record<string, string>, secret?: string): Api.SandboxRequest {
+  return { method: 'POST', path: '/token', headers: tokenHeaders(secret), body: new URLSearchParams(fields).toString() };
+}
+
+/** The authorization_code grant of the code a grant of the premises left, with its PKCE verifier. */
+function exchangeOf(grant: Api.PreparedGrant | undefined): Api.SandboxRequest {
+  return tokenRequest({ grant_type: 'authorization_code', code: grant?.code ?? '', redirect_uri: REDIRECT_URI, code_verifier: grant?.codeVerifier ?? '' });
+}
 
 /** The line of a file of the repository that holds a piece of code. */
 function lineOf(path: string, code: string): number {
@@ -36,19 +38,33 @@ function claimsOf(jwt: string): Record<string, unknown> {
   return JSON.parse(atob((jwt.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
 }
 
+/** The premises made by requests, made once for the tests that read them, as the page gets them (through JSON). */
+let prepared: Promise<Api.PreparedPremises> | undefined;
+
+/** The premises made by requests (see `prepared`). */
+function premisesMade(): Promise<Api.PreparedPremises> {
+  prepared ??= preparePremises().then((premises) => JSON.parse(JSON.stringify(premises)) as Api.PreparedPremises);
+  return prepared;
+}
+
+/** The grant of the premises made by its id. */
+async function grantOf(id: string): Promise<Api.PreparedGrant | undefined> {
+  return (await premisesMade()).grants.find((grant) => grant.id === id);
+}
+
 describe('runRequest', () => {
-  it('should answer the authorization_code grant of code-1 with a token response issued at the clock of the premises', async () => {
-    const run = await runRequest(EXCHANGE_CODE);
+  it('should answer the exchange of the code no request exchanged with a token response issued at the clock of the premises, for the user who signed in', async () => {
+    const run = await runRequest(exchangeOf(await grantOf('unused')), await premisesMade());
     const body = JSON.parse(run.response?.body ?? '{}') as { access_token: string; token_type: string; refresh_token?: string };
 
     expect(run.response?.status).toBe(200);
     expect(body.token_type).toBe('Bearer');
-    expect(claimsOf(body.access_token)).toMatchObject({ iss: 'https://op.example.com', sub: 'user-1', client_id: 'client-1', iat: PREMISES.now });
+    expect(claimsOf(body.access_token)).toMatchObject({ iss: 'https://op.example.com', sub: 'testuser', client_id: 'client-1', iat: PREMISES.now });
     expect(body.refresh_token).toEqual(expect.any(String));
   });
 
   it('should count what ran by repository path, at the lines of the original source', async () => {
-    const run = await runRequest(EXCHANGE_CODE);
+    const run = await runRequest(exchangeOf(await grantOf('unused')), await premisesMade());
 
     expect(Object.keys(run.ran).filter((path) => path.startsWith('/') || !/\.tsx?$/.test(path))).toEqual([]);
     expect(run.ran[PIPELINE]?.s.map(([line]) => line)).toContain(lineOf(PIPELINE, 'await parseTokenRequest(c)'));
@@ -56,51 +72,103 @@ describe('runRequest', () => {
   });
 
   it('should note the records the exchange read (its client and its code) and those it wrote (the code used, the tokens issued)', async () => {
-    const run = await runRequest(EXCHANGE_CODE);
+    const unused = await grantOf('unused');
+    const run = await runRequest(exchangeOf(unused), await premisesMade());
     const body = JSON.parse(run.response?.body ?? '{}') as { access_token: string; refresh_token: string };
 
     expect(run.store.read).toEqual([
       { collection: 'clients', key: CLIENT_ID, found: true },
-      { collection: 'codes', key: 'code-1', found: true },
+      { collection: 'codes', key: unused?.code, found: true },
     ]);
     expect(run.store.wrote.map(({ collection, key, change, fields }) => ({ collection, key, change, fields }))).toEqual([
-      { collection: 'codes', key: 'code-1', change: 'changed', fields: ['used'] },
+      { collection: 'codes', key: unused?.code, change: 'changed', fields: ['used'] },
       { collection: 'accessTokens', key: body.access_token, change: 'added', fields: undefined },
       { collection: 'refreshTokens', key: body.refresh_token, change: 'added', fields: undefined },
     ]);
   });
 
   it('should note a code the OP does not hold as a record read and not found, and no record written', async () => {
-    const run = await runRequest({ ...EXCHANGE_CODE, body: EXCHANGE_CODE.body?.replace('code=code-1', 'code=code-9') });
+    const run = await runRequest(tokenRequest({ grant_type: 'authorization_code', code: 'code-9', redirect_uri: REDIRECT_URI, code_verifier: 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz' }), await premisesMade());
 
     expect(run.response?.status).toBe(400);
     expect(run.store).toEqual({ read: [{ collection: 'clients', key: CLIENT_ID, found: true }, { collection: 'codes', key: 'code-9', found: false }], wrote: [] });
   });
 
   it('should find the premises as they are in every request, the code a request exchanged included', async () => {
-    const first = await runRequest(EXCHANGE_CODE);
-    const second = await runRequest(EXCHANGE_CODE);
-    const refreshed = await runRequest({ method: 'POST', path: '/token', headers: tokenHeaders(), body: 'grant_type=refresh_token&refresh_token=refresh-1' });
+    const premises = await premisesMade();
+    const first = await runRequest(exchangeOf(await grantOf('unused')), premises);
+    const second = await runRequest(exchangeOf(await grantOf('unused')), premises);
+    const refreshed = await runRequest(tokenRequest({ grant_type: 'refresh_token', refresh_token: String((await grantOf('exchanged'))?.tokens?.refresh_token) }), premises);
 
     expect([first.response?.status, second.response?.status, refreshed.response?.status]).toEqual([200, 200, 200]);
   });
 
   it('should run requests asked for together one after another, each on the premises as they are', async () => {
-    const runs = await Promise.all([runRequest(EXCHANGE_CODE), runRequest(EXCHANGE_CODE), runRequest({ ...EXCHANGE_CODE, headers: tokenHeaders('another-secret') })]);
+    const premises = await premisesMade();
+    const exchange = exchangeOf(await grantOf('unused'));
+    const runs = await Promise.all([runRequest(exchange, premises), runRequest(exchange, premises), runRequest({ ...exchange, headers: tokenHeaders('another-secret') }, premises)]);
 
     expect(runs.map((run) => run.response?.status)).toEqual([200, 200, 401]);
   });
 
   it('should answer a request the premises do not let through with the OAuth error of the OP', async () => {
-    const run = await runRequest({ ...EXCHANGE_CODE, headers: tokenHeaders('another-secret') });
+    const run = await runRequest({ ...exchangeOf(await grantOf('unused')), headers: tokenHeaders('another-secret') }, await premisesMade());
 
     expect(run.response?.status).toBe(401);
     expect(JSON.parse(run.response?.body ?? '{}')).toMatchObject({ error: 'invalid_client' });
   });
 
+  it('should refuse the code exchanged already and revoke the tokens its exchange issued', async () => {
+    const exchanged = await grantOf('exchanged');
+    const run = await runRequest(exchangeOf(exchanged), await premisesMade());
+
+    expect(JSON.parse(run.response?.body ?? '{}')).toMatchObject({ error: 'invalid_grant' });
+    expect(run.store.wrote.map(({ collection, key, change }) => ({ collection, key, change }))).toEqual([
+      { collection: 'accessTokens', key: exchanged?.tokens?.access_token, change: 'removed' },
+      { collection: 'refreshTokens', key: exchanged?.tokens?.refresh_token, change: 'removed' },
+    ]);
+  });
+
+  it('should take the access token of the premises at the UserInfo endpoint', async () => {
+    const exchanged = await grantOf('exchanged');
+    const run = await runRequest({ method: 'GET', path: '/userinfo', headers: [['authorization', `Bearer ${String(exchanged?.tokens?.access_token)}`]] }, await premisesMade());
+
+    expect(run.response?.status).toBe(200);
+    expect(JSON.parse(run.response?.body ?? '{}')).toMatchObject({ sub: 'testuser' });
+  });
+
+  it('should sign the tokens it issues with the key the premises give, not one of its own', async () => {
+    const premises = await premisesMade();
+    const other = await anotherSigningKey(premises.signingKey.keyId);
+    const unused = premises.grants.find((grant) => grant.id === 'unused');
+    const run = await runRequest(tokenRequest({ grant_type: 'authorization_code', code: unused?.code ?? '', redirect_uri: REDIRECT_URI, code_verifier: unused?.codeVerifier ?? '' }), { ...premises, signingKey: other });
+    const { access_token: token } = JSON.parse(run.response?.body ?? '{}') as { access_token: string };
+
+    expect(await verifies(token, other.publicJwk)).toBe(true);
+    expect(await verifies(token, premises.signingKey.publicJwk)).toBe(false);
+  });
+
+  it('should run on the OP as it is configured when given no premises: its clients, and no code', async () => {
+    const credentials = await runRequest({ method: 'POST', path: '/token', headers: [['content-type', 'application/x-www-form-urlencoded'], ['authorization', `Basic ${btoa('service-1:service-1-secret-value')}`]], body: 'grant_type=client_credentials&scope=reports.read' });
+    const code = await runRequest(exchangeOf(await grantOf('unused')));
+
+    expect([credentials.response?.status, code.response?.status]).toEqual([200, 400]);
+    expect(credentials.store.read).toContainEqual({ collection: 'clients', key: 'service-1', found: true });
+    expect(code.store.read).toContainEqual({ collection: 'codes', key: (await grantOf('unused'))?.code, found: false });
+  });
+
+  it('should run as the issuer of the premises given, so their tokens are taken there', async () => {
+    const premises = await preparePremises({ ...PREMISES, issuer: 'https://other.example.com' });
+    const exchanged = premises.grants.find((grant) => grant.id === 'exchanged');
+    const run = await runRequest({ method: 'GET', path: '/userinfo', headers: [['authorization', `Bearer ${String(exchanged?.tokens?.access_token)}`]] }, premises);
+
+    expect(run.request.url).toBe('https://other.example.com/userinfo');
+    expect(run.response?.status).toBe(200);
+  });
+
   it('should give the clock and the fetch of the global scope back after the request', async () => {
     const fetchBefore = globalThis.fetch;
-    await runRequest(EXCHANGE_CODE);
+    await runRequest(exchangeOf(await grantOf('unused')), await premisesMade());
 
     expect(Date.now()).not.toBe(PREMISES.now * 1000);
     expect(new Date().getTime()).not.toBe(PREMISES.now * 1000);
@@ -108,42 +176,60 @@ describe('runRequest', () => {
   });
 
   it('should refuse a request that cannot be made', async () => {
-    await expect(runRequest({ method: 'GET', path: '/token', headers: [], body: 'grant_type=authorization_code' })).rejects.toThrow(TypeError);
+    await expect(runRequest({ method: 'GET', path: '/token', headers: [], body: 'grant_type=authorization_code' }, await premisesMade())).rejects.toThrow(TypeError);
   });
 });
 
 describe('PREMISES', () => {
-  it('should hold the issuer, the clock, client-1 and the users of the tests', () => {
+  it('should hold the issuer, the clock, client-1 and the users of the tests, and the grants client-1 asks testuser for with PKCE', () => {
     const client = PREMISES.clients.find((candidate) => candidate.clientId === CLIENT_ID);
 
     expect([PREMISES.issuer, PREMISES.now]).toEqual([TEST_ISSUER, NOW]);
     expect(client).toMatchObject({ clientSecret: CLIENT_SECRET, redirectUris: [REDIRECT_URI], authMethod: 'client_secret_basic' });
     expect(PREMISES.users).toEqual(developmentUsers.map((user) => ({ username: user.sub, password: user.password })));
-    expect(PREMISES.codes.map((code) => [code.code, code.clientId, code.used === true])).toEqual([
-      ['code-1', CLIENT_ID, false],
-      ['code-2', CLIENT_ID, false],
-      ['code-used', CLIENT_ID, true],
+    expect(PREMISES.grants.map((grant) => [grant.id, grant.authorize.client_id, grant.authorize.code_challenge_method, grant.username, grant.exchange])).toEqual([
+      ['unused', CLIENT_ID, 'S256', 'testuser', false],
+      ['exchanged', CLIENT_ID, 'S256', 'testuser', true],
     ]);
   });
 });
 
 describe('candidateRequests', () => {
-  it('should try the requests a client sends first, then each changed in one place, each once, at the token endpoint alone', () => {
-    const requests = candidateRequests('token');
+  it('should try the requests a client sends first, then each changed in one place, each once, at the endpoints that act on the codes and tokens the OP holds', async () => {
+    const premises = await premisesMade();
+    const requests = candidateRequests('token', premises);
 
-    expect(SAMPLED_ENDPOINTS).toEqual(['token']);
-    expect(requests[0]).toEqual(EXCHANGE_CODE);
+    expect(SAMPLED_ENDPOINTS).toEqual(['token', 'userinfo', 'introspection', 'revocation']);
+    expect(requests[0]).toEqual(exchangeOf(await grantOf('unused')));
     expect(new Set(requests.map((request) => JSON.stringify(request))).size).toBe(requests.length);
     expect(requests.filter((request) => request.method !== 'POST' || request.path !== '/token')).toEqual([]);
     expect(requests.map((request) => request.body)).toContain('grant_type=authorization_code&redirect_uri=https%3A%2F%2Frp.example.com%2Fcallback&code_verifier=verifier-0123456789-abcdefghijklmnopqrstuvwxyz');
-    expect(candidateRequests('userinfo')).toEqual([]);
+    expect(candidateRequests('discovery', premises)).toEqual([]);
   });
 
-  it('should find a code that was exchanged already, and a client that is not the one of a code, among the requests the OP answers with their errors', async () => {
-    const requests = candidateRequests('token');
-    const used = requests.find((request) => request.body?.includes('code=code-used') === true);
-    const otherClient = requests.find((request) => request.body?.includes('code=code-1') === true && request.body.includes('client_id=client-2&client_secret=client-2-secret-value'));
-    const answers = await Promise.all([used, otherClient].map(async (request) => (request === undefined ? undefined : JSON.parse((await runRequest(request)).response?.body ?? '{}'))));
+  it('should try the access token and the refresh token the premises hold at the UserInfo, introspection and revocation endpoints, which read them', async () => {
+    const premises = await premisesMade();
+    const exchanged = premises.grants.find((grant) => grant.id === 'exchanged');
+    const [userinfo] = candidateRequests('userinfo', premises);
+    const [introspection] = candidateRequests('introspection', premises);
+    const revocation = candidateRequests('revocation', premises).find((request) => request.body?.includes('token_type_hint=refresh_token') === true);
+    const runs = await Promise.all([userinfo, introspection, revocation].map((request) => runRequest(request as Api.SandboxRequest, premises)));
+
+    expect(userinfo?.headers).toEqual([['authorization', `Bearer ${String(exchanged?.tokens?.access_token)}`]]);
+    expect(runs.map((run) => run.response?.status)).toEqual([200, 200, 200]);
+    expect(runs.map((run) => run.store.read.filter((read) => read.key !== undefined && (read.collection === 'accessTokens' || read.collection === 'refreshTokens')).map(({ collection, key }) => [collection, key]))).toEqual([
+      [['accessTokens', exchanged?.tokens?.access_token]],
+      [['accessTokens', exchanged?.tokens?.access_token]],
+      [['refreshTokens', exchanged?.tokens?.refresh_token]],
+    ]);
+  });
+
+  it('should find the code exchanged already, and a client that is not the one of a code, among the requests the OP answers with their errors', async () => {
+    const premises = await premisesMade();
+    const requests = candidateRequests('token', premises);
+    const used = requests.find((request) => request.body?.includes(`code=${(premises.grants[1] as Api.PreparedGrant).code}&`) === true);
+    const otherClient = requests.find((request) => request.body?.includes(`code=${(premises.grants[0] as Api.PreparedGrant).code}&`) === true && request.body.includes('client_id=client-2&client_secret=client-2-secret-value'));
+    const answers = await Promise.all([used, otherClient].map(async (request) => (request === undefined ? undefined : JSON.parse((await runRequest(request, premises)).response?.body ?? '{}'))));
 
     expect(answers).toEqual([expect.objectContaining({ error: 'invalid_grant' }), expect.objectContaining({ error: 'invalid_grant' })]);
   });
@@ -160,11 +246,6 @@ function headerOf(message: { headers: Array<[string, string]> }, name: string): 
   return message.headers.find(([candidate]) => candidate === name)?.[1];
 }
 
-/** A request to the token endpoint by client-1 (client_secret_basic) with a form of fields. */
-function tokenRequest(fields: Record<string, string>): Api.SandboxRequest {
-  return { method: 'POST', path: '/token', headers: tokenHeaders(), body: new URLSearchParams(fields).toString() };
-}
-
 /** An RS256 key other than the one the premises were made with, under the same key id, as the JWKs the premises give one in. */
 async function anotherSigningKey(keyId: string): Promise<Api.PreparedPremises['signingKey']> {
   const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -178,15 +259,6 @@ async function verifies(token: string, publicJwk: JsonWebKey): Promise<boolean> 
   const key = await crypto.subtle.importKey('jwk', { kty: publicJwk.kty, n: publicJwk.n, e: publicJwk.e }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
   const bytes = Uint8Array.from(atob(signature.replace(/-/g, '+').replace(/_/g, '/')), (character) => character.charCodeAt(0));
   return crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, bytes, new TextEncoder().encode(`${header}.${payload}`));
-}
-
-/** The premises made by requests, made once for the tests that read them, as the page gets them (through JSON). */
-let prepared: Promise<Api.PreparedPremises> | undefined;
-
-/** The premises made by requests (see `prepared`). */
-function premisesMade(): Promise<Api.PreparedPremises> {
-  prepared ??= preparePremises().then((premises) => JSON.parse(JSON.stringify(premises)) as Api.PreparedPremises);
-  return prepared;
 }
 
 describe('preparePremises', () => {
@@ -260,52 +332,5 @@ describe('preparePremises, of other grants', () => {
     const [grant] = PREMISES.grants;
 
     await expect(preparePremises({ ...PREMISES, grants: [{ ...(grant as Api.PremiseGrant), id: 'no-pkce', authorize: { ...grant?.authorize, code_challenge: '' } }] })).rejects.toThrow('The OP did not give the code of the grant no-pkce');
-  });
-});
-
-describe('runRequest on premises made by requests', () => {
-  it('should exchange the code no request exchanged, and refresh with the refresh token of the exchanged one', async () => {
-    const premises = await premisesMade();
-    const [unused, exchanged] = premises.grants;
-    const code = await runRequest(tokenRequest({ grant_type: 'authorization_code', code: unused?.code ?? '', redirect_uri: REDIRECT_URI, code_verifier: unused?.codeVerifier ?? '' }), premises);
-    const refresh = await runRequest(tokenRequest({ grant_type: 'refresh_token', refresh_token: String(exchanged?.tokens?.refresh_token) }), premises);
-
-    expect([code.response?.status, refresh.response?.status]).toEqual([200, 200]);
-    expect(code.store.read).toEqual([
-      { collection: 'clients', key: CLIENT_ID, found: true },
-      { collection: 'codes', key: unused?.code, found: true },
-    ]);
-  });
-
-  it('should refuse the code exchanged already and revoke the tokens its exchange issued', async () => {
-    const premises = await premisesMade();
-    const exchanged = premises.grants.find((grant) => grant.id === 'exchanged');
-    const run = await runRequest(tokenRequest({ grant_type: 'authorization_code', code: exchanged?.code ?? '', redirect_uri: REDIRECT_URI, code_verifier: exchanged?.codeVerifier ?? '' }), premises);
-
-    expect(JSON.parse(run.response?.body ?? '{}')).toMatchObject({ error: 'invalid_grant' });
-    expect(run.store.wrote.map(({ collection, key, change }) => ({ collection, key, change }))).toEqual([
-      { collection: 'accessTokens', key: exchanged?.tokens?.access_token, change: 'removed' },
-      { collection: 'refreshTokens', key: exchanged?.tokens?.refresh_token, change: 'removed' },
-    ]);
-  });
-
-  it('should take the access token of the premises at the UserInfo endpoint', async () => {
-    const premises = await premisesMade();
-    const exchanged = premises.grants.find((grant) => grant.id === 'exchanged');
-    const run = await runRequest({ method: 'GET', path: '/userinfo', headers: [['authorization', `Bearer ${String(exchanged?.tokens?.access_token)}`]] }, premises);
-
-    expect(run.response?.status).toBe(200);
-    expect(JSON.parse(run.response?.body ?? '{}')).toMatchObject({ sub: 'testuser' });
-  });
-
-  it('should sign the tokens it issues with the key the premises give, not one of its own', async () => {
-    const premises = await premisesMade();
-    const other = await anotherSigningKey(premises.signingKey.keyId);
-    const unused = premises.grants.find((grant) => grant.id === 'unused');
-    const run = await runRequest(tokenRequest({ grant_type: 'authorization_code', code: unused?.code ?? '', redirect_uri: REDIRECT_URI, code_verifier: unused?.codeVerifier ?? '' }), { ...premises, signingKey: other });
-    const { access_token: token } = JSON.parse(run.response?.body ?? '{}') as { access_token: string };
-
-    expect(await verifies(token, other.publicJwk)).toBe(true);
-    expect(await verifies(token, premises.signingKey.publicJwk)).toBe(false);
   });
 });

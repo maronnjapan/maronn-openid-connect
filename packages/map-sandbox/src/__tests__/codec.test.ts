@@ -11,6 +11,6 @@ describe('encodeValue and decodeValue', () => {
   });
 
   it('should leave out the members of an object that are undefined, as JSON does', () => {
-    expect(encodeValue({ nonce: undefined, used: true })).toEqual({ used: true });
+    expect(encodeValue({ nonce: undefined, used: true })).toStrictEqual({ used: true });
   });
 });

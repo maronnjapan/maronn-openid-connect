@@ -9,7 +9,7 @@
  * `@maronn-openid-connect/test-catalog/model`, so this module has no code and
  * has only type imports.
  */
-import type { FeatureRange, MapFeature, StepKind } from '@maronn-openid-connect/map-analysis';
+import type { FeatureRange, MapFeature, StepKind, StoreAccess } from '@maronn-openid-connect/map-analysis';
 
 /**
  * What kind of test a case is, by where it is and what it does:
@@ -532,10 +532,11 @@ export interface EndpointCase {
   sample?: CaseSample;
 }
 
-/** A request the OP of the map (packages/map-sandbox) took a way with, and what the OP answered. */
+/** A request the OP of the map (packages/map-sandbox) took a way with, what the OP answered, and what it read and wrote of the records the OP held. */
 export interface CaseSample {
   request: ExampleRequest;
   response: ExampleResponse;
+  store?: StoreAccess;
 }
 
 /** A decision and the side a way takes at it, in words. */

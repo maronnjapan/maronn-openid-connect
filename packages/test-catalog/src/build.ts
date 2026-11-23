@@ -377,9 +377,10 @@ function shownRequest(request: { method: string; path: string; headers: Array<[s
 /**
  * The requests the OP of the map took the ways of each root with, for the
  * flow view of the map (RootRequests): the sample of each case that has one
- * (samples.ts), with the parameters it sent and the status the OP answered
- * with. Only the cases with a sample; only the endpoints with one. What the
- * tests sent stays with the tests page (the examples of its cases).
+ * (samples.ts), with the parameters it sent, the status the OP answered
+ * with, and what it read and wrote of the records the OP held. Only the
+ * cases with a sample; only the endpoints with one. What the tests sent
+ * stays with the tests page (the examples of its cases).
  */
 export function rootRequests(data: MapData, found: ReadonlyArray<readonly [string, EndpointCases]>): RootRequests[] {
   const roots: RootRequests[] = [];
@@ -393,9 +394,10 @@ export function rootRequests(data: MapData, found: ReadonlyArray<readonly [strin
     for (const item of endpoint.cases) {
       if (item.sample === undefined) continue;
       const { status, statusText } = item.sample.response;
-      ways.push({ id: item.id, kind: item.kind, name: item.name, target: item.target, sample: { ...shownRequest(item.sample.request), status, ...(statusText === undefined ? {} : { statusText }) } });
+      const { store } = item.sample;
+      ways.push({ id: item.id, kind: item.kind, name: item.name, target: item.target, sample: { ...shownRequest(item.sample.request), status, ...(statusText === undefined ? {} : { statusText }), ...(store === undefined ? {} : { store }) } });
     }
-    if (ways.length > 0) roots.push({ version: 2, root, source, endpoint: id, ways });
+    if (ways.length > 0) roots.push({ version: 3, root, source, endpoint: id, ways });
   }
   return roots;
 }

@@ -264,9 +264,11 @@ export interface FrameFile {
  * reading each with the rules the test catalog reads a request with
  * (packages/test-catalog samples.ts); a way none of them took is not listed.
  * The tests play no part: what a test sent is the tests page's to show.
+ * Each sample says what it read and wrote of the records the OP held, which
+ * the premises (MapData.premises) say the origin of.
  */
 export interface RootRequests {
-  version: 2;
+  version: 3;
   /** The root the ways are of, by frame id. */
   root: string;
   /** The source of the OP that ran them (`hono`: express and fastify, generated from it, share its roots). */
@@ -308,6 +310,31 @@ export interface WaySample {
   /** The status the OP answered with, and its reason phrase when it had one. */
   status: number;
   statusText?: string;
+  /** What it read and wrote of the records the OP of the map held. */
+  store?: StoreAccess;
+}
+
+/** What a request run on the OP of the map read and wrote of the records of its memory database (packages/map-sandbox store.ts). */
+export interface StoreAccess {
+  /** The records it read, the first read of each, in the order read (`key` absent for a collection it went through whole, `member` the key looked up inside a record that is a Map itself: a user's consent to a client); not those it wrote before reading them. */
+  read: Array<{ collection: string; key?: string; member?: string; found: boolean }>;
+  /** The records it added, changed (with the top-level fields whose values changed) or removed, as plain JSON. */
+  wrote: Array<{ collection: string; key: string; change: 'added' | 'changed' | 'removed'; value?: unknown; before?: unknown; fields?: string[] }>;
+}
+
+/**
+ * data/premises/<hash>.json: what the OP of the map held before any request
+ * (packages/map-sandbox PreparedPremises, made by requests at the build):
+ * the requests run to make them and the records each wrote, and the records
+ * held with the request that added each. The page hands it to the OP it
+ * runs a request on. Only what the map reads of it is typed here.
+ */
+export interface PremisesFile {
+  version: 1;
+  issuer: string;
+  now: number;
+  steps: Array<{ grant: string; request: { method: string; url: string }; response: { status: number }; wrote: StoreAccess['wrote'] }>;
+  records: Array<{ collection: string; key: string; value: unknown; addedBy?: number; changedBy?: number[] }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +537,8 @@ export interface MapData {
    * none. Absent when the build ran no request on the OP of the map.
    */
   requests?: Record<string, string>;
+  /** The url of what the OP of the map held before any request (PremisesFile, `./data/premises/<hash>.json`); absent when the build made no premises. */
+  premises?: string;
   /** The url of the changes that reached main (HistoryData, `./data/history/<hash>.json`); absent when the build read no git history. */
   history?: string;
 }

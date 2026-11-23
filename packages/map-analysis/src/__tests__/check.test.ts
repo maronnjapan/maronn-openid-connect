@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkLinks, checkMap } from '../check.js';
-import type { FrameFile, MapChanges, MapData, RootRequests, SourceDocument, WaySample } from '../model.js';
+import type { FrameFile, MapChanges, MapData, PremisesFile, RootRequests, SourceDocument, StoreAccess, WaySample } from '../model.js';
 
 /** A map of one function whose frame offers some choices by name. */
 function mapOf(names: readonly string[]): { data: MapData; frame: FrameFile } {
@@ -59,7 +59,7 @@ describe('checkMap, with the requests the OP of the map took ways with', () => {
   it('should pass ways that are choices of their root, and count them', async () => {
     const { data, frame } = mapOf(['return x']);
     data.requests = { 'core:a.ts#f': 'requests.json' };
-    const requests: RootRequests = { version: 2, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', sample: sample() }] };
+    const requests: RootRequests = { version: 3, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', sample: sample() }] };
     const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
     expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, unmatched: 0 }, []]);
   });
@@ -68,7 +68,7 @@ describe('checkMap, with the requests the OP of the map took ways with', () => {
     const { data, frame } = mapOf(['return x']);
     data.requests = { 'core:a.ts#f': 'requests.json', 'core:b.ts#g': 'other.json' };
     const requests: RootRequests = {
-      version: 2,
+      version: 3,
       root: 'core:a.ts#f',
       source: 'hono',
       endpoint: 'token',
@@ -83,6 +83,81 @@ describe('checkMap, with the requests the OP of the map took ways with', () => {
       [
         'core:a.ts#f: the requests name the way step "a step" (s0), which no ready-made choice of the root is: the flow view would not show them',
         'core:b.ts#g: the requests name a root the map has no frame of',
+      ],
+    ]);
+  });
+});
+
+/** Premises made by two requests: a code added by the first and changed by the second, and a client of the configuration. */
+function premisesFile(): PremisesFile {
+  return {
+    version: 1,
+    issuer: 'https://op.example.com',
+    now: 0,
+    steps: [
+      { grant: 'g', request: { method: 'POST', url: 'https://op.example.com/consent' }, response: { status: 302 }, wrote: [{ collection: 'codes', key: 'c1', change: 'added', value: {} }] },
+      { grant: 'g', request: { method: 'POST', url: 'https://op.example.com/token' }, response: { status: 200 }, wrote: [{ collection: 'codes', key: 'c1', change: 'changed', value: {}, fields: ['used'] }] },
+    ],
+    records: [
+      { collection: 'codes', key: 'c1', value: {}, addedBy: 0, changedBy: [1] },
+      { collection: 'clients', key: 'client-1', value: {} },
+    ],
+  };
+}
+
+/** The requests of a root whose one way's sample read what is given. */
+function requestsReading(read: StoreAccess['read']): RootRequests {
+  return { version: 3, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', sample: { ...sample(), store: { read, wrote: [] } } }] };
+}
+
+describe('checkMap, with the premises of the OP of the map', () => {
+  it('should pass premises whose records were written by the requests they name, and samples that read what they hold', async () => {
+    const { data, frame } = mapOf(['return x']);
+    data.requests = { 'core:a.ts#f': 'requests.json' };
+    data.premises = 'premises.json';
+    const requests = requestsReading([
+      { collection: 'clients', key: 'client-1', found: true },
+      { collection: 'codes', key: 'c1', found: true },
+      { collection: 'codes', key: 'c9', found: false },
+      { collection: 'accessTokens', found: false },
+    ]);
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, async () => premisesFile());
+    expect([metrics.premises, failures]).toEqual([{ steps: 2, records: 2, made: 1, reads: 3, unmatched: 0 }, []]);
+  });
+
+  it('should read a lookup inside a record that is a Map (a consent to a client) against the members of the record', async () => {
+    const { data, frame } = mapOf(['return x']);
+    data.requests = { 'core:a.ts#f': 'requests.json' };
+    data.premises = 'premises.json';
+    const premises = premisesFile();
+    premises.records.push({ collection: 'consentScopes', key: 'testuser', value: { 'client-1': ['openid'] }, addedBy: 0 });
+    premises.steps[0]?.wrote.push({ collection: 'consentScopes', key: 'testuser', change: 'added', value: { 'client-1': ['openid'] } });
+    const requests = requestsReading([
+      { collection: 'consentScopes', key: 'testuser', member: 'client-1', found: true },
+      { collection: 'consentScopes', key: 'testuser', member: 'client-2', found: false },
+      { collection: 'consentScopes', key: 'testuser', member: 'client-9', found: true },
+    ]);
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, async () => premises);
+    expect([metrics.premises.unmatched, failures]).toEqual([1, ['core:a.ts#f: the sample of "return x" found consentScopes testuser client-9, which the premises do not hold: it was not run on the premises the page hands to its OP']]);
+  });
+
+  it('should fail on a record that names a request that did not write it, and on a sample that read records the premises disagree with', async () => {
+    const { data, frame } = mapOf(['return x']);
+    data.requests = { 'core:a.ts#f': 'requests.json' };
+    data.premises = 'premises.json';
+    const premises = premisesFile();
+    premises.records[0] = { collection: 'codes', key: 'c1', value: {}, addedBy: 1 };
+    const requests = requestsReading([
+      { collection: 'codes', key: 'c2', found: true },
+      { collection: 'clients', key: 'client-1', found: false },
+    ]);
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, async () => premises);
+    expect([metrics.premises.unmatched, failures]).toEqual([
+      2,
+      [
+        'premises: the record codes c1 says request 1 added it, which that request did not',
+        'core:a.ts#f: the sample of "return x" found codes c2, which the premises do not hold: it was not run on the premises the page hands to its OP',
+        'core:a.ts#f: the sample of "return x" did not find clients client-1, which the premises hold: it was not run on the premises the page hands to its OP',
       ],
     ]);
   });

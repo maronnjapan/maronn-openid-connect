@@ -117,7 +117,8 @@ const e2e = card('login', { kind: 'e2e', root: 'e2e', source: { file: 'tests/e2e
 const tool = card('tool', { kind: 'tool', root: 'map', subjects: [{ kind: 'function', id: VERIFY, how: 'describe' }] });
 
 describe('rootRequests', () => {
-  it('should give the root of each endpoint the requests the OP of the map took its cases with, the host and length left out, and leave the requests of the tests out', () => {
+  it('should give the root of each endpoint the requests the OP of the map took its cases with, the host and length left out, with what each read and wrote of the records the OP held, and leave the requests of the tests out', () => {
+    const store = { read: [{ collection: 'codes', key: 'code-1', found: true }], wrote: [{ collection: 'codes', key: 'code-1', change: 'changed' as const, value: { used: true }, before: { used: false }, fields: ['used'] }] };
     const example: CaseExample = {
       test: 't-1',
       line: 378,
@@ -140,6 +141,7 @@ describe('rootRequests', () => {
           sample: {
             request: { method: 'POST', path: '/token?x=1', host: 'op.example.com', headers: [['host', 'op.example.com'], ['Content-Length', '40'], ['content-type', 'application/x-www-form-urlencoded']], body: 'grant_type=authorization_code&code=code-1' },
             response: { status: 200, statusText: 'OK', headers: [['content-type', 'application/json']] },
+            store,
           },
         },
         { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', steps: [], end: 'response', examples: [example], exampleCount: 5 },
@@ -154,7 +156,7 @@ describe('rootRequests', () => {
 
     expect(rootRequests(DATA, found)).toEqual([
       {
-        version: 2,
+        version: 3,
         root: 'endpoint:token',
         source: 'hono',
         endpoint: 'token',
@@ -175,6 +177,7 @@ describe('rootRequests', () => {
               headers: [['content-type', 'application/x-www-form-urlencoded']],
               status: 200,
               statusText: 'OK',
+              store,
             },
           },
         ],

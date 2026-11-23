@@ -27,11 +27,14 @@
  * MARONN_REACH=1): its results and reach join the cards. Without it the cards
  * are those the code says.
  *
- * Before the analysis, the requests the OP of the map (packages/map-sandbox)
- * tries at its endpoints run on it, one after another: the cases they take
- * get them as samples, which the flow view starts the request of a case
- * from (packages/test-catalog samples.ts). Without the built OP of the map
- * the build goes on without samples, and says so.
+ * Before the analysis, the OP of the map (packages/map-sandbox) makes its
+ * premises by the requests that issue them (the codes and tokens of its
+ * grants), written to premises/ for the page to hand to its OP, and the
+ * requests it tries at its endpoints run on them, one after another: the
+ * cases they take get them as samples, which the flow view starts the
+ * request of a case from (packages/test-catalog samples.ts). Without the
+ * built OP of the map the build goes on without premises and samples, and
+ * says so.
  *
  * Reads the built CLI, the built analysis and the built OP of the map, so
  * run `pnpm run build:map` at the root (it builds them first).
@@ -39,7 +42,7 @@
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, originRepository, pullRequestOf } from '@maronn-openid-connect/map-analysis';
+import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, originRepository, pullRequestOf, removeStale, writeHashed } from '@maronn-openid-connect/map-analysis';
 import { buildTests, runSamples } from '@maronn-openid-connect/test-catalog';
 
 /**
@@ -74,24 +77,36 @@ const started = Date.now();
 const reports = process.env.MAP_TEST_REPORTS?.trim() ? resolve(process.env.MAP_TEST_REPORTS.trim()) : undefined;
 const pulls = readPulls(process.env.MAP_PULLS);
 const github = process.env.MAP_REPOSITORY?.trim() || process.env.GITHUB_REPOSITORY?.trim() || originRepository(repository);
-// The requests the OP of the map tries, run before the analysis: the OP stops the clock of the process while one runs.
-const samples = await (async () => {
+// The premises of the OP of the map, made by requests, and the requests it tries, run on them before the analysis: the OP stops the clock of the process while one runs.
+const { premises, samples } = await (async () => {
   let sandbox;
   try {
     sandbox = await import('@maronn-openid-connect/map-sandbox');
   } catch (error) {
-    console.warn(`The OP of the map is not built (pnpm --filter @maronn-openid-connect/map-sandbox build): the cases get no sample (${error instanceof Error ? error.message : String(error)})`);
-    return undefined;
+    console.warn(`The OP of the map is not built (pnpm --filter @maronn-openid-connect/map-sandbox build): no premises, and the cases get no sample (${error instanceof Error ? error.message : String(error)})`);
+    return {};
   }
-  return runSamples({ endpoints: sandbox.SAMPLED_ENDPOINTS, candidates: sandbox.candidateRequests, run: sandbox.runRequest });
+  const made = await sandbox.preparePremises();
+  console.log(`premises: ${made.records.length} records, ${made.records.filter((record) => record.addedBy !== undefined).length} of them stored by the ${made.steps.length} requests that made them`);
+  return { premises: made, samples: await runSamples({ endpoints: sandbox.SAMPLED_ENDPOINTS, candidates: (endpoint) => sandbox.candidateRequests(endpoint, made), run: (request) => sandbox.runRequest(request, made) }) };
 })();
+/** Write the premises beside map.json (premises/<hash>.json, the earlier build's removed) and name them in the index. */
+function writePremises(data) {
+  const directory = join(out, 'premises');
+  const written = new Set();
+  if (premises !== undefined) data.premises = `./data/premises/${writeHashed(directory, 'premises', JSON.stringify(premises), written)}`;
+  removeStale(directory, written);
+}
 const result = await buildMap({
   repository,
   out,
   ...(base === undefined ? {} : { base }),
   ...(pullRequest === undefined ? {} : { pullRequest }),
   history: { ...(pulls === undefined ? {} : { pulls }), ...(github === undefined ? {} : { github }) },
-  extend: (context) => buildTests(context, { out: testsOut, ...(reports === undefined ? {} : { reports }), ...(samples === undefined ? {} : { samples }) }),
+  extend: (context) => {
+    writePremises(context.data);
+    return buildTests(context, { out: testsOut, ...(reports === undefined ? {} : { reports }), ...(samples === undefined ? {} : { samples }) });
+  },
 });
 for (const line of result.log) console.log(`Wrote ${join(out, 'map.json')}: ${line} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
 const changes = result.data.changes;

@@ -38,10 +38,7 @@ function Rows({ label, rows, onChange, onAdd, onRemove, note }: { label: string;
   );
 }
 
-/** Where the request of a way starts from: the request the OP of the map took the way with, or for a way no request took, the request the OP answered the endpoint with. */
-type Origin = { kind: 'sample'; request: WaySample } | { kind: 'base'; request: WaySample; way: string };
-
-/** The request the OP of the map answered the endpoint with, to start a way no request is known for: the sample of an end it answered without an error, else the first sample. */
+/** The request the OP of the map answered the endpoint with, which the reader may copy to start a way no request is known for: the sample of an end it answered without an error, else the first sample. */
 function baseSample(requests: RootRequests | undefined): { request: WaySample; way: string } | undefined {
   const ways = requests?.ways ?? [];
   const found = ways.find((way) => way.kind === 'exit' && way.sample !== undefined && way.sample.status < 400) ?? ways.find((way) => way.sample !== undefined);
@@ -130,8 +127,10 @@ export interface FlowRequestProps {
 /**
  * The request of the way the flow view plays, to read and to run. For a
  * ready-made way (a case) it starts as the request the OP of the map was
- * seen to take it with; for a way no request took, as the request the OP
- * answered the endpoint with, else with no parameters. The reader writes its
+ * seen to take it with; for a way no request took, with no parameters (a
+ * request of another way would not take it), which the reader may replace
+ * with a copy of the request the OP answered the endpoint with, said to be
+ * one that does not take the way. The reader writes its
  * query, its body and its headers and runs it on the OP of the map: the
  * response comes back, and the playback follows the way the request took
  * there (useRun.ts). Above the request, the records of the OP it reads (the
@@ -149,23 +148,25 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
   if (selection !== undefined && selection !== base.selection) setBase({ selection });
   const requests = state.kind === 'ready' ? state.requests : undefined;
   const way = wayRequestsOf(requests, base.selection);
-  // The request the OP of the map took the way with; for a way no request took, the one it answered the endpoint with.
-  const fallback = base.selection === undefined || way !== undefined ? undefined : baseSample(requests);
-  const shown: Origin | undefined = way !== undefined ? { kind: 'sample', request: way.sample } : fallback === undefined ? undefined : { kind: 'base', ...fallback };
+  // The request the OP of the map took the way with; a way no request took starts from no parameters, as a request of another way would not take it.
+  const shown = way?.sample;
+  const borrowable = base.selection === undefined || way !== undefined ? undefined : baseSample(requests);
   const originKey = `${base.selection?.kind ?? ''}|${base.selection?.target ?? ''}|${way?.id ?? ''}`;
-  const origin = shown !== undefined ? draftOf(shown.request) : endpoint !== undefined ? blankDraft(endpoint.method, endpoint.path) : undefined;
-  const [edited, setEdited] = useState<{ key: string; draft: RequestDraft } | undefined>(undefined);
+  const origin = shown !== undefined ? draftOf(shown) : endpoint !== undefined ? blankDraft(endpoint.method, endpoint.path) : undefined;
+  // What the reader wrote over it, and the way of the request it was copied from, when the reader copied one.
+  const [edited, setEdited] = useState<{ key: string; draft: RequestDraft; copiedFrom?: string } | undefined>(undefined);
   const draft = edited?.key === originKey ? edited.draft : origin;
   const changed = edited?.key === originKey;
-  const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next });
+  const copiedFrom = changed ? edited?.copiedFrom : undefined;
+  const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next, ...(copiedFrom === undefined ? {} : { copiedFrom }) });
 
   let note: string;
   if (base.selection === undefined) note = '「道筋」からケースを選ぶと、そのケースを通るリクエストから始めます。値を書いて実行すると、地図の OP で動かし、通った道筋を再生します。';
   else if (state.kind === 'loading') note = '読み込んでいます…';
   else if (state.kind === 'failed') note = `このケースを通るリクエストを読み込めませんでした: ${state.message}`;
-  else if (shown?.kind === 'sample') note = '地図の OP で、このケースを通ると確かめたリクエストです。値を書き換えて実行すると、通る道筋がどう変わるかを再生します。';
-  else if (shown?.kind === 'base') note = `このケースを通るリクエストは見つかっていないので、地図の OP が「${shown.way}」で応えたリクエストから始めます。値を書き換えて、このケースを通るか確かめられます。`;
-  else note = 'このケースを通るリクエストは見つかっていません。値を書いて実行すると、通った道筋を再生します。';
+  else if (shown !== undefined) note = '地図の OP で、このケースを通ると確かめたリクエストです。値を書き換えて実行すると、通る道筋がどう変わるかを再生します。';
+  else if (copiedFrom !== undefined) note = `地図の OP が「${copiedFrom}」で応えたリクエストを写したものです。このケースは通りません。値を書き換えて実行すると、通った道筋を再生します。`;
+  else note = 'このケースを通るリクエストは、地図の OP ではまだ見つかっていません。フローはこのケースの道筋を再生しています（決まらない分岐は仮の側）。リクエストを書いて実行すると、そのリクエストが通った道筋に替わります。';
 
   if (draft === undefined) {
     return (
@@ -180,7 +181,7 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
   const running = run?.status === 'running';
   // What the request reads of the records the OP holds: that of the request run, else that of the request the view started from.
   const ranStore = run?.status === 'done' ? run.run.store : undefined;
-  const sampleStore = shown?.request.store;
+  const sampleStore = shown?.store;
   const reads =
     ranStore !== undefined
       ? { reads: ranStore.read, title: '実行したリクエストが読んだ、OP の保存済みの情報' }
@@ -205,11 +206,18 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
           <span className="req-method">{draft.method}</span>
           <code className="req-path">{draft.path}</code>
           {shown !== undefined && !changed ? (
-            <span className={`req-status req-${statusTone(shown.request.status)}`}>
-              → {statusLine(shown.request)}（地図の OP）
+            <span className={`req-status req-${statusTone(shown.status)}`}>
+              → {statusLine(shown)}（地図の OP）
             </span>
           ) : null}
         </p>
+        {borrowable !== undefined && !changed ? (
+          <p className="note">
+            <button type="button" className="link small" onClick={() => setEdited({ key: originKey, draft: draftOf(borrowable.request), copiedFrom: borrowable.way })}>
+              地図の OP が「{borrowable.way}」で応えたリクエストを写して書き始める
+            </button>
+          </p>
+        ) : null}
         {groups.map(({ place, label }) => {
           const rows = draft.params.map((param, index) => ({ param, index })).filter((item) => item.param.in === place);
           return (

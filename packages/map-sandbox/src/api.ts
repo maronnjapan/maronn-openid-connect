@@ -29,6 +29,40 @@ export interface SandboxMessage {
   truncated?: true;
 }
 
+/** The records of the OP's memory database as plain JSON (a Map as an object, a Set as an array), by collection (`codes`, `clients`, …), then by key. */
+export type PlainDatabase = Record<string, Record<string, unknown>>;
+
+/** A record a request read from the OP's memory database, or, without a key, a collection it went through whole. */
+export interface StoreRead {
+  /** The collection of the database (`codes`, `refreshTokens`, `clients`, …). */
+  collection: string;
+  /** The key it looked up (the code, the token, the client_id, …); absent for a walk over the whole collection. */
+  key?: string;
+  /** Whether the database held the record (for a walk, any record) when the request read it. */
+  found: boolean;
+}
+
+/** A record a request added to the OP's memory database, changed, or removed. */
+export interface StoreChange {
+  collection: string;
+  key: string;
+  change: 'added' | 'changed' | 'removed';
+  /** The record after the request, as plain JSON; absent for one removed. */
+  value?: unknown;
+  /** The record before the request, for one changed or removed. */
+  before?: unknown;
+  /** The top-level fields whose values changed, for a record changed. */
+  fields?: string[];
+}
+
+/** What a request read and wrote of the OP's memory database (store.ts). */
+export interface StoreAccess {
+  /** The records it read, the first read of each, in the order read; not those it wrote before reading them. */
+  read: StoreRead[];
+  /** The records it added, changed or removed. */
+  wrote: StoreChange[];
+}
+
 /** What one request run on the OP of the map gave. */
 export interface SandboxRun {
   /** The request as sent: its method and absolute URL, its headers and body. */
@@ -39,6 +73,8 @@ export interface SandboxRun {
   error?: string;
   /** What ran while the OP answered: the Istanbul counters that went up, by repository path of the original source. */
   ran: Record<string, RanInFile>;
+  /** What it read and wrote of the records the OP held. */
+  store: StoreAccess;
 }
 
 /**

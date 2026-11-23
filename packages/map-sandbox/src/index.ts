@@ -9,7 +9,9 @@
  * measured tests, istanbul.ts) that went up between the start of the send
  * and the end of the response, by repository path. The map reads them with
  * the rules the test catalog reads a test's request with (map-analysis
- * observe.ts).
+ * observe.ts). What the request read and wrote of the records the OP held
+ * is noted too (store.ts): the records it looked up, found or not, and those
+ * it added, changed or removed.
  *
  * The OP sends no request out: the fetch it is given for a client's
  * jwks_uri or a request_uri refuses, and so does the fetch of the global
@@ -22,17 +24,19 @@ import type { MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/mem
 import { createProviderStores } from '../../../apps/hono/src/oidc-provider/db/memory/stores.js';
 import { rs256Key, staticKeyProvider } from '../../../apps/hono/src/test-support/keys.js';
 import type * as Api from './api.js';
+import type { PlainDatabase } from './api.js';
 import { candidateRequests, SAMPLED_ENDPOINTS } from './candidates.js';
 import { atClock } from './clock.js';
 import { PREMISES } from './premises.js';
 import { seededDatabase } from './seed.js';
+import { plainDatabase, storeAccess, watchDatabase } from './store.js';
 
 export { candidateRequests, PREMISES, SAMPLED_ENDPOINTS };
 
 /** The global the OP's memory database is kept on (db/memory/database.ts createDatabase): a request's own while it runs. */
 const DATABASE_KEY = '__oidcMemoryDatabase';
 
-let seeded: Promise<MemoryDatabase> | undefined;
+let seeded: Promise<{ db: MemoryDatabase; plain: PlainDatabase }> | undefined;
 let key: ReturnType<typeof rs256Key> | undefined;
 
 /** The OP's fetch: it refuses, as the OP of the map sends no request out of the page. */
@@ -72,11 +76,12 @@ async function withoutFetch<T>(run: () => Promise<T>): Promise<T> {
 /** Run a request on the OP of the map, no other running. */
 async function runAlone(request: Api.SandboxRequest): Promise<Api.SandboxRun> {
   return atClock(PREMISES.now * 1000, () => withoutFetch(async () => {
-    seeded ??= seededDatabase(PREMISES);
+    seeded ??= seededDatabase(PREMISES).then((db) => ({ db, plain: plainDatabase(db) }));
     key ??= rs256Key('map-sandbox-rs256-key');
-    const db = structuredClone(await seeded);
+    const before = await seeded;
+    const db = structuredClone(before.db);
     const global = globalThis as Record<string, unknown>;
-    const before = global[DATABASE_KEY];
+    const databaseBefore = global[DATABASE_KEY];
     global[DATABASE_KEY] = db;
     try {
       const app = createApp({
@@ -89,6 +94,7 @@ async function runAlone(request: Api.SandboxRequest): Promise<Api.SandboxRun> {
       });
       const sent = new Request(new URL(request.path, PREMISES.issuer), { method: request.method, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
       resetExchanges();
+      const reads = watchDatabase(db);
       await recordExchange(sent, (message) => app.fetch(message)).catch(() => undefined);
       const [exchange] = takeExchanges();
       if (exchange === undefined) throw new Error('The OP of the map recorded no exchange.');
@@ -97,9 +103,10 @@ async function runAlone(request: Api.SandboxRequest): Promise<Api.SandboxRun> {
         ...(exchange.response === undefined ? {} : { response: exchange.response }),
         ...(exchange.error === undefined ? {} : { error: exchange.error }),
         ran: byRepositoryPath(exchange.ran),
+        store: storeAccess(reads, before.plain, db),
       };
     } finally {
-      global[DATABASE_KEY] = before;
+      global[DATABASE_KEY] = databaseBefore;
     }
   }));
 }

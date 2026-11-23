@@ -13,10 +13,9 @@ import { registerDevelopmentUsers } from '../../../apps/hono/src/oidc-provider/d
 import { confidentialClient, storedAuthorizationCode, storedRefreshToken } from '../../../apps/hono/src/test-support/token.js';
 import type { Premises } from './premises.js';
 
-/** A memory database that holds the premises. */
-export async function seededDatabase(premises: Premises): Promise<MemoryDatabase> {
+/** A memory database that holds what the OP is configured with: the clients of the premises, registered, and the development users. */
+export async function configuredDatabase(premises: Premises): Promise<MemoryDatabase> {
   const db = createEmptyDatabase();
-  const stores = createProviderStores(db);
   for (const client of premises.clients) {
     await registerClient(
       db,
@@ -30,6 +29,14 @@ export async function seededDatabase(premises: Premises): Promise<MemoryDatabase
       }),
     );
   }
+  await registerDevelopmentUsers(db);
+  return db;
+}
+
+/** A memory database that holds the premises: what the OP is configured with, and the codes and tokens of the premises as the tests put theirs. */
+export async function seededDatabase(premises: Premises): Promise<MemoryDatabase> {
+  const db = await configuredDatabase(premises);
+  const stores = createProviderStores(db);
   for (const code of premises.codes) {
     await stores.authCodeStore.set(
       code.code,
@@ -49,6 +56,5 @@ export async function seededDatabase(premises: Premises): Promise<MemoryDatabase
   for (const token of premises.refreshTokens) {
     await stores.refreshTokenStore.set(token.token, storedRefreshToken({ clientId: token.clientId, subject: token.subject, scope: token.scope, expiresAt: premises.now + token.expiresIn }));
   }
-  await registerDevelopmentUsers(db);
   return db;
 }

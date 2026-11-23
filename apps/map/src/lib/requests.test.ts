@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RootRequests, WayRequest } from '../types';
-import { basicCredentials, fileName, paramGroups, shortValue, statusLine, statusTone, testsLink, wayRequestsOf } from './requests';
+import { basicCredentials, fileName, statusLine, statusTone, testsLink, wayRequestsOf } from './requests';
 
 const example: WayRequest = {
   test: { id: 't-1', title: 'should rotate the refresh token', file: 'apps/hono/src/oidc-provider/endpoints/token/pipeline.test.ts', line: 378, code: "const whileLoggedIn = await refresh(first.refresh_token ?? '');" },
@@ -42,35 +42,6 @@ describe('wayRequestsOf', () => {
       wayRequestsOf(requests, { kind: 'failure', name: 'x', target: 's0b9' }),
       wayRequestsOf(undefined, { kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9' }),
     ]).toEqual([undefined, undefined, undefined]);
-  });
-});
-
-describe('paramGroups', () => {
-  it('should group the parameters by where they were sent, each group in the order sent', () => {
-    expect(
-      paramGroups([
-        { name: 'client_id', value: 'c', in: 'query' },
-        { name: 'grant_type', value: 'g', in: 'form' },
-        { name: 'scope', value: 's', in: 'query' },
-      ]),
-    ).toEqual([
-      {
-        in: 'query',
-        label: 'クエリ',
-        params: [
-          { name: 'client_id', value: 'c', in: 'query' },
-          { name: 'scope', value: 's', in: 'query' },
-        ],
-      },
-      { in: 'form', label: 'フォーム', params: [{ name: 'grant_type', value: 'g', in: 'form' }] },
-    ]);
-  });
-});
-
-describe('shortValue', () => {
-  it('should cut a long value in the middle to the limit, and leave a short one whole', () => {
-    const long = `${'a'.repeat(40)}${'b'.repeat(40)}`;
-    expect([shortValue('short'), shortValue(long).text.length, shortValue(long).text.startsWith('aaaa'), shortValue(long).text.endsWith('bbbb'), shortValue(long).cut]).toEqual([{ text: 'short', cut: false }, 48, true, true, true]);
   });
 });
 

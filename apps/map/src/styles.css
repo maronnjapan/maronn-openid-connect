@@ -691,6 +691,31 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .req-at { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .req-code { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
 
+/* The request written to run on the OP of the map: a name and a value a row, by where they are sent, and what the run gave. */
+.req-rows { margin: 0; padding: 6px 8px 8px; border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.req-rows legend { padding: 0 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.req-rows ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.req-rows > .note, .req-rows > .link { align-self: flex-start; margin: 0; }
+.req-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; align-items: center; gap: 4px; }
+.req-row input { min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--fg); font-size: 12px; }
+.req-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.req-row .req-note { grid-column: 1 / -1; }
+.req-remove { width: 26px; height: 26px; font-size: 14px; color: var(--muted); }
+.req-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.req-run { flex: 1 1 auto; }
+.req-run:disabled { opacity: 0.45; cursor: default; }
+.req-problem { color: var(--danger); }
+.req-result { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-left: 3px solid var(--accent); border-radius: 4px; background: var(--surface-2); font-size: 12.5px; }
+.req-result .note { margin: 0; }
+.req-error-code { color: var(--danger); font-size: 12px; }
+.req-body pre { margin: 4px 0 0; max-height: 240px; overflow: auto; padding: 6px 8px; border-radius: 4px; background: var(--surface); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.req-premises { font-size: 12.5px; }
+.req-premises summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 12px; }
+.req-premises dl { margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.req-premises dt { font-weight: 600; }
+.req-premises dd { margin: 0 0 0 1em; color: var(--muted); overflow-wrap: anywhere; }
+.req-premises code { color: var(--fg); }
+
 /*
  * The stage of the flow view: the chart of a frame drawn as a Mermaid flowchart reads. Its shapes say what a node is (a stadium for the start and an end,
  * a rounded rectangle for what runs, a rhombus for a decision, a red rounded node for a failure), and its arrows, all of them drawn, carry their labels
@@ -783,6 +808,8 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
   .flow-buttons .icon, .flow-play, .flow-way select { height: 44px; }
   .flow-buttons .icon { width: 44px; }
   .req-step { width: 40px; height: 40px; }
+  .req-row input { height: 40px; font-size: 16px; }
+  .req-remove { width: 40px; height: 40px; }
   .flow-max { display: none; }
 }
 

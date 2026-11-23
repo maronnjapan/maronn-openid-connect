@@ -20,28 +20,6 @@ export function wayRequestsOf(requests: RootRequests | undefined, selection: Pic
 /** Where a parameter was sent, in words. */
 export const PARAM_PLACES: Record<WayRequest['params'][number]['in'], string> = { query: 'クエリ', form: 'フォーム', json: 'JSON' };
 
-/** The parameters of a request by where it sent them (its query, then its body), each group in the order sent. */
-export function paramGroups(params: WayRequest['params']): Array<{ in: WayRequest['params'][number]['in']; label: string; params: WayRequest['params'] }> {
-  const groups: Array<{ in: WayRequest['params'][number]['in']; label: string; params: WayRequest['params'] }> = [];
-  for (const param of params) {
-    const group = groups.find((candidate) => candidate.in === param.in);
-    if (group === undefined) groups.push({ in: param.in, label: PARAM_PLACES[param.in], params: [param] });
-    else group.params.push(param);
-  }
-  return groups;
-}
-
-/** A value past this many characters is cut in the middle until it is opened. */
-export const VALUE_LIMIT = 48;
-
-/** A long value cut in the middle (`eyJhbGciOiJSUzI1…UVBvwA`), and whether it was cut. */
-export function shortValue(value: string, limit = VALUE_LIMIT): { text: string; cut: boolean } {
-  if (value.length <= limit) return { text: value, cut: false };
-  const head = Math.ceil(limit * 0.6);
-  const tail = limit - head - 1;
-  return { text: `${value.slice(0, head)}…${value.slice(value.length - tail)}`, cut: true };
-}
-
 /** The reason phrases of the statuses an OP answers with. */
 const REASONS: Readonly<Record<number, string>> = {
   200: 'OK',

@@ -715,6 +715,31 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .req-premises dt { font-weight: 600; }
 .req-premises dd { margin: 0 0 0 1em; color: var(--muted); overflow-wrap: anywhere; }
 .req-premises code { color: var(--fg); }
+/* The records of the OP a request reads and writes, and the requests that stored them (StoredRecords.tsx). */
+.store { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12.5px; }
+.store-title { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.store-subtitle { margin: 8px 0 2px; font-size: 12px; font-weight: 600; }
+.store .note, .store-origin .note { margin: 0; }
+.store-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.store-item { min-width: 0; overflow-wrap: anywhere; }
+.store-item summary { cursor: pointer; }
+.store-item summary .req-note, .store-item > .req-note { display: inline; margin-left: 6px; }
+.store-what { font-weight: 600; }
+.store-missing { margin-left: 6px; font-size: 11.5px; font-weight: 600; color: var(--danger); }
+.store-value { margin: 4px 0; }
+.store-origin { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.store-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.store-step { padding: 4px 6px; border-left: 2px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+.store-step-did { border-left-color: var(--accent); background: var(--surface-2); }
+.store-step .req-line, .store-step .req-note { margin: 0; }
+.store-num { font-variant-numeric: tabular-nums; color: var(--muted); }
+.store-did { font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.store-sent { margin: 2px 0 0; display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11.5px; color: var(--muted); }
+.store-sent span { overflow-wrap: anywhere; word-break: break-all; }
+.store-sent .store-sent-label { font-family: inherit; font-weight: 600; word-break: normal; }
+.store-grant { margin-top: 4px; }
+.store-walk { margin: 4px 0 0 1em; }
+.store-token code { display: block; overflow-wrap: anywhere; word-break: break-all; font-size: 11px; }
 
 /*
  * The stage of the flow view: the chart of a frame drawn as a Mermaid flowchart reads. Its shapes say what a node is (a stadium for the start and an end,

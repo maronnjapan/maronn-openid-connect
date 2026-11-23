@@ -1,20 +1,22 @@
 /**
  * The requests the map tries on its OP to find, for each way of an endpoint,
  * a request that takes it (packages/test-catalog samples.ts): the requests a
- * client sends to the endpoint, written with the premises, then each of them
+ * client sends to the endpoint, written with the premises (the clients, and
+ * the codes and tokens the grants made by requests left), then each of them
  * changed in one place: a field left out, given a value the OP does not
  * hold, or sent twice; the client authenticated with a wrong secret, as a
  * client the OP does not know, the other way, as another client, both ways
- * at once, or not at all; the body sent without its content type. Which way
- * a request takes is found by running it, never assumed here: a way none of
- * them takes has no request. Plain data from the premises: it imports
- * nothing of the OP.
+ * at once, or not at all; the body sent without its content type. The
+ * requests of the UserInfo endpoint, which carry a token rather than a form
+ * of a client, are written out whole instead. Which way a request takes is
+ * found by running it, never assumed here: a way none of them takes has no
+ * request. Plain data from the premises: it imports nothing of the OP.
  */
-import type { SandboxRequest } from './api.js';
-import { PREMISES, type Premises } from './premises.js';
+import type { PreparedGrant, PreparedPremises, SandboxRequest } from './api.js';
+import { PREMISES } from './premises.js';
 
-/** The endpoints the map tries requests at, by id. */
-export const SAMPLED_ENDPOINTS: readonly string[] = ['token'];
+/** The endpoints the map tries requests at, by id: those that act on the codes and tokens the OP holds. */
+export const SAMPLED_ENDPOINTS: readonly string[] = ['token', 'userinfo', 'introspection', 'revocation'];
 
 /** How a request authenticates its client: in the Authorization header (Basic), in the body with its secret, by its id alone, or not at all. */
 interface Credentials {
@@ -82,20 +84,20 @@ function variants(template: FormTemplate): SandboxRequest[] {
   return requests;
 }
 
-/** The fields of the authorization_code grant of a code of the premises: the code, its redirect_uri, and its PKCE verifier when it has one. */
-function codeFieldsOf(code: Premises['codes'][number] | undefined): Array<[string, string]> {
-  if (code === undefined) return [];
-  return [['grant_type', 'authorization_code'], ['code', code.code], ['redirect_uri', code.redirectUri], ...(code.pkce === undefined ? [] : [['code_verifier', code.pkce.verifier] as [string, string]])];
+/** The fields of the authorization_code grant of the code a grant of the premises left: the code, its redirect_uri, and its PKCE verifier. */
+function codeFieldsOf(grant: PreparedGrant | undefined): Array<[string, string]> {
+  if (grant === undefined) return [];
+  return [['grant_type', 'authorization_code'], ['code', grant.code], ['redirect_uri', grant.redirectUri], ['code_verifier', grant.codeVerifier]];
 }
 
-/** The requests a client sends to the token endpoint, one a grant (and the scopes it asks for), with the premises. */
-function tokenTemplates(): FormTemplate[] {
+/** The requests a client sends to the token endpoint, one a grant (and the scopes it asks for), with the premises: the code of the first grant, the codes of the others, the refresh token of the first grant exchanged. */
+function tokenTemplates(premises: PreparedPremises): FormTemplate[] {
   const client1 = credentialsOf('client-1');
   const service = credentialsOf('service-1');
-  const [code, ...otherCodes] = PREMISES.codes;
-  const refresh = PREMISES.refreshTokens[0];
+  const [code, ...otherCodes] = premises.grants;
+  const refresh = premises.grants.map((grant) => grant.tokens?.refresh_token).find((token) => typeof token === 'string');
   const codeFields = codeFieldsOf(code);
-  const refreshFields: Array<[string, string]> = refresh === undefined ? [] : [['grant_type', 'refresh_token'], ['refresh_token', refresh.token]];
+  const refreshFields: Array<[string, string]> = refresh === undefined ? [] : [['grant_type', 'refresh_token'], ['refresh_token', refresh]];
   const templates: FormTemplate[] = [
     { path: '/token', fields: codeFields, client: client1 },
     // The other codes of the premises, and a verifier PKCE cannot be (shorter than 43 characters).
@@ -129,19 +131,73 @@ function tokenTemplates(): FormTemplate[] {
   return templates.filter((template) => template.fields.length > 0);
 }
 
-/** The templates of each endpoint tried. */
-const TEMPLATES: Readonly<Record<string, () => FormTemplate[]>> = { token: tokenTemplates };
+/** The tokens a grant of the premises exchanged left: its access token, its refresh token, its ID token (each absent when no grant left one). */
+function tokensOf(premises: PreparedPremises): { access?: string; refresh?: string; id?: string } {
+  const tokens = premises.grants.find((grant) => typeof grant.tokens?.access_token === 'string')?.tokens ?? {};
+  const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
+  const access = text(tokens.access_token);
+  const refresh = text(tokens.refresh_token);
+  const id = text(tokens.id_token);
+  return { ...(access === undefined ? {} : { access }), ...(refresh === undefined ? {} : { refresh }), ...(id === undefined ? {} : { id }) };
+}
+
+/** The requests a client sends about a token of the premises to an endpoint that takes it in a form (introspection, RFC 7662 §2.1; revocation, RFC 7009 §2.1): the access token, the refresh token with its hint, and the access token with its hint. */
+function tokenFormTemplates(path: string, premises: PreparedPremises): FormTemplate[] {
+  const client1 = credentialsOf('client-1');
+  const { access, refresh } = tokensOf(premises);
+  const templates: FormTemplate[] = [];
+  if (access !== undefined) templates.push({ path, fields: [['token', access]], client: client1 }, { path, fields: [['token', access], ['token_type_hint', 'access_token']], client: client1 });
+  if (refresh !== undefined) templates.push({ path, fields: [['token', refresh], ['token_type_hint', 'refresh_token']], client: client1 });
+  return templates;
+}
+
+/**
+ * The requests to the UserInfo endpoint with the access token of the
+ * premises (OIDC Core 1.0 §5.3.1, RFC 6750 §2): in the Authorization header
+ * by GET and POST, in a form body, in the query; and without it, with one
+ * the OP does not hold, with the ID token in its place, in another scheme,
+ * and in two places at once.
+ */
+function userinfoRequests(premises: PreparedPremises): SandboxRequest[] {
+  const { access, id } = tokensOf(premises);
+  if (access === undefined) return [];
+  const bearer = (token: string): [string, string] => ['authorization', `Bearer ${token}`];
+  const form: [string, string] = ['content-type', 'application/x-www-form-urlencoded'];
+  return [
+    { method: 'GET', path: '/userinfo', headers: [bearer(access)] },
+    { method: 'POST', path: '/userinfo', headers: [bearer(access)] },
+    { method: 'POST', path: '/userinfo', headers: [form], body: new URLSearchParams({ access_token: access }).toString() },
+    { method: 'GET', path: `/userinfo?${new URLSearchParams({ access_token: access })}`, headers: [] },
+    { method: 'GET', path: '/userinfo', headers: [] },
+    { method: 'GET', path: '/userinfo', headers: [bearer(`${access}-unknown`)] },
+    ...(id === undefined ? [] : [{ method: 'GET', path: '/userinfo', headers: [bearer(id)] }]),
+    { method: 'GET', path: '/userinfo', headers: [['authorization', basic('client-1', 'client-1-secret-value')]] },
+    { method: 'GET', path: `/userinfo?${new URLSearchParams({ access_token: access })}`, headers: [bearer(access)] },
+  ];
+}
+
+/** The templates of each endpoint tried whose requests are forms a client sends. */
+const TEMPLATES: Readonly<Record<string, (premises: PreparedPremises) => FormTemplate[]>> = {
+  token: tokenTemplates,
+  introspection: (premises) => tokenFormTemplates('/introspect', premises),
+  revocation: (premises) => tokenFormTemplates('/revoke', premises),
+};
+
+/** The requests of each endpoint tried that are written out whole, after those of its templates. */
+const WRITTEN: Readonly<Record<string, (premises: PreparedPremises) => SandboxRequest[]>> = { userinfo: userinfoRequests };
 
 /**
  * The requests to try at an endpoint, in the order to try them: the
  * requests a client sends first, then the requests made of each by changing
- * one place, each once. None for an endpoint not tried.
+ * one place, then those written out whole, each once. None for an endpoint
+ * not tried.
  */
-export function candidateRequests(endpoint: string): SandboxRequest[] {
-  const templates = TEMPLATES[endpoint]?.() ?? [];
+export function candidateRequests(endpoint: string, premises: PreparedPremises): SandboxRequest[] {
+  const templates = TEMPLATES[endpoint]?.(premises) ?? [];
+  const written = WRITTEN[endpoint]?.(premises) ?? [];
   const seen = new Set<string>();
   const requests: SandboxRequest[] = [];
-  for (const request of [...templates.map((template) => formRequest(template.path, template.fields, template.client)), ...templates.flatMap(variants)]) {
+  for (const request of [...templates.map((template) => formRequest(template.path, template.fields, template.client)), ...templates.flatMap(variants), ...written]) {
     const key = JSON.stringify(request);
     if (seen.has(key)) continue;
     seen.add(key);

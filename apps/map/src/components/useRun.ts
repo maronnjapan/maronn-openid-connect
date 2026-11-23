@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
-import type { SandboxRequest, SandboxRun } from '@maronn-openid-connect/map-sandbox';
+import type { PreparedPremises, SandboxRequest, SandboxRun } from '@maronn-openid-connect/map-sandbox';
 import type { Decisions, FlowTree, MapData, SourceDocument } from '../types';
 import { walkTrace } from '../lib/playback';
 import { failingCalls, filesOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from '../lib/run';
 import type { TraceState } from '../lib/trace';
 import type { SandboxAnswer, SandboxAsk } from '../sandbox-worker';
+import { fetchPremises } from './useRequests';
 
 // ---------------------------------------------------------------------------
 // The worker
@@ -37,11 +38,19 @@ function sandboxWorker(): Worker {
   return made;
 }
 
-/** Run a request on the OP of the map, in its worker. */
-export function runInSandbox(request: SandboxRequest): Promise<SandboxRun> {
+/** The premises to run a request on (MapData.premises): none for a build that made none, and a failure that says it was they that could not be read. */
+function premisesOf(data: MapData): Promise<PreparedPremises | undefined> {
+  if (data.premises === undefined) return Promise.resolve(undefined);
+  return fetchPremises(data.premises).catch((error: unknown) => {
+    throw new Error(`地図の OP の前提（OP が持っているもの）を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
+/** Run a request on the OP of the map, in its worker, on the premises given (none: the OP as it is configured). */
+export function runInSandbox(request: SandboxRequest, premises: PreparedPremises | undefined): Promise<SandboxRun> {
   return new Promise((resolve, reject) => {
     lastId += 1;
-    const ask: SandboxAsk = { id: lastId, request };
+    const ask: SandboxAsk = { id: lastId, request, ...(premises === undefined ? {} : { premises }) };
     waiting.set(ask.id, { resolve, reject });
     sandboxWorker().postMessage(ask);
   });
@@ -179,7 +188,7 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
       lastRun.current += 1;
       const id = lastRun.current;
       setRunState({ status: 'running', id, request });
-      runInSandbox(request).then(
+      premisesOf(data).then((premises) => runInSandbox(request, premises)).then(
         (run) => setRunState((current) => (current?.id === id ? { status: 'done', id, request, run, follow: true } : current)),
         (error: unknown) => setRunState((current) => (current?.id === id ? { status: 'failed', id, request, message: error instanceof Error ? error.message : String(error) } : current)),
       );

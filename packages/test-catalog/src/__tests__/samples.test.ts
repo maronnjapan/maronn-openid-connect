@@ -131,6 +131,15 @@ describe('attachSamples', () => {
     expect(ways[0]?.made.sample?.request).toEqual({ method: 'POST', path: '/token', host: 'op.example.com', headers: [['content-type', 'application/x-www-form-urlencoded']], body: 'grant_type=authorization_code' });
   });
 
+  it('should keep with a sample what its run read and wrote of the records the OP of the map held', () => {
+    const ways = waysOf(ROOT, SELECTIONS, [], () => [], SOURCES.treeOf);
+    const store = { read: [{ collection: 'clients', key: 'client-1', found: true }], wrote: [{ collection: 'accessTokens', key: 'a', change: 'added' as const, value: { sub: 'testuser' } }] };
+
+    attachSamples(ways, [{ ...ANSWERED, store }, FAILED], ROOT, SOURCES);
+
+    expect(ways.map((way) => way.made.sample?.store)).toEqual([store, undefined, undefined]);
+  });
+
   it('should leave a case no run takes without a sample', () => {
     const ways = waysOf(ROOT, SELECTIONS, [], () => [], SOURCES.treeOf);
 

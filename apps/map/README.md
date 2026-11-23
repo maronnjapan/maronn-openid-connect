@@ -219,20 +219,29 @@ Tab で箱へ移ると、その箱が見える所まで図が動いてカード�
 - この欄はテストとは結び付けない。テストが送ったリクエストは、テストの画面で読む
 - 実行すると、応答のステータスと OAuth のエラー（JSON のボディか、リダイレクト先の `error`）、リダイレクトの `Location`、畳んだ応答のボディを出し、「道筋」は「実行したリクエストが通った道筋」になる。その道筋が「道筋」の選択のどれで終わったか（「失敗: TokenError(invalid_grant)（requireStoredAuthorizationCode から）」、「終わり方: …」、自分で応答するステップならそのステップ）を添え、再生を最初から始める
 - 場面の側のボタンやほかの道筋を選ぶと、再生は実行したリクエストの道筋から離れる。「このリクエストの道筋に戻す」でまた従う。ほかの道筋を選ぶと、実行の結果は消える
-- 「地図の OP が持っているもの」に、リクエストで使える値（クライアントとシークレット、認可コードと PKCE の `code_verifier`、リフレッシュトークン、ユーザー）を並べる
+- 「地図の OP が持っているもの」に、リクエストで使える値（クライアントとシークレット、前提のリクエストが残した認可コードと PKCE の `code_verifier`、リフレッシュトークン、ユーザー）を並べる
 
 ケースを通るリクエストは、地図のビルドが見つける。
 解析の前に、地図の OP が試すリクエスト（`packages/map-sandbox/src/candidates.ts`。クライアントが送るリクエストと、それを一か所ずつ変えたもの）を順に動かし、決定の側を読むのと同じ規則（`takes`）でケースに当てて、ケースごとに最初に通ったものを残す（`packages/test-catalog/src/samples.ts`）。
-推測では埋めないので、どのリクエストも通らないケースには無い。いま試すのは `/token` で、ビルドのログに「samples: … of … cases took one」と数を出す。
+推測では埋めないので、どのリクエストも通らないケースには無い。いま試すのは、OP が保存したコードやトークンを使う `/token`、`/userinfo`、`/introspect`、`/revoke` で（トークンは前提のリクエストが発行したもの）、ビルドのログに「samples: … of … cases took one」と数を出す。
 エンドポイントの処理本体ごとに `public/data/requests/<hash>.json`（`RootRequests`）へ書き、`map.json` の `requests` に URL を置く。
-道筋とは、種類と行き先（`Selection.target`）で結ぶ。地図の出力検査（`scripts/check-map.mjs`）は、どの道筋も根のよく使う選択にあることを確かめる。
+ケースのリクエストには、地図の OP で動かしたときに読んだ記録（コレクションとキー、あったか）と、書いた記録（追加・変更・削除）を添える。
+道筋とは、種類と行き先（`Selection.target`）で結ぶ。地図の出力検査（`scripts/check-map.mjs`）は、どの道筋も根のよく使う選択にあることと、ケースのリクエストが読んだ記録が前提（次の節）にあるかどうかが、読んだときにあったかどうかと合うこと（前提の上で動かしたものであること）を確かめる。
 
 ### 地図の OP
 
 リクエストは、ページの中の Web Worker で動く OP（[`packages/map-sandbox`](../../packages/map-sandbox)）で実行する。
-OP は `apps/hono` の全機能オンの OP そのもので、リクエストごとに、テストと同じ前提（`client-1`、PKCE 付きの `code-1`、`refresh-1`、開発用ユーザー）を写したメモリの DB の上に新しく作り、時計はテストと同じ 2026-01-01T00:00:00Z に止める。
+OP は `apps/hono` の全機能オンの OP そのもので、リクエストごとに、前提（後の段落）のメモリの DB の写しの上に新しく作り、時計はテストと同じ 2026-01-01T00:00:00Z に止める。
 前のリクエストが使ったコードも、次のリクエストではまた使える。
 OP はページの外へリクエストを送らない（クライアントの `jwks_uri` や `request_uri` の取得は断る）。
+リクエストごとに、OP が DB から読んだ記録（認可コード、リフレッシュトークン、クライアントなど。見つからなかったものも）と、書いた記録（追加・変更・削除）を控える（`packages/map-sandbox/src/store.ts`）。
+
+前提は、手で書いた記録ではなく、それを作るリクエストを地図の OP で動かして作る（`packages/map-sandbox/src/prepare.ts`）。
+クライアント（`client-1`、`client-2`、`service-1`）と開発用ユーザーは設定として登録し、認可コードとトークンは、グラント（`premises.ts` の `grants`）ごとに、クライアントの認可リクエスト（PKCE、`offline_access` と `prompt=consent`）を送り、ブラウザと同じようにログイン画面と同意画面のフォームを `testuser` として送って、クライアントへ戻るリダイレクトで受け取る。
+`exchanged` のグラントは、受け取ったコードをトークンエンドポイントで引き換える（使用済みのコードと、発行したアクセストークンとリフレッシュトークンが残る）。
+動かしたリクエストごとに、応答と書いた記録を、最後に DB にある記録ごとに、それを足したリクエストと変えたリクエストを控える。
+ブラウザはページが作るリクエストの Cookie と Origin、読む応答の Set-Cookie を落とすので、前提はビルドが Node で作り、`public/data/premises/<hash>.json`（DB の中身、トークンに署名した鍵、動かしたリクエスト、記録）に書いて `map.json` の `premises` に URL を置く。
+ページはフローを開いたときにそれを読み（記録の出どころを出すため）、実行のときに Web Worker の OP に渡す。前提を作らなかったビルドでは、OP は設定したもの（クライアントとユーザー）だけを持って動く。
 
 道筋は、OP が動いた間に上がった Istanbul の計数から求める。
 計数は計測したテストと同じ設定で数え、テストカタログがテストの送ったリクエストを読むのと同じ規則（`packages/map-analysis/src/observe.ts`）で、トレースが開いているフレームの決定の側と、失敗した呼び出しを読む（`src/lib/run.ts`）。
@@ -456,7 +465,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 1. CLI の `explain --format json` を全機能オンで 4 フレームワーク分まとめ、関数カタログを読む
 2. 関数とエンドポイントの処理本体を TypeScript のコンパイラ API で読み、処理の流れの木にする。呼び先は型で解決する
 3. MAP_BASE があれば、変更前のコードからも木を作り、木の差分、式の差分、影響範囲、変更メモの対応づけを求める
-4. テストを読んでカタログにし、関数カタログとエンドポイントに結び付ける。MAP_TEST_REPORTS があれば、その実行の結果と到達も結び付ける。地図の OP（`packages/map-sandbox`）がビルドしてあれば、試すリクエストを先に動かし、通ったケースに添える（前の「リクエスト」）。MAP_BASE があれば、変更前のカタログとの差分を求め、関連するテストの変わらない変更を検査の対象にし、`changes.md` の説明の無い変更の次にその一覧を、末尾に畳んだテストの差分を足す
+4. テストを読んでカタログにし、関数カタログとエンドポイントに結び付ける。MAP_TEST_REPORTS があれば、その実行の結果と到達も結び付ける。地図の OP（`packages/map-sandbox`）がビルドしてあれば、前提をリクエストで作り（前の「地図の OP」）、その上で試すリクエストを先に動かし、通ったケースに添える（前の「リクエスト」）。MAP_BASE があれば、変更前のカタログとの差分を求め、関連するテストの変わらない変更を検査の対象にし、`changes.md` の説明の無い変更の次にその一覧を、末尾に畳んだテストの差分を足す
 5. 次のファイルを `public/data/` に書く
 
 - `map.json`：索引。フレームワーク、コマンド、機能、エンドポイントとステップ、関数カタログ（呼び先、呼び出し元、外へ出る失敗）、interface のメンバー（説明、実装、実装が呼ぶもの）、PR の変更の一覧。木は含まない
@@ -464,6 +473,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む。名前ごとに宣言の場所（`links`）を、宣言ごとにそれを使う場所（`uses`）を持つ（`packages/map-analysis/src/symbols.ts`。型検査器で引き、地図の根の外の宣言は持たない）。リンクの先を開けるよう、地図の根のファイルはすべて書く
 - `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
+- `premises/<hash>.json`：地図の OP の前提（`PreparedPremises`）。作ったリクエストとその応答、書いた記録、DB にある記録ごとの出どころ、DB の中身とトークンに署名した鍵。フローを開いたときに読み、リクエストを実行するときに Web Worker の OP に渡す
 - `history/<hash>.json`：main に入った変更の一覧。main（PR の地図では MAP_BASE の、ほかはリモートの main（`origin/main`、`upstream/main` など）のうち、HEAD の持つコミットを main に入れた最も新しいコミット（HEAD のブランチをマージしたもの、その上に積んだブランチのマージを含む。PR の変更の起点 `git merge-base` までの履歴がそろう。その間の HEAD の持たない変更も並ぶ）。リモートの main を持たない clone では HEAD）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる
 - `history/<hash>.json`（変更ごと）：変更の、OSS が出すコード（関数カタログの根のファイル）だけの差分（`HistoryDetail`）。git の差分（前後 3 行の文脈、GitHub と同じもの）を、変更した関数ごとと関数の外とに切り分けて持つ（ほかの関数の行が変わるところで hunk を切るので、一つの関数の差分にはその関数の行だけが入る）。変更が書いた変更メモの本文も持つ。テスト、文書、道具の変更は入れない。変更のページを開いたときと、`pnpm map:history` が読む。差分が長すぎるファイル（2,000 行を超えるもの）と、変更全体で 20,000 行を超えた後のファイルは hunk を持たず、どちらの理由かを残す（ライブラリのファイルを先に入れる）
 
@@ -562,7 +572,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/links.ts`, `src/components/SourceView.tsx`：コードの名前のリンク（行を名前で切る、移る先、使う場所、戻る・進むの履歴）と、リンク付きのコードの表示
 - `src/components/Trace.tsx`, `TraceView.tsx`, `SelectionBar.tsx`：アウトライン、決定のボタン、よく使う選択、図・差分・詳細のタブ
 - `src/components/FlowPlayer.tsx`：フローの再生の操作、場面の説明。`FlowRequest.tsx` がリクエストを書いて実行する欄（ケースの例は `src/lib/requests.ts`、データは `useRequests.ts` が読む）を出す。フローチャート（`FlowChart.tsx`）は、再生の位置を受け取って矢印を流し、印を動かす
-- `src/lib/run.ts`, `src/components/useRun.ts`, `src/sandbox-worker.ts`：書いたリクエストを地図の OP へ送る形にし、Web Worker で実行して、通った道筋（決定の側と開くフレーム）を読み、トレースの選択にする
+- `src/lib/run.ts`, `src/components/useRun.ts`, `src/sandbox-worker.ts`：書いたリクエストを地図の OP へ送る形にし、前提（`useRequests.ts` の `usePremises` が読む）とともに Web Worker で実行して、通った道筋（決定の側と開くフレーム）を読み、トレースの選択にする
 - `src/components/useDiagramCards.tsx`：図とフローチャートが共有する、箱のカード（重ねる、フォーカス、タップ）
 - `src/components/`：ほかに、エンドポイントの画面、関数のページ、このPRの変更のページ、左の一覧、検索、メニュー
 - `src/types.ts`：データの形（`@maronn-openid-connect/map-analysis/model` の再輸出）

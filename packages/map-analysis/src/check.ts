@@ -20,8 +20,13 @@
  * - With the requests the OP of the map took ways with (MapData.requests):
  *   every way they name is a ready-made choice of its root (its kind and
  *   target), so the flow view finds the request of the way chosen.
+ * - With the premises of the OP of the map (MapData.premises): the request
+ *   each record says added or changed it wrote it so, and every record a
+ *   sample read (a member of a record that is a Map, for a lookup inside
+ *   it) is held by the premises exactly when the sample found it, so the
+ *   samples were run on the premises the page hands to its OP.
  */
-import type { FlowTree, FrameFile, MapData, RootRequests, SourceDocument, TreeNode } from './model.js';
+import type { FlowTree, FrameFile, MapData, PremisesFile, RootRequests, SourceDocument, StoreAccess, TreeNode } from './model.js';
 
 export interface MapMetrics {
   frames: number;
@@ -43,6 +48,8 @@ export interface MapMetrics {
   wiring: { entries: number; untraceable: number; invalid: number };
   /** The requests the OP of the map took ways with (MapData.requests): the roots, the ways, and the ways no choice of their root is. */
   requests: { roots: number; ways: number; unmatched: number };
+  /** The premises of the OP of the map (MapData.premises): the requests that made them, the records, those a request added, and the reads of the samples that disagree with them. */
+  premises: { steps: number; records: number; made: number; reads: number; unmatched: number };
 }
 
 export interface CheckResult {
@@ -94,7 +101,7 @@ function checkTargets(nodes: readonly TreeNode[], frame: string, failures: strin
  * Check the requests the OP of the map took ways with against the frames of their roots
  * (see the module comment), adding to the metrics and the failures.
  */
-async function checkRequests(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readRequests: (url: string) => Promise<RootRequests>, metrics: MapMetrics, failures: string[]): Promise<void> {
+async function checkRequests(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readRequests: (url: string) => Promise<RootRequests>, metrics: MapMetrics, failures: string[], reads: Array<{ root: string; way: string; read: StoreAccess['read'][number] }>): Promise<void> {
   for (const [root, url] of Object.entries(data.requests ?? {})) {
     const entry = data.bodies[root] ?? data.functions[root];
     if (entry === undefined || entry.frame === '') {
@@ -106,6 +113,7 @@ async function checkRequests(data: MapData, readFrame: (url: string) => Promise<
     if (requests.root !== root) failures.push(`${root}: its requests file is of ${requests.root}`);
     for (const way of requests.ways) {
       metrics.requests.ways += 1;
+      for (const read of way.sample.store?.read ?? []) reads.push({ root, way: way.name, read });
       if (!file.selections.some((selection) => selection.kind === way.kind && selection.target === way.target)) {
         metrics.requests.unmatched += 1;
         failures.push(`${root}: the requests name the way ${way.kind} "${way.name}" (${way.target}), which no ready-made choice of the root is: the flow view would not show them`);
@@ -115,9 +123,42 @@ async function checkRequests(data: MapData, readFrame: (url: string) => Promise<
 }
 
 /**
+ * Check the premises of the OP of the map against themselves and against
+ * the records the samples read (see the module comment), adding to the
+ * metrics and the failures.
+ */
+function checkPremises(premises: PremisesFile, reads: ReadonlyArray<{ root: string; way: string; read: StoreAccess['read'][number] }>, metrics: MapMetrics, failures: string[]): void {
+  metrics.premises.steps = premises.steps.length;
+  metrics.premises.records = premises.records.length;
+  // The records the premises hold, and the members of those that are Maps themselves (a user's consents, by client_id), whose values are objects in the premises.
+  const held = new Set<string>();
+  for (const record of premises.records) {
+    held.add(JSON.stringify([record.collection, record.key]));
+    if (record.value !== null && typeof record.value === 'object' && !Array.isArray(record.value)) {
+      for (const member of Object.keys(record.value)) held.add(JSON.stringify([record.collection, record.key, member]));
+    }
+    if (record.addedBy !== undefined) metrics.premises.made += 1;
+    const said: Array<[number | undefined, 'added' | 'changed']> = [[record.addedBy, 'added'], ...(record.changedBy ?? []).map((step): [number, 'changed'] => [step, 'changed'])];
+    for (const [step, change] of said) {
+      if (step === undefined) continue;
+      if (!premises.steps[step]?.wrote.some((wrote) => wrote.collection === record.collection && wrote.key === record.key && wrote.change === change)) failures.push(`premises: the record ${record.collection} ${record.key} says request ${step} ${change} it, which that request did not`);
+    }
+  }
+  for (const { root, way, read } of reads) {
+    if (read.key === undefined) continue;
+    metrics.premises.reads += 1;
+    const place = read.member === undefined ? [read.collection, read.key] : [read.collection, read.key, read.member];
+    if (held.has(JSON.stringify(place)) === read.found) continue;
+    metrics.premises.unmatched += 1;
+    failures.push(`${root}: the sample of "${way}" ${read.found ? 'found' : 'did not find'} ${place.join(' ')}, which the premises ${read.found ? 'do not hold' : 'hold'}: it was not run on the premises the page hands to its OP`);
+  }
+}
+
+/**
  * Measure the map (see the module comment): the index, a reader of the
- * frame files by url, of the text of the source files by id, and of the
- * requests files by url (MapData.requests).
+ * frame files by url, of the text of the source files by id, of the
+ * requests files by url (MapData.requests), and of the premises file by url
+ * (MapData.premises).
  */
 export async function checkMap(
   data: MapData,
@@ -125,6 +166,9 @@ export async function checkMap(
   readSource: (id: string) => Promise<string | undefined>,
   readRequests: (url: string) => Promise<RootRequests> = async (url) => {
     throw new Error(`no reader of the requests file ${url}`);
+  },
+  readPremises: (url: string) => Promise<PremisesFile> = async (url) => {
+    throw new Error(`no reader of the premises file ${url}`);
   },
 ): Promise<CheckResult> {
   const metrics: MapMetrics = {
@@ -139,6 +183,7 @@ export async function checkMap(
     untested: data.changes?.untested ?? [],
     wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 },
     requests: { roots: 0, ways: 0, unmatched: 0 },
+    premises: { steps: 0, records: 0, made: 0, reads: 0, unmatched: 0 },
   };
   const failures: string[] = [];
   for (const wiring of data.wiring ?? []) {
@@ -204,7 +249,9 @@ export async function checkMap(
     const file = await readFrame(root.frame);
     metrics.token[framework] = file.selections.filter((selection) => selection.kind === 'step' || selection.kind === 'exit').map((selection) => selection.name);
   }
-  await checkRequests(data, readFrame, readRequests, metrics, failures);
+  const reads: Array<{ root: string; way: string; read: StoreAccess['read'][number] }> = [];
+  await checkRequests(data, readFrame, readRequests, metrics, failures, reads);
+  if (data.premises !== undefined) checkPremises(await readPremises(data.premises), reads, metrics, failures);
   if (metrics.unnamed > 0) failures.push(`${metrics.unnamed} ready-made choices have no name`);
   for (const duplicate of metrics.duplicateNames.slice(0, 10)) failures.push(`${duplicate.frame}: two choices are named "${duplicate.name}"`);
   for (const frame of metrics.uncovered.slice(0, 10)) failures.push(`${frame.frame}: lines ${frame.lines.join(', ')} of the body are in no node`);

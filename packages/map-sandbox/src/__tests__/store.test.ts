@@ -85,9 +85,9 @@ describe('watchDatabase', () => {
 });
 
 describe('plainOf', () => {
-  it('should give a Map as an object of its entries and a Set as an array, member by member', () => {
+  it('should give a Map as an object of its entries and a Set as an array, member by member, leaving out the members that are undefined as JSON does', () => {
     expect(plainOf(new Map([['testuser', new Map([['client-1', new Set(['openid', 'profile'])]])]]))).toEqual({ testuser: { 'client-1': ['openid', 'profile'] } });
-    expect(plainOf({ scope: ['openid'], expiresAt: 1, nonce: undefined })).toEqual({ scope: ['openid'], expiresAt: 1, nonce: undefined });
+    expect(plainOf({ scope: ['openid'], expiresAt: 1, nonce: undefined })).toStrictEqual({ scope: ['openid'], expiresAt: 1 });
   });
 });
 

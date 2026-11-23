@@ -14,7 +14,7 @@ const sample: WaySample = {
 };
 
 const requests: RootRequests = {
-  version: 2,
+  version: 3,
   root: 'endpoint:token',
   source: 'hono',
   endpoint: 'token',

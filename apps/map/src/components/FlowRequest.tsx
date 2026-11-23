@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
+import { PremisesPanel, StoredReads, StoredWrites } from './StoredRecords';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
 import { blankDraft, bodiless, draftOf, draftProblem, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
 import type { RootRequests, Selection, WaySample } from '../types';
@@ -47,66 +48,8 @@ function baseSample(requests: RootRequests | undefined): { request: WaySample; w
   return found?.sample === undefined ? undefined : { request: found.sample, way: found.name.replace(/`/g, '') };
 }
 
-/** What the OP of the map holds when a request starts: what a request can use, the codes and tokens as the requests that made the premises left them. */
-function Premises({ premises }: { premises: PremisesState }) {
-  return (
-    <details className="req-premises">
-      <summary>地図の OP が持っているもの（リクエストで使える値）</summary>
-      <p className="note">
-        発行者 <code className="mono">{PREMISES.issuer}</code>、時計は <code className="mono">{new Date(PREMISES.now * 1000).toISOString()}</code> で止まっています。どのリクエストも、この状態の新しい OP で動きます。
-      </p>
-      <dl>
-        {PREMISES.clients.map((client) => (
-          <div key={client.clientId}>
-            <dt>
-              クライアント <code className="mono">{client.clientId}</code>
-            </dt>
-            <dd>
-              {client.authMethod}
-              {client.clientSecret !== undefined ? (
-                <>
-                  、シークレット <code className="mono">{client.clientSecret}</code>
-                </>
-              ) : null}
-              、グラント {client.grantTypes.join(' / ')}、redirect_uri <code className="mono">{client.redirectUris.join(' ')}</code>
-            </dd>
-          </div>
-        ))}
-        {premises.kind === 'ready'
-          ? premises.premises.grants.map((grant) => (
-              <div key={grant.id}>
-                <dt>
-                  認可コード <code className="mono">{grant.code}</code>
-                </dt>
-                <dd>
-                  {grant.clientId} に {grant.redirectUri} で、PKCE の code_verifier <code className="mono">{grant.codeVerifier}</code>
-                  {typeof grant.tokens?.refresh_token === 'string' ? (
-                    <>
-                      。引き換え済みで、リフレッシュトークン <code className="mono">{grant.tokens.refresh_token}</code>
-                    </>
-                  ) : null}
-                </dd>
-              </div>
-            ))
-          : null}
-        <div>
-          <dt>ユーザー</dt>
-          <dd>
-            {PREMISES.users.map((user) => (
-              <span key={user.username}>
-                <code className="mono">{user.username}</code> / <code className="mono">{user.password}</code>{' '}
-              </span>
-            ))}
-          </dd>
-        </div>
-      </dl>
-      {premises.kind === 'failed' ? <p className="note req-problem">認可コードとトークンを読み込めませんでした: {premises.message}</p> : null}
-    </details>
-  );
-}
-
 /** What a request run gave: the response, the way it ended by, and whether the playback follows the way it took. */
-function RunResult({ run, ending, assumed, onFollow }: { run: RequestRunState; ending: string | undefined; assumed: number; onFollow: () => void }) {
+function RunResult({ run, ending, assumed, onFollow, premises }: { run: RequestRunState; ending: string | undefined; assumed: number; onFollow: () => void; premises: PremisesState }) {
   if (run.status === 'running') return <p className="note req-result">地図の OP で実行しています…（最初の実行では OP を読み込みます）</p>;
   if (run.status === 'failed') return <p className="note req-result req-problem">実行できませんでした: {run.message}</p>;
   const { response } = run.run;
@@ -147,6 +90,7 @@ function RunResult({ run, ending, assumed, onFollow }: { run: RequestRunState; e
           </button>
         </p>
       )}
+      <StoredWrites wrote={run.run.store.wrote} now={PREMISES.now} premises={premises} />
       {body !== undefined ? (
         <details className="req-body">
           <summary>応答のボディ{response?.truncated === true ? '（16 KiB で切れています）' : ''}</summary>
@@ -190,9 +134,13 @@ export interface FlowRequestProps {
  * answered the endpoint with, else with no parameters. The reader writes its
  * query, its body and its headers and runs it on the OP of the map: the
  * response comes back, and the playback follows the way the request took
- * there (useRun.ts). The values the OP holds (its clients, codes and tokens)
- * are listed to write with. The tests play no part here: what a test sent is
- * the tests page's to show.
+ * there (useRun.ts). Above the request, the records of the OP it reads (the
+ * code, the refresh token, the client), each with its fields and the
+ * requests that stored it when the build made the premises, or that the OP
+ * holds none; after a run, those the run read, and below its response, the
+ * records it stored, changed or removed. The values the OP holds and the
+ * requests that made them are listed to write with. The tests play no part
+ * here: what a test sent is the tests page's to show.
  */
 export function FlowRequest({ state, premises, selection, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
   const headingId = useId();
@@ -230,6 +178,15 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
 
   const problem = draftProblem(draft);
   const running = run?.status === 'running';
+  // What the request reads of the records the OP holds: that of the request run, else that of the request the view started from.
+  const ranStore = run?.status === 'done' ? run.run.store : undefined;
+  const sampleStore = shown?.request.store;
+  const reads =
+    ranStore !== undefined
+      ? { reads: ranStore.read, title: '実行したリクエストが読んだ、OP の保存済みの情報' }
+      : sampleStore !== undefined
+        ? { reads: sampleStore.read, title: 'このリクエストが読む、OP の保存済みの情報', note: changed ? '書き換える前のリクエストが読むものです。実行すると、書き換えたリクエストが読んだものに替わります。' : undefined }
+        : undefined;
   const groups: Array<{ place: ParamPlace; label: string }> = [{ place: 'query', label: PARAM_PLACES.query }, ...(bodiless(draft.method) ? [] : [{ place: draft.body === 'json' ? ('json' as const) : ('form' as const), label: BODY_WORDS[draft.body] }])];
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -242,6 +199,7 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
         <h4 id={headingId}>リクエスト</h4>
       </div>
       <p className="note req-empty">{note}</p>
+      {reads !== undefined ? <StoredReads reads={reads.reads} premises={premises} title={reads.title} note={reads.note} /> : <p className="note">実行すると、このリクエストが OP の保存済みの情報（認可コード、トークン、クライアントなど）から何を読み、何を保存したかを出します。</p>}
       <form className="req" onSubmit={submit} aria-label="実行するリクエスト">
         <p className="req-line">
           <span className="req-method">{draft.method}</span>
@@ -291,8 +249,8 @@ export function FlowRequest({ state, premises, selection, assumed, framework, en
           ) : null}
         </div>
       </form>
-      {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} /> : null}
-      <Premises premises={premises} />
+      {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} premises={premises} /> : null}
+      <PremisesPanel premises={premises} />
     </section>
   );
 }

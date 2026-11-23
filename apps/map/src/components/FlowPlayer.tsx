@@ -7,7 +7,7 @@ import { Inline } from './ChangeParts';
 import { FeatureBadge } from './FeatureBadge';
 import { FlowRequest } from './FlowRequest';
 import { failureGroups } from './SelectionBar';
-import { usePremises, type RootRequestsState } from './useRequests';
+import { useCurrentPremises, type RootRequestsState } from './useRequests';
 import type { RequestRun } from './useRun';
 
 /** Where a playback is and how it moves (see usePlayback). */
@@ -154,7 +154,7 @@ function plain(text: string): string {
  */
 export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
-  const premises = usePremises(data);
+  const premises = useCurrentPremises(data);
   const scene = scenes[at];
   const choice = state.choices[0];
   // While the playback follows the way of a request run, that is the way chosen, ready-made or not.
@@ -437,6 +437,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         premises={premises}
         // The request of a ready-made way the reader picked; a request run keeps the request it ran, whatever way its sides match.
         selection={run.state !== undefined || picked === -1 ? undefined : selections[picked]}
+        keep={run.state !== undefined}
         assumed={assumedCount}
         framework={framework}
         endpoint={endpoint?.request}

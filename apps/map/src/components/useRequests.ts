@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { PreparedPremises } from '@maronn-openid-connect/map-sandbox';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import type { PreparedPremises, Premises } from '@maronn-openid-connect/map-sandbox';
 import type { MapData, RootRequests } from '../types';
 
 /** The request files fetched so far, by url (a file never changes for its url). */
@@ -67,7 +67,7 @@ export function fetchPremises(url: string): Promise<PreparedPremises> {
 }
 
 /** What the map has of the premises of its OP: loading, none, the premises, or why they could not be read. */
-export type PremisesState = { kind: 'loading' } | { kind: 'none' } | { kind: 'ready'; premises: PreparedPremises } | { kind: 'failed'; message: string };
+export type PremisesState = { kind: 'loading' } | { kind: 'none' } | { kind: 'ready'; premises: PreparedPremises; made?: true } | { kind: 'failed'; message: string };
 
 /**
  * The premises the OP of the map holds before any request (MapData.premises:
@@ -93,4 +93,62 @@ export function usePremises(data: MapData): PremisesState {
   }, [url]);
   if (url === undefined) return { kind: 'none' };
   return loaded?.url === url ? loaded.state : { kind: 'loading' };
+}
+
+/** Premises the reader made again in the page from grants they changed, and the grants (the plan) they were made from. */
+export interface MadePremises {
+  plan: Premises;
+  premises: PreparedPremises;
+}
+
+/** The premises the reader made in the page, used for every request run from then on, in every flow view of the page; none while those of the build are. */
+let made: MadePremises | undefined;
+/** How many times the premises in use changed (made, or gone back to the build's): what follows them (a run, the drafts of the editor) is forgotten when it does. */
+let madeVersion = 0;
+const madeListeners = new Set<() => void>();
+
+/** Use premises made in the page for the requests run from now on, or, with none, those of the build again. */
+export function setMadePremises(next: MadePremises | undefined): void {
+  made = next;
+  madeVersion += 1;
+  for (const listener of madeListeners) listener();
+}
+
+/** How many times the premises in use changed (see madeVersion). */
+export function premisesVersion(): number {
+  return madeVersion;
+}
+
+/** The number of times the premises in use changed, as state: it changes when they do. */
+export function usePremisesVersion(): number {
+  return useSyncExternalStore(subscribeMade, premisesVersion);
+}
+
+/** The premises the reader made in the page, if any (see setMadePremises). */
+export function madePremises(): MadePremises | undefined {
+  return made;
+}
+
+/** Listen to the premises made in the page changing. */
+function subscribeMade(listener: () => void): () => void {
+  madeListeners.add(listener);
+  return () => {
+    madeListeners.delete(listener);
+  };
+}
+
+/** The premises a request runs on in the flow view: those the reader made in the page, else those of the build; with those of the build, to carry a request written on them over, and how many times they changed. */
+export interface CurrentPremises {
+  state: PremisesState;
+  build: PreparedPremises | undefined;
+  made: MadePremises | undefined;
+  version: number;
+}
+
+/** The premises a request runs on (see CurrentPremises). */
+export function useCurrentPremises(data: MapData): CurrentPremises {
+  const build = usePremises(data);
+  const current = useSyncExternalStore(subscribeMade, madePremises);
+  const version = usePremisesVersion();
+  return { state: current === undefined ? build : { kind: 'ready', premises: current.premises, made: true }, build: build.kind === 'ready' ? build.premises : undefined, made: current, version };
 }

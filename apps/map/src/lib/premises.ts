@@ -8,6 +8,7 @@
  * here touches the DOM or fetches.
  */
 import type { PremiseRecord, PremiseStep, PreparedPremises, StoreChange } from '@maronn-openid-connect/map-sandbox';
+import type { RequestDraft } from './run';
 
 /** The words of the collections of the OP's memory database (apps/hono db/memory/database.ts). */
 const COLLECTION_WORDS: Readonly<Record<string, string>> = {
@@ -175,4 +176,34 @@ function textOf(value: unknown): string {
 /** The records of a collection the premises hold, in their order. */
 export function recordsIn(premises: PreparedPremises | undefined, collection: string): PremiseRecord[] {
   return premises?.records.filter((record) => record.collection === collection) ?? [];
+}
+
+/** The tokens of a grant's token response a request is written with (not its scope or token_type, which a reader writes too). */
+const TOKEN_NAMES = ['access_token', 'refresh_token', 'id_token'];
+
+/** The values a request is written with from premises (the code, the verifier and the tokens of each grant), each paired with the same grant's value in other premises, where they differ. */
+export function valuesBetween(from: PreparedPremises, to: PreparedPremises): Map<string, string> {
+  const pairs = new Map<string, string>();
+  const pair = (before: unknown, after: unknown) => {
+    if (typeof before === 'string' && typeof after === 'string' && before !== '' && before !== after) pairs.set(before, after);
+  };
+  for (const grant of from.grants) {
+    const other = to.grants.find((candidate) => candidate.id === grant.id);
+    if (other === undefined) continue;
+    pair(grant.code, other.code);
+    pair(grant.codeVerifier, other.codeVerifier);
+    for (const name of TOKEN_NAMES) pair(grant.tokens?.[name], other.tokens?.[name]);
+  }
+  return pairs;
+}
+
+/** A request written on some premises, carried over to others (valuesBetween): a parameter whose value is one of theirs takes the other's, and so does a header that holds one (`Bearer <token>`). */
+export function carryOver(draft: RequestDraft, pairs: ReadonlyMap<string, string>): RequestDraft {
+  if (pairs.size === 0) return draft;
+  const headerValue = (value: string) => {
+    let carried = value;
+    for (const [before, after] of pairs) if (carried.includes(before)) carried = carried.split(before).join(after);
+    return carried;
+  };
+  return { ...draft, params: draft.params.map((param) => ({ ...param, value: pairs.get(param.value) ?? param.value })), headers: draft.headers.map(([name, value]): [string, string] => [name, headerValue(value)]) };
 }

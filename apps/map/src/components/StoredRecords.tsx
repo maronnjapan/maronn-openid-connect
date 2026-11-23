@@ -1,5 +1,4 @@
 import type { PreparedPremises, PremiseRecord, PremiseStep, StoreChange, StoreRead } from '@maronn-openid-connect/map-sandbox';
-import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
 import { changeWords, collectionWord, originOf, premiseRecordOf, recordsIn, shortKey, stepLine, stepNumber, valueRows } from '../lib/premises';
 import { statusLine, statusTone } from '../lib/requests';
 import type { PremisesState } from './useRequests';
@@ -24,7 +23,7 @@ function RecordValue({ value, now }: { value: unknown; now: number }) {
 }
 
 /** A request of the premises: its number, method and path, status, what it sent (the query, the form, the cookies, the client of its credentials), where it was sent next, and the records it wrote; marked where it stored or changed the record read. */
-function StepItem({ index, step, did }: { index: number; step: PremiseStep; did?: 'added' | 'changed' | undefined }) {
+export function StepItem({ index, step, did }: { index: number; step: PremiseStep; did?: 'added' | 'changed' | undefined }) {
   const line = stepLine(step);
   return (
     <li className={`store-step${did !== undefined ? ' store-step-did' : ''}`}>
@@ -71,13 +70,13 @@ function StepItem({ index, step, did }: { index: number; step: PremiseStep; did?
 }
 
 /** Where a record of the premises came from: the requests of its grant up to the one that stored it (and those that changed it after), or the OP's configuration. */
-function Origin({ premises, record }: { premises: PreparedPremises; record: PremiseRecord }) {
+function Origin({ premises, record, made }: { premises: PreparedPremises; record: PremiseRecord; made: boolean }) {
   const origin = originOf(premises, record);
   if (origin === undefined) return <p className="note">OP の設定で登録したもので、リクエストでは作っていません。</p>;
   return (
     <div className="store-origin">
       <p className="note">
-        グラント <code className="mono">{origin.grant}</code> のリクエストを地図の OP で動かして保存したものです（地図のビルドが前提を作るときに動かしたもの）。
+        グラント <code className="mono">{origin.grant}</code> のリクエストを地図の OP で動かして保存したものです（{made ? 'このページで前提を作り直したときに動かしたもの' : '地図のビルドが前提を作るときに動かしたもの'}）。
       </p>
       <ol className="store-steps">
         {origin.steps.map(({ index, step, did }) => (
@@ -101,7 +100,7 @@ function originWords(premises: PreparedPremises, record: PremiseRecord): string 
 }
 
 /** A record of the premises a request read or wrote, to open: its key, where it came from on one line, then its fields and the requests that stored it; `words` follows the key (what the request did to it). */
-function RecordItem({ premises, record, words }: { premises: PreparedPremises; record: PremiseRecord; words?: string }) {
+function RecordItem({ premises, record, words, made }: { premises: PreparedPremises; record: PremiseRecord; words?: string; made: boolean }) {
   return (
     <details>
       <summary>
@@ -110,7 +109,7 @@ function RecordItem({ premises, record, words }: { premises: PreparedPremises; r
         <span className="req-note">（{originWords(premises, record)}）</span>
       </summary>
       <RecordValue value={record.value} now={premises.now} />
-      <Origin premises={premises} record={record} />
+      <Origin premises={premises} record={record} made={made} />
     </details>
   );
 }
@@ -151,7 +150,7 @@ export function StoredReads({ reads, premises, title, note }: StoredReadsProps) 
                   <ul className="store-list store-walk">
                     {records.map((record) => (
                       <li key={record.key} className="store-item">
-                        <RecordItem premises={ready} record={record} />
+                        <RecordItem premises={ready} record={record} made={premises.kind === 'ready' && premises.made === true} />
                       </li>
                     ))}
                   </ul>
@@ -178,7 +177,7 @@ export function StoredReads({ reads, premises, title, note }: StoredReadsProps) 
           return (
             <li key={at} className="store-item">
               {ready !== undefined && record !== undefined ? (
-                <RecordItem premises={ready} record={record} />
+                <RecordItem premises={ready} record={record} made={premises.kind === 'ready' && premises.made === true} />
               ) : (
                 <>
                   <span className="store-what">{collectionWord(read.collection)}</span> <code className="mono">{shortKey(read.key)}</code>
@@ -210,96 +209,11 @@ export function StoredWrites({ wrote, now, premises }: { wrote: readonly StoreCh
                 {ready !== undefined && premiseRecordOf(ready, change.collection, change.key) !== undefined ? <span className="req-note">（{originWords(ready, premiseRecordOf(ready, change.collection, change.key) as PremiseRecord)}）</span> : null}
               </summary>
               <RecordValue value={change.change === 'removed' ? change.before : change.value} now={now} />
-              {ready !== undefined && premiseRecordOf(ready, change.collection, change.key) !== undefined ? <Origin premises={ready} record={premiseRecordOf(ready, change.collection, change.key) as PremiseRecord} /> : null}
+              {ready !== undefined && premiseRecordOf(ready, change.collection, change.key) !== undefined ? <Origin premises={ready} record={premiseRecordOf(ready, change.collection, change.key) as PremiseRecord} made={premises.kind === 'ready' && premises.made === true} /> : null}
             </details>
           </li>
         ))}
       </ul>
     </section>
-  );
-}
-
-/**
- * What the OP of the map holds before any request: the clients and the
- * users of its configuration (with the secrets and the passwords a request
- * is written with), and the requests the build ran to make the rest, grant
- * by grant, each with the records it wrote, and the values they left to use.
- */
-export function PremisesPanel({ premises }: { premises: PremisesState }) {
-  const ready = premises.kind === 'ready' ? premises.premises : undefined;
-  return (
-    <details className="req-premises">
-      <summary>地図の OP が持っているもの（リクエストで使える値と、それを作ったリクエスト）</summary>
-      <p className="note">
-        発行者 <code className="mono">{PREMISES.issuer}</code>、時計は <code className="mono">{new Date(PREMISES.now * 1000).toISOString()}</code> で止まっています。どのリクエストも、この状態の新しい OP で動きます。
-      </p>
-      <h6 className="store-subtitle">OP の設定で登録したもの</h6>
-      <dl>
-        {PREMISES.clients.map((client) => (
-          <div key={client.clientId}>
-            <dt>
-              クライアント <code className="mono">{client.clientId}</code>
-            </dt>
-            <dd>
-              {client.authMethod}
-              {client.clientSecret !== undefined ? (
-                <>
-                  、シークレット <code className="mono">{client.clientSecret}</code>
-                </>
-              ) : null}
-              、グラント {client.grantTypes.join(' / ')}
-              {client.redirectUris.length > 0 ? (
-                <>
-                  、redirect_uri <code className="mono">{client.redirectUris.join(' ')}</code>
-                </>
-              ) : null}
-            </dd>
-          </div>
-        ))}
-        <div>
-          <dt>ユーザー</dt>
-          <dd>
-            {PREMISES.users.map((user) => (
-              <span key={user.username}>
-                <code className="mono">{user.username}</code> / <code className="mono">{user.password}</code>{' '}
-              </span>
-            ))}
-          </dd>
-        </div>
-      </dl>
-      {ready === undefined ? (
-        <p className="note">{premises.kind === 'failed' ? `リクエストで作った前提を読み込めませんでした: ${premises.message}` : premises.kind === 'loading' ? 'リクエストで作った前提を読み込んでいます…' : 'このビルドは、リクエストで前提を作っていません。'}</p>
-      ) : (
-        ready.grants.map((grant) => (
-          <div key={grant.id} className="store-grant">
-            <h6 className="store-subtitle">
-              グラント <code className="mono">{grant.id}</code> を作ったリクエスト
-            </h6>
-            <ol className="store-steps">
-              {ready.steps.map((step, index) => (step.grant === grant.id ? <StepItem key={index} index={index} step={step} /> : null))}
-            </ol>
-            <dl>
-              <div>
-                <dt>リクエストで使える値</dt>
-                <dd>
-                  code <code className="mono">{grant.code}</code>、code_verifier <code className="mono">{grant.codeVerifier}</code>
-                  {typeof grant.tokens?.refresh_token === 'string' ? (
-                    <>
-                      、refresh_token <code className="mono">{grant.tokens.refresh_token}</code>
-                    </>
-                  ) : null}
-                  {typeof grant.tokens?.access_token === 'string' ? (
-                    <details className="store-token">
-                      <summary>access_token（JWT）</summary>
-                      <code className="mono">{grant.tokens.access_token}</code>
-                    </details>
-                  ) : null}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        ))
-      )}
-    </details>
   );
 }

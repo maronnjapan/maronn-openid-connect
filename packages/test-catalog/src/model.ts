@@ -528,6 +528,14 @@ export interface EndpointCase {
   examples?: CaseExample[];
   /** How many recorded requests took this way in all (at least examples.length). */
   exampleCount?: number;
+  /** A request the OP of the map was seen to take this way with (samples.ts); absent when none of the requests the build tried there took it. */
+  sample?: CaseSample;
+}
+
+/** A request the OP of the map (packages/map-sandbox) took a way with, and what the OP answered. */
+export interface CaseSample {
+  request: ExampleRequest;
+  response: ExampleResponse;
 }
 
 /** A decision and the side a way takes at it, in words. */

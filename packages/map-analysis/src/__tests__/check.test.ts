@@ -61,7 +61,16 @@ describe('checkMap, with the requests of a measured run', () => {
     data.requests = { 'core:a.ts#f': 'requests.json' };
     const requests: RootRequests = { version: 1, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', count: 2, examples: [wayRequest(12), wayRequest(30)] }] };
     const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
-    expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, examples: 2, unmatched: 0 }, []]);
+    expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, examples: 2, samples: 0, unmatched: 0 }, []]);
+  });
+
+  it('should pass a way only the OP of the map took, without a request of a test, and count its sample', async () => {
+    const { data, frame } = mapOf(['return x']);
+    data.requests = { 'core:a.ts#f': 'requests.json' };
+    const sample = { method: 'POST', path: '/token', params: [{ name: 'grant_type', value: 'authorization_code', in: 'form' as const }], headers: [], status: 200 };
+    const requests: RootRequests = { version: 1, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', count: 0, examples: [], sample }] };
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
+    expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, examples: 0, samples: 1, unmatched: 0 }, []]);
   });
 
   it('should fail on a way no choice of its root is, a request without the line of its test, and a root with no frame', async () => {
@@ -84,7 +93,7 @@ describe('checkMap, with the requests of a measured run', () => {
         'core:a.ts#f: the requests name the way step "a step" (s0), which no ready-made choice of the root is: the flow view would not show them',
         'core:a.ts#f: a request of the way "return x" names no line of the code of its test t-1',
         'core:a.ts#f: a request of the way "return x" names no line of the code of its test t-1',
-        'core:b.ts#g: the requests of the measured run name a root the map has no frame of',
+        'core:b.ts#g: the requests name a root the map has no frame of',
       ],
     ]);
   });

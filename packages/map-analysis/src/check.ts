@@ -17,10 +17,11 @@
  * - Wiring outside ordinary call paths retains its source and a reason when
  *   unresolved; claiming a destination requires a target and destinations.
  * - Every unresolved call node explains why it cannot be followed.
- * - With the requests of a measured run (MapData.requests): every way they
- *   name is a ready-made choice of its root (its kind and target), so the
- *   flow view finds the request of the way chosen, and every request says
- *   the line of its test that sent it and the code of that line.
+ * - With the requests of a measured run or of the OP of the map
+ *   (MapData.requests): every way they name is a ready-made choice of its
+ *   root (its kind and target), so the flow view finds the request of the
+ *   way chosen, and every request of a test says the line of its test that
+ *   sent it and the code of that line.
  */
 import type { FlowTree, FrameFile, MapData, RootRequests, SourceDocument, TreeNode } from './model.js';
 
@@ -43,7 +44,7 @@ export interface MapMetrics {
   /** Wiring inventory entries, their unresolved count, and malformed output entries. */
   wiring: { entries: number; untraceable: number; invalid: number };
   /** The requests of the measured run (MapData.requests): the roots, the ways and the requests, and the ways no choice of their root is. */
-  requests: { roots: number; ways: number; examples: number; unmatched: number };
+  requests: { roots: number; ways: number; examples: number; samples: number; unmatched: number };
 }
 
 export interface CheckResult {
@@ -92,14 +93,14 @@ function checkTargets(nodes: readonly TreeNode[], frame: string, failures: strin
 }
 
 /**
- * Check the requests of a measured run against the frames of their roots
+ * Check the requests of a measured run and of the OP of the map against the frames of their roots
  * (see the module comment), adding to the metrics and the failures.
  */
 async function checkRequests(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readRequests: (url: string) => Promise<RootRequests>, metrics: MapMetrics, failures: string[]): Promise<void> {
   for (const [root, url] of Object.entries(data.requests ?? {})) {
     const entry = data.bodies[root] ?? data.functions[root];
     if (entry === undefined || entry.frame === '') {
-      failures.push(`${root}: the requests of the measured run name a root the map has no frame of`);
+      failures.push(`${root}: the requests name a root the map has no frame of`);
       continue;
     }
     const [file, requests] = await Promise.all([readFrame(entry.frame), readRequests(url)]);
@@ -108,6 +109,7 @@ async function checkRequests(data: MapData, readFrame: (url: string) => Promise<
     for (const way of requests.ways) {
       metrics.requests.ways += 1;
       metrics.requests.examples += way.examples.length;
+      if (way.sample !== undefined) metrics.requests.samples += 1;
       if (!file.selections.some((selection) => selection.kind === way.kind && selection.target === way.target)) {
         metrics.requests.unmatched += 1;
         failures.push(`${root}: the requests name the way ${way.kind} "${way.name}" (${way.target}), which no ready-made choice of the root is: the flow view would not show them`);
@@ -143,7 +145,7 @@ export async function checkMap(
     undocumented: data.changes?.undocumented ?? [],
     untested: data.changes?.untested ?? [],
     wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 },
-    requests: { roots: 0, ways: 0, examples: 0, unmatched: 0 },
+    requests: { roots: 0, ways: 0, examples: 0, samples: 0, unmatched: 0 },
   };
   const failures: string[] = [];
   for (const wiring of data.wiring ?? []) {

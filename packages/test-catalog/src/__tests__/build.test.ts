@@ -146,6 +146,7 @@ describe('rootRequests', () => {
         root: 'endpoint:token',
         source: 'hono',
         endpoint: 'token',
+        measured: true,
         ways: [
           {
             id: 'c-refresh',
@@ -168,6 +169,50 @@ describe('rootRequests', () => {
                 statusText: 'OK',
               },
             ],
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe('rootRequests, with the samples of the OP of the map', () => {
+  it('should give a case the OP of the map took its sample, without a request of a test, and say no run was measured', () => {
+    const cases: EndpointCases = {
+      version: 1,
+      key: 'hono:token',
+      cases: [
+        {
+          id: 'c-code',
+          kind: 'step',
+          name: 'authorization_code グラントを検証する',
+          target: 's0b10',
+          steps: [],
+          end: 'response',
+          sample: {
+            request: { method: 'POST', path: '/token', host: 'op.example.com', headers: [['content-type', 'application/x-www-form-urlencoded'], ['content-length', '30']], body: 'grant_type=authorization_code' },
+            response: { status: 200, headers: [['content-type', 'application/json']] },
+          },
+        },
+        { id: 'c-none', kind: 'exit', name: 'return x', target: 's0b9s0', steps: [], end: 'response' },
+      ],
+    };
+
+    expect(rootRequests(DATA, [['hono:token', cases]], new Map(), false)).toEqual([
+      {
+        version: 1,
+        root: 'endpoint:token',
+        source: 'hono',
+        endpoint: 'token',
+        ways: [
+          {
+            id: 'c-code',
+            kind: 'step',
+            name: 'authorization_code グラントを検証する',
+            target: 's0b10',
+            count: 0,
+            examples: [],
+            sample: { method: 'POST', path: '/token', params: [{ name: 'grant_type', value: 'authorization_code', in: 'form' }], headers: [['content-type', 'application/x-www-form-urlencoded']], status: 200 },
           },
         ],
       },

@@ -30,6 +30,7 @@ import { FAILS, failureSelections, frameSelections, stepsOf, walkFlow, type Fail
 import { attachExamples, conditionOf, type CaseSources, type CaseWay, type ExampleCounts, type SentRequest } from './examples.js';
 import { errorCodeOf, type Joined } from './join.js';
 import type { CaseCondition, EndpointCase, EndpointCases, FailureTests, TestCase } from './model.js';
+import { attachSamples, type SampleRun } from './samples.js';
 
 /** A tree with the uses of the values its steps make, as the analysis builds it (map-analysis BuiltTree). */
 export interface CaseTree {
@@ -139,6 +140,16 @@ function hasSteps(nodes: readonly TreeNode[]): boolean {
   return nodes.some((node) => node.step !== undefined || hasSteps(node.pre ?? []) || (node.branches ?? []).some((branch) => hasSteps(branch.nodes)));
 }
 
+/** The requests run on the OP of the map, for the samples of the cases (samples.ts), with what the rules read them with. */
+export interface CaseSamples {
+  /** The runs at each endpoint, by `hono:<endpoint>` (runSamples). */
+  byEndpoint: ReadonlyMap<string, readonly SampleRun[]>;
+  /** The lines of a file of the repository, by its path. */
+  linesOf(path: string): readonly string[] | undefined;
+  /** The frame a line of a file is in (run.ts FrameLocator). */
+  frameAt(path: string, line: number): string | undefined;
+}
+
 /** The requests of a measured run, for the examples of the cases (examples.ts). */
 export interface CaseRequests {
   /** The requests sent to each endpoint, by `<source>:<endpoint>` (requestsByEndpoint). */
@@ -155,9 +166,11 @@ export interface CaseRequests {
  * working tree (with the value uses the step choices read), `failures` the
  * failures that leave each frame; with `requests`, the cases get the
  * requests of the measured run that took them, and `counts` adds up what
- * that join saw.
+ * that join saw. With `samples`, the cases of an endpoint the OP of the map
+ * ran requests at get the first that takes each (samples.ts), and
+ * `counts.sampled` adds up how many did.
  */
-export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 }): Map<string, EndpointCases> {
+export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 }, samples?: CaseSamples): Map<string, EndpointCases> {
   const plain = new Map([...trees].map(([id, built]) => [id, built.tree]));
   const treeOf = (id: string) => plain.get(id);
   const nameOf = (id: string) => data.functions[id]?.name ?? plain.get(id)?.name ?? id;
@@ -179,6 +192,11 @@ export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree
         counts.read += seen.read;
         counts.took += seen.took;
         counts.unpinned += seen.unpinned;
+      }
+      const runs = samples?.byEndpoint.get(key) ?? [];
+      if (samples !== undefined && runs.length > 0) {
+        const sampled = attachSamples(ways, runs, built.tree, { treeOf, pathOf: (file) => data.sources[file]?.path, linesOf: (path) => samples.linesOf(path), frameAt: (path, line) => samples.frameAt(path, line) });
+        counts.sampled = (counts.sampled ?? 0) + sampled;
       }
       if (ways.length > 0) found.set(key, { version: 1, key, cases: ways.map((way) => way.made) });
     }

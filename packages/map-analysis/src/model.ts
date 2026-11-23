@@ -257,12 +257,12 @@ export interface FrameFile {
 }
 
 /**
- * data/requests/<hash>.json: the requests measured API tests sent that took
- * the ready-made ways of a root (an endpoint body), which the flow view
- * shows as the request of the way chosen. The test catalog writes it from
- * the examples of the cases of the tests page (packages/test-catalog
- * examples.ts): only requests a line of their test's own code sent, each
- * with that line.
+ * data/requests/<hash>.json: the requests that took the ready-made ways of a
+ * root (an endpoint body), which the flow view starts the request of the
+ * way chosen from: those measured API tests sent (the examples of the cases
+ * of the tests page, packages/test-catalog examples.ts: only requests a line
+ * of their test's own code sent, each with that line), and the one the OP
+ * of the map took the way with (its sample, samples.ts).
  */
 export interface RootRequests {
   version: 1;
@@ -272,6 +272,8 @@ export interface RootRequests {
   source: string;
   /** The endpoint of the source, by id. */
   endpoint: string;
+  /** The build read a measured run of the tests: a way without examples took no recorded request. Absent when it read none, and the ways have samples only. */
+  measured?: true;
   /** The ways some request took, in the order of the cases. */
   ways: WayRequests[];
 }
@@ -286,8 +288,22 @@ export interface WayRequests {
   target: string;
   /** How many recorded requests took it in all (at least examples.length). */
   count: number;
-  /** The best of them, at most 3 (examples.ts attachExamples). */
+  /** The best of them, at most 3 (examples.ts attachExamples); none when only the OP of the map took it. */
   examples: WayRequest[];
+  /** A request the OP of the map (packages/map-sandbox) took it with: the first of those the build ran there (test-catalog samples.ts). */
+  sample?: WaySample;
+}
+
+/** A request the OP of the map took a way with, as the flow view shows it, and the status the OP answered with. */
+export interface WaySample {
+  method: string;
+  /** The path of its URL, without the query. */
+  path: string;
+  params: WayRequest['params'];
+  /** Its headers but Host and Content-Length. */
+  headers: Array<[string, string]>;
+  status: number;
+  statusText?: string;
 }
 
 /** A request a test's own code sent that took a way, as the flow view shows it. */
@@ -501,9 +517,10 @@ export interface MapData {
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
   /**
-   * With a measured run of the tests: the url of the requests that took the
-   * ways of each root (RootRequests), by the root's frame id; a root no
-   * recorded request took has none. Absent without a measured run.
+   * With a measured run of the tests, or the requests the build ran on the
+   * OP of the map: the url of the requests that took the ways of each root
+   * (RootRequests), by the root's frame id; a root no request took has none.
+   * Absent with neither.
    */
   requests?: Record<string, string>;
   /** The url of the changes that reached main (HistoryData, `./data/history/<hash>.json`); absent when the build read no git history. */

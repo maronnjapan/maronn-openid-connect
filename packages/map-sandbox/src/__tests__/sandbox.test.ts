@@ -6,7 +6,7 @@ import { CLIENT_ID, CLIENT_SECRET, NOW, REDIRECT_URI } from '../../../../apps/ho
 import type * as Api from '../api.js';
 
 // The OP as the map loads it: the bundle `vite build` wrote (the test script builds it first).
-const { PREMISES, runRequest } = (await import(new URL('../../dist/sandbox.js', import.meta.url).href)) as typeof Api;
+const { PREMISES, SAMPLED_ENDPOINTS, candidateRequests, runRequest } = (await import(new URL('../../dist/sandbox.js', import.meta.url).href)) as typeof Api;
 
 const PIPELINE = 'apps/hono/src/oidc-provider/endpoints/token/pipeline.ts';
 
@@ -63,6 +63,12 @@ describe('runRequest', () => {
     expect([first.response?.status, second.response?.status, refreshed.response?.status]).toEqual([200, 200, 200]);
   });
 
+  it('should run requests asked for together one after another, each on the premises as they are', async () => {
+    const runs = await Promise.all([runRequest(EXCHANGE_CODE), runRequest(EXCHANGE_CODE), runRequest({ ...EXCHANGE_CODE, headers: tokenHeaders('another-secret') })]);
+
+    expect(runs.map((run) => run.response?.status)).toEqual([200, 200, 401]);
+  });
+
   it('should answer a request the premises do not let through with the OAuth error of the OP', async () => {
     const run = await runRequest({ ...EXCHANGE_CODE, headers: tokenHeaders('another-secret') });
 
@@ -89,5 +95,32 @@ describe('PREMISES', () => {
     expect([PREMISES.issuer, PREMISES.now]).toEqual([TEST_ISSUER, NOW]);
     expect(client).toMatchObject({ clientSecret: CLIENT_SECRET, redirectUris: [REDIRECT_URI], authMethod: 'client_secret_basic' });
     expect(PREMISES.users).toEqual(developmentUsers.map((user) => ({ username: user.sub, password: user.password })));
+    expect(PREMISES.codes.map((code) => [code.code, code.clientId, code.used === true])).toEqual([
+      ['code-1', CLIENT_ID, false],
+      ['code-2', CLIENT_ID, false],
+      ['code-used', CLIENT_ID, true],
+    ]);
+  });
+});
+
+describe('candidateRequests', () => {
+  it('should try the requests a client sends first, then each changed in one place, each once, at the token endpoint alone', () => {
+    const requests = candidateRequests('token');
+
+    expect(SAMPLED_ENDPOINTS).toEqual(['token']);
+    expect(requests[0]).toEqual(EXCHANGE_CODE);
+    expect(new Set(requests.map((request) => JSON.stringify(request))).size).toBe(requests.length);
+    expect(requests.filter((request) => request.method !== 'POST' || request.path !== '/token')).toEqual([]);
+    expect(requests.map((request) => request.body)).toContain('grant_type=authorization_code&redirect_uri=https%3A%2F%2Frp.example.com%2Fcallback&code_verifier=verifier-0123456789-abcdefghijklmnopqrstuvwxyz');
+    expect(candidateRequests('userinfo')).toEqual([]);
+  });
+
+  it('should find a code that was exchanged already, and a client that is not the one of a code, among the requests the OP answers with their errors', async () => {
+    const requests = candidateRequests('token');
+    const used = requests.find((request) => request.body?.includes('code=code-used') === true);
+    const otherClient = requests.find((request) => request.body?.includes('code=code-1') === true && request.body.includes('client_id=client-2&client_secret=client-2-secret-value'));
+    const answers = await Promise.all([used, otherClient].map(async (request) => (request === undefined ? undefined : JSON.parse((await runRequest(request)).response?.body ?? '{}'))));
+
+    expect(answers).toEqual([expect.objectContaining({ error: 'invalid_grant' }), expect.objectContaining({ error: 'invalid_grant' })]);
   });
 });

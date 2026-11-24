@@ -1,7 +1,7 @@
 /**
  * The view in the URL hash, so a trace can be linked as it is:
  *
- *     #<framework>--<endpoint>[--<step>][/<frame>]...[;d=<decision>:<side>,...]...[;e][;f=<frame>][;p]
+ *     #<framework>--<endpoint>[--<step>][/<frame>]...[;d=<decision>:<side>,...]...[;w=<way>][;e][;f=<frame>][;p][;r=<request>]
  *     #<framework>--fn--<name>[--<package>--<module>][/<frame>]...[;...]
  *     #<framework>--changes   (#changes too)
  *     #<framework>--wiring    (#wiring too)
@@ -11,7 +11,8 @@
  * (`/s0b1s0/s0b1s0.s2`); a decision is keyed by its frame and node the same
  * way (`d=s0b8s0:nullish,s0b1s0.s1:true`), and each `;d=` is one choice (several
  * are their union). A call keyed the same way with the side `fails`
- * (`d=s0b1s0:fails`) fails there. `;e` shows where failures are caught;
+ * (`d=s0b1s0:fails`) fails there. `;w=` names an explicitly chosen path;
+ * `;e` shows where failures are caught;
  * `;f=` names the frame the diagram shows; `;p` opens the trace as a
  * playback (the flow view). Ids and names are letters,
  * digits and hyphens, so `--` separates them; a module is written
@@ -64,9 +65,11 @@ export function traceHash(trace: TraceState): string {
     const pairs = Object.entries(choice).map(([key, side]) => `${key}:${encodeURIComponent(side)}`);
     if (pairs.length > 0) hash += `;d=${pairs.join(',')}`;
   }
+  if (trace.way !== undefined) hash += `;w=${encodeURIComponent(trace.way)}`;
   if (trace.errors) hash += ';e';
   if (trace.focus !== '') hash += `;f=${trace.focus}`;
   if (trace.flow === true) hash += ';p';
+  if (trace.request !== undefined) hash += `;r=${encodeURIComponent(trace.request)}`;
   return hash;
 }
 
@@ -75,12 +78,16 @@ export function parseTrace(part: string): TraceState {
   const [frames = '', ...options] = part.split(';');
   const open = frames.split('/').filter((key) => /^[a-z0-9]+(\.[a-z0-9]+)*$/.test(key));
   const choices: Decisions[] = [];
+  let way: string | undefined;
+  let request: string | undefined;
   let errors = false;
   let focus = '';
   let flow = false;
   for (const option of options) {
     if (option === 'e') errors = true;
     else if (option === 'p') flow = true;
+    else if (option.startsWith('w=') && option.length > 2) way = decode(option.slice(2));
+    else if (option.startsWith('r=') && option.length > 2) request = decode(option.slice(2));
     else if (option.startsWith('f=')) focus = option.slice(2);
     else if (option.startsWith('d=')) {
       const choice: Decisions = {};
@@ -93,7 +100,7 @@ export function parseTrace(part: string): TraceState {
       if (Object.keys(choice).length > 0) choices.push(choice);
     }
   }
-  return { open: [...new Set(open)], choices, errors, focus, ...(flow ? { flow: true } : {}) };
+  return { open: [...new Set(open)], choices, errors, focus, ...(way === undefined ? {} : { way }), ...(flow ? { flow: true } : {}), ...(request === undefined ? {} : { request }) };
 }
 
 export function buildHash(view: View, data: MapData): string {

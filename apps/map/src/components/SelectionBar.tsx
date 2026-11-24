@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { Decisions, Selection } from '../types';
+import type { Selection } from '../types';
+import { sameChoice, selectionKey } from '../lib/playback';
 import type { TraceState } from '../lib/trace';
 import { Inline } from './ChangeParts';
 import { MobileMenuSection } from './MobileMenu';
@@ -16,12 +17,6 @@ export interface SelectionBarProps {
   changesBelow?: number;
   /** A choice was picked (not unpicked): the trace selects and shows the node it leads to. */
   onPick?: (selection: Selection) => void;
-}
-
-/** Whether two choices choose the same sides. */
-function same(a: Decisions, b: Decisions): boolean {
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
 /** The failure choices grouped by what fails, in the order each first appears. */
@@ -58,18 +53,27 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
     document.addEventListener('pointerdown', close);
     return () => document.removeEventListener('pointerdown', close);
   }, []);
-  const picked = (selection: Selection) => state.choices.some((choice) => same(choice, selection.decisions));
+  // A path without any decisions can be restored by its identity alone.
+  const active = state.choices[0] === undefined && state.way !== undefined ? [{}] : state.choices;
+  const matches = (selection: Selection) => active.findIndex((choice) => sameChoice(choice, selection.decisions));
+  const picked = (selection: Selection) => {
+    const at = matches(selection);
+    return at !== -1 && (at !== 0 || state.way === undefined || state.way === selectionKey(selection));
+  };
   const toggle = (selection: Selection) => {
+    const at = matches(selection);
     if (picked(selection)) {
-      onState({ ...state, choices: state.choices.filter((choice) => !same(choice, selection.decisions)) });
+      onState({ ...state, choices: active.filter((_, index) => index !== at), way: at === 0 ? undefined : state.way });
       return;
     }
     const open = [...new Set([...state.open, ...(selection.frames ?? [])])];
     const focus = selection.frames !== undefined && selection.frames.length > 0 ? (selection.frames[selection.frames.length - 1] as string) : state.focus;
-    onState({ ...state, open, focus, choices: [...state.choices, selection.decisions] });
+    const choices = at === 0 ? active : [...active, selection.decisions];
+    const way = active.length === 0 || at === 0 ? selectionKey(selection) : state.way;
+    onState({ ...state, open, focus, choices, way, request: undefined });
     onPick?.(selection);
   };
-  const count = state.choices.length;
+  const count = active.length;
   return (
     <MobileMenuSection section="cases">
       <details className="selections" ref={popup} onKeyDown={(event) => {
@@ -80,7 +84,7 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
         }
       }}>
         <summary>
-          <span className="selections-title">道筋を選ぶ</span>
+          <span className="selections-title">コードの道筋を選ぶ</span>
           {count > 0 ? <span className="selections-current">{count} 個を選択中</span> : null}
           {state.errors ? <span className="selections-current">エラー時</span> : null}
         </summary>
@@ -88,7 +92,7 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
           <div className="selections-head">
             <span className="note">選ぶと、その道筋で通らない行が灰色になります（行は消えません）。複数選ぶと和集合です。分岐ごとの側はアウトラインのボタンでも選べます。</span>
             <span className="selections-actions">
-              <button type="button" onClick={() => onState({ ...state, choices: [] })} disabled={count === 0}>
+              <button type="button" onClick={() => onState({ ...state, choices: [], way: undefined })} disabled={count === 0}>
                 すべて表示
               </button>
               <label className="toggle">

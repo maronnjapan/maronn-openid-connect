@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { FlowStep, MapData, Selection } from '../types';
-import { STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, scenarioOf, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
+import { STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, scenarioOf, selectionKey, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
+import type { RequestDraft } from '../lib/run';
 import { choose, entryOf, type TraceState } from '../lib/trace';
 import { firstSentence } from '../lib/words';
 import { Inline } from './ChangeParts';
 import { FeatureBadge } from './FeatureBadge';
-import { FlowRequest } from './FlowRequest';
+import { FlowRequest, type FlowRequestProps } from './FlowRequest';
 import { failureGroups } from './SelectionBar';
 import { useCurrentPremises, type RootRequestsState } from './useRequests';
 import type { RequestRun } from './useRun';
@@ -68,6 +69,7 @@ export function usePlayback(scenes: readonly Scene[]): Playback {
     speed,
     go: (index) => {
       const next = Math.max(0, Math.min(last, index));
+      if (next === 0) was.current = undefined;
       setFrom(next === shown + 1 ? shown : undefined);
       setAt(next);
     },
@@ -96,6 +98,12 @@ export interface FlowPlayerProps {
   playback: Playback;
   /** The requests the OP of the map took the ways of the root with (useRootRequests): the request of the way chosen starts from its one. */
   requests: RootRequestsState;
+  /** The endpoint's purpose-based request selector. */
+  requestCase?: ReactNode;
+  /** The selected purpose and the draft it generated, once ready. */
+  generatedCase?: FlowRequestProps['generatedCase'];
+  /** Run the selected purpose's draft with the fixtures it requires. */
+  onRunScenario?: ((draft: RequestDraft) => void) | undefined;
   /** The framework the map shows (TraceProps.framework). */
   framework: string;
   /** The words a scene is named by: those of its box in the diagram. */
@@ -141,9 +149,8 @@ function plain(text: string): string {
 /**
  * The player of the flow view: which way the request takes (a ready-made
  * choice, or the sides the reader chose), the controls of the playback, what
- * happens in the scene shown, and the request of the way: for a ready-made
- * way (a case of the tests page), the parameters a test's code actually sent
- * that took it (FlowRequest). The chart beside it shows where the scene is
+ * happens in the scene shown, and the draft to run on the map's OP (FlowRequest).
+ * The chart beside it shows where the scene is
  * (a node of it goes to its scene); this says what happens there, in the
  * words the outline uses.
  *
@@ -152,14 +159,14 @@ function plain(text: string): string {
  * same choice the outline's side buttons make). A call that has a frame can
  * be entered, which makes the request go through that function too.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, onRunScenario, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
   const premises = useCurrentPremises(data);
   const scene = scenes[at];
   const choice = state.choices[0];
   // While the playback follows the way of a request run, that is the way chosen, ready-made or not.
   const ran = run.state?.status === 'done' && run.state.follow;
-  const picked = ran ? -1 : scenarioOf(selections, choice);
+  const picked = ran ? -1 : scenarioOf(selections, choice, state.way);
   const custom = !ran && picked === -1 && choice !== undefined && Object.keys(choice).length > 0;
   // A request run plays the way it took from the start, once that way is read.
   const played = useRef(0);
@@ -171,19 +178,19 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     playback.play(true);
   }, [run.state, run.walked, playback]);
   const pick = (value: string) => {
+    if (value === 'run' || value === 'custom') return;
     playback.play(false);
-    if (value === 'run') return;
+    playback.go(0);
     // Another way leaves the way of the request run.
     run.forget();
-    if (value === 'auto' || value === 'custom') {
-      if (value === 'auto') onState({ ...state, open: [], choices: [], focus: '' });
+    if (value === 'auto') {
+      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, focus: '' });
       return;
     }
     const selection = selections[Number(value)];
     if (selection === undefined) return;
     // A way is played on its own: its frames open, its sides chosen, from the start.
-    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], focus: '' });
-    playback.go(0);
+    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, focus: '' });
   };
   const failures = selections.map((selection, index) => ({ selection, index })).filter((item) => item.selection.kind === 'failure');
   const failureIndex = new Map(failures.map((item) => [item.selection, item.index]));
@@ -249,7 +256,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
                 onClick={() => {
                   playback.play(false);
                   const unpick = side.key === decision.taken && !decision.assumed;
-                  onState({ ...state, choices: choose(state.choices.slice(0, 1), decision.key, unpick ? undefined : side.key) });
+                  onState({ ...state, choices: choose(state.choices.slice(0, 1), decision.key, unpick ? undefined : side.key), way: undefined });
                 }}
               >
                 {side.label}
@@ -288,10 +295,11 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
 
   return (
     <section className="flow-player" aria-label="フローの再生" onKeyDown={onKey}>
+      {requestCase}
       <div className="flow-controls">
         <label className="flow-way">
-          <span className="flow-label">道筋</span>
-          <select value={ran ? 'run' : picked !== -1 ? String(picked) : custom ? 'custom' : 'auto'} onChange={(event) => pick(event.target.value)} aria-label="リクエストが通る道筋">
+          <span className="flow-label">コードの道筋</span>
+          <select value={ran ? 'run' : picked !== -1 ? String(picked) : custom ? 'custom' : 'auto'} onChange={(event) => pick(event.target.value)}>
             <option value="auto">おまかせ（分岐は仮の側へ進む）</option>
             {ran ? <option value="run">実行したリクエストが通った道筋</option> : null}
             {custom ? <option value="custom">自分で選んだ道筋</option> : null}
@@ -438,6 +446,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         // The request of a ready-made way the reader picked; a request run keeps the request it ran, whatever way its sides match.
         selection={run.state !== undefined || picked === -1 ? undefined : selections[picked]}
         keep={run.state !== undefined}
+        generatedCase={generatedCase}
         assumed={assumedCount}
         framework={framework}
         endpoint={endpoint?.request}
@@ -447,7 +456,8 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         ending={ending}
         onRun={(draft) => {
           playback.play(false);
-          run.run(draft);
+          if (generatedCase !== undefined && onRunScenario !== undefined) onRunScenario(draft);
+          else run.run(draft);
         }}
         onFollow={run.follow}
       />

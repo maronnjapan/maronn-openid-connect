@@ -26,13 +26,16 @@ const requests: RootRequests = {
 };
 
 describe('wayRequestsOf', () => {
-  it('should find the request of a way by its kind and target, by its name too when several share them', () => {
+  it('should find the request of the exact code path', () => {
     expect([
       wayRequestsOf(requests, { kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9' })?.id,
-      wayRequestsOf(requests, { kind: 'step', name: 'a name the catalog said otherwise', target: 's0b9' })?.id,
       wayRequestsOf(requests, { kind: 'exit', name: 'return b', target: 's0b9s0' })?.id,
-      wayRequestsOf(requests, { kind: 'exit', name: 'return c', target: 's0b9s0' })?.id,
-    ]).toEqual(['c-refresh', 'c-refresh', 'c-exit-b', 'c-exit-a']);
+    ]).toEqual(['c-refresh', 'c-exit-b']);
+  });
+
+  it('should leave a path without a request when only a different path to its node was observed', () => {
+    const onlyOne: RootRequests = { ...requests, ways: requests.ways.filter((way) => way.id === 'c-exit-a') };
+    expect(wayRequestsOf(onlyOne, { kind: 'exit', name: 'return b', target: 's0b9s0' })).toBeUndefined();
   });
 
   it('should find none for no way, a way no request took, or no requests', () => {

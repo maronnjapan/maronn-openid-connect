@@ -45,7 +45,7 @@ while [ $# -gt 0 ]; do
 Usage: deploy-cloudflare.sh [--issuer <https://...>] [--dry-run]
 
 引数なしで実行するとガイド付きでデプロイします:
-  1. pnpm / 依存関係 / @maronn-openid-connect/core のビルドを準備
+  1. pnpm / 依存関係 / core と experimental のビルドを準備
   2. Cloudflare 未ログインなら 'wrangler login' を起動
   3. D1 データベース（${D1_NAME}）を作成または再利用し、database_id を自動解決
   4. wrangler.deploy.jsonc（gitignore 済み）を生成（テーブルは Worker が最初のリクエストで作る）
@@ -80,9 +80,9 @@ guide_step "Cloudflare Workers へのデプロイを開始します（サンプ�
 guide_require_node_version 22 13
 guide_require_pnpm
 guide_ensure_workspace_deps "${ROOT_DIR}"
-guide_info "@maronn-openid-connect/core をビルドします。"
+guide_info "@maronn-openid-connect/core と experimental をビルドします。"
 if [ "${DRY_RUN}" != "1" ]; then
-  (cd "${ROOT_DIR}" && pnpm --filter @maronn-openid-connect/core build >/dev/null)
+  (cd "${ROOT_DIR}" && pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build >/dev/null)
 fi
 guide_ok "ツールチェーンの準備ができました（wrangler はサンプルの devDependencies を使用）。"
 

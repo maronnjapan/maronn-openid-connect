@@ -114,7 +114,7 @@ async function checkRequests(data: MapData, readFrame: (url: string) => Promise<
     for (const way of requests.ways) {
       metrics.requests.ways += 1;
       for (const read of way.sample.store?.read ?? []) reads.push({ root, way: way.name, read });
-      if (!file.selections.some((selection) => selection.kind === way.kind && selection.target === way.target)) {
+      if (!file.selections.some((selection) => selection.kind === way.kind && selection.target === way.target && selection.name === way.name)) {
         metrics.requests.unmatched += 1;
         failures.push(`${root}: the requests name the way ${way.kind} "${way.name}" (${way.target}), which no ready-made choice of the root is: the flow view would not show them`);
       }

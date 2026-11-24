@@ -3,6 +3,7 @@ import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
 import { Rows } from './Rows';
 import { PremisesPanel } from './PremisesPanel';
 import { StoredReads, StoredWrites } from './StoredRecords';
+import { selectionKey } from '../lib/playback';
 import { carryOver, valuesBetween } from '../lib/premises';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
 import { blankDraft, bodiless, draftOf, draftProblem, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
@@ -89,6 +90,8 @@ export interface FlowRequestProps {
   selection: Selection | undefined;
   /** A request run is played: the request keeps the way it was taken from, whatever way the run took. */
   keep: boolean;
+  /** A purpose was selected, with a draft once it has been generated. */
+  generatedCase?: { key: string; draft?: RequestDraft } | undefined;
   /** How many decisions the way played takes on an assumed side. */
   assumed: number;
   /** The framework the map shows: express and fastify, generated from hono, run on the OP of hono, and say so. */
@@ -124,30 +127,33 @@ export interface FlowRequestProps {
  * requests that made them are listed to write with. The tests play no part
  * here: what a test sent is the tests page's to show.
  */
-export function FlowRequest({ state, premises, selection, keep, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
+export function FlowRequest({ state, premises, selection, keep, generatedCase, assumed, framework, endpoint, unrunnable, featuresOff, run, ending, onRun, onFollow }: FlowRequestProps) {
   const headingId = useId();
   // The way the request was taken from: a ready-made way picked later takes its place, and so does no way (おまかせ, sides the reader chose), while the way of a run keeps it.
   const [base, setBase] = useState<{ selection: Selection | undefined }>({ selection });
   if (selection !== base.selection && (selection !== undefined || !keep)) setBase({ selection });
   const requests = state.kind === 'ready' ? state.requests : undefined;
-  const way = wayRequestsOf(requests, base.selection);
+  const way = generatedCase === undefined ? wayRequestsOf(requests, base.selection) : undefined;
   // The request the OP of the map took the way with; a way no request took starts from no parameters, as a request of another way would not take it.
   const shown = way?.sample;
-  const borrowable = base.selection === undefined || way !== undefined ? undefined : baseSample(requests);
-  const originKey = `${base.selection?.kind ?? ''}|${base.selection?.target ?? ''}|${way?.id ?? ''}`;
-  const origin = shown !== undefined ? draftOf(shown) : endpoint !== undefined ? blankDraft(endpoint.method, endpoint.path) : undefined;
+  const borrowable = generatedCase !== undefined || base.selection === undefined || way !== undefined ? undefined : baseSample(requests);
+  const originKey = generatedCase === undefined ? `${base.selection === undefined ? '' : selectionKey(base.selection)}|${way?.id ?? ''}` : `case:${generatedCase.key}`;
+  const origin = generatedCase !== undefined ? generatedCase.draft : shown !== undefined ? draftOf(shown) : endpoint !== undefined ? blankDraft(endpoint.method, endpoint.path) : undefined;
   // What the reader wrote over it, the premises it was written on, and the way of the request it was copied from, when the reader copied one.
   const [edited, setEdited] = useState<{ key: string; draft: RequestDraft; on: PreparedPremises | undefined; copiedFrom?: string } | undefined>(undefined);
+  if (edited !== undefined && edited.key !== originKey) setEdited(undefined);
   // The premises a request runs on now: a request written on others (the samples on the build's) is carried over to them, its codes and tokens those of the same grants.
   const current = premises.made?.premises ?? premises.build;
   const changed = edited?.key === originKey;
-  const draft = changed && edited !== undefined ? carried(edited.draft, edited.on, current) : origin === undefined ? undefined : carried(origin, premises.build, current);
+  const written = changed ? edited?.draft : origin;
+  const draft = written === undefined || generatedCase !== undefined ? written : carried(written, changed ? edited?.on : premises.build, current);
   const copiedFrom = changed ? edited?.copiedFrom : undefined;
   // Once the reader writes over a copy, it is the reader's request, no longer the copy said not to take the case.
   const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next, on: current });
 
   let note: string;
-  if (base.selection === undefined) note = '「道筋」からケースを選ぶと、そのケースを通るリクエストから始めます。値を書いて実行すると、地図の OP で動かし、通った道筋を再生します。';
+  if (generatedCase !== undefined) note = 'このケースのクライアント設定を使って地図の OP で実行し、実際に通った道筋を再生します。';
+  else if (base.selection === undefined) note = '「コードの道筋」を選ぶと、地図の OP がその道筋を通ったリクエストを表示します。値を書いて実行すると、実際に通った道筋を再生します。';
   else if (state.kind === 'loading') note = '読み込んでいます…';
   else if (state.kind === 'failed') note = `このケースを通るリクエストを読み込めませんでした: ${state.message}`;
   else if (shown !== undefined && premises.made !== undefined) note = '地図のビルドの前提で、このケースを通ると確かめたリクエストです。コードとトークンは、いまの前提の同じグラントのものに置き換えています。いまの前提でもこのケースを通るかは、実行して確かめます。';
@@ -159,13 +165,14 @@ export function FlowRequest({ state, premises, selection, keep, assumed, framewo
     return (
       <section className="flow-request" aria-labelledby={headingId}>
         <h4 id={headingId}>リクエスト</h4>
-        <p className="note req-empty">関数のトレースには、送るリクエストがありません。エンドポイントの画面で書いて実行できます。</p>
+        {generatedCase === undefined ? <p className="note req-empty">エンドポイントの画面でリクエストを書いて実行できます。</p> : null}
       </section>
     );
   }
 
   const problem = draftProblem(draft);
   const running = run?.status === 'running';
+  const recordsPremises = generatedCase === undefined ? premises.state : { kind: 'none' as const };
   // What the request reads of the records the OP holds: that of the request run, else that of the request the view started from.
   const ranStore = run?.status === 'done' ? run.run.store : undefined;
   const sampleStore = shown?.store;
@@ -176,7 +183,7 @@ export function FlowRequest({ state, premises, selection, keep, assumed, framewo
       : sampleStore !== undefined && premises.made === undefined
         ? { reads: sampleStore.read, title: 'このリクエストが読む、OP の保存済みの情報', note: changed ? '書き換える前のリクエストが読むものです。実行すると、書き換えたリクエストが読んだものに替わります。' : undefined }
         : undefined;
-  const noReads = premises.made !== undefined ? '前提を作り直したので、このリクエストが読むものは、実行して確かめます（ビルドの前提で読んだものは出しません）。実行すると、この前提で読んだもの、保存したものを出します。' : '実行すると、このリクエストが OP の保存済みの情報（認可コード、トークン、クライアントなど）から何を読み、何を保存したかを出します。';
+  const noReads = generatedCase === undefined && premises.made !== undefined ? '前提を作り直したので、このリクエストが読むものは、実行して確かめます（ビルドの前提で読んだものは出しません）。実行すると、この前提で読んだもの、保存したものを出します。' : '実行すると、このリクエストが OP の保存済みの情報（認可コード、トークン、クライアントなど）から何を読み、何を保存したかを出します。';
   const groups: Array<{ place: ParamPlace; label: string }> = [{ place: 'query', label: PARAM_PLACES.query }, ...(bodiless(draft.method) ? [] : [{ place: draft.body === 'json' ? ('json' as const) : ('form' as const), label: BODY_WORDS[draft.body] }])];
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -189,8 +196,8 @@ export function FlowRequest({ state, premises, selection, keep, assumed, framewo
         <h4 id={headingId}>リクエスト</h4>
       </div>
       <p className="note req-empty">{note}</p>
-      {reads !== undefined ? <StoredReads reads={reads.reads} premises={premises.state} title={reads.title} note={reads.note} /> : <p className="note">{noReads}</p>}
-      <p className="note">前提（認可リクエストのスコープ、クライアントの grant_types など）は、下の「地図の OP が持っているもの」で書き換えて作り直せます。</p>
+      {reads !== undefined ? <StoredReads reads={reads.reads} premises={recordsPremises} title={reads.title} note={reads.note} /> : <p className="note">{noReads}</p>}
+      {generatedCase === undefined ? <p className="note">前提（認可リクエストのスコープ、クライアントの grant_types など）は、下の「地図の OP が持っているもの」で書き換えて作り直せます。</p> : null}
       <form className="req" onSubmit={submit} aria-label="実行するリクエスト">
         <p className="req-line">
           <span className="req-method">{draft.method}</span>
@@ -247,8 +254,8 @@ export function FlowRequest({ state, premises, selection, keep, assumed, framewo
           ) : null}
         </div>
       </form>
-      {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} premises={premises.state} /> : null}
-      <PremisesPanel premises={premises} />
+      {run !== undefined ? <RunResult run={run} ending={ending} assumed={assumed} onFollow={onFollow} premises={recordsPremises} /> : null}
+      {generatedCase === undefined ? <PremisesPanel premises={premises} /> : null}
     </section>
   );
 }

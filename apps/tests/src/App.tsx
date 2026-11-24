@@ -20,7 +20,7 @@ import { SourceSwitch } from './components/ui';
 import { buildDb, type Db } from './lib/data';
 import type { Lang } from './lib/filter';
 import { DIFF_URL, loadJson, MissingData } from './lib/load';
-import { formatHash, panelOf, parseHash, samePage, type Source, type View } from './lib/route';
+import { formatHash, panelOf, parseHash, samePage, withoutPanel, type Source, type View } from './lib/route';
 
 const TESTS_URL = './data/tests.json';
 const OUTLINE_URL = './data/outline.json';
@@ -143,7 +143,7 @@ export function App() {
     const hash = formatHash(next);
     if (hash === window.location.hash) return;
     // Closing a panel this page opened goes back, so the back button does not open it again.
-    if (panelOf(current) !== undefined && panelOf(next) === undefined && samePage(current, next) && window.history.state?.panel === true) {
+    if (panelOf(current) !== undefined && hash === formatHash(withoutPanel(current)) && window.history.state?.panel === true) {
       window.history.back();
       return;
     }

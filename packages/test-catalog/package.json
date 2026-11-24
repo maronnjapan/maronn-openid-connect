@@ -11,6 +11,11 @@
     },
     "./model": {
       "types": "./src/model.ts"
+    },
+    "./premises": {
+      "types": "./src/premises.ts",
+      "browser": "./src/premises.ts",
+      "import": "./dist/premises.js"
     }
   },
   "scripts": {

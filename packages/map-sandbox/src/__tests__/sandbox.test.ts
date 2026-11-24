@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { developmentUsers } from '../../../../apps/hono/src/oidc-provider/development.js';
 import { TEST_ISSUER } from '../../../../apps/hono/src/test-support/context.js';
 import { CLIENT_ID, CLIENT_SECRET, NOW, REDIRECT_URI } from '../../../../apps/hono/src/test-support/token.js';
+import { generateRequestScenario } from '../../../test-catalog/src/premises.js';
 import type * as Api from '../api.js';
 
 // The OP as the map loads it: the bundle `vite build` wrote (the test script builds it first).
@@ -53,6 +54,31 @@ async function grantOf(id: string): Promise<Api.PreparedGrant | undefined> {
 }
 
 describe('runRequest', () => {
+  it('should accept the generated signed Request Object with the client verification key registered', async () => {
+    const generated = await generateRequestScenario('authorize-request-object', { issuer: PREMISES.issuer, clientId: 'request-object-client' });
+    const { registration } = generated;
+    const premises = await preparePremises({
+      ...PREMISES,
+      now: generated.issuedAt,
+      clients: [{
+        clientId: registration.client_id,
+        authMethod: registration.token_endpoint_auth_method,
+        grantTypes: registration.grant_types,
+        redirectUris: registration.redirect_uris,
+        requestObjectKeys: registration.jwks?.keys,
+      }],
+      grants: [],
+    });
+    const run = await runRequest(generated.request, premises);
+    const location = headerOf(run.response ?? { headers: [] }, 'location');
+    const verifyStep = 'apps/hono/src/oidc-provider/features/request-object/steps/resolve-request-object.ts';
+
+    expect(run.response?.status).toBe(302);
+    expect(location).toMatch(/^https:\/\/op\.example\.com\/login\?transaction_id=/);
+    expect(run.ran[verifyStep]?.s.map(([line]) => line)).toContain(lineOf(verifyStep, 'return resolveRequestObjectParams(params, {'));
+    expect(run.store.wrote).toContainEqual(expect.objectContaining({ collection: 'transactions', change: 'added' }));
+  });
+
   it('should answer the exchange of the code no request exchanged with a token response issued at the clock of the premises, for the user who signed in', async () => {
     const run = await runRequest(exchangeOf(await grantOf('unused')), await premisesMade());
     const body = JSON.parse(run.response?.body ?? '{}') as { access_token: string; token_type: string; refresh_token?: string };

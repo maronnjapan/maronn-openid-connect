@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import { ChangesScreen } from './components/ChangesScreen';
 import { EndpointScreen } from './components/EndpointScreen';
 import { FunctionScreen } from './components/FunctionScreen';
@@ -159,10 +160,14 @@ function ProviderMap({ data }: { data: MapData }) {
   const flow = data.flows[view.framework] ?? (data.flows[data.frameworks[0] as string] as MapData['flows'][string]);
   const endpoints = useMemo(() => visibleEndpoints(flow, data.features, enabled), [flow, data.features, enabled]);
   const markers = useMemo(() => enabledMarkers(data.features, enabled), [data.features, enabled]);
-  // A link or a caller may name an endpoint or a step of a feature that is off: turn the feature on to show it.
+  // An endpoint, step or request may need a feature that is off.
   useEffect(() => {
     if (view.fn !== null) return;
-    const missing = featuresToShow(flow, data.features, enabled, view.endpoint, view.step);
+    const scenario = requestScenariosFor(view.endpoint ?? '').find((candidate) => candidate.id === view.trace.request);
+    const missing = [
+      ...featuresToShow(flow, data.features, enabled, view.endpoint, view.step),
+      ...(scenario?.feature === undefined ? [] : featuresMissing(data.features, enabled, [scenario.feature])),
+    ];
     if (missing.length === 0) return;
     const next = new Set([...enabled, ...missing]);
     save(FEATURES_KEY, JSON.stringify([...next]));

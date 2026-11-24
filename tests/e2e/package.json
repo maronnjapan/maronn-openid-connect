@@ -19,7 +19,7 @@
     },
     "devDependencies": {
         "@maronn-openid-connect/test-reach": "workspace:*",
-        "@playwright/test": "^1.65.0",
+        "@playwright/test": "^1.65.1",
         "@types/node": "^26.6.6",
         "istanbul-lib-coverage": "^3.2.2",
         "istanbul-lib-report": "^3.0.1",

@@ -15,6 +15,7 @@
     "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
     "deploy": "pnpm run build && wrangler deploy",
     "deploy:preview": "pnpm run build && wrangler versions upload",
+    "request:check": "pnpm --filter @maronn-openid-connect/test-catalog build && node scripts/check-request-scenario.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "check:wiring": "node ../../scripts/audit-wiring.mjs && node ../../scripts/check-wiring-audit.mjs"

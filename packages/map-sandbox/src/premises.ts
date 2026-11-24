@@ -25,6 +25,8 @@ export interface PremiseClient {
   redirectUris: string[];
   /** The scopes it may request; absent for any the OP supports. */
   scope?: string[];
+  /** Public ES256 keys registered for verifying a signed Request Object. */
+  requestObjectKeys?: Array<{ kty: 'EC'; crv: 'P-256'; x: string; y: string; kid: string; alg: 'ES256'; use: 'sig' }>;
 }
 
 /** A user who can sign in at the login page: one of the development users the OP registers (seed.ts), with the password the login form is sent with. */

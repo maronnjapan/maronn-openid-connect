@@ -24,7 +24,12 @@ export async function configuredDatabase(premises: Premises): Promise<MemoryData
         redirectUris: client.redirectUris,
         grantTypes: client.grantTypes,
         tokenEndpointAuthMethods: [client.authMethod],
+        ...(client.authMethod === 'none' ? { clientType: 'public' } : {}),
         ...(client.scope === undefined ? {} : { scope: client.scope }),
+        ...(client.requestObjectKeys === undefined ? {} : {
+          requestObjectSigningAlg: 'ES256',
+          keys: { request_object: { keys: client.requestObjectKeys } },
+        }),
       }),
     );
   }

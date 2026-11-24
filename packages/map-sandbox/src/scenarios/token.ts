@@ -1,7 +1,7 @@
 import { rs256Key } from '../../../../apps/hono/src/test-support/keys.js';
 import { signJwt } from '@maronn-openid-connect/core';
 import type { PreparedGrant, SandboxRequest } from '../api.js';
-import { PREMISES } from '../premises.js';
+import { PREMISES, type Premises } from '../premises.js';
 import type { ScenarioContext, ScenarioRecipe } from '../scenario-runtime.js';
 
 const CODE_CLIENT = 'client-1';
@@ -96,7 +96,7 @@ function serviceRequest(fields: Record<string, string> = {}, client = SERVICE_CL
 }
 
 /** Configure a demo service that authenticates using its registered public key. */
-async function privateKeyPlan(now: number) {
+async function privateKeyPlan(now: number): Promise<Premises> {
   const { publicJwk: { kty, n, e }, keyId } = await rs256Key(ASSERTION_KEY_ID);
   if (kty !== 'RSA' || n === undefined || e === undefined) throw new Error('The demo client requires an RSA public key.');
   return {

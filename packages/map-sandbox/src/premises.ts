@@ -10,11 +10,9 @@
  * The clients, the users and the clock are those of the tests of the token
  * endpoint (apps/hono/src/test-support/token.ts, the development users), so
  * a request one of those tests sends with them takes the same way here.
- * This module imports only types: the page reads it without the OP
+ * This module imports nothing: the page reads it without the OP
  * (`@maronn-openid-connect/map-sandbox/premises`).
  */
-
-import type { Jwk } from '@maronn-openid-connect/core';
 
 /** A client registered with the OP. */
 export interface PremiseClient {
@@ -31,7 +29,7 @@ export interface PremiseClient {
   /** The response algorithm for clients that register signed UserInfo. */
   userinfoSignedResponseAlg?: 'RS256';
   /** Public keys registered for verifying signed client assertions. */
-  clientAssertionKeys?: Jwk[];
+  clientAssertionKeys?: Array<{ kty: 'RSA'; n: string; e: string; alg: 'RS256'; use: 'sig'; kid: string }>;
   /** Public ES256 keys registered for verifying a signed Request Object. */
   requestObjectKeys?: Array<{ kty: 'EC'; crv: 'P-256'; x: string; y: string; kid: string; alg: 'ES256'; use: 'sig' }>;
 }

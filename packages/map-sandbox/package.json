@@ -12,6 +12,10 @@
     "./premises": {
       "types": "./src/premises.ts",
       "import": "./src/premises.ts"
+    },
+    "./browser": {
+      "types": "./src/browser.ts",
+      "import": "./src/browser.ts"
     }
   },
   "scripts": {
@@ -20,6 +24,7 @@
     "test": "vite build && vitest run"
   },
   "devDependencies": {
+    "@maronn-openid-connect/core": "workspace:*",
     "@maronn-openid-connect/test-reach": "workspace:*",
     "@types/node": "^26.6.6",
     "@vitest/istanbul-lib-instrument": "1.0.2",

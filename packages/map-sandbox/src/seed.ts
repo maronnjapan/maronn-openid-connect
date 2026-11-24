@@ -23,13 +23,17 @@ export async function configuredDatabase(premises: Premises): Promise<MemoryData
         clientSecret: client.clientSecret,
         redirectUris: client.redirectUris,
         grantTypes: client.grantTypes,
+        ...(client.responseTypes === undefined ? {} : { responseTypes: client.responseTypes }),
         tokenEndpointAuthMethods: [client.authMethod],
         ...(client.authMethod === 'none' ? { clientType: 'public' } : {}),
         ...(client.scope === undefined ? {} : { scope: client.scope }),
-        ...(client.requestObjectKeys === undefined ? {} : {
-          requestObjectSigningAlg: 'ES256',
-          keys: { request_object: { keys: client.requestObjectKeys } },
-        }),
+        ...(client.userinfoSignedResponseAlg === undefined ? {} : { userinfoSignedResponseAlg: client.userinfoSignedResponseAlg }),
+        ...(client.requestObjectKeys === undefined ? {} : { requestObjectSigningAlg: 'ES256' }),
+        ...(client.clientAssertionKeys === undefined ? {} : { tokenEndpointAuthSigningAlg: 'RS256' }),
+        keys: {
+          ...(client.requestObjectKeys === undefined ? {} : { request_object: { keys: client.requestObjectKeys } }),
+          ...(client.clientAssertionKeys === undefined ? {} : { private_key_jwt: { keys: client.clientAssertionKeys } }),
+        },
       }),
     );
   }

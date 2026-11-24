@@ -1,30 +1,33 @@
-import { generateRequestScenario, requestText, type GeneratedRequestScenario, type RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
+import type { PreparedRequestScenario } from '@maronn-openid-connect/map-sandbox';
+import { prepareRequestScenarioInSandbox } from '@maronn-openid-connect/map-sandbox/browser';
+import { requestText, type RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
 import { useEffect, useState } from 'react';
 
 type RequestResult =
-  | { id: string; revision: number; generated: GeneratedRequestScenario }
-  | { id: string; revision: number; error: string };
+  | { id: string; framework: string; revision: number; prepared: PreparedRequestScenario }
+  | { id: string; framework: string; revision: number; error: string };
 
 /** Generate a fresh request for the selected case and discard older selections' results. */
-export function useRequestCase(scenario: RequestScenario | undefined) {
+export function useRequestCase(scenario: RequestScenario | undefined, framework: string) {
   const id = scenario?.id;
-  const [selection, setSelection] = useState({ id, revision: 0 });
-  if (selection.id !== id) setSelection({ id, revision: selection.revision + 1 });
+  const [selection, setSelection] = useState({ id, framework, revision: 0 });
+  const sameSelection = selection.id === id && selection.framework === framework;
+  if (!sameSelection) setSelection({ id, framework, revision: selection.revision + 1 });
   const { revision } = selection;
   const [result, setResult] = useState<RequestResult>();
   useEffect(() => {
     if (id === undefined) return;
     let active = true;
-    generateRequestScenario(id).then(
-      (generated) => { if (active) setResult({ id, revision, generated }); },
-      (error: unknown) => { if (active) setResult({ id, revision, error: error instanceof Error ? error.message : String(error) }); },
+    prepareRequestScenarioInSandbox(id, framework).then(
+      (prepared) => { if (active) setResult({ id, framework, revision, prepared }); },
+      (error: unknown) => { if (active) setResult({ id, framework, revision, error: error instanceof Error ? error.message : String(error) }); },
     );
     return () => { active = false; };
-  }, [id, revision]);
+  }, [id, framework, revision]);
   return {
     revision,
-    result: selection.id === id && result?.id === id && result?.revision === revision ? result : undefined,
-    regenerate: () => setSelection((current) => ({ id, revision: current.revision + 1 })),
+    result: sameSelection && result?.id === id && result?.framework === framework && result?.revision === revision ? result : undefined,
+    regenerate: () => setSelection((current) => ({ ...current, revision: current.revision + 1 })),
   };
 }
 
@@ -51,15 +54,16 @@ export function RequestCase({ scenarios, selected, result, testsUrl, compact, on
       {selected !== undefined ? (
         <div className="request-case-detail" key={selected.id}>
           <p>{selected.purpose}</p>
-          <p><strong>期待する応答</strong> <code>{selected.expected.status}</code> {selected.expected.description}</p>
+          <p><strong>期待する応答</strong> <code>{selected.expected.status}</code> {selected.expected.error === undefined ? null : <><code>{selected.expected.error}</code> </>}{selected.expected.description}</p>
+          {selected.external === undefined ? null : <p className="note">{selected.external}</p>}
           {result === undefined ? <p role="status">リクエストを生成しています…</p> : 'error' in result ? (
             <p role="alert">リクエストを生成できませんでした（{result.error}）</p>
           ) : compact ? (
             <details>
-              <summary>HTTP リクエストとクライアント設定</summary>
-              <RequestExample key={result.revision} generated={result.generated} />
+              <summary>生成した HTTP リクエスト</summary>
+              <RequestExample key={result.revision} prepared={result.prepared} />
             </details>
-          ) : <RequestExample key={result.revision} generated={result.generated} />}
+          ) : <RequestExample key={result.revision} prepared={result.prepared} />}
           <div className="request-case-actions">
             {onTry !== undefined ? <button type="button" className="code-button" onClick={onTry}>地図の OP で試す</button> : null}
             <button type="button" className="code-button" onClick={onRegenerate}>再生成</button>
@@ -71,8 +75,8 @@ export function RequestCase({ scenarios, selected, result, testsUrl, compact, on
   );
 }
 
-/** The generated HTTP message and the client settings needed to run it. */
-function RequestExample({ generated }: { generated: GeneratedRequestScenario }) {
+/** The generated HTTP message and the preparation used to create it. */
+function RequestExample({ prepared: { generated, premises } }: { prepared: PreparedRequestScenario }) {
   const text = requestText(generated.request);
   const [copyStatus, setCopyStatus] = useState('');
   async function copyRequest() {
@@ -90,12 +94,21 @@ function RequestExample({ generated }: { generated: GeneratedRequestScenario }) 
         <button type="button" className="code-button" onClick={() => void copyRequest()}>リクエストをコピー</button>
         <span role="status">{copyStatus}</span>
       </div>
-      <details>
-        <summary>送信に使うクライアント設定</summary>
-        <p className="note">検証先の OP に同じクライアント ID とリダイレクト URI を登録します。署名付きのケースでは公開鍵も登録します。</p>
-        <pre aria-label="クライアント登録情報">{JSON.stringify(generated.registration, null, 2)}</pre>
-        <p className="note">認可コードの交換に使う <code>code_verifier</code> <code>{generated.codeVerifier}</code></p>
-      </details>
+      {premises.steps.length === 0 ? null : (
+        <details>
+          <summary>準備に使ったリクエスト（{premises.steps.length} 件）</summary>
+          <ol>
+            {premises.steps.map(({ request, response }, index) => <li key={index}><code>{request.method} {new URL(request.url).pathname}</code> → <code>{response.status}</code></li>)}
+          </ol>
+        </details>
+      )}
+      {generated.registration === undefined && generated.codeVerifier === undefined ? null : (
+        <details>
+          <summary>送信に使うクライアント設定</summary>
+          {generated.registration === undefined ? null : <pre aria-label="クライアント登録情報">{JSON.stringify(generated.registration, null, 2)}</pre>}
+          {generated.codeVerifier === undefined ? null : <p className="note">認可コードの交換に使う <code>code_verifier</code> <code>{generated.codeVerifier}</code></p>}
+        </details>
+      )}
     </>
   );
 }

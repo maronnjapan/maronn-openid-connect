@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
+import { requestScenarioFeatures, requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import { ChangesScreen } from './components/ChangesScreen';
 import { EndpointScreen } from './components/EndpointScreen';
 import { FunctionScreen } from './components/FunctionScreen';
@@ -163,10 +163,11 @@ function ProviderMap({ data }: { data: MapData }) {
   // An endpoint, step or request may need a feature that is off.
   useEffect(() => {
     if (view.fn !== null) return;
-    const scenario = requestScenariosFor(view.endpoint ?? '').find((candidate) => candidate.id === view.trace.request);
+    const scenario = requestScenariosFor(view.endpoint ?? '', undefined, view.framework).find((candidate) => candidate.id === view.trace.request);
+    const required = scenario === undefined ? [] : requestScenarioFeatures(scenario);
     const missing = [
       ...featuresToShow(flow, data.features, enabled, view.endpoint, view.step),
-      ...(scenario?.feature === undefined ? [] : featuresMissing(data.features, enabled, [scenario.feature])),
+      ...featuresMissing(data.features, enabled, required),
     ];
     if (missing.length === 0) return;
     const next = new Set([...enabled, ...missing]);

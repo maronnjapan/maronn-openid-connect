@@ -153,9 +153,11 @@ Tab で箱へ移ると、その箱が見える所まで図が動いてカード�
 
 ### 想定リクエスト
 
-`/authorize` では、認可コード + PKCE、署名付き Request Object、`prompt=none` から目的を選べる。選ぶと HTTP リクエストを生成し、期待する応答とクライアントの登録情報を表示する。Request Object は ES256 で署名し、検証用の公開 JWKS を表示する。
+各エンドポイントで目的を選ぶと、HTTP リクエストと期待する応答を表示する。たとえば `/authorize` では署名付き Request Object や PAR、`/token` では認可コードの交換や更新、`/device` では利用者コードの確認や承認を選べる。トークン、認可トランザクション、Cookie などが必要なら、地図の OP へ準備のリクエストを送り、その応答から得た値を使う。
 
-「地図の OP で試す」を開くと、生成した値がリクエスト欄に入る。「このリクエストを実行」でケース専用のクライアント設定を使い、応答と実際に通った道筋を表示する。ケースは `#hono--authorize;r=authorize-request-object` のように共有でき、tests にも同じ目的のケースがある。
+「地図の OP で試す」を開くと、メソッド、パス、ボディ、ヘッダーが実行欄に入る。「このリクエストを実行」でケースの準備が済んだ状態から実行し、応答と通った道筋を表示する。準備した状態は実行ごとに複製するので、同じ認可コードの交換も同じ条件で試せる。地図内の実行には Hono の OP を使う。Next.js は実装に対応するパスと期待する応答を表示する。Google から実際の認証情報を受け取るケースでは、その前提を表示する。
+
+ケースは `#hono--authorize;r=authorize-request-object` のように共有でき、tests でも同じ目的を選べる。ケースを増やすときは、[目的と期待する応答](../../packages/test-catalog/src/scenarios) と [リクエストの準備手順](../../packages/map-sandbox/src/scenarios) を同じ ID で追加する。地図のビルドは各エンドポイントにケースがあることを検査し、sandbox のテストは生成したリクエストの応答を検査する。
 
 ### 道筋と仮の側
 
@@ -599,7 +601,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/links.ts`, `src/components/SourceView.tsx`：コードの名前のリンク（行を名前で切る、移る先、使う場所、戻る・進むの履歴）と、リンク付きのコードの表示
 - `src/components/Trace.tsx`, `TraceView.tsx`, `SelectionBar.tsx`：アウトライン、決定のボタン、よく使う選択、図・差分・詳細のタブ
 - `src/components/FlowPlayer.tsx`：フローの再生の操作、場面の説明。`FlowRequest.tsx` がリクエストを書いて実行する欄（ケースの例は `src/lib/requests.ts`、データは `useRequests.ts` が読む）を出し、`StoredRecords.tsx` が読んだ・書いた記録と前提を作ったリクエストを出す（言葉と記録の出どころは `src/lib/premises.ts`）。フローチャート（`FlowChart.tsx`）は、再生の位置を受け取って矢印を流し、印を動かす
-- `src/lib/run.ts`, `src/components/useRun.ts`, `src/sandbox-worker.ts`：書いたリクエストを地図の OP へ送る形にし、前提（`useRequests.ts` の `usePremises` が読む）とともに Web Worker で実行して、通った道筋（決定の側と開くフレーム）を読み、トレースの選択にする
+- `src/lib/run.ts`, `src/components/useRun.ts`, `packages/map-sandbox/src/browser-worker.ts`：書いたリクエストを地図の OP へ送る形にし、準備した状態とともに Web Worker で実行して、通った道筋をトレースに表示する
 - `src/components/useDiagramCards.tsx`：図とフローチャートが共有する、箱のカード（重ねる、フォーカス、タップ）
 - `src/components/`：ほかに、エンドポイントの画面、関数のページ、このPRの変更のページ、左の一覧、検索、メニュー
 - `src/types.ts`：データの形（`@maronn-openid-connect/map-analysis/model` の再輸出）

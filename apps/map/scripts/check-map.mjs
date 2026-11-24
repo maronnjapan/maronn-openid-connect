@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkLinks, checkMap } from '@maronn-openid-connect/map-analysis';
+import { REQUEST_SCENARIOS, requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // pnpm passes on the `--` before the arguments of a script.
@@ -56,6 +57,24 @@ for (const [framework, names] of Object.entries(metrics.token)) console.log(`  /
 const links = checkLinks(new Map(Object.entries(data.sources).map(([id, source]) => [id, JSON.parse(readFileSync(fileOf(source.url), 'utf8'))])));
 console.log(`Checked the links of the code: ${links.links} names in ${Object.keys(data.sources).length} files, ${links.broken.length} broken`);
 failures.push(...links.broken.slice(0, 20), ...(links.broken.length > 20 ? [`… and ${links.broken.length - 20} more broken links of the code`] : []));
+const featureIds = data.features.map(({ id }) => id);
+const seenScenarios = new Set();
+let endpointCount = 0;
+for (const [framework, flow] of Object.entries(data.flows)) {
+  for (const endpoint of flow.endpoints) {
+    endpointCount += 1;
+    const scenarios = requestScenariosFor(endpoint.id, featureIds, framework);
+    if (scenarios.length === 0) failures.push(`${framework} ${endpoint.path} has no request scenario`);
+    for (const scenario of scenarios) seenScenarios.add(scenario.id);
+  }
+}
+const ids = new Set();
+for (const { id } of REQUEST_SCENARIOS) {
+  if (ids.has(id)) failures.push(`Duplicate request scenario: ${id}`);
+  if (!seenScenarios.has(id)) failures.push(`Request scenario is not available at any endpoint: ${id}`);
+  ids.add(id);
+}
+console.log(`Checked the request scenarios: ${seenScenarios.size} scenarios across ${endpointCount} framework endpoints`);
 if (failures.length > 0) {
   for (const failure of failures) console.error(`✗ ${failure}`);
   process.exit(1);

@@ -1,12 +1,22 @@
 import type { ExampleRequest } from './model.js';
+import { deviceScenarios } from './scenarios/device.js';
+import { interactionScenarios } from './scenarios/interaction.js';
+import { protocolScenarios } from './scenarios/protocol.js';
+import { tokenScenarios } from './scenarios/token.js';
 
 /** A request a reader can generate for a protocol use case. */
 export interface RequestScenario {
   id: string;
+  endpoint: string;
   title: string;
   purpose: string;
-  expected: { status: number; description: string };
+  expected: { status: number; description: string; error?: string; redirectPath?: string };
   feature?: string;
+  requires?: readonly string[];
+  frameworks?: readonly string[];
+  /** Setup required outside the in-browser OP. */
+  external?: string;
+  nextjs?: { path?: string; expected?: RequestScenario['expected'] };
 }
 
 export interface AuthorizationScenarioOptions {
@@ -39,25 +49,33 @@ export interface AuthorizationScenarioRegistration {
   jwks?: { keys: RequestObjectPublicKey[] };
 }
 
+/** A generated request and the client settings relevant to its use. */
 export interface GeneratedRequestScenario {
   request: ExampleRequest;
   url: string;
   /** The Unix clock used for the request's JWT claims. */
   issuedAt: number;
+  codeVerifier?: string;
+  registration?: AuthorizationScenarioRegistration;
+}
+
+export interface GeneratedAuthorizationScenario extends GeneratedRequestScenario {
   codeVerifier: string;
   registration: AuthorizationScenarioRegistration;
 }
 
-const EXPECT_LOGIN = { status: 302, description: '未ログインの場合はログイン画面へリダイレクト' };
+const EXPECT_LOGIN = { status: 302, description: '未ログインの場合はログイン画面へリダイレクト', redirectPath: '/login' };
 const AUTHORIZE_SCENARIOS: readonly RequestScenario[] = [
   {
     id: 'authorize-code-pkce',
+    endpoint: 'authorize',
     title: '認可コード + PKCE でログインを始める',
     purpose: '認可コードを受け取るため、S256 のコードチャレンジ付きで認可を開始する。',
     expected: EXPECT_LOGIN,
   },
   {
     id: 'authorize-request-object',
+    endpoint: 'authorize',
     title: 'Request Object で認可をリクエストする',
     purpose: '認可パラメータを ES256 署名付き JWT にまとめ、登録した公開鍵で検証できるようにして送る。',
     expected: EXPECT_LOGIN,
@@ -65,17 +83,53 @@ const AUTHORIZE_SCENARIOS: readonly RequestScenario[] = [
   },
   {
     id: 'authorize-prompt-none',
+    endpoint: 'authorize',
     title: '画面を出さずにログイン状態を確認する',
     purpose: 'prompt=none を指定し、既存セッションを使えるか確認する。',
-    expected: { status: 302, description: '有効なセッションがない場合はコールバックに login_required を返す' },
+    expected: { status: 302, description: 'コールバックにログインが必要であることを返す', error: 'login_required' },
   },
 ];
 
+export const REQUEST_SCENARIOS: readonly RequestScenario[] = [
+  ...AUTHORIZE_SCENARIOS, ...protocolScenarios, ...interactionScenarios, ...tokenScenarios, ...deviceScenarios,
+];
+
+/** The feature IDs required by the case. */
+export function requestScenarioFeatures(scenario: RequestScenario): readonly string[] {
+  return scenario.feature === undefined ? (scenario.requires ?? []) : [scenario.feature, ...(scenario.requires ?? [])];
+}
+
+/** Match either the feature IDs or the camel-case markers of a framework. */
+function featureKey(id: string): string {
+  return id.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+/** Apply the framework's request path and response semantics to a case. */
+function scenarioForFramework(scenario: RequestScenario, framework: string): RequestScenario | undefined {
+  if (scenario.frameworks !== undefined && !scenario.frameworks.includes(framework)) return undefined;
+  const expected = framework === 'nextjs' ? scenario.nextjs?.expected : undefined;
+  return expected === undefined ? scenario : { ...scenario, expected };
+}
+
 /** The protocol use cases available at this endpoint in the selected provider. */
-export function requestScenariosFor(endpointId: string, features?: readonly string[]): readonly RequestScenario[] {
-  if (endpointId !== 'authorize') return [];
-  if (features === undefined) return AUTHORIZE_SCENARIOS;
-  return AUTHORIZE_SCENARIOS.filter((scenario) => scenario.feature === undefined || features.includes(scenario.feature));
+export function requestScenariosFor(endpointId: string, features?: readonly string[], framework = 'hono'): readonly RequestScenario[] {
+  const available = features === undefined ? undefined : new Set(features.map(featureKey));
+  return REQUEST_SCENARIOS.flatMap((scenario) => {
+    if (scenario.endpoint !== endpointId || !requestScenarioFeatures(scenario).every((id) => available === undefined || available.has(featureKey(id)))) return [];
+    const shown = scenarioForFramework(scenario, framework);
+    return shown === undefined ? [] : [shown];
+  });
+}
+
+/** Look up a case by its shareable ID. */
+export function requestScenario(id: string, framework = 'hono'): RequestScenario | undefined {
+  const scenario = REQUEST_SCENARIOS.find((candidate) => candidate.id === id);
+  return scenario === undefined ? undefined : scenarioForFramework(scenario, framework);
+}
+
+/** Whether a case is generated with the browser-safe authorization request generator. */
+export function isStandaloneAuthorizationScenario(id: string): boolean {
+  return AUTHORIZE_SCENARIOS.some((scenario) => scenario.id === id);
 }
 
 const textEncoder = new TextEncoder();
@@ -101,8 +155,8 @@ async function signRequestObject(options: { params: Record<string, string>; issu
 }
 
 /** Generate the HTTP request and its public client configuration using the supplied provider settings. */
-export async function generateRequestScenario(id: string, options: AuthorizationScenarioOptions = {}): Promise<GeneratedRequestScenario> {
-  if (!AUTHORIZE_SCENARIOS.some((scenario) => scenario.id === id)) throw new Error(`Unknown request scenario: ${id}`);
+export async function generateRequestScenario(id: string, options: AuthorizationScenarioOptions = {}): Promise<GeneratedAuthorizationScenario> {
+  if (!isStandaloneAuthorizationScenario(id)) throw new Error(`Unknown authorization request scenario: ${id}`);
   const issuer = options.issuer ?? 'https://op.example.com';
   const url = new URL(issuer);
   if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') {

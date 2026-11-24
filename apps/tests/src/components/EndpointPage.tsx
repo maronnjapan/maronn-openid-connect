@@ -248,7 +248,8 @@ export function EndpointPage() {
   const own = useMemo(() => (endpoint === undefined ? [] : endpointTests(db, endpoint)), [db, endpoint]);
   const gone = useMemo(() => (endpoint === undefined ? [] : endpointRemoved(db, endpoint)), [db, endpoint]);
   const counts = useMemo(() => countsOf(own), [own]);
-  const scenarios = endpoint === undefined ? [] : requestScenariosFor(endpoint.id, [endpoint.feature, ...endpoint.steps.map((step) => step.feature)].filter((feature) => feature !== undefined));
+  const availableFeatures = db.features.length === 0 ? undefined : db.features.map((feature) => feature.id);
+  const scenarios = endpoint === undefined ? [] : requestScenariosFor(endpoint.id, availableFeatures, endpoint.source);
   const scenario = scenarios.find((item) => item.id === view.case);
   // Read the code-derived paths only while the case view is open.
   const casesUrl = db.index.cases?.[key];

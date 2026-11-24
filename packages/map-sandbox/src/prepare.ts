@@ -24,7 +24,8 @@
  */
 import type { MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/memory/database.js';
 import { rs256Key } from '../../../apps/hono/src/test-support/keys.js';
-import type { PlainDatabase, PremiseRecord, PremiseStep, PreparedGrant, PreparedPremises, SandboxMessage } from './api.js';
+import type { PlainDatabase, PremiseRecord, PremiseStep, PreparedGrant, PreparedPremises, SandboxMessage, SandboxRequest } from './api.js';
+import { cookieHeaders, keepCookies, submittedForm, type CookieJar } from './browser-session.js';
 import { encodeValue } from './codec.js';
 import { exportSigningKey, mapOp, onDatabase, responseHeaders, setCookiesOf, wholeRequest } from './op.js';
 import type { PremiseClient, PremiseGrant, Premises } from './premises.js';
@@ -45,22 +46,6 @@ interface Making {
   steps: PremiseStep[];
 }
 
-/** What a browser holds between two requests of a grant: its cookies, by name. */
-type CookieJar = Map<string, string>;
-
-/** Keep the cookies a response sets, and forget those it clears (an empty value, or Max-Age=0). */
-function keepCookies(jar: CookieJar, response: Response): void {
-  for (const cookie of setCookiesOf(response)) {
-    const [pair = ''] = cookie.split(';');
-    const equals = pair.indexOf('=');
-    if (equals <= 0) continue;
-    const name = pair.slice(0, equals).trim();
-    const value = pair.slice(equals + 1).trim();
-    if (value === '' || /;\s*max-age=0\s*(;|$)/i.test(cookie)) jar.delete(name);
-    else jar.set(name, value);
-  }
-}
-
 /** A body as a step keeps it: absent when empty, cut at BODY_LIMIT characters. */
 function bodyOf(text: string | undefined): Pick<SandboxMessage, 'body' | 'truncated'> {
   if (text === undefined || text === '') return {};
@@ -73,14 +58,14 @@ function bodyOf(text: string | undefined): Pick<SandboxMessage, 'body' | 'trunca
  * with what the OP answered (the body of a page left out) and the records
  * it wrote. Returns the response and the text of its body.
  */
-async function send(making: Making, grant: string, jar: CookieJar | undefined, method: string, url: string, init: { headers?: Array<[string, string]>; body?: string } = {}): Promise<{ response: Response; text: string }> {
+async function send(making: Making, grant: string, jar: CookieJar | undefined, method: string, url: string, init: { headers?: Array<[string, string]>; body?: string } = {}): Promise<{ response: Response; text: string; url: string }> {
   const headers: Array<[string, string]> = [...(init.headers ?? [])];
-  if (jar !== undefined && jar.size > 0) headers.push(['cookie', [...jar].map(([name, value]) => `${name}=${value}`).join('; ')]);
+  if (jar !== undefined) headers.push(...cookieHeaders(jar));
   const request = wholeRequest(new URL(url, making.issuer), { method, headers, ...(init.body === undefined ? {} : { body: init.body }) });
   const before = plainDatabase(making.db);
   const response = await making.op.fetch(request);
   const text = await response.text();
-  if (jar !== undefined) keepCookies(jar, response);
+  if (jar !== undefined) keepCookies(jar, setCookiesOf(response));
   const page = (response.headers.get('content-type') ?? '').startsWith('text/html');
   making.steps.push({
     grant,
@@ -88,42 +73,7 @@ async function send(making: Making, grant: string, jar: CookieJar | undefined, m
     response: { status: response.status, ...(response.statusText === '' ? {} : { statusText: response.statusText }), headers: responseHeaders(response), ...(page ? {} : bodyOf(text)) },
     wrote: changesBetween(before, plainDatabase(making.db)),
   });
-  return { response, text };
-}
-
-/** A character reference of HTML made again (`&amp;` → `&`): the OP escapes `&`, `<`, `>` and the quotes in the values of its pages. */
-function unescapeHtml(text: string): string {
-  return text.replace(/&(amp|lt|gt|quot|#39|#x27);/g, (_, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'" })[name] ?? '');
-}
-
-/** The value of an attribute of an HTML tag; undefined without it. */
-function attributeOf(tag: string, name: string): string | undefined {
-  const match = new RegExp(`\\s${name}="([^"]*)"`).exec(tag);
-  return match === null ? undefined : unescapeHtml(match[1] ?? '');
-}
-
-/**
- * The form of an OP's page as a user submits it: where it posts, and its
- * fields, the hidden ones as they are, the text and password inputs with
- * the user's name and password, and the submit button that approves (the
- * first one when none does). Undefined for a page without a form that posts.
- */
-function submittedForm(html: string, user: { username: string; password: string }): { action: string; fields: Array<[string, string]> } | undefined {
-  const form = /<form\b[^>]*>/i.exec(html)?.[0];
-  if (form === undefined || (attributeOf(form, 'method') ?? '').toLowerCase() !== 'post') return undefined;
-  const fields: Array<[string, string]> = [];
-  for (const [input] of html.matchAll(/<input\b[^>]*>/gi)) {
-    const name = attributeOf(input, 'name');
-    if (name === undefined) continue;
-    const type = (attributeOf(input, 'type') ?? 'text').toLowerCase();
-    if (type === 'hidden') fields.push([name, attributeOf(input, 'value') ?? '']);
-    else if (type === 'password') fields.push([name, user.password]);
-    else if (type === 'text') fields.push([name, user.username]);
-  }
-  const buttons = [...html.matchAll(/<button\b[^>]*>/gi)].map(([tag]) => tag).filter((tag) => (attributeOf(tag, 'type') ?? 'submit') === 'submit' && attributeOf(tag, 'name') !== undefined);
-  const button = buttons.find((tag) => attributeOf(tag, 'value') === 'approve') ?? buttons[0];
-  if (button !== undefined) fields.push([attributeOf(button, 'name') ?? '', attributeOf(button, 'value') ?? '']);
-  return { action: attributeOf(form, 'action') ?? '', fields };
+  return { response, text, url: request.url };
 }
 
 /** The headers and the fields a client authenticates with at the token endpoint, the way it is registered (RFC 6749 §2.3.1: in the Authorization header, or in the body with its secret; a public client by its id alone). */
@@ -220,31 +170,63 @@ function recordsOf(steps: readonly PremiseStep[], after: PlainDatabase): Premise
   return records;
 }
 
-/** Make the premises by requests (see the module comment and api.ts preparePremises). */
-export async function preparePremises(premises: Premises): Promise<PreparedPremises> {
+/** The grants and HTTP responses available while preparing a request on the same OP. */
+export interface PremiseRequestsContext {
+  issuer: string;
+  now: number;
+  grants: readonly PreparedGrant[];
+  /** Send the next setup request and return the full response for the next one to use. */
+  send(request: SandboxRequest): Promise<{ status: number; headers: Array<[string, string]>; body: string; url: string }>;
+}
+
+/** Make the grants, then run any other setup requests before taking the database snapshot. */
+export async function prepareWithRequests<T>(
+  premises: Premises,
+  label: string,
+  finish: (context: PremiseRequestsContext) => T | Promise<T>,
+): Promise<{ result: T; premises: PreparedPremises }> {
   const db = await configuredDatabase(premises);
   const key = await rs256Key('map-sandbox-rs256-key');
   const making: Making = { op: mapOp(db, key, premises.issuer), db, issuer: premises.issuer, steps: [] };
   const failures: NonNullable<PreparedPremises['failures']> = [];
-  const grants = await onDatabase(db, premises.now, async () => {
-    const made: PreparedGrant[] = [];
+  const { grants, result } = await onDatabase(db, premises.now, async () => {
+    const grants: PreparedGrant[] = [];
     for (const grant of premises.grants) {
       // The requests a grant sent stay among the steps, a failed one's too: the reader reads which one the OP refused, and how.
       const { prepared, failure } = await runGrant(making, premises, grant);
-      if (prepared !== undefined) made.push(prepared);
+      if (prepared !== undefined) grants.push(prepared);
       if (failure !== undefined) failures.push(failure);
     }
-    return made;
-  });
+    const result = await finish({
+      issuer: premises.issuer,
+      now: premises.now,
+      grants,
+      async send(request) {
+        const { response, text, url } = await send(making, label, undefined, request.method, request.path, request);
+        return { status: response.status, headers: responseHeaders(response), body: text, url };
+      },
+    });
+    return { grants, result };
+  }, premises.postLogoutRedirectUris);
   return {
-    version: 1,
-    issuer: premises.issuer,
-    now: premises.now,
-    steps: making.steps,
-    records: recordsOf(making.steps, plainDatabase(db)),
-    grants,
-    ...(failures.length === 0 ? {} : { failures }),
-    database: encodeValue(db),
-    signingKey: await exportSigningKey(key),
+    result,
+    premises: {
+      version: 1,
+      issuer: premises.issuer,
+      ...(premises.postLogoutRedirectUris === undefined ? {} : { postLogoutRedirectUris: premises.postLogoutRedirectUris }),
+      now: premises.now,
+      steps: making.steps,
+      records: recordsOf(making.steps, plainDatabase(db)),
+      grants,
+      ...(failures.length === 0 ? {} : { failures }),
+      database: encodeValue(db),
+      signingKey: await exportSigningKey(key),
+    },
   };
+}
+
+/** Make the premises by sending their grants' requests. */
+export async function preparePremises(premises: Premises): Promise<PreparedPremises> {
+  const prepared = await prepareWithRequests(premises, '', () => undefined);
+  return prepared.premises;
 }

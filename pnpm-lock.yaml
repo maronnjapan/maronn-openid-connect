@@ -168,6 +168,9 @@ importers:
         specifier: ^19.3.1
         version: 19.3.1(react@19.3.1)
     devDependencies:
+      '@maronn-openid-connect/map-sandbox':
+        specifier: workspace:*
+        version: link:../../packages/map-sandbox
       '@maronn-openid-connect/test-catalog':
         specifier: workspace:*
         version: link:../../packages/test-catalog
@@ -331,6 +334,9 @@ importers:
 
   packages/map-sandbox:
     devDependencies:
+      '@maronn-openid-connect/core':
+        specifier: workspace:*
+        version: link:../core
       '@maronn-openid-connect/test-reach':
         specifier: workspace:*
         version: link:../test-reach

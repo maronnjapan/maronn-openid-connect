@@ -4,7 +4,7 @@ import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
 import { Rows } from './Rows';
 import { StepItem } from './StoredRecords';
 import { setMadePremises, type CurrentPremises } from './useRequests';
-import { prepareInSandbox } from './useRun';
+import { prepareInSandbox } from '@maronn-openid-connect/map-sandbox/browser';
 
 /** A grant of the premises as the reader edits it: the parameters of its authorization request as rows (a name may be empty while it is written), and whether its code is exchanged. */
 interface GrantDraft {

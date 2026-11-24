@@ -13,7 +13,7 @@ import type { CurrentPremises, RootRequestsState } from './useRequests';
 import type { RequestRunState } from './useRun';
 
 /** The words of the body of a request, by its kind. */
-const BODY_WORDS: Record<RequestDraft['body'], string> = { form: 'ボディ（フォーム）', json: 'ボディ（JSON）', none: 'ボディ' };
+const BODY_WORDS = { form: 'ボディ（フォーム）', json: 'ボディ（JSON）' };
 
 /** A request written on some premises, as written on others: their codes and tokens, grant by grant (carryOver); as it is when either is unknown or they are the same. */
 function carried(draft: RequestDraft, from: PreparedPremises | undefined, to: PreparedPremises | undefined): RequestDraft {
@@ -91,7 +91,7 @@ export interface FlowRequestProps {
   /** A request run is played: the request keeps the way it was taken from, whatever way the run took. */
   keep: boolean;
   /** A purpose was selected, with a draft once it has been generated. */
-  generatedCase?: { key: string; draft?: RequestDraft } | undefined;
+  generatedCase?: { key: string; draft?: RequestDraft; premises?: PreparedPremises } | undefined;
   /** How many decisions the way played takes on an assumed side. */
   assumed: number;
   /** The framework the map shows: express and fastify, generated from hono, run on the OP of hono, and say so. */
@@ -152,7 +152,7 @@ export function FlowRequest({ state, premises, selection, keep, generatedCase, a
   const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next, on: current });
 
   let note: string;
-  if (generatedCase !== undefined) note = 'このケースのクライアント設定を使って地図の OP で実行し、実際に通った道筋を再生します。';
+  if (generatedCase !== undefined) note = unrunnable ?? 'このケースで準備した OP にリクエストを送り、実際に通った道筋を再生します。';
   else if (base.selection === undefined) note = '「コードの道筋」を選ぶと、地図の OP がその道筋を通ったリクエストを表示します。値を書いて実行すると、実際に通った道筋を再生します。';
   else if (state.kind === 'loading') note = '読み込んでいます…';
   else if (state.kind === 'failed') note = `このケースを通るリクエストを読み込めませんでした: ${state.message}`;
@@ -172,7 +172,7 @@ export function FlowRequest({ state, premises, selection, keep, generatedCase, a
 
   const problem = draftProblem(draft);
   const running = run?.status === 'running';
-  const recordsPremises = generatedCase === undefined ? premises.state : { kind: 'none' as const };
+  const recordsPremises = generatedCase?.premises === undefined ? premises.state : { kind: 'ready' as const, premises: generatedCase.premises };
   // What the request reads of the records the OP holds: that of the request run, else that of the request the view started from.
   const ranStore = run?.status === 'done' ? run.run.store : undefined;
   const sampleStore = shown?.store;
@@ -184,7 +184,8 @@ export function FlowRequest({ state, premises, selection, keep, generatedCase, a
         ? { reads: sampleStore.read, title: 'このリクエストが読む、OP の保存済みの情報', note: changed ? '書き換える前のリクエストが読むものです。実行すると、書き換えたリクエストが読んだものに替わります。' : undefined }
         : undefined;
   const noReads = generatedCase === undefined && premises.made !== undefined ? '前提を作り直したので、このリクエストが読むものは、実行して確かめます（ビルドの前提で読んだものは出しません）。実行すると、この前提で読んだもの、保存したものを出します。' : '実行すると、このリクエストが OP の保存済みの情報（認可コード、トークン、クライアントなど）から何を読み、何を保存したかを出します。';
-  const groups: Array<{ place: ParamPlace; label: string }> = [{ place: 'query', label: PARAM_PLACES.query }, ...(bodiless(draft.method) ? [] : [{ place: draft.body === 'json' ? ('json' as const) : ('form' as const), label: BODY_WORDS[draft.body] }])];
+  const groups: Array<{ place: ParamPlace; label: string }> = [{ place: 'query', label: PARAM_PLACES.query }];
+  if (!bodiless(draft.method) && (draft.body === 'json' || draft.body === 'form')) groups.push({ place: draft.body, label: BODY_WORDS[draft.body] });
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (problem === undefined && unrunnable === undefined && !running) onRun(draft);
@@ -228,6 +229,12 @@ export function FlowRequest({ state, premises, selection, keep, generatedCase, a
             />
           );
         })}
+        {draft.body === 'raw' ? (
+          <fieldset className="req-rows">
+            <legend>ボディ</legend>
+            <textarea className="req-raw-body" aria-label="ボディ" value={draft.rawBody ?? ''} onChange={(event) => update({ ...draft, rawBody: event.target.value })} />
+          </fieldset>
+        ) : null}
         <Rows
           label="ヘッダー"
           rows={draft.headers.map(([name, value]) => ({ name, value }))}
@@ -240,7 +247,7 @@ export function FlowRequest({ state, premises, selection, keep, generatedCase, a
           }}
         />
         {problem !== undefined ? <p className="note req-problem">{problem}</p> : null}
-        {unrunnable !== undefined ? <p className="note">{unrunnable}</p> : null}
+        {unrunnable !== undefined && generatedCase === undefined ? <p className="note">{unrunnable}</p> : null}
         {unrunnable === undefined && featuresOff ? <p className="note">地図の OP は全機能オンで動きます。オフの機能のステップを通るリクエストは、生成した OP とは道筋が変わります。</p> : null}
         {unrunnable === undefined && framework !== 'hono' ? <p className="note">{framework} の OP は hono の OP から生成したもので、このエンドポイントの処理は同じなので、hono の OP で動かします。</p> : null}
         <div className="req-actions">

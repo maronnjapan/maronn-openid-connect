@@ -4,11 +4,10 @@ import { generateRequestScenario, requestScenariosFor, requestText } from '../pr
 
 describe('request scenarios', () => {
   it('should offer the Request Object purpose when the provider includes it', () => {
-    expect(requestScenariosFor('authorize', ['request-object']).map(({ id }) => id)).toEqual([
-      'authorize-code-pkce', 'authorize-request-object', 'authorize-prompt-none',
-    ]);
-    expect(requestScenariosFor('authorize', []).map(({ id }) => id)).toEqual(['authorize-code-pkce', 'authorize-prompt-none']);
-    expect(requestScenariosFor('discovery', ['request-object'])).toEqual([]);
+    expect(requestScenariosFor('authorize', ['request-object']).map(({ id }) => id)).toContain('authorize-request-object');
+    expect(requestScenariosFor('authorize', ['requestObject']).map(({ id }) => id)).toContain('authorize-request-object');
+    expect(requestScenariosFor('authorize', []).map(({ id }) => id)).not.toContain('authorize-request-object');
+    expect(requestScenariosFor('discovery', []).map(({ id }) => id)).toContain('discovery-provider-metadata');
   });
 
   it('should generate a verifiable Request Object carrying the authorization parameters', async () => {

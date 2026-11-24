@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { FlowStep, MapData, Selection } from '../types';
 import { STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, scenarioOf, selectionKey, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
-import type { RequestDraft } from '../lib/run';
 import { choose, entryOf, type TraceState } from '../lib/trace';
 import { firstSentence } from '../lib/words';
 import { Inline } from './ChangeParts';
@@ -102,8 +101,6 @@ export interface FlowPlayerProps {
   requestCase?: ReactNode;
   /** The selected purpose and the draft it generated, once ready. */
   generatedCase?: FlowRequestProps['generatedCase'];
-  /** Run the selected purpose's draft with the fixtures it requires. */
-  onRunScenario?: ((draft: RequestDraft) => void) | undefined;
   /** The framework the map shows (TraceProps.framework). */
   framework: string;
   /** The words a scene is named by: those of its box in the diagram. */
@@ -159,7 +156,7 @@ function plain(text: string): string {
  * same choice the outline's side buttons make). A call that has a frame can
  * be entered, which makes the request go through that function too.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, onRunScenario, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
   const premises = useCurrentPremises(data);
   const scene = scenes[at];
@@ -456,8 +453,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         ending={ending}
         onRun={(draft) => {
           playback.play(false);
-          if (generatedCase !== undefined && onRunScenario !== undefined) onRunScenario(draft);
-          else run.run(draft);
+          run.run(draft, generatedCase?.premises);
         }}
         onFollow={run.follow}
       />

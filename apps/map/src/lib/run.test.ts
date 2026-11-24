@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { walkFlow } from '@maronn-openid-connect/map-analysis/walk';
 import type { Branch, FlowTree, MapData, Selection, TreeNode, WaySample } from '../types';
-import { blankDraft, draftOf, draftProblem, endingWay, failingCalls, filesOf, jsonValueOf, oauthErrorOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from './run';
+import { blankDraft, draftOf, draftOfRequest, draftProblem, endingWay, failingCalls, filesOf, jsonValueOf, oauthErrorOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from './run';
 
 const example: Pick<WaySample, 'method' | 'path' | 'params' | 'headers'> = {
   method: 'POST',
@@ -30,6 +30,33 @@ describe('draftOf', () => {
       { method: 'POST', path: '/token', body: 'form', params: [], headers: [['content-type', 'application/x-www-form-urlencoded']] },
       { method: 'GET', path: '/userinfo', body: 'none', params: [], headers: [] },
     ]);
+  });
+});
+
+describe('draftOfRequest', () => {
+  it('should load a form and preserve its fields, query and cookie when the editor sends it', () => {
+    const request = {
+      method: 'POST',
+      path: '/consent?mode=demo',
+      headers: [['content-type', 'application/x-www-form-urlencoded'], ['cookie', 'session=demo']] as Array<[string, string]>,
+      body: 'action=allow&scope=openid&scope=profile',
+    };
+    const draft = draftOfRequest(request);
+
+    expect(draft.body).toBe('form');
+    expect(draft.params.map((field) => field.in)).toEqual(['query', 'form', 'form', 'form']);
+    expect(sandboxRequestOf(draft)).toEqual(request);
+  });
+
+  it('should keep registry JSON editable and preserve intentional invalid or ambiguous bodies', () => {
+    const request = { method: 'POST', path: '/register', headers: [['content-type', 'application/json']] as Array<[string, string]> };
+    const registration = { ...request, body: '{"redirect_uris":["https://rp.example.com/cb"],"client_name":"Demo"}' };
+    const invalid = { ...request, body: '{' };
+    const stringRating = { ...request, body: '{"client_name":"123"}' };
+
+    expect(draftOfRequest(registration).body).toBe('json');
+    expect(draftOfRequest(invalid).body).toBe('raw');
+    expect([registration, invalid, stringRating, request].map((item) => sandboxRequestOf(draftOfRequest(item)))).toEqual([registration, invalid, stringRating, request]);
   });
 });
 

@@ -1,43 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
-import type { PreparedPremises, Premises, SandboxRequest, SandboxRun } from '@maronn-openid-connect/map-sandbox';
+import type { PreparedPremises, SandboxRequest, SandboxRun } from '@maronn-openid-connect/map-sandbox';
+import { runInSandbox } from '@maronn-openid-connect/map-sandbox/browser';
 import type { Decisions, FlowTree, MapData, SourceDocument } from '../types';
 import { walkTrace } from '../lib/playback';
 import { failingCalls, filesOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from '../lib/run';
 import type { TraceState } from '../lib/trace';
-import type { SandboxAnswer, SandboxAsk } from '../sandbox-worker';
 import { fetchPremises, madePremises, usePremisesVersion } from './useRequests';
-
-// ---------------------------------------------------------------------------
-// The worker
-
-/** The worker the OP of the map runs in: made when the first request is run, kept for the page. */
-let worker: Worker | undefined;
-/** The requests sent to the worker and not answered yet, by id. */
-const waiting = new Map<number, { resolve: (answer: SandboxRun | PreparedPremises) => void; reject: (error: Error) => void }>();
-let lastId = 0;
-
-/** The worker, made on first use; a worker that failed to load is dropped, its requests failed, so the next request makes another. */
-function sandboxWorker(): Worker {
-  if (worker !== undefined) return worker;
-  const made = new Worker(new URL('../sandbox-worker.ts', import.meta.url), { type: 'module', name: 'map-sandbox' });
-  made.addEventListener('message', (event: MessageEvent<SandboxAnswer>) => {
-    const answer = event.data;
-    const pending = waiting.get(answer.id);
-    waiting.delete(answer.id);
-    if ('run' in answer) pending?.resolve(answer.run);
-    else if ('premises' in answer) pending?.resolve(answer.premises);
-    else pending?.reject(new Error(answer.error));
-  });
-  made.addEventListener('error', (event) => {
-    for (const pending of waiting.values()) pending.reject(new Error(event.message || '地図の OP を読み込めませんでした'));
-    waiting.clear();
-    made.terminate();
-    if (worker === made) worker = undefined;
-  });
-  worker = made;
-  return made;
-}
 
 /** The premises to run a request on: those the reader made in the page, else those of the build (MapData.premises; none for a build that made none, and a failure that says it was they that could not be read). */
 function premisesOf(data: MapData): Promise<PreparedPremises | undefined> {
@@ -47,25 +16,6 @@ function premisesOf(data: MapData): Promise<PreparedPremises | undefined> {
   return fetchPremises(data.premises).catch((error: unknown) => {
     throw new Error(`地図の OP の前提（OP が持っているもの）を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`);
   });
-}
-
-/** Send the worker an ask, and wait for its answer. */
-function ask(question: Omit<SandboxAsk, 'id'>): Promise<SandboxRun | PreparedPremises> {
-  return new Promise((resolve, reject) => {
-    lastId += 1;
-    waiting.set(lastId, { resolve, reject });
-    sandboxWorker().postMessage({ id: lastId, ...question } as SandboxAsk);
-  });
-}
-
-/** Run a request on the OP of the map, in its worker, on the premises given (none: the OP as it is configured). */
-export function runInSandbox(request: SandboxRequest, premises: PreparedPremises | undefined): Promise<SandboxRun> {
-  return ask({ request, ...(premises === undefined ? {} : { premises }) }) as Promise<SandboxRun>;
-}
-
-/** Make premises from grants the reader changed, on the OP of the map in its worker (the page loads it on the first ask). */
-export function prepareInSandbox(plan: Premises): Promise<PreparedPremises> {
-  return ask({ prepare: plan }) as Promise<PreparedPremises>;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +83,7 @@ export interface RequestRunInput {
 export interface RequestRun {
   state: RequestRunState | undefined;
   /** Run a request the reader wrote. */
-  run: (draft: RequestDraft, plan?: Premises) => void;
+  run: (draft: RequestDraft, prepared?: PreparedPremises) => void;
   /** Follow the way the request took again, after the reader took other sides. */
   follow: () => void;
   /** Forget the request run: another way was picked. */
@@ -202,12 +152,12 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
   return {
     state: runState,
     walked: following ? walked : undefined,
-    run: (draft, plan) => {
+    run: (draft, prepared) => {
       const request = sandboxRequestOf(draft);
       lastRun.current += 1;
       const id = lastRun.current;
       setRunState({ status: 'running', id, request });
-      const premises = plan === undefined ? premisesOf(data) : prepareInSandbox(plan);
+      const premises = prepared === undefined ? premisesOf(data) : Promise.resolve(prepared);
       premises.then((prepared) => runInSandbox(request, prepared)).then(
         (run) => setRunState((current) => (current?.id === id ? { status: 'done', id, request, run, follow: true } : current)),
         (error: unknown) => setRunState((current) => (current?.id === id ? { status: 'failed', id, request, message: error instanceof Error ? error.message : String(error) } : current)),

@@ -18,8 +18,8 @@ import { decisionKey, frameIds } from './trace';
 /** Where a parameter is sent: the query of the URL, a field of a form body, a member of a JSON body. */
 export type ParamPlace = RequestParam['in'];
 
-/** The body a request sends: a form (`application/x-www-form-urlencoded`), a JSON object, or none. */
-export type BodyKind = 'form' | 'json' | 'none';
+/** The body a request sends: a form, a JSON object, raw text, or none. */
+export type BodyKind = 'form' | 'json' | 'raw' | 'none';
 
 /** A request as the reader writes it: the method and the path of the endpoint, the parameters of its query and its body, its headers. */
 export interface RequestDraft {
@@ -27,12 +27,13 @@ export interface RequestDraft {
   /** The path, without the query: the query is the parameters `in: 'query'`. */
   path: string;
   body: BodyKind;
+  rawBody?: string;
   params: Array<{ name: string; value: string; in: ParamPlace }>;
   headers: Array<[string, string]>;
 }
 
 /** The content type of a body kind. */
-const CONTENT_TYPES: Record<Exclude<BodyKind, 'none'>, string> = { form: 'application/x-www-form-urlencoded', json: 'application/json' };
+const CONTENT_TYPES: Record<'form' | 'json', string> = { form: 'application/x-www-form-urlencoded', json: 'application/json' };
 
 /** The value of a header (its name in any case), the first one; undefined without it. */
 export function headerValue(headers: ReadonlyArray<readonly [string, string]>, name: string): string | undefined {
@@ -61,6 +62,33 @@ export function draftOf(example: Pick<WaySample, 'method' | 'path' | 'params' | 
   return { method: example.method, path: example.path, body: bodyKindOf(example.method, params, headers), params, headers };
 }
 
+/** Read query, form and JSON fields for the editor; preserve any other body as text. */
+export function draftOfRequest(request: SandboxRequest): RequestDraft {
+  const { pathname: path, searchParams } = new URL(request.path, 'https://op.invalid');
+  const { method, headers, body } = request;
+  const params: RequestDraft['params'] = Array.from(searchParams, ([name, value]) => ({ name, value, in: 'query' }));
+  if (body === undefined) return { method, path, body: 'none', params, headers };
+  const type = (headerValue(headers, 'content-type') ?? '').split(';')[0]?.trim().toLowerCase();
+  if (type === CONTENT_TYPES.form) {
+    return { method, path, body: 'form', params: [...params, ...Array.from(new URLSearchParams(body), ([name, value]) => ({ name, value, in: 'form' as const }))], headers };
+  }
+  if (type === CONTENT_TYPES.json || type?.endsWith('+json')) {
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        const fields = Object.entries(parsed) as [string, unknown][];
+        // A string that reads as a JSON number, boolean or object would change type in the field editor.
+        if (fields.every(([name, value]) => name !== '' && (typeof value !== 'string' || jsonValueOf(value) === value))) {
+          return { method, path, body: 'json', params: [...params, ...fields.map(([name, value]) => ({ name, value: typeof value === 'string' ? value : JSON.stringify(value), in: 'json' as const }))], headers };
+        }
+      }
+    } catch {
+      // The case may intentionally send invalid JSON.
+    }
+  }
+  return { method, path, body: 'raw', rawBody: body, params, headers };
+}
+
 /** A request to an endpoint with no parameters yet: a form body for a method that sends one, with its content type. */
 export function blankDraft(method: string, path: string): RequestDraft {
   return bodiless(method) ? { method, path, body: 'none', params: [], headers: [] } : { method, path, body: 'form', params: [], headers: [['content-type', CONTENT_TYPES.form]] };
@@ -78,7 +106,7 @@ export function jsonValueOf(text: string): unknown {
 
 /** What keeps a request from being sent, in words; undefined when it can be. */
 export function draftProblem(draft: RequestDraft): string | undefined {
-  if (bodiless(draft.method) && draft.params.some((param) => param.in !== 'query')) return `${draft.method} のリクエストにはボディを付けられません。`;
+  if (bodiless(draft.method) && (draft.rawBody !== undefined || draft.params.some((param) => param.in !== 'query'))) return `${draft.method} のリクエストにはボディを付けられません。`;
   const header = draft.headers.find(([name]) => name.trim() !== '' && !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name.trim()));
   if (header !== undefined) return `ヘッダーの名前「${header[0]}」に使えない文字があります。`;
   return undefined;
@@ -99,7 +127,8 @@ export function sandboxRequestOf(draft: RequestDraft): SandboxRequest {
   let body: string | undefined;
   if (draft.body === 'form' && !bodiless(draft.method)) body = new URLSearchParams(fields.map((param) => [param.name, param.value])).toString();
   if (draft.body === 'json' && !bodiless(draft.method)) body = JSON.stringify(Object.fromEntries(fields.map((param) => [param.name, jsonValueOf(param.value)])));
-  if (body !== undefined && draft.body !== 'none' && headerValue(headers, 'content-type') === undefined) headers.push(['content-type', CONTENT_TYPES[draft.body]]);
+  if (draft.body === 'raw' && !bodiless(draft.method)) body = draft.rawBody;
+  if (body !== undefined && (draft.body === 'form' || draft.body === 'json') && headerValue(headers, 'content-type') === undefined) headers.push(['content-type', CONTENT_TYPES[draft.body]]);
   return { method: draft.method.toUpperCase(), path: `${draft.path}${query === '' ? '' : `?${query}`}`, headers, ...(body === undefined ? {} : { body }) };
 }
 

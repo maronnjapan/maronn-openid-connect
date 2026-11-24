@@ -145,7 +145,7 @@ importers:
         version: 11.3.4(supports-color@10.2.2)
       next:
         specifier: ^16.4.6
-        version: 16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.0)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react:
         specifier: ^19.3.1
         version: 19.3.1
@@ -224,7 +224,7 @@ importers:
         version: 4.13.13
       next:
         specifier: ^16.4.6
-        version: 16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.0)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react:
         specifier: ^19.3.1
         version: 19.3.1
@@ -517,7 +517,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       next:
         specifier: ^16.4.6
-        version: 16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.0)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react:
         specifier: ^19.3.1
         version: 19.3.1
@@ -536,8 +536,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/test-reach
       '@playwright/test':
-        specifier: ^1.65.0
-        version: 1.65.0
+        specifier: ^1.65.1
+        version: 1.65.1
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
@@ -552,7 +552,7 @@ importers:
         version: 3.2.0
       playwright-bdd:
         specifier: ^9.2.1
-        version: 9.2.1(@playwright/test@1.65.0)
+        version: 9.2.1(@playwright/test@1.65.1)
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -569,14 +569,14 @@ importers:
         specifier: ^34.2.1
         version: 34.2.1
       '@playwright/test':
-        specifier: ^1.65.0
-        version: 1.65.0
+        specifier: ^1.65.1
+        version: 1.65.1
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
       playwright-bdd:
         specifier: ^9.2.1
-        version: 9.2.1(@playwright/test@1.65.0)
+        version: 9.2.1(@playwright/test@1.65.1)
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -1621,8 +1621,8 @@ packages:
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
-  '@playwright/test@1.65.0':
-    resolution: {integrity: sha512-iGURLGuKDLakSEl7Pgfv8h7f+XLT+V861Wfhz0zlEl5nyFuKUopdkFBPKqTllTUp06aOwPuH8iuUEb3yp3MpbQ==}
+  '@playwright/test@1.65.1':
+    resolution: {integrity: sha512-y+NCIRm2LvY4slUVWvGh1nujJ8RF/hEisIsq2mtUPgdQC4L701bq5hZGMhrpeXjACvwvO9tj5dJqhvM6TP9lbw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -3269,13 +3269,13 @@ packages:
     peerDependencies:
       '@playwright/test': '>=1.44'
 
-  playwright-core@1.65.0:
-    resolution: {integrity: sha512-vNSKgH6YqtN7cdT/L334zo0a+YwkrpicyrHJlWWPIm/Q+Nn2SWInil01oT0mbu96U4GgoRtCYQD9CzJQgju+lA==}
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
     engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.65.0:
-    resolution: {integrity: sha512-F3AMWcR44qMBt4kq+6Kb6mX7bjGXshktKFOPULd7reED6ZJWevjbNRqysP7q+AATE9kdPEZBibex1BYsvpVoeA==}
+  playwright@1.65.1:
+    resolution: {integrity: sha512-vJ1FuoOrNwOKHUIVEvSt3jT1L+wjjDpwhwIstKtfvTh8XIG4FG4bIFuvNdMxi81LGfAhUgUZleVFaOLY4RIUUw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4910,9 +4910,9 @@ snapshots:
 
   '@pinojs/redact@0.4.0': {}
 
-  '@playwright/test@1.65.0':
+  '@playwright/test@1.65.1':
     dependencies:
-      playwright: 1.65.0
+      playwright: 1.65.1
 
   '@pnpm/deps.graph-sequencer@1100.0.1': {}
 
@@ -6507,7 +6507,7 @@ snapshots:
 
   neotraverse@1.0.1: {}
 
-  next@16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.0)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  next@16.4.6(@babel/core@8.1.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       '@next/env': 16.4.6
       '@swc/helpers': 0.5.23
@@ -6526,7 +6526,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 16.4.6
       '@next/swc-win32-arm64-msvc': 16.4.6
       '@next/swc-win32-x64-msvc': 16.4.6
-      '@playwright/test': 1.65.0
+      '@playwright/test': 1.65.1
       sharp: 0.35.5(@types/node@26.6.6)
     transitivePeerDependencies:
       - '@babel/core'
@@ -6653,7 +6653,7 @@ snapshots:
       sonic-boom: 4.2.1
       thread-stream: 4.2.0
 
-  playwright-bdd@9.2.1(@playwright/test@1.65.0):
+  playwright-bdd@9.2.1(@playwright/test@1.65.1):
     dependencies:
       '@cucumber/ci-environment': 13.0.0
       '@cucumber/cucumber-expressions': 19.0.0
@@ -6664,17 +6664,17 @@ snapshots:
       '@cucumber/messages': 32.3.1
       '@cucumber/query': 15.0.1(@cucumber/messages@32.3.1)
       '@cucumber/tag-expressions': 9.1.0
-      '@playwright/test': 1.65.0
+      '@playwright/test': 1.65.1
       cli-table3: 0.6.5
       commander: 13.1.0
       mime-types: 3.0.2
       tinyglobby: 0.2.17
 
-  playwright-core@1.65.0: {}
+  playwright-core@1.65.1: {}
 
-  playwright@1.65.0:
+  playwright@1.65.1:
     dependencies:
-      playwright-core: 1.65.0
+      playwright-core: 1.65.1
 
   postcss-nested@6.2.0(postcss@8.5.23):
     dependencies:

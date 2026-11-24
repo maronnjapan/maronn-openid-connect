@@ -465,7 +465,7 @@ export function CasePanel({ scenarios, scenario, tests, ...decision }: CasePanel
       </div>
       {scenario !== undefined ? (
         <>
-          <ScenarioRequest key={scenario.id} scenario={scenario} />
+          <ScenarioRequest key={`${endpoint.source}:${scenario.id}`} scenario={scenario} framework={endpoint.source} />
           {narrowed ?? <TestList tests={related} sections={['e2e', 'api', 'unit']} target={{ current: endpoint.id }} title={<span>{feature === undefined ? 'エンドポイントのテスト' : '機能に関連するテスト'}</span>} />}
         </>
       ) : chosen === undefined && scenarios.length > 0 ? (

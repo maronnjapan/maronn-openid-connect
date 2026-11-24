@@ -25,6 +25,7 @@
 import { recordExchange, resetExchanges, takeExchanges } from '@maronn-openid-connect/test-reach/exchanges';
 import type { MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/memory/database.js';
 import { rs256Key } from '../../../apps/hono/src/test-support/keys.js';
+import { generateRequestScenario, isStandaloneAuthorizationScenario, requestScenario } from '../../test-catalog/src/premises.js';
 import type * as Api from './api.js';
 import type { PlainDatabase } from './api.js';
 import { candidateRequests, SAMPLED_ENDPOINTS } from './candidates.js';
@@ -32,6 +33,11 @@ import { decodeValue } from './codec.js';
 import { importSigningKey, mapOp, onDatabase, responseHeaders, wholeRequest, type SigningKey } from './op.js';
 import { PREMISES } from './premises.js';
 import { preparePremises as prepare } from './prepare.js';
+import { prepareScenarioRecipe, type ScenarioRecipe } from './scenario-runtime.js';
+import { deviceRecipes } from './scenarios/device.js';
+import { interactionRecipes } from './scenarios/interaction.js';
+import { protocolRecipes } from './scenarios/protocol.js';
+import { tokenRecipes } from './scenarios/token.js';
 import { configuredDatabase } from './seed.js';
 import { plainDatabase, storeAccess, watchDatabase } from './store.js';
 
@@ -79,24 +85,60 @@ function byRepositoryPath(ran: Record<string, Api.RanInFile>): Record<string, Ap
 /** The run before the next: a request waits for it, as the clock and the counters a run reads are the process's. */
 let previous: Promise<unknown> = Promise.resolve();
 
+/** Run an operation after the preceding one has released the provider and the clock. */
+function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+  const result = previous.then(operation);
+  previous = result.catch(() => undefined);
+  return result;
+}
+
 /** Run a request on the OP of the map (see the module comment and api.ts), after the runs asked for before it. */
 export function runRequest(request: Api.SandboxRequest, premises?: Api.PreparedPremises): Promise<Api.SandboxRun> {
-  const run = previous.then(
-    () => runAlone(request, premises),
-    () => runAlone(request, premises),
-  );
-  previous = run.catch(() => undefined);
-  return run;
+  return enqueue(() => runAlone(request, premises));
 }
 
 /** Make the premises by requests (prepare.ts), those of the map unless others are given, after the runs asked for before, as it stops the clock of the process too. */
 export function preparePremises(plan: Api.Premises = PREMISES): Promise<Api.PreparedPremises> {
-  const premises = previous.then(
-    () => prepare(plan),
-    () => prepare(plan),
-  );
-  previous = premises.catch(() => undefined);
-  return premises;
+  return enqueue(() => prepare(plan));
+}
+
+const recipes: Readonly<Record<string, ScenarioRecipe>> = { ...protocolRecipes, ...interactionRecipes, ...tokenRecipes, ...deviceRecipes };
+
+/** Generate the request and make the provider state that will receive it. */
+export function prepareRequestScenario(id: string, framework = 'hono'): Promise<Api.PreparedRequestScenario> {
+  return enqueue(async () => {
+    const scenario = requestScenario(id, framework);
+    if (scenario === undefined) throw new Error(`Unknown request case for ${framework}: ${id}`);
+    if (isStandaloneAuthorizationScenario(id)) {
+      const generated = await generateRequestScenario(id, { issuer: PREMISES.issuer });
+      const registration = generated.registration;
+      const premises = await prepare({
+        ...PREMISES,
+        now: generated.issuedAt,
+        grants: [],
+        clients: [{
+          clientId: registration.client_id,
+          authMethod: registration.token_endpoint_auth_method,
+          grantTypes: registration.grant_types,
+          redirectUris: registration.redirect_uris,
+          requestObjectKeys: registration.jwks?.keys,
+        }],
+      });
+      return { generated, premises };
+    }
+    const recipe = recipes[id];
+    if (recipe === undefined) throw new Error(`No recipe for request case: ${id}`);
+    const { request, premises } = await prepareScenarioRecipe(recipe, id);
+    const url = new URL(request.path, premises.issuer);
+    const path = framework === 'nextjs' ? scenario.nextjs?.path : undefined;
+    if (path !== undefined) url.pathname = path;
+    const generated = {
+      request: { ...request, path: `${url.pathname}${url.search}`, host: url.host },
+      url: url.href,
+      issuedAt: premises.now,
+    };
+    return { generated, premises };
+  });
 }
 
 /** Run a request on the OP of the map, no other running. */
@@ -121,11 +163,12 @@ async function runAlone(request: Api.SandboxRequest, premises: Api.PreparedPremi
       ran: byRepositoryPath(exchange.ran),
       store: storeAccess(reads, base.plain, db),
     };
-  });
+  }, premises?.postLogoutRedirectUris);
 }
 
 runRequest satisfies typeof Api.runRequest;
 preparePremises satisfies typeof Api.preparePremises;
+prepareRequestScenario satisfies typeof Api.prepareRequestScenario;
 PREMISES satisfies typeof Api.PREMISES;
 candidateRequests satisfies typeof Api.candidateRequests;
 SAMPLED_ENDPOINTS satisfies typeof Api.SAMPLED_ENDPOINTS;

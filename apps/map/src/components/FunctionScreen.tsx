@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { DiffHunk, FunctionEntry, MapData, OpFlow } from '../types';
 import { allHunks, frameMark, markOf, type ChangeIndex } from '../lib/changes';
 import { callersOf, endpointsInModule, endpointsRootedAt, endpointsUsing, locationOf, type EndpointUse } from '../lib/model';
-import type { TraceState } from '../lib/trace';
+import type { TraceState, TraceUpdate } from '../lib/trace';
 import { Badge, ChangeDetail } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
 import { FeatureBadge } from './FeatureBadge';
@@ -21,7 +21,7 @@ export interface FunctionScreenProps {
   trace: TraceState;
   enabled: ReadonlySet<string>;
   canGoBack: boolean;
-  onTrace: (next: TraceState) => void;
+  onTrace: TraceUpdate;
   onBack: () => void;
   onOpenFunction: (id: string) => void;
   onOpenStep: (endpoint: string, step: string) => void;

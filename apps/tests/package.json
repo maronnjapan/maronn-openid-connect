@@ -16,6 +16,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@maronn-openid-connect/map-sandbox": "workspace:*",
     "@maronn-openid-connect/test-catalog": "workspace:*",
     "@maronn-openid-connect/test-reach": "workspace:*",
     "@types/react": "^19.3.0",

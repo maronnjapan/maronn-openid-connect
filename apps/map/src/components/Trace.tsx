@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
 import { requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import type { DiffHunk, FlowStep, FrameChange, MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
@@ -25,10 +24,10 @@ import {
   traceRows,
   withinFrame,
   type TraceState,
+  type TraceUpdate,
 } from '../lib/trace';
 import { locationOf } from '../lib/model';
-import { draftOf } from '../lib/run';
-import { endingWay, wayName } from '../lib/run';
+import { draftOfRequest, endingWay, wayName } from '../lib/run';
 import { nodeWords } from '../lib/words';
 import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
@@ -55,7 +54,7 @@ export interface TraceProps {
   /** Ready-made choices beyond the root frame's own: the ways to the changes of the pull request. */
   extraSelections?: readonly Selection[];
   state: TraceState;
-  onState: (next: TraceState) => void;
+  onState: TraceUpdate;
   /** The ids of the features that are on (the markers of the code name them the same way). */
   enabled: ReadonlySet<string>;
   onOpenFunction: (id: string) => void;
@@ -228,23 +227,16 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const requests = useRootRequests(data, rootId);
   // The request the reader runs in the flow view on the OP of the map: while the playback follows it, the sides it was seen to take are the trace's choice.
   const requestRun = useRequestRun({ data, rootId, root, trees: frames.trees, state, onState, enabled, hasFrame });
-  const scenarios = requestScenariosFor(endpoint?.id ?? '');
+  const scenarios = requestScenariosFor(endpoint?.id ?? '', undefined, framework);
   const scenario = scenarios.find((candidate) => candidate.id === state.request);
-  const { revision, result, regenerate } = useRequestCase(scenario);
-  const generated = result !== undefined && 'generated' in result ? result.generated : undefined;
+  const { revision, result, regenerate } = useRequestCase(scenario, framework);
+  const prepared = result !== undefined && 'prepared' in result ? result.prepared : undefined;
+  const scenarioId = scenario?.id;
   const generatedCase = useMemo(() => {
-    if (scenario === undefined) return undefined;
-    const key = `${scenario.id}:${revision}`;
-    if (generated === undefined) return { key };
-    const { pathname, searchParams } = new URL(generated.url);
-    const draft = draftOf({
-      method: generated.request.method,
-      path: pathname,
-      params: Array.from(searchParams, ([name, value]) => ({ name, value, in: 'query' })),
-      headers: generated.request.headers,
-    });
-    return { key, draft };
-  }, [scenario, revision, generated]);
+    if (scenarioId === undefined) return undefined;
+    const key = `${scenarioId}:${revision}`;
+    return prepared === undefined ? { key } : { key, draft: draftOfRequest(prepared.generated.request), premises: prepared.premises };
+  }, [scenarioId, revision, prepared]);
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
@@ -315,7 +307,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const focusKey = scene !== undefined && known.has(scene.frame) ? scene.frame : known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order);
   // Once every frame has loaded, a frame the outline no longer shows (a feature turned off took its call out) gives the focus to the frame above it, in the hash too.
   useEffect(() => {
-    if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey });
+    if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey }, state);
   }, [loading, root, focusKey, state, onState]);
   const focusId = known.get(focusKey) ?? rootId;
   const focusTree = frames.trees.get(focusId);
@@ -852,7 +844,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
         regenerate();
         selectRequest(scenario?.id);
       }}
-      onTry={!flowOn && source === 'hono' && generated !== undefined ? () => onState({ ...state, flow: true }) : undefined}
+      onTry={!flowOn && source === 'hono' && prepared !== undefined && scenario?.external === undefined ? () => onState({ ...state, flow: true }) : undefined}
     />
   ) : undefined;
 
@@ -875,22 +867,6 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               requests={requests}
               requestCase={requestCase}
               generatedCase={generatedCase}
-              onRunScenario={generated === undefined ? undefined : (draft) => {
-                const registration = generated.registration;
-                const keys = registration.jwks?.keys;
-                requestRun.run(draft, {
-                  ...PREMISES,
-                  now: generated.issuedAt,
-                  clients: [{
-                    clientId: registration.client_id,
-                    authMethod: registration.token_endpoint_auth_method,
-                    grantTypes: registration.grant_types,
-                    redirectUris: registration.redirect_uris,
-                    ...(keys === undefined ? {} : { requestObjectKeys: keys }),
-                  }],
-                  grants: [],
-                });
-              }}
               framework={framework}
               titleOf={sceneTitle}
               endpoint={endpoint}
@@ -898,7 +874,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               loading={loading}
               run={requestRun}
               ending={runEnding}
-              unrunnable={sourceOf(framework) === 'hono' ? undefined : 'Next.js の OP は、地図の中ではまだ動かせません（動かせるのは hono の OP と、そこから生成した Express・Fastify の OP です）。'}
+              unrunnable={scenario?.external ?? (source === 'hono' ? undefined : '地図の中でリクエストを実行できるのは、Hono・Express・Fastify の OP です。')}
               deeper={enterable.length}
               canFold={state.open.length > 0}
               onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}

@@ -51,6 +51,7 @@ function formRequest(path: string, fields: ReadonlyArray<[string, string]>, clie
 function credentialsOf(clientId: string): Credentials {
   const client = PREMISES.clients.find((candidate) => candidate.clientId === clientId);
   if (client === undefined) throw new Error(`No client ${clientId} in the premises of the OP of the map`);
+  if (client.authMethod === 'private_key_jwt') throw new Error(`No sample signer for client ${clientId}`);
   return { id: client.clientId, secret: client.clientSecret ?? '', method: client.authMethod };
 }
 

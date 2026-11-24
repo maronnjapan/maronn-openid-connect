@@ -6,7 +6,7 @@ import { defineConfig } from 'vite';
 // Two pages: the map (index.html) and the code page (code/index.html, served at code/).
 export default defineConfig({
   base: './',
-  // The OP of the map runs in a module worker (src/sandbox-worker.ts).
+  // The sandbox OP shared with the tests viewer runs in a module worker.
   worker: { format: 'es' },
   build: {
     outDir: 'dist',

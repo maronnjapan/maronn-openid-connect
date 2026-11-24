@@ -5,5 +5,6 @@ import { defineConfig } from 'vite';
 // ./data beside it. JSX follows tsconfig (react-jsx).
 export default defineConfig({
   base: './',
+  worker: { format: 'es' },
   build: { outDir: 'dist', emptyOutDir: true, sourcemap: false },
 });

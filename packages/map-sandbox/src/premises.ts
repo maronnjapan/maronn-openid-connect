@@ -20,11 +20,16 @@ export interface PremiseClient {
   /** Its secret, for the methods that send one. */
   clientSecret?: string;
   /** How it authenticates at the token endpoint (RFC 7591 §2 `token_endpoint_auth_method`). */
-  authMethod: 'client_secret_basic' | 'client_secret_post' | 'none';
+  authMethod: 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt' | 'none';
   grantTypes: string[];
+  responseTypes?: string[];
   redirectUris: string[];
   /** The scopes it may request; absent for any the OP supports. */
   scope?: string[];
+  /** The response algorithm for clients that register signed UserInfo. */
+  userinfoSignedResponseAlg?: 'RS256';
+  /** Public keys registered for verifying signed client assertions. */
+  clientAssertionKeys?: Array<{ kty: 'RSA'; n: string; e: string; alg: 'RS256'; use: 'sig'; kid: string }>;
   /** Public ES256 keys registered for verifying a signed Request Object. */
   requestObjectKeys?: Array<{ kty: 'EC'; crv: 'P-256'; x: string; y: string; kid: string; alg: 'ES256'; use: 'sig' }>;
 }
@@ -60,6 +65,8 @@ export interface PremiseGrant {
 /** What the OP of the map holds (see the module comment). */
 export interface Premises {
   issuer: string;
+  /** Registered post-logout redirect URIs by client, when a case configures them. */
+  postLogoutRedirectUris?: Record<string, string[]>;
   /** The clock while a request runs, in Unix seconds: it stands still there. */
   now: number;
   clients: PremiseClient[];

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { atClock } from '../clock.js';
 import { decodeValue, encodeValue } from '../codec.js';
 
 describe('encodeValue and decodeValue', () => {
@@ -12,5 +13,13 @@ describe('encodeValue and decodeValue', () => {
 
   it('should leave out the members of an object that are undefined, as JSON does', () => {
     expect(encodeValue({ nonce: undefined, used: true })).toStrictEqual({ used: true });
+  });
+
+  it('should preserve expiry Dates created before and during a stopped clock', async () => {
+    const expiresAt = new Date(60_000);
+    const encoded = await atClock(1_000, async () => encodeValue({ expiresAt, startedAt: new Date() }));
+
+    expect(JSON.parse(JSON.stringify(encoded))).toEqual({ expiresAt: { $date: 60_000 }, startedAt: { $date: 1_000 } });
+    expect(decodeValue(encoded)).toEqual({ expiresAt, startedAt: new Date(1_000) });
   });
 });

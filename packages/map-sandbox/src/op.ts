@@ -11,8 +11,10 @@ import { createApp } from '../../../apps/hono/src/oidc-provider/app.js';
 import { createClientKeyResolver, createClientResolver } from '../../../apps/hono/src/oidc-provider/db/memory/clients.js';
 import type { MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/memory/database.js';
 import { createProviderStores } from '../../../apps/hono/src/oidc-provider/db/memory/stores.js';
+import { rpInitiatedLogoutConfig } from '../../../apps/hono/src/oidc-provider/features/rp-initiated-logout/config.js';
 import { type rs256Key, staticKeyProvider } from '../../../apps/hono/src/test-support/keys.js';
 import { atClock } from './clock.js';
+import { onFeatureStores } from './feature-stores.js';
 
 /** A key the OP signs with (core SigningKey), as the test support makes one. */
 export type SigningKey = Awaited<ReturnType<typeof rs256Key>>;
@@ -40,21 +42,24 @@ export function mapOp(db: MemoryDatabase, signingKey: SigningKey, issuer: string
 /**
  * Run with the database on the global scope, Date stopped at a clock (Unix
  * seconds), the fetch of the global scope refusing and responses keeping
- * their Set-Cookie values, and give all four back after: no part of the OP
- * sends a request out, and none finds another database.
+ * their Set-Cookie values. The optional logout registry belongs to this
+ * same sandbox case and is restored along with the other defaults.
  */
-export async function onDatabase<T>(db: MemoryDatabase, clock: number, run: () => Promise<T>): Promise<T> {
+export async function onDatabase<T>(db: MemoryDatabase, clock: number, run: () => Promise<T>, postLogoutRedirectUris?: Record<string, string[]>): Promise<T> {
   return atClock(clock * 1000, () => keepingSetCookies(async () => {
     const global = globalThis as Record<string, unknown>;
     const databaseBefore = global[DATABASE_KEY];
     const fetchBefore = globalThis.fetch;
+    const logoutUrisBefore = rpInitiatedLogoutConfig.postLogoutRedirectUris;
     global[DATABASE_KEY] = db;
     globalThis.fetch = refuseFetch;
+    if (postLogoutRedirectUris !== undefined) rpInitiatedLogoutConfig.postLogoutRedirectUris = postLogoutRedirectUris;
     try {
-      return await run();
+      return await onFeatureStores(db, run);
     } finally {
       global[DATABASE_KEY] = databaseBefore;
       globalThis.fetch = fetchBefore;
+      rpInitiatedLogoutConfig.postLogoutRedirectUris = logoutUrisBefore;
     }
   }));
 }

@@ -4,6 +4,7 @@
  * so the page reads them without loading the OP.
  */
 import type { RanInFile } from '@maronn-openid-connect/test-reach/exchanges';
+import type { GeneratedRequestScenario } from '../../test-catalog/src/premises.js';
 import type { Premises } from './premises.js';
 
 export type { RanInFile };
@@ -130,6 +131,8 @@ export type EncodedValue = unknown;
 export interface PreparedPremises {
   version: 1;
   issuer: string;
+  /** The logout registry the case starts with. */
+  postLogoutRedirectUris?: Record<string, string[]>;
   /** The clock of the requests, in Unix seconds. */
   now: number;
   steps: PremiseStep[];
@@ -170,6 +173,15 @@ export declare function runRequest(request: SandboxRequest, premises?: PreparedP
  * among the failures.
  */
 export declare function preparePremises(premises?: Premises): Promise<PreparedPremises>;
+
+/** The generated request and the isolated provider state for the case. */
+export interface PreparedRequestScenario {
+  generated: GeneratedRequestScenario;
+  premises: PreparedPremises;
+}
+
+/** Create the selected case and send any HTTP requests required to prepare it. */
+export declare function prepareRequestScenario(id: string, framework?: string): Promise<PreparedRequestScenario>;
 
 /** What the OP of the map is given before any request: its clients, its users, and the grants it gives by requests (premises.ts). */
 export declare const PREMISES: Premises;

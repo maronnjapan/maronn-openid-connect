@@ -24,6 +24,7 @@ import {
   traceRows,
   withinFrame,
   type TraceState,
+  type TraceUpdate,
 } from '../lib/trace';
 import { locationOf } from '../lib/model';
 import { draftOfRequest, endingWay, wayName } from '../lib/run';
@@ -53,7 +54,7 @@ export interface TraceProps {
   /** Ready-made choices beyond the root frame's own: the ways to the changes of the pull request. */
   extraSelections?: readonly Selection[];
   state: TraceState;
-  onState: (next: TraceState) => void;
+  onState: TraceUpdate;
   /** The ids of the features that are on (the markers of the code name them the same way). */
   enabled: ReadonlySet<string>;
   onOpenFunction: (id: string) => void;
@@ -306,7 +307,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const focusKey = scene !== undefined && known.has(scene.frame) ? scene.frame : known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order);
   // Once every frame has loaded, a frame the outline no longer shows (a feature turned off took its call out) gives the focus to the frame above it, in the hash too.
   useEffect(() => {
-    if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey });
+    if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey }, state);
   }, [loading, root, focusKey, state, onState]);
   const focusId = known.get(focusKey) ?? rootId;
   const focusTree = frames.trees.get(focusId);

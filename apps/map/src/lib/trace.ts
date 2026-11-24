@@ -36,6 +36,9 @@ export interface TraceState {
 
 export const EMPTY_TRACE: TraceState = { open: [], choices: [], errors: false, focus: '' };
 
+/** Update the trace, optionally only if it still matches the state used to compute the update. */
+export type TraceUpdate = (next: TraceState, basedOn?: TraceState) => boolean;
+
 /** The decision key of a node of a frame. */
 export function decisionKey(frame: string, node: string): string {
   return frame === '' ? node : `${frame}.${node}`;

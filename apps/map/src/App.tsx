@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { requestScenarioFeatures, requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import { ChangesScreen } from './components/ChangesScreen';
 import { EndpointScreen } from './components/EndpointScreen';
@@ -11,7 +11,7 @@ import { HistoryScreen } from './components/HistoryScreen';
 import { indexChanges } from './lib/changes';
 import { buildHash, parseHash, plainView, type View } from './lib/hash';
 import { defaultEnabled, enabledMarkers, featuresMissing, featuresToShow, visibleEndpoints, type SearchHit } from './lib/model';
-import { EMPTY_TRACE, sourceOf, type TraceState } from './lib/trace';
+import { EMPTY_TRACE, sourceOf, type TraceState, type TraceUpdate } from './lib/trace';
 import type { MapData, Reach } from './types';
 
 const FEATURES_KEY = 'oidc-map-features';
@@ -113,6 +113,7 @@ function ProviderMap({ data }: { data: MapData }) {
     [data, anyChanges, fallbackEndpoint],
   );
   const [view, setView] = useState<View>(() => fromHash(data.frameworks[0] ?? 'hono'));
+  const currentView = useRef(view);
   // The changes as the endpoints of the framework shown reach them: an implementation in hono or nextjs reaches only its own endpoints.
   const changes = useMemo(() => indexChanges(data, sourceOf(view.framework)), [data, view.framework]);
   const [depth, setDepth] = useState(historyDepth);
@@ -127,7 +128,9 @@ function ProviderMap({ data }: { data: MapData }) {
   // Back, forward, or a hash typed by hand.
   useEffect(() => {
     const onChange = () => {
-      setView((current) => fromHash(current.framework));
+      const next = fromHash(currentView.current.framework);
+      currentView.current = next;
+      setView(next);
       setDepth(historyDepth());
       closeMenu();
     };
@@ -151,6 +154,7 @@ function ProviderMap({ data }: { data: MapData }) {
         }
       }
       setDepth(historyDepth());
+      currentView.current = next;
       setView(next);
       if (mode === 'push') closeMenu();
     },
@@ -214,7 +218,13 @@ function ProviderMap({ data }: { data: MapData }) {
     navigate({ framework, endpoint: way.endpoint, step: null, fn: null, changes: false, trace, target: way.target }, 'push');
   };
   /** Change the trace of the open page: its frames, choices and focus, kept in the hash without a new entry of the history. */
-  const onTrace = (trace: TraceState) => navigate({ ...view, trace }, 'replace');
+  const onTrace: TraceUpdate = (trace, basedOn) => {
+    const current = currentView.current;
+    if (current.framework !== view.framework || current.endpoint !== view.endpoint || current.fn !== view.fn) return false;
+    if (basedOn !== undefined && basedOn !== current.trace) return false;
+    navigate({ ...current, trace }, 'replace');
+    return true;
+  };
   const onPick = (hit: SearchHit) => {
     if ('fn' in hit.target) openFunction(hit.target.fn);
     else openStep(hit.target.endpoint, hit.target.step);

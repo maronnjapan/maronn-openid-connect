@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { FlowEndpoint, MapData } from '../types';
 import { frameMark, waySelections, type ChangeIndex } from '../lib/changes';
 import { generatedWhen } from '../lib/model';
-import { entryOf, sourceOf, type TraceState } from '../lib/trace';
+import { entryOf, sourceOf, type TraceState, type TraceUpdate } from '../lib/trace';
 import { Badge } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
 import { FeatureBadge } from './FeatureBadge';
@@ -22,7 +22,7 @@ export interface EndpointScreenProps {
   step?: string | null;
   /** A node a way to a change leads to, keyed like a decision: the trace selects it once its frame shows. */
   target?: string | null;
-  onTrace: (next: TraceState) => void;
+  onTrace: TraceUpdate;
   onOpenFunction: (id: string) => void;
 }
 

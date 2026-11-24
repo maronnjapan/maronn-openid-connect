@@ -5,7 +5,7 @@ import { runInSandbox } from '@maronn-openid-connect/map-sandbox/browser';
 import type { Decisions, FlowTree, MapData, SourceDocument } from '../types';
 import { walkTrace } from '../lib/playback';
 import { failingCalls, filesOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from '../lib/run';
-import type { TraceState } from '../lib/trace';
+import type { TraceState, TraceUpdate } from '../lib/trace';
 import { fetchPremises, madePremises, usePremisesVersion } from './useRequests';
 
 /** The premises to run a request on: those the reader made in the page, else those of the build (MapData.premises; none for a build that made none, and a failure that says it was they that could not be read). */
@@ -74,7 +74,7 @@ export interface RequestRunInput {
   /** The trees of the frames loaded so far, by id. */
   trees: ReadonlyMap<string, FlowTree>;
   state: TraceState;
-  onState: (next: TraceState) => void;
+  onState: TraceUpdate;
   enabled: ReadonlySet<string>;
   hasFrame: (id: string) => boolean;
 }
@@ -134,7 +134,7 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
     const last = applied.current;
     if (last.id === done.id && last.choice !== undefined && !sameChoice(state.choices[0], last.choice)) {
       // The reader took other sides (or another way): the playback no longer follows the run.
-      setRunState({ ...done, follow: false });
+      setRunState((current) => (current === done ? { ...done, follow: false } : current));
       return;
     }
     if (last.id !== done.id) applied.current = { id: done.id, choice: undefined, opened: new Set() };
@@ -144,9 +144,10 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
       applied.current.choice = choice;
       return;
     }
-    for (const key of open) opened.add(key);
-    applied.current.choice = choice;
-    onState({ ...state, choices: [choice], open: [...state.open, ...open] });
+    if (onState({ ...state, choices: [choice], open: [...state.open, ...open] }, state)) {
+      for (const key of open) opened.add(key);
+      applied.current.choice = choice;
+    }
   }, [done, choice, walked, state, onState, hasFrame]);
 
   return {

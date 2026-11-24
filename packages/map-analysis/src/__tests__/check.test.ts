@@ -75,13 +75,15 @@ describe('checkMap, with the requests the OP of the map took ways with', () => {
       ways: [
         { id: 'c1', kind: 'step', name: 'a step', target: 's0', sample: sample() },
         { id: 'c2', kind: 'exit', name: 'return x', target: 's0', sample: sample() },
+        { id: 'c3', kind: 'exit', name: 'return y', target: 's0', sample: sample() },
       ],
     };
     const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
     expect([metrics.requests.unmatched, failures]).toEqual([
-      1,
+      2,
       [
         'core:a.ts#f: the requests name the way step "a step" (s0), which no ready-made choice of the root is: the flow view would not show them',
+        'core:a.ts#f: the requests name the way exit "return y" (s0), which no ready-made choice of the root is: the flow view would not show them',
         'core:b.ts#g: the requests name a root the map has no frame of',
       ],
     ]);

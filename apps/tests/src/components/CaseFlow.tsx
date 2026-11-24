@@ -144,7 +144,7 @@ function Lines({ lines, opened }: { lines: readonly HttpLine[]; opened: Opened }
 }
 
 /** A request or a response as the RFCs show one: a block of code that scrolls sideways inside itself, the notes of how it is shown under it. */
-function HttpView({ block, label }: { block: HttpBlock; label: string }) {
+export function HttpView({ block, label }: { block: HttpBlock; label: string }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
   const opened: Opened = {
     open,

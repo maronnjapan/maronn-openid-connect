@@ -7,15 +7,12 @@
 import type { RequestParam, RootRequests, Selection, WayRequests, WaySample } from '../types';
 
 /**
- * The request the OP of the map took a ready-made way with: the entry of
- * its kind and target, of its name too when more than one has them; none
- * for no way (おまかせ, a way the reader chose side by side), or for a way no
- * request took.
+ * Find the request the map's OP took for the exact variant of a code path.
+ * Several paths can reach the same node, and only observed samples can be shown.
  */
 export function wayRequestsOf(requests: RootRequests | undefined, selection: Pick<Selection, 'kind' | 'name' | 'target'> | undefined): WayRequests | undefined {
   if (requests === undefined || selection === undefined) return undefined;
-  const same = requests.ways.filter((way) => way.kind === selection.kind && way.target === selection.target);
-  return same.find((way) => way.name === selection.name) ?? same[0];
+  return requests.ways.find((way) => way.kind === selection.kind && way.target === selection.target && way.name === selection.name);
 }
 
 /** Where a parameter was sent, in words. */

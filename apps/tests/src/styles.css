@@ -4276,6 +4276,53 @@ button.code-item-head:hover,
   background: var(--surface-2);
 }
 
+.scenario-row {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.scenario-purpose {
+  margin: -4px 0 16px;
+}
+
+.scenario-request,
+.scenario-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scenario-request {
+  flex-direction: column;
+}
+
+.scenario-request + .scenario-request {
+  margin-top: 16px;
+}
+
+.scenario-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.scenario-details summary {
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.scenario-details summary + * {
+  margin-top: 8px;
+}
+
+.scenario-details pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
 .case-name {
   flex: 1 1 240px;
   min-width: 0;

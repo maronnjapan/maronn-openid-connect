@@ -7,11 +7,8 @@
  * code of the endpoint and of each step (its function, or its block of the
  * Route Handler) opens in the panel.
  *
- * The list has a second face, the cases (CasePanel): the ways a request
- * takes through the endpoint, and what the tests say about the one chosen.
- * A case chosen lights the steps it runs on the timeline, dims the others,
- * and can be played: a token goes down the steps in the order the request
- * reaches them, each lighting as it arrives, to where the case ends.
+ * The case panel generates requests for supported client goals. It also
+ * lets readers inspect and replay the implementation's decision paths.
  *
  * In the build of a pull request the head has a chip of how many of its
  * tests the pull request added, changed and removed (which keeps only those
@@ -20,6 +17,7 @@
  * step or the function among the others.
  */
 import type { EndpointCase, EndpointCases, OutlineEndpoint, OutlineStep, TestEntry } from '@maronn-openid-connect/test-catalog/model';
+import { requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { endWords, STEP_MS, stepChecks, type StepCheck } from '../lib/cases';
 import { countsOf, endpointRemoved, endpointTests, framesRemoved, healthOf, otherFunctions, stepCount, stepFrames, stepTests, unitTestsOf, type Db } from '../lib/data';
@@ -38,6 +36,7 @@ import { Legend, PartsBar, Segmented, SourceSwitch, Words } from './ui';
 
 /** How many of the other functions show before 「すべて表示」. */
 const FIRST_OTHERS = 10;
+const NO_DECISION_PATHS: readonly EndpointCase[] = [];
 
 /** The tests the list is narrowed to, their name, and the functions they are of: a step's, or another function's; with the unit tests of them a pull request removed. */
 function selection(db: Db, endpoint: OutlineEndpoint, view: View): { label: string; tests: TestEntry[]; frames: string[]; removed: RemovedTest[] } | undefined {
@@ -249,12 +248,15 @@ export function EndpointPage() {
   const own = useMemo(() => (endpoint === undefined ? [] : endpointTests(db, endpoint)), [db, endpoint]);
   const gone = useMemo(() => (endpoint === undefined ? [] : endpointRemoved(db, endpoint)), [db, endpoint]);
   const counts = useMemo(() => countsOf(own), [own]);
-  // The cases of the endpoint, read when its page shows them: the ways a request takes through it (CasePanel).
+  const scenarios = endpoint === undefined ? [] : requestScenariosFor(endpoint.id, [endpoint.feature, ...endpoint.steps.map((step) => step.feature)].filter((feature) => feature !== undefined));
+  const scenario = scenarios.find((item) => item.id === view.case);
+  // Read the code-derived paths only while the case view is open.
   const casesUrl = db.index.cases?.[key];
   const loaded = useJson<EndpointCases>(view.cases === true ? casesUrl : undefined);
-  const cases = loaded === undefined || loaded instanceof Error ? undefined : loaded.cases;
-  const chosen = cases?.find((item) => item.id === view.case);
-  const checks = useMemo(() => (endpoint === undefined || cases === undefined ? [] : stepChecks(db, endpoint, cases, chosen)), [db, endpoint, cases, chosen]);
+  const cases = loaded === undefined || loaded instanceof Error ? NO_DECISION_PATHS : loaded.cases;
+  const chosen = cases.find((item) => item.id === view.case);
+  const checks = useMemo(() => (endpoint === undefined ? [] : stepChecks(db, endpoint, cases, chosen)), [db, endpoint, cases, chosen]);
+  const hasCases = scenarios.length > 0 || casesUrl !== undefined;
   // The playback of the case chosen: the step of its way the token is at, and whether it moves on its own. It belongs to its case:
   // choosing another case (or another endpoint) starts from nothing, whatever the playback of the one before was doing.
   const playOf = `${key}:${view.case ?? ''}`;
@@ -386,26 +388,35 @@ export function EndpointPage() {
           play={{ at: play.at, on: play.on, start: () => setPlayed({ of: playOf, at: play.at !== null && play.at >= waySteps - 1 ? null : play.at, on: waySteps > 0 }), stop: () => setPlayed({ of: playOf, at: play.at, on: false }) }}
         />
         <section className="endpoint-list" aria-label="テスト">
-          {casesUrl !== undefined && (
+          {hasCases && (
             <div className="list-mode">
               <Segmented
                 label="右の欄に出すもの"
                 options={[
                   { value: 'list', label: 'テスト一覧' },
-                  { value: 'cases', label: 'ケースで確かめる' },
+                  { value: 'cases', label: scenarios.length > 0 ? 'ケースで確かめる' : '実装の道筋' },
                 ]}
                 value={view.cases === true ? 'cases' : 'list'}
                 onChange={(value) => showCases(value === 'cases')}
               />
-              {view.cases !== true && <span className="list-mode-note">テストが多いときは、リクエストの道筋（ケース）ごとに確かめられます</span>}
+              {view.cases !== true && scenarios.length > 0 && <span className="list-mode-note">目的を選ぶとリクエストと期待する応答を表示します</span>}
             </div>
           )}
-          {view.cases === true && casesUrl !== undefined ? (
-            cases === undefined ? (
-              <p className="note list-empty">{loaded instanceof Error ? `ケースを読み込めませんでした: ${loaded.message}` : 'ケースを読み込んでいます…'}</p>
-            ) : (
-              <CasePanel endpoint={endpoint} cases={cases} chosen={chosen} checks={checks} playing={playing} onChoose={(id) => showCases(true, id)} onStep={(id) => pick(view.step === id ? {} : { step: id })} narrowed={narrowedList} />
-            )
+          {view.cases === true && hasCases ? (
+            <CasePanel
+              endpoint={endpoint}
+              scenarios={scenarios}
+              scenario={scenario}
+              tests={own}
+              cases={cases}
+              traceState={loaded instanceof Error ? loaded : casesUrl !== undefined && loaded === undefined ? 'loading' : undefined}
+              chosen={chosen}
+              checks={checks}
+              playing={playing}
+              onChoose={(id) => showCases(true, id)}
+              onStep={(id) => pick(view.step === id ? {} : { step: id })}
+              narrowed={narrowedList}
+            />
           ) : (
           <TestList
             tests={picked === undefined ? own : picked.tests}

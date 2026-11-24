@@ -1,27 +1,6 @@
-/**
- * The cases of an endpoint beside its steps: the ways a request takes
- * through it (the way into a step, each way it ends, each failure), and what
- * the tests say about the one chosen, so a reader can judge whether a case
- * is covered without reading every test of the endpoint.
- *
- * - With no case chosen: what the tests say about the endpoint as a whole,
- *   and the cases to choose from, the failures grouped by what fails with a
- *   mark of how surely a test expects each.
- * - With a case: first the case as a request going through the endpoint
- *   (CaseFlow: an example request, the steps it goes through, the result),
- *   then what the tests say about it (テストの確認状況): its verdicts (the
- *   unit tests of the steps it runs, the failures that can come up on its
- *   way, the API and E2E tests of the endpoint, how it ends), a table of
- *   its steps, and its tests. A failure lists the tests that expect its
- *   error, those of the function that throws it apart from the others.
- *
- * A case some recorded request took shows a one-line preview of the first
- * in the list (`POST /token · grant_type=refresh_token → 200`).
- *
- * Every verdict is a mark and words, never a color alone, and says the rule
- * it comes from (lib/cases.ts).
- */
+/** Request cases for client goals and test evidence for the endpoint's decision paths. */
 import type { EndpointCase, OutlineEndpoint, TestEntry } from '@maronn-openid-connect/test-catalog/model';
+import type { RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
 import { useState, type ReactNode } from 'react';
 import {
   caseGroups,
@@ -47,6 +26,7 @@ import { formatCount } from '../lib/format';
 import { useApp } from './app-context';
 import { CaseFlow } from './CaseFlow';
 import { FeatureBadge } from './FeatureBadge';
+import { ScenarioRequest } from './ScenarioRequest';
 import { Rows, rowOf, TestList } from './TestList';
 import { Words } from './ui';
 
@@ -385,7 +365,11 @@ function CaseList({ cases, onChoose }: { cases: readonly EndpointCase[]; onChoos
 /** What the case panel shows and what it tells the page (see the module comment). */
 export interface CasePanelProps {
   endpoint: OutlineEndpoint;
+  scenarios: readonly RequestScenario[];
+  scenario: RequestScenario | undefined;
+  tests: readonly TestEntry[];
   cases: readonly EndpointCase[];
+  traceState: 'loading' | Error | undefined;
   chosen: EndpointCase | undefined;
   /** The checks of every step of the endpoint (lib/cases stepChecks), with the place of each on the way of the case chosen. */
   checks: readonly StepCheck[];
@@ -398,56 +382,17 @@ export interface CasePanelProps {
   narrowed: ReactNode | undefined;
 }
 
-/** The cases of an endpoint and what the tests say about the one chosen (see the module comment). */
-export function CasePanel({ endpoint, cases, chosen, checks, playing, onChoose, onStep, narrowed }: CasePanelProps) {
+/** The test evidence for the endpoint or a selected implementation path. */
+function DecisionEvidence({ endpoint, cases, traceState, chosen, checks, playing, onChoose, onStep, narrowed }: Pick<CasePanelProps, 'endpoint' | 'cases' | 'traceState' | 'chosen' | 'checks' | 'playing' | 'onChoose' | 'onStep' | 'narrowed'>) {
   const { db } = useApp();
+  if (traceState !== undefined) {
+    return <p className="note list-empty" role="status">{traceState instanceof Error ? `実装の道筋を読み込めませんでした（${traceState.message}）` : '実装の道筋を読み込んでいます…'}</p>;
+  }
   const summary = summarize(db, endpoint, checks, chosen);
-  const groups = caseGroups(cases);
   const rows = chosen === undefined ? checks : pathChecks(checks, chosen);
   const of = (ids: readonly string[] | undefined) => sortForList(entriesOf(db, ids ?? []));
   return (
     <div className="case-panel">
-      <div className="case-head">
-        <label className="case-pick">
-          <span className="case-pick-label">ケース</span>
-          <select value={chosen?.id ?? ''} onChange={(event) => onChoose(event.target.value === '' ? undefined : event.target.value)} aria-label="確かめるケース">
-            <option value="">エンドポイント全体（ケースを選ぶ）</option>
-            {groups.steps.length > 0 && (
-              <optgroup label="ステップへ進む道筋">
-                {groups.steps.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {caseName(item)}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {groups.exits.length > 0 && (
-              <optgroup label="終わり方">
-                {groups.exits.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {caseName(item)}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {groups.failures.map((group) => (
-              <optgroup key={group.error} label={`失敗: ${group.error}`}>
-                {group.cases.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {VERDICT_MARKS[verdictOf(item.tests)]} {failureName(item)}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-        {chosen !== undefined && (
-          <button type="button" className="text-button" onClick={() => onChoose(undefined)}>
-            ケースの一覧に戻る
-          </button>
-        )}
-      </div>
-
       {chosen !== undefined && <CaseFlow key={chosen.id} endpoint={endpoint} cases={cases} chosen={chosen} playing={playing} />}
 
       <section className="check" aria-label="確認状況">
@@ -457,11 +402,12 @@ export function CasePanel({ endpoint, cases, chosen, checks, playing, onChoose, 
 
       {chosen === undefined ? (
         <>
-          <section aria-label="ケースの一覧">
-            <h2 className="check-title">ケースを選んで確かめる</h2>
-            <p className="evidence-note">リクエストが通る道筋ごとに、リクエストの例・通るステップ・結果と、そのテスト・起こり得る失敗を確かめられます。左の「処理の流れ」で道筋を再生できます。</p>
-            <CaseList cases={cases} onChoose={onChoose} />
-          </section>
+          {cases.length > 0 && (
+            <section aria-label="道筋の一覧">
+              <h2 className="check-title">実装の道筋</h2>
+              <CaseList cases={cases} onChoose={onChoose} />
+            </section>
+          )}
           <section aria-label="ステップごとの確認">
             <h2 className="check-title">ステップごとの確認</h2>
             <StepTable endpoint={endpoint} rows={rows} playing={playing} onStep={onStep} onChoose={onChoose} />
@@ -487,6 +433,59 @@ export function CasePanel({ endpoint, cases, chosen, checks, playing, onChoose, 
             ))}
         </>
       )}
+    </div>
+  );
+}
+
+/** Choose a client goal and inspect its generated request or the existing test evidence. */
+export function CasePanel({ scenarios, scenario, tests, ...decision }: CasePanelProps) {
+  const { endpoint, chosen, narrowed, onChoose } = decision;
+  const selected = scenario?.id ?? chosen?.id;
+  const feature = scenario?.feature;
+  const related = feature === undefined ? tests : tests.filter((test) => test.features?.includes(feature));
+  const evidence = <DecisionEvidence {...decision} narrowed={scenario === undefined ? narrowed : undefined} />;
+  return (
+    <div className="case-panel">
+      <div className="case-head">
+        {scenarios.length > 0 && (
+          <label className="case-pick">
+            <span className="case-pick-label">リクエストの目的</span>
+            <select value={selected ?? ''} onChange={(event) => onChoose(event.target.value || undefined)}>
+              <option value="">目的を選ぶ</option>
+              {scenarios.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+              {chosen !== undefined && <option value={chosen.id}>{caseName(chosen)}</option>}
+            </select>
+          </label>
+        )}
+        {selected !== undefined && (
+          <button type="button" className="text-button" onClick={() => onChoose(undefined)}>
+            {scenarios.length > 0 ? '目的の一覧に戻る' : '道筋の一覧に戻る'}
+          </button>
+        )}
+      </div>
+      {scenario !== undefined ? (
+        <>
+          <ScenarioRequest key={scenario.id} scenario={scenario} />
+          {narrowed ?? <TestList tests={related} sections={['e2e', 'api', 'unit']} target={{ current: endpoint.id }} title={<span>{feature === undefined ? 'エンドポイントのテスト' : '機能に関連するテスト'}</span>} />}
+        </>
+      ) : chosen === undefined && scenarios.length > 0 ? (
+        <ul className="case-rows" aria-label="リクエストの目的の一覧">
+          {scenarios.map((item) => (
+            <li key={item.id}>
+              <button type="button" className="case-row scenario-row" onClick={() => onChoose(item.id)}>
+                <strong>{item.title}</strong>
+                <span className="flow-part-note"><Words text={item.purpose} /></span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {chosen === undefined && scenarios.length > 0 ? (
+        <details className="scenario-details decision-evidence">
+          <summary>実装の道筋とテストの確認状況</summary>
+          {evidence}
+        </details>
+      ) : evidence}
     </div>
   );
 }

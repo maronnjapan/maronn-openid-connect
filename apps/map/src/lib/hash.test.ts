@@ -4,7 +4,8 @@ import { buildHash, parseHash, parseTrace, traceHash, type View } from './hash';
 import { EMPTY_TRACE, type TraceState } from './trace';
 
 const token = { id: 'token', steps: [{ id: 'respond' }], root: 'endpoint:token' } as unknown as FlowEndpoint;
-const flow = { endpoints: [token] } as unknown as OpFlow;
+const authorize = { id: 'authorize', steps: [], root: 'endpoint:authorize' } as unknown as FlowEndpoint;
+const flow = { endpoints: [token, authorize] } as unknown as OpFlow;
 function card(id: string, name: string): FunctionEntry {
   const [root, rest] = id.split(':') as [string, string];
   return { id, name, package: root, module: rest.split('#')[0] as string, line: 1, exported: true, kind: 'other', summary: '', calls: [], calledBy: [], sites: [], frame: '' };
@@ -37,12 +38,25 @@ describe('the trace in a hash', () => {
     expect(parseTrace(';p')).toEqual({ ...EMPTY_TRACE, flow: true });
   });
 
+  it('should round-trip the explicit code path independently of its decisions', () => {
+    const way = '["exit","s0","既定の応答 / a;b"]';
+    const trace: TraceState = { ...EMPTY_TRACE, way, flow: true };
+    expect(traceHash(trace)).toBe(`;w=${encodeURIComponent(way)};p`);
+    expect(parseTrace(traceHash(trace))).toEqual(trace);
+  });
+
   it('should read a side to its end, a colon in it kept, and drop what is not a frame', () => {
     expect(parseTrace("/s1/../x y;d=s0:case 'a:b'")).toEqual({ open: ['s1'], choices: [{ s0: "case 'a:b'" }], errors: false, focus: '' });
   });
 });
 
 describe('the view in a hash', () => {
+  it('should restore a selected request on reload without a code path', () => {
+    const view: View = { ...defaults, endpoint: 'authorize', trace: { ...EMPTY_TRACE, flow: true, request: 'authorize-request-object' } };
+    expect(buildHash(view, data)).toBe('hono--authorize;p;r=authorize-request-object');
+    expect(parseHash('#hono--authorize;p;r=authorize-request-object', data, defaults)).toEqual(view);
+  });
+
   it('should round-trip an endpoint, a step and the trace of its page', () => {
     const view: View = { framework: 'nextjs', endpoint: 'token', step: 'respond', fn: null, trace: { open: ['s0b1s0'], choices: [{ s0b8s0: 'nullish' }], errors: false, focus: '' } };
     expect(buildHash(view, data)).toBe('nextjs--token--respond/s0b1s0;d=s0b8s0:nullish');

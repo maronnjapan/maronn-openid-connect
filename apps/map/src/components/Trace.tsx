@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { PREMISES } from '@maronn-openid-connect/map-sandbox/premises';
+import { requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import type { DiffHunk, FlowStep, FrameChange, MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, boxOf, frameDiagram, markOfBox, type Diagram, type DiagramGroup, type DiagramNode } from '../lib/diagram';
@@ -25,6 +27,7 @@ import {
   type TraceState,
 } from '../lib/trace';
 import { locationOf } from '../lib/model';
+import { draftOf } from '../lib/run';
 import { endingWay, wayName } from '../lib/run';
 import { nodeWords } from '../lib/words';
 import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
@@ -34,6 +37,7 @@ import { FlowDiagram } from './FlowDiagram';
 import { FlowPlayer, usePlayback } from './FlowPlayer';
 import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
+import { RequestCase, useRequestCase } from './RequestCase';
 import { SelectionBar } from './SelectionBar';
 import { rootedName, TraceView, type MemberDiff } from './TraceView';
 import { useFrames } from './useFrames';
@@ -71,7 +75,7 @@ export interface TraceProps {
    * way begins, and its steps in their order, whose kinds and values the
    * scenes and the chart say. Absent for the trace of a function.
    */
-  endpoint?: { name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
+  endpoint?: { id: string; name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -224,6 +228,23 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const requests = useRootRequests(data, rootId);
   // The request the reader runs in the flow view on the OP of the map: while the playback follows it, the sides it was seen to take are the trace's choice.
   const requestRun = useRequestRun({ data, rootId, root, trees: frames.trees, state, onState, enabled, hasFrame });
+  const scenarios = requestScenariosFor(endpoint?.id ?? '');
+  const scenario = scenarios.find((candidate) => candidate.id === state.request);
+  const { revision, result, regenerate } = useRequestCase(scenario);
+  const generated = result !== undefined && 'generated' in result ? result.generated : undefined;
+  const generatedCase = useMemo(() => {
+    if (scenario === undefined) return undefined;
+    const key = `${scenario.id}:${revision}`;
+    if (generated === undefined) return { key };
+    const { pathname, searchParams } = new URL(generated.url);
+    const draft = draftOf({
+      method: generated.request.method,
+      path: pathname,
+      params: Array.from(searchParams, ([name, value]) => ({ name, value, in: 'query' })),
+      headers: generated.request.headers,
+    });
+    return { key, draft };
+  }, [scenario, revision, generated]);
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
@@ -812,6 +833,28 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     onState({ ...state, flow: false });
     if (item !== undefined) select({ frame: item.frame, node: item.node, frameId: item.tree, from: 'diagram' });
   };
+  /** Switch the request case and reset the flow so it can follow the next run. */
+  const selectRequest = (id: string | undefined) => {
+    requestRun.forget();
+    playback.play(false);
+    playback.go(0);
+    onState({ ...state, request: id, way: undefined, open: [], choices: [], focus: '' });
+  };
+  const requestCase = endpoint !== undefined && scenarios.length > 0 ? (
+    <RequestCase
+      scenarios={scenarios}
+      selected={scenario}
+      result={result}
+      testsUrl={`./tests/#/endpoint/${source}/${encodeURIComponent(endpoint.id)}?case=${encodeURIComponent(scenario?.id ?? '')}`}
+      compact={flowOn}
+      onSelect={(id) => selectRequest(id || undefined)}
+      onRegenerate={() => {
+        regenerate();
+        selectRequest(scenario?.id);
+      }}
+      onTry={!flowOn && source === 'hono' && generated !== undefined ? () => onState({ ...state, flow: true }) : undefined}
+    />
+  ) : undefined;
 
   if (flowOn) {
     return (
@@ -830,6 +873,24 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               scenes={scenes}
               playback={playback}
               requests={requests}
+              requestCase={requestCase}
+              generatedCase={generatedCase}
+              onRunScenario={generated === undefined ? undefined : (draft) => {
+                const registration = generated.registration;
+                const keys = registration.jwks?.keys;
+                requestRun.run(draft, {
+                  ...PREMISES,
+                  now: generated.issuedAt,
+                  clients: [{
+                    clientId: registration.client_id,
+                    authMethod: registration.token_endpoint_auth_method,
+                    grantTypes: registration.grant_types,
+                    redirectUris: registration.redirect_uris,
+                    ...(keys === undefined ? {} : { requestObjectKeys: keys }),
+                  }],
+                  grants: [],
+                });
+              }}
               framework={framework}
               titleOf={sceneTitle}
               endpoint={endpoint}
@@ -888,6 +949,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     <div className="trace-area">
       <div className={`work${paneVisible ? ' with-pane' : ' outline-only'}`} ref={work} style={paneVisible ? { gridTemplateColumns: `minmax(0, 1fr) 8px minmax(0, ${paneWidth}%)` } : undefined}>
         <div className="outline">
+          {requestCase}
           {root === undefined ? (
             <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
           ) : (

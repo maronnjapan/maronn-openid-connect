@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, Selection, TreeNode } from '../types';
-import { callsToEnter, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, SPEEDS, stopKey, walkTrace, withoutDeepest } from './playback';
+import { callsToEnter, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, selectionKey, SPEEDS, stopKey, walkTrace, withoutDeepest } from './playback';
 import { nodesRun } from './trace';
 
 /** A tree of nodes written by hand. */
@@ -149,6 +149,21 @@ describe('scenarioOf', () => {
   it('should find none for no choice or another one', () => {
     expect(scenarioOf(selections, undefined)).toBe(-1);
     expect(scenarioOf(selections, { s0: 'try' })).toBe(-1);
+  });
+
+  it('should keep the chosen path when another path has the same decisions', () => {
+    const path: Selection = { kind: 'step', name: 'another step', decisions: { s0: 'catch' }, target: 's0h1' };
+    const withDuplicate = [...selections, path];
+
+    expect(scenarioOf(withDuplicate, path.decisions, selectionKey(path))).toBe(2);
+    expect(scenarioOf(withDuplicate, path.decisions)).toBe(-1);
+    expect(scenarioOf(withDuplicate, { s0: 'try' }, selectionKey(path))).toBe(-1);
+  });
+
+  it('should restore an explicitly chosen path without decisions', () => {
+    const path: Selection = { kind: 'exit', name: 'return', decisions: {}, target: 's0' };
+    expect(scenarioOf([path], undefined, selectionKey(path))).toBe(0);
+    expect(scenarioOf([path], undefined)).toBe(-1);
   });
 });
 

@@ -133,7 +133,7 @@ export interface RequestRunInput {
 export interface RequestRun {
   state: RequestRunState | undefined;
   /** Run a request the reader wrote. */
-  run: (draft: RequestDraft) => void;
+  run: (draft: RequestDraft, plan?: Premises) => void;
   /** Follow the way the request took again, after the reader took other sides. */
   follow: () => void;
   /** Forget the request run: another way was picked. */
@@ -162,9 +162,9 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
   const [runState, setRunState] = useState<RequestRunState | undefined>(undefined);
   // A run is of the premises it ran on: when the premises in use change (made again, or gone back to the build's), it is forgotten, and so is one still running.
   const version = usePremisesVersion();
-  const [ranVersion, setRanVersion] = useState(version);
-  if (ranVersion !== version) {
-    setRanVersion(version);
+  const [context, setContext] = useState({ version, scenario: state.request });
+  if (context.version !== version || context.scenario !== state.request) {
+    setContext({ version, scenario: state.request });
     if (runState !== undefined) setRunState(undefined);
   }
   // The id of the last run: never given again, so a run after one forgotten is not taken for it.
@@ -202,12 +202,13 @@ export function useRequestRun({ data, rootId, root, trees, state, onState, enabl
   return {
     state: runState,
     walked: following ? walked : undefined,
-    run: (draft) => {
+    run: (draft, plan) => {
       const request = sandboxRequestOf(draft);
       lastRun.current += 1;
       const id = lastRun.current;
       setRunState({ status: 'running', id, request });
-      premisesOf(data).then((premises) => runInSandbox(request, premises)).then(
+      const premises = plan === undefined ? premisesOf(data) : prepareInSandbox(plan);
+      premises.then((prepared) => runInSandbox(request, prepared)).then(
         (run) => setRunState((current) => (current?.id === id ? { status: 'done', id, request, run, follow: true } : current)),
         (error: unknown) => setRunState((current) => (current?.id === id ? { status: 'failed', id, request, message: error instanceof Error ? error.message : String(error) } : current)),
       );

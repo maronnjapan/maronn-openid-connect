@@ -178,15 +178,22 @@ export function withoutDeepest(open: readonly string[]): string[] {
 }
 
 /** Whether two choices choose the same sides. */
-function sameChoice(a: Decisions, b: Decisions): boolean {
+export function sameChoice(a: Decisions, b: Decisions): boolean {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
-/** The ready-made choice a trace is on: the first whose sides are exactly those of the choice the playback follows; -1 for none. */
-export function scenarioOf(selections: readonly Selection[], choice: Decisions | undefined): number {
+/** Identify a code path by the same fields its recorded requests use. */
+export function selectionKey(selection: Pick<Selection, 'kind' | 'target' | 'name'>): string {
+  return JSON.stringify([selection.kind, selection.target, selection.name]);
+}
+
+/** Find the chosen code path, or infer it from the decisions when they match exactly one path. */
+export function scenarioOf(selections: readonly Selection[], choice: Decisions | undefined, way?: string): number {
+  if (way !== undefined) return selections.findIndex((selection) => selectionKey(selection) === way && sameChoice(selection.decisions, choice ?? {}));
   if (choice === undefined) return -1;
-  return selections.findIndex((selection) => sameChoice(selection.decisions, choice));
+  const first = selections.findIndex((selection) => sameChoice(selection.decisions, choice));
+  return first !== -1 && !selections.some((selection, index) => index > first && sameChoice(selection.decisions, choice)) ? first : -1;
 }
 
 /** What a step of an endpoint does, by its kind, as a short label. */

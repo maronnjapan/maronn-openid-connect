@@ -22,12 +22,16 @@ export interface TraceState {
   open: string[];
   /** The choices: each decision key → side; several are their union, none shows everything. */
   choices: Decisions[];
+  /** The code path explicitly picked, even when its decisions are shared or empty. */
+  way?: string | undefined;
   /** Show where the failure of each call is caught. */
   errors: boolean;
   /** The frame the diagram shows. */
   focus: string;
   /** The trace shows as a playback (the flow view) instead of the outline. */
   flow?: boolean;
+  /** The purpose-based request selected on the endpoint. */
+  request?: string;
 }
 
 export const EMPTY_TRACE: TraceState = { open: [], choices: [], errors: false, focus: '' };

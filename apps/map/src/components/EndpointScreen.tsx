@@ -39,7 +39,7 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
   const root = entryOf(data, endpoint.root);
   const mark = frameMark(changes, endpoint.root);
   // What the trace's flow view says of the endpoint: kept while the endpoint stays, so the chart drawn from it is not drawn again.
-  const named = useMemo(() => ({ name: `${endpoint.methods.join(' | ')} ${endpoint.path}`, steps: endpoint.steps, request: { method: endpoint.methods[0] ?? 'GET', path: endpoint.path } }), [endpoint]);
+  const named = useMemo(() => ({ id: endpoint.id, name: `${endpoint.methods.join(' | ')} ${endpoint.path}`, steps: endpoint.steps, request: { method: endpoint.methods[0] ?? 'GET', path: endpoint.path } }), [endpoint]);
   return (
     <section className="screen" aria-label={endpoint.label}>
       <ScreenHeader
@@ -57,7 +57,7 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
               </button>
             ) : null}
             {/* The tests are a page of their own (apps/tests): the cases of this endpoint there say what the tests check on each way through it. */}
-            <a className="code-button" href={`./tests/#/endpoint/${sourceOf(framework)}/${encodeURIComponent(endpoint.id)}?cases=1`} title="このエンドポイントのテストを、リクエストの道筋（ケース）ごとに確かめる（テストの画面）">
+            <a className="code-button" href={`./tests/#/endpoint/${sourceOf(framework)}/${encodeURIComponent(endpoint.id)}?cases=1`} title="このエンドポイントの想定リクエストとテストを見る">
               テストを確かめる
             </a>
           </>

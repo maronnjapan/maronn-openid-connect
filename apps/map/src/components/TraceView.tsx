@@ -103,7 +103,7 @@ function Sides({ node, frame, state, enabled, onState }: { node: TreeNode; frame
           aria-pressed={chosen === branch.key}
           disabled={forced !== undefined}
           title={forced !== undefined ? 'この側だけが残る（値を作る機能がオフ）' : chosen === branch.key ? '選択を外す' : 'この側だけを活性にする'}
-          onClick={() => onState({ ...state, choices: choose(state.choices, key, chosen === branch.key ? undefined : branch.key) })}
+          onClick={() => onState({ ...state, choices: choose(state.choices, key, chosen === branch.key ? undefined : branch.key), way: undefined })}
         >
           {sideLabel(node, branch)}
         </button>
@@ -410,7 +410,7 @@ export function TraceView({ data, changes, rootId, source, state, trees, diffs, 
               className="branch-choose"
               aria-pressed={row.chosen}
               title={`${whole}\n${row.chosen ? '押すと選択を外す（すべての側を活性に戻す）' : '押すとこの側だけを活性にする'}`}
-              onClick={() => onState({ ...state, choices: choose(state.choices, key, row.chosen ? undefined : row.branch.key) })}
+              onClick={() => onState({ ...state, choices: choose(state.choices, key, row.chosen ? undefined : row.branch.key), way: undefined })}
             >
               {content}
             </button>

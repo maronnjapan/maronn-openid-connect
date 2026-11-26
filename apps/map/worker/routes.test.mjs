@@ -4,10 +4,12 @@
  * the assets (`run_worker_first`) are exactly the OP's paths (OP_ROUTES)
  * and its control API, so a path the OP answers is never served the page
  * and a path of the page never reaches the OP; and the Durable Object the
- * Worker exports is bound and SQLite-backed. It reads the built live OP
- * (packages/live-op/dist).
+ * Worker exports is bound and SQLite-backed; and no version of the Worker
+ * gets a preview URL, which would run that version's OP on the Durable
+ * Objects of production. It reads the built live OP (packages/live-op/dist).
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { isLivePath, LIVE_PREFIX, OP_ROUTES } from '@maronn-openid-connect/live-op';
@@ -42,5 +44,13 @@ describe('wrangler.jsonc Durable Objects', () => {
 
   it('should enable the Node.js compatibility the OP bundle needs for node:crypto', () => {
     assert.ok(config.compatibility_flags.includes('nodejs_compat'));
+  });
+});
+
+describe('wrangler.jsonc previews', () => {
+  it('should give no version a preview URL, nor upload one to preview', () => {
+    const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts;
+    assert.equal(config.preview_urls, false);
+    assert.deepEqual(Object.entries(scripts).filter(([, command]) => command.includes('versions upload')), []);
   });
 });

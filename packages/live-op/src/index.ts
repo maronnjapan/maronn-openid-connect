@@ -8,7 +8,7 @@ import { installRecorder } from './recorder.js';
 
 export * from './api.js';
 export { oauthErrorOf, LiveWorkspace, MemoryStorage, requestOf, type Answered, type WorkspaceSnapshot, type WorkspaceStorage } from './workspace.js';
-export { answerLive, isLivePath, OP_ROUTES, workspaceIdOf } from './relay.js';
+export { answerLive, isLivePath, OP_ROUTES, refusalOf, workspaceIdOf } from './relay.js';
 export { probeTable } from './recorder.js';
 export { RECIPES } from './scenarios/index.js';
 export { prepareRecipe, type ScenarioContext, type ScenarioRecipe } from './scenario-runtime.js';

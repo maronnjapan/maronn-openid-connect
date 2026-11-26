@@ -14,6 +14,12 @@
  * more, each at its own clock, in order: what has expired since is evicted
  * as it would have been.
  *
+ * The records of every store but the registered clients live minutes (a
+ * pushed request 60 seconds, a device code 10, a CIBA request 2), so the
+ * writes of a record last written over an hour ago (FEATURE_WRITE_LIFETIME)
+ * are dropped (prune): the record has expired, and its writes would only
+ * grow what the workspace keeps and the time it takes to make it again.
+ *
  * The calls of a request are noted too, so the map shows what it read and
  * wrote of them beside the records of the database.
  */
@@ -26,7 +32,10 @@ import type { StoreChange, StoreRead } from './api.js';
 import { atClock } from './clock.js';
 import { plainOf } from './store.js';
 
-/** A store of a feature: the module's one, how to make one of a workspace, and its methods that read and that write. */
+/** How long after its record was last written a write of a store whose records live minutes is kept, in milliseconds (1 hour). */
+export const FEATURE_WRITE_LIFETIME = 60 * 60 * 1000;
+
+/** A store of a feature: the module's one, how to make one of a workspace, its methods that read and that write, and whether its records live minutes. */
 interface StoreBinding {
   singleton: object;
   create: () => object;
@@ -34,19 +43,21 @@ interface StoreBinding {
   collection: string;
   reads: readonly string[];
   writes: readonly string[];
+  /** Its records expire within minutes, so the writes of one written over FEATURE_WRITE_LIFETIME ago are dropped. */
+  shortLived: boolean;
 }
 
 /** A store of a feature (see StoreBinding). */
-function binding<T extends object>(singleton: T, create: () => T, collection: string, reads: ReadonlyArray<keyof T & string>, writes: ReadonlyArray<keyof T & string>): StoreBinding {
-  return { singleton, create, collection, reads, writes };
+function binding<T extends object>(singleton: T, create: () => T, collection: string, reads: ReadonlyArray<keyof T & string>, writes: ReadonlyArray<keyof T & string>, shortLived: boolean): StoreBinding {
+  return { singleton, create, collection, reads, writes, shortLived };
 }
 
 const stores = {
-  par: binding(parStore, () => new InMemoryPushedAuthorizationRequestStore(), 'pushedRequests', [], ['save', 'consume']),
-  device: binding(deviceAuthorizationStore, () => new InMemoryDeviceAuthorizationStore(), 'deviceCodes', ['findByDeviceCode', 'findByUserCode'], ['save', 'update', 'delete', 'consume']),
-  ciba: binding(cibaAuthenticationRequestStore, createInMemoryCibaAuthenticationRequestStore, 'cibaRequests', ['findByAuthReqId', 'listPendingBySubject'], ['save', 'update', 'delete', 'consume']),
-  cibaLogin: binding(cibaLoginTransactionStore, createInMemoryCibaLoginTransactionStore, 'cibaLogins', ['findById'], ['save', 'update', 'delete']),
-  registration: binding(dynamicClientStore, () => new InMemoryDynamicallyRegisteredClientStore(), 'registeredClients', ['get', 'count'], ['save', 'delete']),
+  par: binding(parStore, () => new InMemoryPushedAuthorizationRequestStore(), 'pushedRequests', [], ['save', 'consume'], true),
+  device: binding(deviceAuthorizationStore, () => new InMemoryDeviceAuthorizationStore(), 'deviceCodes', ['findByDeviceCode', 'findByUserCode'], ['save', 'update', 'delete', 'consume'], true),
+  ciba: binding(cibaAuthenticationRequestStore, createInMemoryCibaAuthenticationRequestStore, 'cibaRequests', ['findByAuthReqId', 'listPendingBySubject'], ['save', 'update', 'delete', 'consume'], true),
+  cibaLogin: binding(cibaLoginTransactionStore, createInMemoryCibaLoginTransactionStore, 'cibaLogins', ['findById'], ['save', 'update', 'delete'], true),
+  registration: binding(dynamicClientStore, () => new InMemoryDynamicallyRegisteredClientStore(), 'registeredClients', ['get', 'count'], ['save', 'delete'], false),
 };
 
 type StoreName = keyof typeof stores;
@@ -93,16 +104,35 @@ export class FeatureStores {
     for (const name of Object.keys(stores) as StoreName[]) this.delegates.set(name, stores[name].create());
   }
 
-  /** The stores of a workspace made again from its writes (none for a new workspace), each run at its own clock. */
+  /** The stores of a workspace made again from its writes (none for a new workspace), each run at its own clock; an error for a write of a store or a method this build does not have. */
   static async restore(writes: readonly FeatureWrite[] = []): Promise<FeatureStores> {
     const made = new FeatureStores([]);
     for (const write of writes) {
-      const store = made.delegates.get(write.store);
-      if (store === undefined || !stores[write.store].writes.includes(write.method)) throw new Error('Invalid feature store write.');
+      const store = Object.hasOwn(stores, write.store) ? made.delegates.get(write.store) : undefined;
+      if (store === undefined || !stores[write.store].writes.includes(write.method) || !Array.isArray(write.args)) throw new Error(`A write this OP's feature stores do not have (${String(write.store)}.${String(write.method)}).`);
       await atClock(write.at, () => methodOf(store, write.method)(...structuredClone(write.args)));
       made.writes.push(write);
     }
     return made;
+  }
+
+  /**
+   * Drop the writes of the records of the short-lived stores whose last
+   * write is older than FEATURE_WRITE_LIFETIME at a clock (the OP's, in
+   * Unix milliseconds): every write of such a record goes, so the writes
+   * left make again only records that may not have expired. The writes of
+   * the registered clients are kept.
+   */
+  prune(now: number): void {
+    const lastWritten = new Map<string, number>();
+    const recordOf = (write: FeatureWrite): string => JSON.stringify([write.store, keyOf(write.args) ?? null]);
+    for (const write of this.writes) {
+      if (keyOf(write.args) !== undefined) lastWritten.set(recordOf(write), Math.max(lastWritten.get(recordOf(write)) ?? write.at, write.at));
+    }
+    const kept = this.writes.filter((write) => !stores[write.store].shortLived || (lastWritten.get(recordOf(write)) ?? write.at) > now - FEATURE_WRITE_LIFETIME);
+    if (kept.length === this.writes.length) return;
+    this.writes.length = 0;
+    for (const write of kept) this.writes.push(write);
   }
 
   /**

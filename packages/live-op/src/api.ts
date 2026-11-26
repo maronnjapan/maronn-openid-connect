@@ -180,6 +180,13 @@ export interface LiveState {
   records: LiveRecord[];
   /** How many exchanges the workspace has recorded since it was made. */
   exchanges: number;
+  /**
+   * Why the workspace was started over without a reader asking for it (what
+   * its host kept could not be read, the OP's code or configuration changed,
+   * or what it held grew past what a workspace keeps), in Japanese for the
+   * reader; absent once it is reset.
+   */
+  notice?: string;
 }
 
 /**
@@ -244,3 +251,14 @@ export const MAX_EVENTS = 400_000;
 
 /** The most exchanges a workspace keeps; older ones are dropped, their summaries too. */
 export const MAX_EXCHANGES = 200;
+
+/**
+ * The most bytes of a body the live OP takes (64 KiB), a request it relays
+ * (`POST /__live/run`) included: a limit of the playground, which keeps
+ * what a workspace holds small, not one of the OP. A larger one is
+ * answered 413 before the OP runs.
+ */
+export const REQUEST_BODY_LIMIT = 64 * 1024;
+
+/** The most characters of a URL the live OP takes (16 KiB), a limit of the playground as REQUEST_BODY_LIMIT is. */
+export const REQUEST_URL_LIMIT = 16 * 1024;

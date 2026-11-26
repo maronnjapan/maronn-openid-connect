@@ -170,6 +170,30 @@ export function liveClient(issuer: string, clientId: string): LiveClient | undef
   return liveClients(issuer).find((client) => client.clientId === clientId);
 }
 
+/** A string's FNV-1a hash, as 13 base-36 digits (the hash recorder.ts names a probe table by). */
+function hashOf(text: string): string {
+  let high = 0x811c9dc5;
+  let low = 0x01000193;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    high = Math.imul(high ^ code, 0x01000193) >>> 0;
+    low = Math.imul(low ^ (code + index), 0x811c9dc5) >>> 0;
+  }
+  return (high.toString(36) + low.toString(36)).padStart(13, '0');
+}
+
+/**
+ * A hash of what the live OP of an issuer is configured with: its
+ * environment but the signing key (each workspace has its own), and the
+ * users who sign in. A workspace kept by an OP configured otherwise holds
+ * the clients and users of that configuration, so it is not opened again
+ * (workspace.ts).
+ */
+export function liveConfigurationHash(issuer: string): string {
+  const { OIDC_SIGNING_KEY_JWK: _key, ...environment } = liveEnvironment(issuer, { kid: '' });
+  return hashOf(JSON.stringify({ environment, users: LIVE_USERS }));
+}
+
 /**
  * The environment of apps/hono's server app for the live OP of an issuer,
  * signing with a key of the workspace (a private RS256 JWK, kept by the

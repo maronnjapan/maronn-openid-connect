@@ -295,6 +295,7 @@ OP は Istanbul の計数が上がるたびにその場所（プローブ）を�
 - 動かせるのは hono の OP で、Express と Fastify の地図も同じエンドポイントの処理なので hono の OP で動かす。Next.js の OP は動かせない
 - 地図の OP は全機能オンで動く。オフの機能があるときはその旨を出す（オフの機能のステップを通るリクエストは、生成した OP とは道筋が変わる）
 - ページが地図の OP に接続できない（OP の無いところから配信した）ときは、リクエストの欄に「地図の OP に接続できません。…」と出す
+- 地図の OP は遊び場としての制限を持つ。ボディは 64 KiB、URL は 16 KiB までで、超えると 413 を返す。ワークスペースの状態が 8 MiB を超えたとき、保存していた状態を読めないとき、OP のコードか設定が変わったときは、ワークスペースを作り直して理由を状態の `notice` に残す（[docs/design-live-op.md](docs/design-live-op.md) の「制限」）
 - 地図のデータを作った OP と、いま動いている OP のプローブの表が違う（`map.json` の `liveOp.probes`）ときは、道筋がずれうるので、地図のデータを作り直すように警告する
 
 ### 呼び出しの中へ
@@ -565,7 +566,6 @@ pnpm run build            # データを作って dist/ にビルドし、テス
 pnpm run check            # public/data の地図の出力だけを検査する
 pnpm run changes:draft    # MAP_BASE からの差分で変更メモの雛形を書く
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
-pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらないが、地図の OP は本番の Durable Object に届く）
 pnpm run worker:dev       # デプロイするのと同じ Worker（ビルドした dist/ と、Durable Object の地図の OP）を wrangler dev で手元に動かす（http://127.0.0.1:8787）
 pnpm test                 # ページの純粋な部分（トレース、決定、図、フローの再生、ハッシュ、変更の札、検索）のテストと、Worker のテスト（worker/*.test.mjs）
 ```
@@ -614,6 +614,7 @@ pnpm --filter @maronn-openid-connect/map request:check "$(cat samples/hono-cloud
 
 PR ごとに Worker を分けるのは、地図の OP のワークスペースが Durable Object にあるからである（[docs/design-live-op.md](docs/design-live-op.md) の「ホスト」）。
 同じ Worker の Worker Preview（`wrangler preview`）やバージョンのプレビュー URL は、本番の Durable Object の名前空間に届き、そこでは main の OP が動く。
+そのため `wrangler.jsonc` は `preview_urls` を `false` にし、`wrangler versions upload` でプレビューを作るスクリプトも置かない。
 `map-preview.mjs` は、`wrangler.jsonc` が Durable Object を持たないときだけ Worker Preview `pr-<番号>` を作り（失敗したら PR ごとの Worker へ `wrangler deploy` する）、閉じたときは Preview と Worker の両方を消す。
 どの場合も Actions の artifact（`oidc-provider-map`）にビルド結果が残る。
 `dist/` を静的に配信すれば同じ地図が見られるが、地図の OP は動かないので、リクエストの欄は「地図の OP に接続できません」と出す。

@@ -5,7 +5,10 @@
  * or Vite's dev server that passes the OP's paths on to the Node host), so
  * the calls go to the page's own origin, and the browser's own requests to
  * the OP (a login in another tab) reach the same workspace by its cookie.
- * Only fetch and the types: it imports nothing of the OP.
+ * Every call names the workspace in WORKSPACE_HEADER, the only way the
+ * control API takes it, and every POST sends a JSON body, the only kind it
+ * takes (relay.ts refusalOf). Only fetch and the types: it imports nothing
+ * of the OP.
  */
 import {
   LIVE_PREFIX,

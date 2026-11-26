@@ -5,23 +5,26 @@
  *
  * A request for a path of the OP or of its control API (isLivePath: the
  * paths wrangler.jsonc's `assets.run_worker_first` sends here) goes to the
- * Durable Object of its workspace (workspaceIdOf: the header or the cookie
- * the page sets, else the public workspace), one per workspace and origin;
- * any other is answered by the assets (the page, or index.html for a path
- * of the page).
+ * Durable Object of its workspace (workspaceIdOf: the header the page sets,
+ * or for the OP's paths the cookie, else the public workspace), one per
+ * workspace and origin, unless it is refused before (refusalOf: past the
+ * playground's limits, or a control request another site made); any other
+ * is answered by the assets (the page, or index.html for a path of the
+ * page).
  *
  * The Durable Object (LiveOpWorkspace, SQLite-backed, so it runs on the
  * Workers Free plan) holds the workspace: the OP opened on what its storage
  * keeps (storage.ts) with the origin of its requests as the issuer, so the
  * OP's pages and redirects point back where the browser is. A workspace
  * that receives no request for IDLE_LIFETIME (7 days) is deleted by its
- * alarm.
+ * alarm; only a request the workspace answered moves the alarm on, so one
+ * that cannot be opened is not kept alive by the requests it fails.
  *
  * The module exports only what the runtime takes from a Worker's entry: the
  * handler and the Durable Object class.
  */
 import { DurableObject } from 'cloudflare:workers';
-import { answerLive, isLivePath, LiveWorkspace, workspaceIdOf } from '@maronn-openid-connect/live-op';
+import { answerLive, EXCHANGE_HEADER, isLivePath, LiveWorkspace, refusalOf, workspaceIdOf } from '@maronn-openid-connect/live-op';
 import { DurableStorage } from './storage.js';
 
 /** The bindings of the Worker (wrangler.jsonc). */
@@ -56,15 +59,24 @@ export class LiveOpWorkspace extends DurableObject<Env> {
   /** When the last request came, since the Durable Object was started. */
   private lastRequestAt = 0;
 
-  /** Answer a request for the OP or its control API on the workspace. */
+  /**
+   * Answer a request for the OP or its control API on the workspace, and
+   * move the alarm on when the workspace answered it: a response of the
+   * OP (it names its exchange) or of the control API that is not a
+   * failure.
+   */
   override async fetch(request: Request): Promise<Response> {
+    let response: Response;
     try {
-      this.lastRequestAt = Date.now();
-      await this.keepAlive();
-      return await answerLive(await this.workspaceOf(request), request);
+      response = await answerLive(await this.workspaceOf(request), request);
     } catch (error) {
       return failure(error);
     }
+    if (response.status < 500 || response.headers.has(EXCHANGE_HEADER)) {
+      this.lastRequestAt = Date.now();
+      await this.keepAlive().catch(() => undefined);
+    }
+    return response;
   }
 
   /** Delete the workspace when it has received no request for IDLE_LIFETIME; move the alarm on when it has. */
@@ -105,10 +117,10 @@ export class LiveOpWorkspace extends DurableObject<Env> {
   }
 }
 
-/** The Worker's handler: the live paths to the workspace's Durable Object, every other to the assets. */
+/** The Worker's handler: the live paths to the workspace's Durable Object (but those refused before, which reach none), every other to the assets. */
 async function fetchOfWorker(request: Request, env: Env): Promise<Response> {
   if (!isLivePath(new URL(request.url).pathname)) return env.ASSETS.fetch(request);
-  return env.LIVE_OP.get(env.LIVE_OP.idFromName(workspaceNameOf(request))).fetch(request);
+  return refusalOf(request) ?? env.LIVE_OP.get(env.LIVE_OP.idFromName(workspaceNameOf(request))).fetch(request);
 }
 
 export default { fetch: fetchOfWorker };

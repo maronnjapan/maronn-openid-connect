@@ -11,6 +11,9 @@ const {
   LiveWorkspace,
   OP_ROUTES,
   PUBLIC_WORKSPACE,
+  refusalOf,
+  REQUEST_BODY_LIMIT,
+  REQUEST_URL_LIMIT,
   WORKSPACE_COOKIE,
   WORKSPACE_HEADER,
   workspaceIdOf,
@@ -103,7 +106,76 @@ describe('answerLive', () => {
   });
 });
 
+describe('answerLive refusals', () => {
+  /** A token request of client-1 with a body of some bytes. */
+  function tokenRequest(bytes: number, init: RequestInit = {}): Request {
+    const body = `grant_type=client_credentials&pad=${'a'.repeat(Math.max(0, bytes - 34))}`;
+    return at('/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body, ...init });
+  }
+
+  it('should answer 413 for a body or a URL past the playground\'s limits, before the OP runs', async () => {
+    const workspace = await LiveWorkspace.open('relay-limits', ISSUER);
+    const within = await answerLive(workspace, tokenRequest(REQUEST_BODY_LIMIT));
+    const body = await answered(await answerLive(workspace, tokenRequest(REQUEST_BODY_LIMIT + 1)));
+    const chunks = [new TextEncoder().encode('grant_type=client_credentials&pad='), new Uint8Array(REQUEST_BODY_LIMIT).fill(97)];
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) { const chunk = chunks.shift(); if (chunk === undefined) controller.close(); else controller.enqueue(chunk); } });
+    // A body sent without a Content-Length: read up to the limit.
+    const streamed = await answerLive(workspace, at('/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: stream, duplex: 'half' } as RequestInit));
+    const url = await answerLive(workspace, at(`/authorize?state=${'s'.repeat(REQUEST_URL_LIMIT)}`));
+    const relayed = await answered(await answerLive(workspace, control('run', { request: { method: 'GET', path: `/authorize?state=${'s'.repeat(REQUEST_URL_LIMIT)}`, headers: [] } })));
+    expect(within.status).toBe(401);
+    expect(body.status).toBe(413);
+    expect(body.body['error_description']).toContain('地図の OP（遊び場）の制限');
+    expect(body.body['error_description']).toContain('OP（apps/hono）の制限ではありません');
+    expect(streamed.status).toBe(413);
+    expect(url.status).toBe(413);
+    expect(relayed.status).toBe(413);
+    expect(workspace.summaries()).toHaveLength(1);
+  });
+
+  it('should refuse a control request that changes something unless the map\'s own page could have sent it', async () => {
+    const workspace = await LiveWorkspace.open('relay-csrf', ISSUER);
+    await answerLive(workspace, at('/.well-known/jwks.json'));
+    const post = (headers: Record<string, string>): Request => at(`${LIVE_PREFIX}reset`, { method: 'POST', headers, body: '{}' });
+    const refused = [
+      await answerLive(workspace, post({ 'content-type': 'text/plain' })),
+      await answerLive(workspace, post({ 'content-type': 'application/x-www-form-urlencoded' })),
+      await answerLive(workspace, post({})),
+      await answerLive(workspace, post({ 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' })),
+      await answerLive(workspace, post({ 'content-type': 'application/json', 'sec-fetch-site': 'same-site' })),
+      await answerLive(workspace, post({ 'content-type': 'application/json', [WORKSPACE_HEADER]: 'not a workspace!' })),
+    ];
+    const kept = workspace.summaries().length;
+    const taken = [
+      await answerLive(workspace, post({ 'content-type': 'application/json; charset=utf-8', 'sec-fetch-site': 'same-origin' })),
+      await answerLive(workspace, post({ 'content-type': 'application/json', 'sec-fetch-site': 'none' })),
+      await answerLive(workspace, post({ 'content-type': 'application/json' })),
+    ];
+    const callback = await answerLive(workspace, at(`${LIVE_PREFIX}callback?code=abc`, { headers: { 'sec-fetch-site': 'cross-site' } }));
+    expect(refused.map((response) => response.status)).toEqual([415, 415, 415, 403, 403, 400]);
+    expect(kept).toBe(1);
+    expect(taken.map((response) => response.status)).toEqual([200, 200, 200]);
+    expect(workspace.summaries()).toEqual([]);
+    expect(callback.status).toBe(200);
+  });
+
+  it('should refuse before a host finds the workspace, from the URL and the headers alone', () => {
+    expect(refusalOf(at('/token', { method: 'POST', headers: { 'content-length': String(REQUEST_BODY_LIMIT + 1) } }))?.status).toBe(413);
+    expect(refusalOf(at(`/authorize?state=${'s'.repeat(REQUEST_URL_LIMIT)}`))?.status).toBe(413);
+    expect(refusalOf(at('/token', { headers: { [WORKSPACE_HEADER]: '../public' } }))?.status).toBe(400);
+    expect(refusalOf(at(`${LIVE_PREFIX}clock`, { method: 'POST', headers: { 'content-type': 'text/plain' } }))?.status).toBe(415);
+    expect(refusalOf(at(`${LIVE_PREFIX}state`, { headers: { 'sec-fetch-site': 'cross-site' } }))).toBeUndefined();
+    // The OP's own paths are the OP's: a form another site posts to /token is the OP's to answer.
+    expect(refusalOf(at('/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site' } }))).toBeUndefined();
+  });
+});
+
 describe('workspaceIdOf', () => {
+  it('should take the control API\'s workspace from the header only, never from the cookie', () => {
+    expect(workspaceIdOf(at(`${LIVE_PREFIX}reset`, { method: 'POST', headers: { cookie: `${WORKSPACE_COOKIE}=reader_2` } }))).toBe(PUBLIC_WORKSPACE);
+    expect(workspaceIdOf(at(`${LIVE_PREFIX}state`, { headers: { [WORKSPACE_HEADER]: 'reader_1', cookie: `${WORKSPACE_COOKIE}=reader_2` } }))).toBe('reader_1');
+  });
+
   it('should read the workspace from the header, then the cookie, and fall back to the public one', () => {
     expect(workspaceIdOf(at('/token', { headers: { [WORKSPACE_HEADER]: 'reader_1' } }))).toBe('reader_1');
     expect(workspaceIdOf(at('/token', { headers: { [WORKSPACE_HEADER]: 'reader_1', cookie: `${WORKSPACE_COOKIE}=reader_2` } }))).toBe('reader_1');

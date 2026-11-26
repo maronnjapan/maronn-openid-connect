@@ -45,6 +45,7 @@
     "bindings": [{ "name": "LIVE_OP", "class_name": "LiveOpWorkspace" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveOpWorkspace"] }],
-  "preview_urls": true,
+  // No preview URL of a version: it would run that version's OP on the Durable Objects of production (see above).
+  "preview_urls": false,
   "workers_dev": true
 }

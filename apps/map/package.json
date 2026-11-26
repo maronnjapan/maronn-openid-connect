@@ -15,7 +15,6 @@
     "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
     "worker:dev": "wrangler dev --ip ${HOST:-127.0.0.1} --port ${PORT:-8787}",
     "deploy": "pnpm run build && wrangler deploy",
-    "deploy:preview": "pnpm run build && wrangler versions upload",
     "request:check": "pnpm --filter @maronn-openid-connect/test-catalog build && node scripts/check-request-scenario.mjs",
     "test": "vitest run && pnpm run test:worker",
     "test:worker": "node --test \"worker/*.test.mjs\"",

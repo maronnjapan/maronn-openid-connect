@@ -14,9 +14,32 @@
  * - `GET /__live/callback`: the page a browser that signed in comes back to
  *
  * A host (apps/map/worker on Workers, node.ts in Node) finds the workspace
- * of a request (workspaceIdOf) and hands it the request.
+ * of a request (workspaceIdOf) and hands it the request. Before anything
+ * runs, a request is refused (refusalOf, answerLive):
+ *
+ * - 413 for a body past REQUEST_BODY_LIMIT or a URL past REQUEST_URL_LIMIT,
+ *   the playground's limits, not the OP's
+ * - 400 for a WORKSPACE_HEADER that is not a workspace id
+ * - for a request to the control API that changes something (not GET or
+ *   HEAD), 403 when the browser says another site made it
+ *   (`Sec-Fetch-Site` other than `same-origin` or `none`), and 415 for a
+ *   body that is not `application/json`, which a form of another site
+ *   cannot send; the control API takes its workspace from the header only,
+ *   which such a form cannot set either, so another site cannot reset or
+ *   drive a reader's workspace
  */
-import { EXCHANGE_HEADER, isWorkspaceId, LIVE_PREFIX, PUBLIC_WORKSPACE, WORKSPACE_COOKIE, WORKSPACE_HEADER, type GrantPlan, type LiveRequest } from './api.js';
+import {
+  EXCHANGE_HEADER,
+  isWorkspaceId,
+  LIVE_PREFIX,
+  PUBLIC_WORKSPACE,
+  REQUEST_BODY_LIMIT,
+  REQUEST_URL_LIMIT,
+  WORKSPACE_COOKIE,
+  WORKSPACE_HEADER,
+  type GrantPlan,
+  type LiveRequest,
+} from './api.js';
 import { runGrant } from './grant.js';
 import { probeTable } from './recorder.js';
 import { prepareRecipe } from './scenario-runtime.js';
@@ -60,10 +83,18 @@ export function isLivePath(pathname: string): boolean {
   return OP_ROUTES.some((route) => (route.endsWith('/*') ? pathname.startsWith(route.slice(0, -1)) : pathname === route));
 }
 
-/** The workspace a request names: by WORKSPACE_HEADER, else by WORKSPACE_COOKIE, else PUBLIC_WORKSPACE. A name that is not a workspace id is the public one. */
+/**
+ * The workspace a request names: by WORKSPACE_HEADER; for a path of the OP
+ * (a browser's own request, a login page opened in a tab), else by
+ * WORKSPACE_COOKIE; else PUBLIC_WORKSPACE. The control API does not read the
+ * cookie, which a browser sends with a request another site makes it send.
+ * A cookie that is not a workspace id names the public workspace; a header
+ * that is not one is refused (refusalOf), and named the public one here.
+ */
 export function workspaceIdOf(request: Request): string {
   const named = request.headers.get(WORKSPACE_HEADER);
   if (named !== null) return isWorkspaceId(named) ? named : PUBLIC_WORKSPACE;
+  if (new URL(request.url).pathname.startsWith(LIVE_PREFIX)) return PUBLIC_WORKSPACE;
   for (const part of (request.headers.get('cookie') ?? '').split(';')) {
     const [name, ...value] = part.trim().split('=');
     if (name === WORKSPACE_COOKIE) {
@@ -79,6 +110,58 @@ function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
+/** The answer to a request past the playground's limits (413). */
+function tooLarge(): Response {
+  return json({
+    error: 'content_too_large',
+    error_description: `地図の OP（遊び場）の制限を超えています。ボディは ${REQUEST_BODY_LIMIT / 1024} KiB、URL は ${REQUEST_URL_LIMIT / 1024} KiB までです。OP（apps/hono）の制限ではありません。`,
+  }, 413);
+}
+
+/**
+ * The answer to a request refused before anything runs (see the module
+ * comment), from its URL and headers alone; undefined for one taken. A
+ * host calls it before it finds the workspace, and answerLive again, with
+ * the body read too (a body sent without a Content-Length).
+ */
+export function refusalOf(request: Request): Response | undefined {
+  const contentLength = Number(request.headers.get('content-length') ?? '0');
+  if (request.url.length > REQUEST_URL_LIMIT || contentLength > REQUEST_BODY_LIMIT) return tooLarge();
+  const named = request.headers.get(WORKSPACE_HEADER);
+  if (named !== null && !isWorkspaceId(named)) {
+    return json({ error: 'invalid_request', error_description: `${WORKSPACE_HEADER} must be a workspace id: 1 to 64 letters, digits, - and _.` }, 400);
+  }
+  const method = request.method.toUpperCase();
+  if (!new URL(request.url).pathname.startsWith(LIVE_PREFIX) || method === 'GET' || method === 'HEAD') return undefined;
+  const site = request.headers.get('sec-fetch-site');
+  if (site !== null && site !== 'same-origin' && site !== 'none') {
+    return json({ error: 'forbidden', error_description: `The control API takes requests of the map's own pages only (Sec-Fetch-Site: ${site}).` }, 403);
+  }
+  const mediaType = (request.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
+  if (mediaType !== 'application/json') {
+    return json({ error: 'unsupported_media_type', error_description: `A ${method} of the control API takes a JSON body (content-type: application/json).` }, 415);
+  }
+  return undefined;
+}
+
+/** Whether a request's body is larger than REQUEST_BODY_LIMIT: read from a copy (the request is read whole after), no further than the limit. */
+async function bodyTooLarge(request: Request): Promise<boolean> {
+  const copy = request.body === null ? null : request.clone().body;
+  if (copy === null) return false;
+  const reader = copy.getReader();
+  let length = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return false;
+    length += value.byteLength;
+    if (length > REQUEST_BODY_LIMIT) {
+      // Not awaited: the copy is a branch of a tee, whose cancel settles only once the request's own branch is cancelled too.
+      reader.cancel().catch(() => undefined);
+      return true;
+    }
+  }
+}
+
 /** The body of a control request as JSON; an error for one that is not. */
 async function bodyOf(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -92,6 +175,9 @@ async function bodyOf(request: Request): Promise<Record<string, unknown>> {
 
 /** A control request that cannot be done, answered 400. */
 class LiveRequestError extends Error {}
+
+/** A control request past the playground's limits (a request to relay whose URL is past REQUEST_URL_LIMIT), answered 413. */
+class LiveLimitError extends Error {}
 
 /** Whether a value is a request a reader wrote (LiveRequest). */
 function isLiveRequest(value: unknown): value is LiveRequest {
@@ -129,6 +215,7 @@ async function control(workspace: LiveWorkspace, request: Request, url: URL): Pr
   if (route === 'run' && method === 'POST') {
     const body = await bodyOf(request);
     if (!isLiveRequest(body['request'])) throw new LiveRequestError('request must be { method, path, headers, body? } with a path of the OP.');
+    if (new URL(body['request'].path, workspace.issuer).href.length > REQUEST_URL_LIMIT) throw new LiveLimitError();
     const { exchange } = await workspace.send(body['request'], 'relay');
     return json(exchange);
   }
@@ -170,16 +257,20 @@ async function control(workspace: LiveWorkspace, request: Request, url: URL): Pr
 
 /**
  * Answer a request a host gave a workspace: the control API, or the OP
- * (recorded, its response naming the exchange). A control request that
- * cannot be done is answered 400 with what is wrong.
+ * (recorded, its response naming the exchange). A request refused before
+ * anything runs (refusalOf, a body past the limit) is answered so, and a
+ * control request that cannot be done 400 with what is wrong.
  */
 export async function answerLive(workspace: LiveWorkspace, request: Request): Promise<Response> {
+  const refused = refusalOf(request) ?? ((await bodyTooLarge(request)) ? tooLarge() : undefined);
+  if (refused !== undefined) return refused;
   const url = new URL(request.url);
   if (url.pathname.startsWith(LIVE_PREFIX)) {
     try {
       return await control(workspace, request, url);
     } catch (error) {
       if (error instanceof LiveRequestError) return json({ error: 'invalid_request', error_description: error.message }, 400);
+      if (error instanceof LiveLimitError) return tooLarge();
       return json({ error: 'server_error', error_description: error instanceof Error ? error.message : String(error) }, 500);
     }
   }

@@ -487,6 +487,38 @@ describe('lintSource', () => {
       assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
     });
 
+    it('should read the names after a backtick that no backtick closes, as in a regex literal', () => {
+      const source = route(
+        [
+          '    // [respond] Respond',
+          '    if (/`/.test(request.url)) return oauthError(request);',
+          '    return dispatchCiba(request);',
+        ],
+        [
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
+    it('should read the names after a /* that nothing closes, as in a regex literal', () => {
+      const source = route(
+        [
+          '    // [respond] Respond',
+          '    if (/\\/*/.test(request.url)) return oauthError(request);',
+          '    return dispatchCiba(request);',
+        ],
+        [
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
     it('should not count the names of a multi-line import as a use outside the blocks', () => {
       const source = route(
         [

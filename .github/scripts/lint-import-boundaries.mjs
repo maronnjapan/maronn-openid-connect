@@ -191,11 +191,14 @@ function identifiersIn(lines) {
 }
 
 /**
- * The code with its comments, string literals and the text of its template
- * literals blanked, read once from the start (as packages/cli's
- * extract/source.ts does): the expressions of `${…}` stay, since a name they
- * read is read, and the // of a URL in a template is no comment. Regex
- * literals are not told apart.
+ * The code with its comments, its string literals and the text of its
+ * template literals blanked, read once from the start (as packages/cli's
+ * extract/source.ts does): the expressions of `${…}` stay (the strings and
+ * templates in them are read by the same rules), and the // of a URL in a
+ * string or a template is no comment. An opener that nothing closes (a quote
+ * on its line, a backtick or a /* before the end, as in the regex literals
+ * /['"]/ and /`/) opens nothing, and the code after it is read: a name missed
+ * would hide a violation. Regex literals are not told apart otherwise.
  */
 function codeWithoutLiterals(code) {
   let result = '';
@@ -206,45 +209,42 @@ function codeWithoutLiterals(code) {
   while (index < code.length) {
     const char = code[index];
     const next = code[index + 1];
+    // Where the comment, the literal or the text of a template that starts here ends; undefined for code.
+    let end;
     if (char === '/' && next === '*') {
-      const end = code.indexOf('*/', index + 2);
-      index = end === -1 ? code.length : end + 2;
-      result += ' ';
+      const close = code.indexOf('*/', index + 2);
+      end = close === -1 ? undefined : close + 2;
     } else if (char === '/' && next === '/') {
-      const end = code.indexOf('\n', index);
-      index = end === -1 ? code.length : end;
-      result += ' ';
+      const close = code.indexOf('\n', index);
+      end = close === -1 ? code.length : close;
     } else if (char === "'" || char === '"') {
-      const end = endOfQuoted(code, index, char);
-      // A quote with no closing one on its line (in a regex literal such as /['"]/) starts no string.
-      if (end === undefined) {
-        result += char;
-        index += 1;
-      } else {
-        index = end;
-        result += ' ';
-      }
+      end = endOfQuoted(code, index, char);
     } else if (char === '`') {
-      index = endOfTemplateText(code, index + 1, substitutions, depth);
-      result += ' ';
+      end = endOfTemplateText(code, index + 1, substitutions, depth);
     } else if (char === '}' && substitutions.length > 0 && substitutions[substitutions.length - 1] === depth) {
       // The `}` that closes a `${` goes back to the text of its template literal.
       substitutions.pop();
-      index = endOfTemplateText(code, index + 1, substitutions, depth);
-      result += ' ';
-    } else {
-      if (char === '{') depth += 1;
-      if (char === '}') depth -= 1;
+      end = endOfTemplateText(code, index + 1, substitutions, depth) ?? index + 1;
+    } else if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+    }
+    if (end === undefined) {
       result += char;
       index += 1;
+    } else {
+      result += ' ';
+      index = end;
     }
   }
   return result;
 }
 
 /**
- * The index after the string literal that starts at start, skipping escaped
- * quotes; undefined when no quote closes it on its line.
+ * The index after the string literal that opens at start, past escaped
+ * characters; undefined when no quote closes it on its line (a quote in a
+ * regex literal such as /['"]/ opens no string).
  */
 function endOfQuoted(code, start, quote) {
   let index = start + 1;
@@ -256,8 +256,9 @@ function endOfQuoted(code, start, quote) {
 
 /**
  * The index after the text of a template literal from start: after its
- * closing backtick, or after a `${` (whose depth goes onto substitutions, so
- * the matching } returns to the text).
+ * closing backtick, or after a `${`, whose depth goes onto substitutions so
+ * that the matching } returns to the text. Undefined when the code ends
+ * first (a backtick in a regex literal such as /`/ opens no template).
  */
 function endOfTemplateText(code, start, substitutions, depth) {
   let index = start;
@@ -274,7 +275,7 @@ function endOfTemplateText(code, start, substitutions, depth) {
       index += 1;
     }
   }
-  return index;
+  return undefined;
 }
 
 /**

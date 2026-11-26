@@ -1190,6 +1190,7 @@ interface EndpointCase {
   conditions?: CaseCondition[]; // 選択が決める向き（⑤-11-a）。いつも書く
   examples?: CaseExample[];     // 通ったリクエスト（⑤-11-b）。三つまで。無ければ置かない
   exampleCount?: number;        // 通ったリクエストの数（examples の数以上）
+  scenarios?: string[];         // ビルドが地図の OP で動かしたリクエストのケースのうち、この道筋を通ったもの（RequestScenario.id、ケースの順）。無ければ置かない
 }
 interface CaseCondition {
   step?: string; // 決定のあるステップの id
@@ -1210,7 +1211,8 @@ interface CaseCondition {
 - `packages/test-catalog/src/cases.ts`：`endpointCases`、`waysOf`、`casesOf`、`conditionsOf`、`failureTests`、`expectsFailure`、`errorClassOf`、`caseId`
 - `packages/test-catalog/src/examples.ts`：`requestsByEndpoint`、`attachExamples`、`takes`、`seenSide`、`nodeRan`、`exampleOf`、`responseError`
 - `packages/test-catalog/src/sent.ts`：`sentLine`、`lineCode`、`recordedRequests`、`requestParams`、`authOf`、`pathOf`
-- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`、`rootRequests`、`withRun`（カードの `recorded`）
+- `packages/test-catalog/src/build.ts`：`buildTests` の、ケースを書く段、`caseRequests`、`withRun`（カードの `recorded`）
+- `packages/test-catalog/src/live.ts`：`runLiveCases`、`followCases`、`rootRequests`（リクエストのケースを地図の OP で動かし、トレースを根の木でたどって、通った道筋を `scenarios` と地図の `requests/<hash>.json` に書く）
 - `packages/map-analysis/src/walk.ts`：`walkFlow`、`stepsOf`、`assumedSide`
 
 ### ⑤-11-a ケースの条件

@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite';
-// By its path: the tests page's package does not depend on the live OP's; Vite bundles this file with the config.
-import { liveOp } from '../../packages/live-op/src/vite.ts';
+import { liveOp } from '@maronn-openid-connect/live-op/vite';
 
 // Relative asset paths: CI copies the build into the map's dist/tests/, so the
 // page is served under a subpath of the map's Worker and fetches its data from

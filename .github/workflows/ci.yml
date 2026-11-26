@@ -302,9 +302,13 @@ jobs:
           MAP_PULLS: ${{ github.workspace }}/work/pulls.json
         run: pnpm run build:map
 
+      # 地図の Worker（apps/map/worker）は地図の OP（apps/hono のソース）を読み込むので、その型検査は
+      # test ジョブと同じく、ビルドしたライブラリ（core、experimental、google-login）の型を読む。
       - name: Check map types and layout
         if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
-        run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
+        run: |
+          pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login run build
+          pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
 
       # 地図の E2E（apps/map/e2e）。ビルドした地図のページ（dist/）で地図の Worker を wrangler dev で動かし、
       # 本番と同じ Workers のランタイム（ワークスペースごとの Durable Object）の地図の OP に、ブラウザで地図を開いて

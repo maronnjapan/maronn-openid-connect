@@ -201,11 +201,14 @@ export function identifiersIn(code: string): Set<string> {
 }
 
 /**
- * コメント、文字列リテラル、テンプレートリテラルの文字の部分を空白にしたコードを返す。
- *
- * テンプレートリテラルの `${…}` の中はコードなので残し、その中の文字列やテンプレートリテラルも同じ規則で読む。
- * コメントとリテラルは先頭から一度だけ走査して見分けるので、テンプレートリテラルの中の `//`（`https://${host}` など）をコメントと取り違えない。
- * 正規表現リテラルは見分けない。
+ * The code with its comments, its string literals and the text of its
+ * template literals blanked, read once from the start: the expressions of
+ * `${…}` stay (the strings and templates in them are read by the same
+ * rules), and the // of a URL in a string or a template is no comment. An
+ * opener that nothing closes (a quote on its line, a backtick or a /* before
+ * the end, as in the regex literals /['"]/ and /`/) opens nothing, and the
+ * code after it is read: a name missed would let the generator drop what is
+ * still read. Regex literals are not told apart otherwise.
  */
 function codeWithoutLiterals(code: string): string {
   let result = '';
@@ -216,47 +219,42 @@ function codeWithoutLiterals(code: string): string {
   while (index < code.length) {
     const char = code[index] as string;
     const next = code[index + 1];
+    // Where the comment, the literal or the text of a template that starts here ends; undefined for code.
+    let end: number | undefined;
     if (char === '/' && next === '*') {
-      const end = code.indexOf('*/', index + 2);
-      index = end === -1 ? code.length : end + 2;
-      result += ' ';
+      const close = code.indexOf('*/', index + 2);
+      end = close === -1 ? undefined : close + 2;
     } else if (char === '/' && next === '/') {
-      const end = code.indexOf('\n', index);
-      index = end === -1 ? code.length : end;
-      result += ' ';
+      const close = code.indexOf('\n', index);
+      end = close === -1 ? code.length : close;
     } else if (char === "'" || char === '"') {
-      const end = endOfQuoted(code, index, char);
-      // A quote with no closing one on its line (in a regex literal such as /['"]/) starts no string.
-      if (end === undefined) {
-        result += char;
-        index += 1;
-      } else {
-        index = end;
-        result += ' ';
-      }
+      end = endOfQuoted(code, index, char);
     } else if (char === '`') {
-      index = endOfTemplateText(code, index + 1, substitutions, depth);
-      result += ' ';
+      end = endOfTemplateText(code, index + 1, substitutions, depth);
     } else if (char === '}' && substitutions.length > 0 && substitutions[substitutions.length - 1] === depth) {
       // The `}` that closes a `${` goes back to the text of its template literal.
       substitutions.pop();
-      index = endOfTemplateText(code, index + 1, substitutions, depth);
-      result += ' ';
-    } else {
-      if (char === '{') depth += 1;
-      if (char === '}') depth -= 1;
+      end = endOfTemplateText(code, index + 1, substitutions, depth) ?? index + 1;
+    } else if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+    }
+    if (end === undefined) {
       result += char;
       index += 1;
+    } else {
+      result += ' ';
+      index = end;
     }
   }
   return result;
 }
 
 /**
- * 引用符で始まる文字列リテラルの終わりの次の位置を返す。
- *
- * エスケープした引用符は飛ばす。
- * 同じ行に閉じる引用符が無ければ `undefined` を返す（正規表現リテラルの中の引用符などで、文字列は始まっていない）。
+ * The index after the string literal that opens at start, past escaped
+ * characters; undefined when no quote closes it on its line (a quote in a
+ * regex literal such as /['"]/ opens no string).
  */
 function endOfQuoted(code: string, start: number, quote: string): number | undefined {
   let index = start + 1;
@@ -267,11 +265,12 @@ function endOfQuoted(code: string, start: number, quote: string): number | undef
 }
 
 /**
- * テンプレートリテラルの文字の部分を読み進め、その終わりか `${` の次の位置を返す。
- *
- * `${` で止まったときは、その深さを `substitutions` に積む（対応する `}` で文字の部分に戻るため）。
+ * The index after the text of a template literal from start: after its
+ * closing backtick, or after a `${`, whose depth goes onto substitutions so
+ * that the matching } returns to the text. Undefined when the code ends
+ * first (a backtick in a regex literal such as /`/ opens no template).
  */
-function endOfTemplateText(code: string, start: number, substitutions: number[], depth: number): number {
+function endOfTemplateText(code: string, start: number, substitutions: number[], depth: number): number | undefined {
   let index = start;
   while (index < code.length) {
     const char = code[index];
@@ -286,5 +285,5 @@ function endOfTemplateText(code: string, start: number, substitutions: number[],
       index += 1;
     }
   }
-  return index;
+  return undefined;
 }

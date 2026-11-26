@@ -33,4 +33,36 @@ describe('dropUnusedBindings', () => {
 
     expect(dropUnusedBindings(source)).toBe(source);
   });
+
+  // Without its declaration line, the rest of a template literal that the line opens has no opening backtick.
+  it('should keep a binding whose declaration line opens a multi-line template literal that a later block reads', () => {
+    const source = [
+      'export async function POST(request: Request) {',
+      '  // [describe-request] Describe the request',
+      '  const message = `first ${request.url}',
+      'second`;',
+      '  // [respond] Respond',
+      '  return new Response(message);',
+      '}',
+      '',
+    ].join('\n');
+
+    expect(dropUnusedBindings(source)).toBe(source);
+  });
+
+  it('should keep a binding that a later block reads after a backtick in a regex literal', () => {
+    const source = [
+      'export async function POST(request: Request) {',
+      '  // [read-body] Read the body',
+      '  const raw = await request.text();',
+      '  // [check-url] Check the URL',
+      '  if (/`/.test(request.url)) throw new Error();',
+      '  // [respond] Respond',
+      '  return new Response(raw);',
+      '}',
+      '',
+    ].join('\n');
+
+    expect(dropUnusedBindings(source)).toBe(source);
+  });
 });

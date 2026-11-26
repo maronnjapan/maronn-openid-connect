@@ -40,4 +40,17 @@ describe('identifiersIn', () => {
   it('should not take the // of a URL in a template literal for a comment', () => {
     expect([...identifiersIn('const url = `https://${host}/token`; next(url);')]).toEqual(['const', 'url', 'host', 'next']);
   });
+
+  // A regex literal is not told apart from code: an opener in it that nothing closes must not hide the code after it.
+  it('should read the names after a backtick that no backtick closes, as in a regex literal', () => {
+    expect([...identifiersIn('if (/`/.test(raw)) return reject(raw);')]).toEqual(['if', 'raw', 'return', 'reject']);
+  });
+
+  it('should read the names after a /* that nothing closes, as in a regex literal', () => {
+    expect([...identifiersIn('if (/\\/*/.test(raw)) return reject(raw);')]).toEqual(['if', 'raw', 'return', 'reject']);
+  });
+
+  it('should read the code after a template literal whose text no backtick closes after a ${…}', () => {
+    expect([...identifiersIn('const label = `a ${first} b\nreturn second;')]).toEqual(['const', 'label', 'first', 'b', 'return', 'second']);
+  });
 });

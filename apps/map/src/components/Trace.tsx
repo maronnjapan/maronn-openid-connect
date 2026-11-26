@@ -6,7 +6,7 @@ import type { DiffHunk, FlowStep, FrameChange, MapData, Selection, StepMark, Tre
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, boxOf, frameDiagram, markOfBox, type Diagram, type DiagramGroup, type DiagramNode } from '../lib/diagram';
 import { chartWay, flowChart } from '../lib/flowchart';
-import { callsToEnter, sceneDuration, scenesOf, walkTrace, withoutDeepest, type FlowWalk, type Scene } from '../lib/playback';
+import { callsToEnter, sceneDuration, scenarioOf, scenesOf, walkTrace, withoutDeepest, type FlowWalk, type Scene } from '../lib/playback';
 import {
   changedIdsOf,
   childFrame,
@@ -36,7 +36,8 @@ import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
 import { FlowChart, type ChartPlay } from './FlowChart';
 import { FlowDiagram } from './FlowDiagram';
-import { FlowPlayer, usePlayback } from './FlowPlayer';
+import { FlowPlayer, usePlayback, type Playback } from './FlowPlayer';
+import { FlowRequest } from './FlowRequest';
 import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
 import { RequestCase, useRequestCase } from './RequestCase';
@@ -320,10 +321,16 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   );
   const playback = usePlayback(scenes);
   const scene: Scene | undefined = flowOn ? scenes[playback.at] : undefined;
+  // The call the reader asked to go into in the flow view (a scene's 中に入る, a card's 中の流れを見る), by the key of its frame:
+  // the playback moves to its first scene once the walk goes there (its tree loaded).
+  const [entering, setEntering] = useState<string | null>(null);
+  // A frame the reader went into that the request does not go through: the stage shows its chart alone, without the playback, until the playback moves.
+  const [peek, setPeek] = useState<string | null>(null);
+  const peeking = flowOn && peek !== null && known.has(peek) ? peek : undefined;
 
-  // The frame in focus for the diagram: in the flow view, the frame of the scene shown; else the one the trace asks for (the frame of the row selected last, a call opened from
-  // the diagram, the end of a ready-made choice) when the outline shows it, else the nearest frame above it that the outline shows.
-  const focusKey = scene !== undefined && known.has(scene.frame) ? scene.frame : known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order);
+  // The frame in focus for the diagram: in the flow view, the frame the reader looks into, else the frame of the scene shown; else the one the trace asks for (the frame of the row
+  // selected last, a call opened from the diagram, the end of a ready-made choice) when the outline shows it, else the nearest frame above it that the outline shows.
+  const focusKey = peeking ?? (scene !== undefined && known.has(scene.frame) ? scene.frame : known.has(state.focus) && order.has(state.focus) ? state.focus : shownFrame(state.focus, order));
   // Once every frame has loaded, a frame the outline no longer shows (a feature turned off took its call out) gives the focus to the frame above it, in the hash too.
   useEffect(() => {
     if (!loading && root !== undefined && focusKey !== state.focus) onState({ ...state, focus: focusKey }, state);
@@ -467,10 +474,15 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const goTo = (key: string) => {
     if (more.current !== null) more.current.open = false;
     if (scene !== undefined) {
-      // The flow view shows the frame of its scene: going up to a frame goes back to the last scene the request was in it.
+      // The flow view shows the frame of its scene: going up to a frame goes back to the last scene the request was in it;
+      // a frame the request does not go through (one the reader looked into below another) shows its chart alone.
       const back = [...scenes].reverse().find((item) => item.index <= scene.index && item.frame === key);
       playback.play(false);
-      if (back !== undefined) playback.go(back.index);
+      setEntering(null);
+      if (back !== undefined) {
+        setPeek(null);
+        playback.go(back.index);
+      } else if (key !== '' && known.has(key)) setPeek(key);
       return;
     }
     onState({ ...state, focus: key });
@@ -812,11 +824,11 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   // Where the playback is on the chart: the node of the scene, and, when it just moved one scene forward, the node the token comes from:
   // the scene before in this frame (the call it came back up from included), else the start of the frame it came into.
   const play = useMemo((): ChartPlay | undefined => {
-    if (scene === undefined || way === undefined) return undefined;
+    if (scene === undefined || way === undefined || peeking !== undefined) return undefined;
     const before = playback.from === undefined ? undefined : [...scenes.slice(0, scene.index)].reverse().find((item) => item.frame === scene.frame);
     const from = playback.from === undefined ? undefined : (before?.shape ?? ((way.nodes.get('start') ?? []).includes(scene.index) ? 'start' : undefined));
     return { way, at: scene.index, shape: scene.shape, from, tone: scene.tone, duration: sceneDuration(playback.speed) * 0.7 };
-  }, [scene, scenes, way, playback.from, playback.speed]);
+  }, [scene, scenes, way, peeking, playback.from, playback.speed]);
   /** The words a scene is named by: those of the box that shows it (the label of a catch for a region), else those of its node. */
   const sceneTitle = (item: Scene): { text: string; code: boolean } => {
     const shown = flowDiagrams.get(item.frame);
@@ -832,6 +844,69 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const partings = useMemo(() => (apart === undefined ? undefined : partingLines(apart, scenes, frames.trees, data)), [apart, scenes, frames.trees, data]);
   // The calls on the way the playback could still go into: those of functions with a frame that the trace has not opened.
   const enterable = useMemo(() => (walked === undefined ? [] : callsToEnter(walked, hasFrame).filter((key) => !state.open.includes(key))), [walked, hasFrame, state.open]);
+  // The playback as the player and the request move it: moving it (or playing) ends a look into a frame the request does not go through, and a wait to go into one.
+  const player: Playback = {
+    ...playback,
+    go: (index) => {
+      setPeek(null);
+      setEntering(null);
+      playback.go(index);
+    },
+    play: (on) => {
+      if (on) {
+        setPeek(null);
+        setEntering(null);
+      }
+      playback.play(on);
+    },
+  };
+  /**
+   * Go into the frame of a call, by its key (a scene's 中に入る, a card's
+   * 中の流れを見る): the frame opens, so the request goes through it, and
+   * the playback moves to its first scene once the walk goes there; a call
+   * the request does not make shows its frame's chart alone (below).
+   */
+  const enter = (key: string) => {
+    playback.play(false);
+    setPeek(null);
+    setEntering(key);
+    if (!state.open.includes(key)) onState({ ...state, open: [...state.open, key] });
+  };
+  /** Come out of the frame of a call: the request steps over it again, and a look into a frame below it ends. */
+  const leave = (key: string) => {
+    if (peek !== null && withinFrame(peek, key)) setPeek(null);
+    if (entering !== null && withinFrame(entering, key)) setEntering(null);
+    onState({ ...state, open: state.open.filter((candidate) => !withinFrame(candidate, key)) });
+  };
+  // The frame gone into: its first scene once the walk goes there; once its tree is read without the walk going there, the request does not make the call on this way,
+  // and the stage shows the frame's chart alone (a tree that could not be read says so there).
+  useEffect(() => {
+    if (entering === null) return;
+    if (!flowOn) {
+      setEntering(null);
+      return;
+    }
+    const first = scenes.find((item) => item.frame === entering);
+    if (first !== undefined) {
+      setEntering(null);
+      playback.go(first.index);
+      return;
+    }
+    const id = known.get(entering);
+    if (id !== undefined && state.open.includes(entering) && (frames.trees.has(id) || frames.failed.has(id))) {
+      setEntering(null);
+      setPeek(entering);
+    }
+  }, [entering, flowOn, scenes, known, state.open, frames.trees, frames.failed, playback]);
+  // A look into a frame ends with the flow view, and when its call is no longer open.
+  useEffect(() => {
+    if (peek !== null && (!flowOn || !known.has(peek))) setPeek(null);
+  }, [peek, flowOn, known]);
+  // The ready-made way the flow plays, by its index among the ways offered: none while the playback follows a request.
+  const followingRun = requestRun.state?.status === 'done' && requestRun.state.follow;
+  const picked = followingRun ? -1 : scenarioOf(flowSelections, state.choices[0], state.way);
+  // The trace shows the way of the request followed, every frame it goes into loaded: the playback may move along it.
+  const settled = requestRun.shows && !loading;
   // Escape gives the page back from a flow view that fills the screen.
   useEffect(() => {
     if (!maximized || !flowOn) return undefined;
@@ -901,79 +976,129 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   ) : undefined;
 
   if (flowOn) {
+    // The name of the frame the reader looks into, which the request does not go through.
+    const peekName = peeking === undefined ? undefined : crumbs[crumbs.length - 1]?.label;
     return (
       <div className={`trace-area flow-area${maximized ? ' maximized' : ''}`}>
         <div className="work flow-work">
-          {root === undefined || walked === undefined ? (
-            <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
-          ) : (
-            <FlowPlayer
-              data={data}
-              selections={flowSelections}
-              state={state}
-              onState={onState}
-              enabled={enabled}
-              walked={walked}
-              scenes={scenes}
-              playback={playback}
-              requests={requests}
-              requestCase={requestCase}
-              generatedCase={generatedCase}
-              endpoints={allEndpoints}
-              caseTitle={(id) => scenarios.find((candidate) => candidate.id === id)?.title}
-              onPrepareCase={prepareCase}
-              onOpenExchange={openExchange}
-              onOpenExchangeId={openExchangeId}
-              framework={framework}
-              titleOf={sceneTitle}
-              endpoint={endpoint}
-              hasFrame={hasFrame}
-              loading={loading}
-              run={requestRun}
-              partings={partings}
-              ending={runEnding}
-              unrunnable={scenario?.external ?? (live ? undefined : '地図の中でリクエストを実行できるのは、Hono・Express・Fastify の OP です。')}
-              live={live}
-              idle={notRan ? 'このリクエストではエンドポイントの処理は動いていません。再生する道筋はありません（下の応答を見てください）。' : undefined}
-              deeper={enterable.length}
-              canFold={state.open.length > 0}
-              onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}
-              onFold={() => onState({ ...state, open: withoutDeepest(state.open) })}
-              onEnter={(key) => onState({ ...state, open: [...new Set([...state.open, key])] })}
-              onLeave={(key) => onState({ ...state, open: state.open.filter((candidate) => !withinFrame(candidate, key)) })}
-              onOpenCode={onOpenCode}
-              onOutline={leaveFlow}
-            />
-          )}
+          <div className="flow-side">
+            {requestCase}
+            {root === undefined || walked === undefined ? null : (
+              <FlowRequest
+                data={data}
+                requests={requests}
+                // The ready-made way the reader picked: the cases that take it are offered; a request run shows the way it took instead.
+                selection={requestRun.state !== undefined || picked === -1 ? undefined : flowSelections[picked]}
+                generatedCase={generatedCase}
+                origin={requestRun.origin}
+                assumed={walked.assumed.length}
+                framework={framework}
+                endpoint={endpoint === undefined || endpoint.request === undefined ? undefined : { id: endpoint.id, ...endpoint.request }}
+                endpoints={allEndpoints}
+                unrunnable={scenario?.external ?? (live ? undefined : '地図の中でリクエストを実行できるのは、Hono・Express・Fastify の OP です。')}
+                live={live}
+                featuresOff={data.features.some((feature) => !enabled.has(feature.id))}
+                run={requestRun.state}
+                replay={requestRun.replay}
+                previewing={requestRun.previewing}
+                previewProblem={requestRun.previewProblem}
+                onPreview={requestRun.show}
+                onRelease={requestRun.release}
+                partings={partings}
+                onScene={(index) => {
+                  player.play(false);
+                  player.go(index);
+                }}
+                ending={runEnding}
+                caseTitle={(id) => scenarios.find((candidate) => candidate.id === id)?.title}
+                onRun={(draft, from) => {
+                  player.play(false);
+                  requestRun.run(draft, from);
+                }}
+                onFollow={requestRun.follow}
+                onPrepareCase={prepareCase}
+                onOpenExchange={openExchange}
+                onOpenExchangeId={openExchangeId}
+              />
+            )}
+          </div>
           <div className="flow-stage">
             <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
               {crumbTrail}
-              {crumbs.length <= 2 ? <span className="note crumb-hint">流れる線がこのリクエストの通った道、濃い箱がいまの場所、破線がこの先です。</span> : null}
-              <button type="button" className="code-button flow-max" aria-pressed={maximized} onClick={() => setMaximized(!maximized)} title={maximized ? '元の大きさに戻す（Esc）' : '図と再生を画面いっぱいに広げる'}>
-                {maximized ? '元の大きさ' : '画面いっぱい'}
-              </button>
+              {peekName === undefined && crumbs.length <= 2 ? <span className="note crumb-hint">流れる線がこのリクエストの通った道、濃い箱がいまの場所、破線がこの先です。</span> : null}
+              <span className="flow-view-actions">
+                <button type="button" className="code-button" onClick={() => leaveFlow()} title="フローを閉じて、処理の流れを行の一覧（アウトライン）で読む">
+                  アウトライン
+                </button>
+                <button type="button" className="code-button flow-max" aria-pressed={maximized} onClick={() => setMaximized(!maximized)} title={maximized ? '元の大きさに戻す（Esc）' : '図と再生を画面いっぱいに広げる'}>
+                  {maximized ? '元の大きさ' : '画面いっぱい'}
+                </button>
+              </span>
             </nav>
-            {diagram !== undefined && chart !== undefined ? (
-              <FlowChart
-                chart={chart}
-                diagram={diagram}
-                play={play}
-                openOn={scene?.node.id ?? null}
-                reveal={scene === undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
-                label="リクエストの流れのフローチャート"
-                marks={marks}
-                onScene={(index) => {
-                  // A node picked on the stage moves the playback to the scene that reaches it.
-                  playback.play(false);
-                  playback.go(index);
-                }}
-                onOpen={(box) => {
-                  if (box.opens !== undefined) onState({ ...state, open: [...new Set([...state.open, childFrame(focusKey, box.opens.node)])] });
-                }}
-                onToggleStep={toggleStep}
-              />
+            {root === undefined || walked === undefined ? (
+              <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
             ) : (
-              <p className="note pad">読み込んでいます…</p>
+              <FlowPlayer
+                data={data}
+                selections={flowSelections}
+                state={state}
+                onState={onState}
+                enabled={enabled}
+                walked={walked}
+                scenes={scenes}
+                playback={player}
+                picked={picked}
+                titleOf={sceneTitle}
+                endpoint={endpoint}
+                hasFrame={hasFrame}
+                loading={loading}
+                run={requestRun}
+                partings={partings}
+                settled={settled}
+                ending={runEnding}
+                idle={notRan ? 'このリクエストではエンドポイントの処理は動いていません。再生する道筋はありません（「リクエスト」の応答を見てください）。' : undefined}
+                deeper={enterable.length}
+                canFold={state.open.length > 0}
+                onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}
+                onFold={() => onState({ ...state, open: withoutDeepest(state.open) })}
+                onEnter={enter}
+                onLeave={leave}
+                onOpenCode={onOpenCode}
+                onOutline={leaveFlow}
+              >
+                {peekName !== undefined ? (
+                  <p className="flow-peek" role="status">
+                    <span>
+                      このリクエストは <code className="mono">{peekName}</code> を通りません。中の流れだけを見ています。
+                    </span>
+                    <button type="button" className="link small" onClick={() => setPeek(null)}>
+                      再生の場所に戻る
+                    </button>
+                  </p>
+                ) : null}
+                {diagram !== undefined && chart !== undefined ? (
+                  <FlowChart
+                    chart={chart}
+                    diagram={diagram}
+                    play={play}
+                    openOn={peeking !== undefined ? null : (scene?.node.id ?? null)}
+                    reveal={scene === undefined || peeking !== undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
+                    label="リクエストの流れのフローチャート"
+                    marks={marks}
+                    onScene={(index) => {
+                      // A node picked on the stage moves the playback to the scene that reaches it.
+                      player.play(false);
+                      player.go(index);
+                    }}
+                    onOpen={(box) => {
+                      if (box.opens !== undefined) enter(childFrame(focusKey, box.opens.node));
+                    }}
+                    onToggleStep={toggleStep}
+                  />
+                ) : (
+                  <p className="note pad flow-canvas-note">{entering !== null || loading ? '読み込んでいます…' : frames.failed.get(focusId) !== undefined ? `読み込めませんでした: ${frames.failed.get(focusId)}` : '読み込んでいます…'}</p>
+                )}
+              </FlowPlayer>
             )}
           </div>
         </div>

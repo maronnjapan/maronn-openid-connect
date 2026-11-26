@@ -605,18 +605,26 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .wiring-search { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .wiring-search input { min-width: 0; width: min(100%, 320px); padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--fg); font: inherit; }
 
-/* ---- the flow view: the diagram as the stage, a request played through it, and beside it what happens in the scene shown */
+/* ---- the flow view: on one side the request (written, sent, and what it answered), on the other the stage: the chart of the frame shown,
+   the player above it (the way, the controls, what the request followed answered) and what happens in the scene shown below it */
 .flow-open { flex: none; color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .flow-area { background: var(--surface); }
 .flow-area.maximized { position: fixed; inset: 0; z-index: 30; }
-.work.flow-work { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); }
-.flow-player { min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 12px; border-right: 1px solid var(--line); background: var(--surface); }
-.flow-scene { flex: 0 1 auto; min-height: 96px; max-height: 32%; overflow: auto; }
+.work.flow-work { grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); }
+.flow-side { min-height: 0; min-width: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 24px; border-right: 1px solid var(--line); background: var(--surface); }
 .flow-stage { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .flow-stage .crumbs { flex: none; padding: 8px 12px; background: var(--surface); }
+.flow-player { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.flow-scene { flex: 0 1 auto; min-height: 0; max-height: 32%; overflow: auto; padding: 8px 12px 10px; border-top: 1px solid var(--line); background: var(--surface); }
+.flow-scene .scene-card { gap: 6px; padding: 8px 12px; }
+@media (max-height: 800px) { .flow-scene { max-height: 26%; } }
+/* The header of the endpoint above the flow takes less of the height the stage needs. */
+.screen:has(.flow-area) .screen-head { padding-top: 10px; padding-bottom: 8px; }
+.flow-canvas-note { flex: 1; }
 .flow-label { color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-.flow-controls { display: flex; flex-direction: column; gap: 8px; }
-.flow-way { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.flow-controls { display: flex; flex-direction: column; gap: 6px; }
+.flow-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; }
+.flow-way { flex: 1 1 240px; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .flow-way select { flex: 1; min-width: 0; height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; }
 .request-case { padding: 12px 24px; max-width: var(--reading-width); margin-inline: auto; border-bottom: 1px solid var(--line); }
 .request-case .flow-way select { max-width: 27rem; }
@@ -626,21 +634,30 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .request-case-detail summary { cursor: pointer; }
 .request-case-detail details[open] > :not(summary) { margin-top: 6px; }
 .request-case-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
-.flow-player > .request-case { flex: 0 0 auto; max-height: 26%; width: 100%; padding: 0 0 8px; overflow: auto; }
-.flow-buttons { display: flex; align-items: center; gap: 4px; }
+.flow-side > .request-case { flex: none; width: 100%; padding: 0 0 8px; }
+.flow-buttons { flex: none; display: flex; align-items: center; gap: 4px; }
 .flow-buttons .icon { width: 34px; height: 34px; font-size: 14px; border-color: var(--line); }
 .flow-buttons .icon:disabled, .flow-play:disabled { opacity: 0.4; cursor: default; }
-.flow-play { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.flow-play { flex: 1; min-width: 7.5em; height: 34px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .flow-play[aria-pressed="true"] { background: var(--surface); color: var(--accent); }
 .flow-speed { flex: none; }
 .flow-speed button { padding: 3px 7px; font-size: 12px; }
-.flow-scrub { width: 100%; margin: 0; accent-color: var(--accent); }
-.flow-depth { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.flow-position { flex: 1 1 180px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.flow-scrub { flex: 1; min-width: 0; width: 100%; margin: 0; accent-color: var(--accent); }
+.flow-count { flex: none; min-width: 4.5em; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.flow-depth { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .flow-depth .code-button:disabled { opacity: 0.45; cursor: default; }
-.flow-max { margin-left: auto; flex: none; }
+/* What the request the playback follows answered and how its way ends, on one line: an edit shows here as it lands. */
+.flow-now { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; font-size: 12.5px; }
+.flow-now-ending { text-align: left; overflow-wrap: anywhere; }
+.flow-now-pending { color: var(--muted); }
+.flow-view-actions { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.flow-max { flex: none; }
 .flow-stage .crumbs { align-items: center; }
 .flow-stage .crumb-hint { margin-left: 0; }
 .flow-max[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+/* The frame the reader went into that the request does not go through: its chart alone, said on a bar above it. */
+.flow-peek { flex: none; margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--accent-soft); color: var(--fg); font-size: 12.5px; }
 
 .scene-card { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--surface); }
 .scene-card.tone-error { border-left-color: var(--danger); }
@@ -669,10 +686,10 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 .scene-inside ol { margin: 4px 0 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 2px; }
 .scene-inside li { overflow-wrap: anywhere; }
 
-.flow-foot { margin: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.line-actions { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; }
 
-/* The request of the way played: what a test's code actually sent that took it, in its own scroll below the scene. */
-.flow-request { flex: 1 1 0; min-height: 160px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+/* The request the flow follows, written and sent on the live OP, with what it answered: read down the side, in the side's one scroll. */
+.flow-request { flex: none; display: flex; flex-direction: column; gap: 8px; }
 .flow-request-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; }
 .flow-request-head h4 { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
 .req-nav { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
@@ -886,11 +903,12 @@ a.code-button { display: inline-block; color: inherit; text-decoration: none; }
 @keyframes chart-arrive-text-error { from { fill: var(--danger); } to { fill: var(--accent-fg); } }
 
 @media (max-width: 899px) {
-  .work.flow-work { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 48dvh) auto; overflow: auto; }
-  .flow-stage { order: -1; border-bottom: 1px solid var(--line); }
-  .flow-player { border-right: 0; overflow: visible; }
+  /* One column read down: the stage (the chart at a fixed height), then the request; each as tall as what it holds. */
+  .work.flow-work { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-content: start; overflow: auto; }
+  .flow-stage { order: -1; min-height: auto; border-bottom: 1px solid var(--line); }
+  .flow-stage .diagram-viewport { flex: none; height: max(260px, 48dvh); }
+  .flow-side { min-height: auto; border-right: 0; overflow: visible; }
   .flow-scene { flex: none; max-height: none; overflow: visible; }
-  .flow-request { flex: none; overflow: visible; }
   .flow-stage .crumbs { min-height: max(64px, calc(env(safe-area-inset-top, 0px) + 56px)); padding-left: max(64px, calc(env(safe-area-inset-left, 0px) + 60px)); }
   .flow-stage .crumb-hint { display: none; }
   .flow-buttons .icon, .flow-play, .flow-way select { height: 44px; }

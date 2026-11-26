@@ -254,4 +254,18 @@ describe('takenSelections', () => {
     expect(endingSelection(SELECTIONS, walk)?.target).toBe('s0t1.s0t0.s0');
     expect(takenSelections(SELECTIONS, walk).map((selection) => selection.target)).toEqual(['s0t1.s0t0.s0']);
   });
+
+  it('should end by the failure way of the same error from the same function when no way names the throw itself', () => {
+    const walk = followTrace(FAILED, ROOT, SOURCES).walk!;
+    const other = { ...SELECTIONS[0]!, target: 's0t1.s0t0.s9' };
+
+    expect(endingSelection([other, ...SELECTIONS.slice(1)], walk)?.target).toBe('s0t1.s0t0.s9');
+  });
+
+  it('should not end by a failure a catch below the root took', () => {
+    const walk = { stops: [...followTrace(FAILED, ROOT, SOURCES).walk!.stops].map((stop) => (stop.event === 'catches' ? { ...stop, depth: 1 } : stop)) };
+
+    expect(endingSelection(SELECTIONS, walk)?.target).toBe('s0h0');
+  });
 });
+

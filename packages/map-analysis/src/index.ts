@@ -9,7 +9,7 @@ export { buildMap, plain, removeStale, writeHashed, type BuildContext, type Buil
 export { changesMarkdown, changeTargets, collectChanges, diffLines, git, hunksOf, KIND_ORDER, KIND_WORDS, LINKS_PLACE, parseNameStatus, pullRequestOf, targetLabels, touchedLines, type ChangedFile, type ChangeResult } from './changes.js';
 export { codeIndexOf } from './code-index.js';
 export { changeBrief, changeNamed, changesFor, entryKey, entryOf, functionBrief, functionsNamed, keyOf, keyOfInput, listBrief, namesPull, omittedWords, placeOf, sharingNumber, unifiedHunk, type BriefMap } from './history-brief.js';
-export { checkLinks, checkMap, uncoveredLines, type CheckResult, type LinkCheck, type MapMetrics } from './check.js';
+export { caseFaults, checkLinks, checkMap, uncoveredLines, type CaseExpectation, type CheckResult, type LinkCheck, type MapMetrics } from './check.js';
 export { readLinks, usesOf, type AliasCache, type LinkInput } from './symbols.js';
 export { countWords, diffTrees, expressionChanges, nodeWords, normalCode, placeHunks } from './diff.js';
 export { noteName, writeDraft, type DraftOptions, type DraftResult } from './draft.js';
@@ -31,4 +31,6 @@ export { buildTree, ends, nodesOf } from './tree.js';
 export { assumedSide, FAILS, stepsOf, walkFlow, type FlowWalk, type WalkEvent, type WalkOptions, type WalkStop } from './walk.js';
 // The reading of a measured request against the trees: shared with the page too (`@maronn-openid-connect/map-analysis/observe`).
 export { BOTH, FrameLocator, GOES, locate, nodeRan, placesOf, RequestRun, seenDecisions, seenSide, throughTries, type Located, type Place, type RanInFile, type RanRequest, type RunSources } from './observe.js';
+// The reading of a request traced on the live OP: shared with the page too (`@maronn-openid-connect/map-analysis/traced`); the build of the map runs the cases with it.
+export { endingSelection, followTrace, FrameCatalog, RequestTrace, takenSelections, treeAtKey, walkMismatches, type FollowedTrace, type Invocation, type TraceProbes, type TraceRun, type WalkMismatch } from './traced.js';
 export type * from './model.js';

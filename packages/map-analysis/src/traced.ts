@@ -504,16 +504,33 @@ function within(key: string, target: string): boolean {
 }
 
 /**
- * The ready-made way a walk ended by: for a failure, the way of the throw
- * the walk reached; else the way of the end of the root it reached (its
- * return), or for an end no way names, the way into the innermost step the
- * end is in (a step that answers itself). Undefined for none.
+ * The ready-made way a walk ended by. For a failure, the throw whose
+ * failure reached the root: the last `throw` before the root's catch took
+ * it (or before the walk failed out of the root); a throw a catch below
+ * took is not one, unless that catch throws again (its own `throw` is then
+ * the one). Its way is the failure way of that throw, else the failure way
+ * of the same error from the same function (the map offers one way for
+ * each error a function throws). Else the way of the end of the root it
+ * reached (its return), or for an end no way names, the way into the
+ * innermost step the end is in (a step that answers itself). Undefined for
+ * none.
  */
-export function endingSelection(selections: readonly Selection[], walk: Pick<FlowWalk, 'stops'>): Selection | undefined {
-  const thrown = walk.stops.find((stop) => stop.event === 'throws');
-  if (thrown !== undefined) {
-    const key = thrown.frame === '' ? thrown.node.id : `${thrown.frame}.${thrown.node.id}`;
-    return selections.find((selection) => selection.kind === 'failure' && selection.target === key);
+export function endingSelection(selections: readonly Selection[], walk: Pick<FlowWalk, 'stops'> & Partial<Pick<FlowWalk, 'outcome'>>): Selection | undefined {
+  let pending: FlowWalk['stops'][number] | undefined;
+  let failed: FlowWalk['stops'][number] | undefined;
+  for (const stop of walk.stops) {
+    if (stop.event === 'throws') pending = stop;
+    else if (stop.event === 'catches' && pending !== undefined) {
+      if (stop.depth === 0) failed = pending;
+      pending = undefined;
+    }
+  }
+  if (walk.outcome === 'fails' && pending !== undefined) failed = pending;
+  if (failed !== undefined) {
+    const key = failed.frame === '' ? failed.node.id : `${failed.frame}.${failed.node.id}`;
+    const failures = selections.filter((selection) => selection.kind === 'failure');
+    return failures.find((selection) => selection.target === key)
+      ?? failures.find((selection) => selection.failure?.from === failed?.tree && failed?.node.error !== undefined && selection.failure.error === failed.node.error);
   }
   const end = [...walk.stops].reverse().find((stop) => stop.depth === 0 && (stop.event === 'returns' || stop.event === 'ends'));
   if (end === undefined) return undefined;
@@ -528,7 +545,7 @@ export function endingSelection(selections: readonly Selection[], walk: Pick<Flo
  * and every way into a step whose node the walk went through. A way of a
  * change is not one a request takes.
  */
-export function takenSelections(selections: readonly Selection[], walk: Pick<FlowWalk, 'stops'>): Selection[] {
+export function takenSelections(selections: readonly Selection[], walk: Pick<FlowWalk, 'stops'> & Partial<Pick<FlowWalk, 'outcome'>>): Selection[] {
   const keys = walk.stops.map((stop) => (stop.frame === '' ? stop.node.id : `${stop.frame}.${stop.node.id}`));
   const ending = endingSelection(selections, walk);
   return selections.filter((selection) => selection === ending || (selection.kind === 'step' && keys.some((key) => within(key, selection.target))));

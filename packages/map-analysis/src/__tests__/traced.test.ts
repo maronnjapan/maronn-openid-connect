@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, MapData, TreeNode } from '../model.js';
 import { FAILS, SKIPS, walkFlow, type FlowWalk } from '../walk.js';
-import { endingSelection, followTrace, FrameCatalog, handlersRoot, RequestTrace, takenSelections, walkMismatches, type Invocation, type TraceProbes } from '../traced.js';
+import { endingSelection, followTrace, FrameCatalog, handlersRoot, RequestTrace, sameRun, takenSelections, walkMismatches, type Invocation, type TraceProbes } from '../traced.js';
 import type { Selection } from '../model.js';
 
 // An endpoint that checks two values with the same function; the second
@@ -731,6 +731,187 @@ describe('followTrace: a root that has its handlers written in it', () => {
   });
 });
 
+// An endpoint two requests take the same way through, parting inside calls
+// that do not fail: a step looks the token up (found or not) through another
+// function, and the token is described (active or not).
+
+const TOKEN_PATH = 'apps/hono/src/introspect.ts';
+const TOKEN_TEXT = [
+  "app.post('/introspect', async (c) => {",
+  '  const resolved = await resolve(c);',
+  '  return respond(describe(resolved));',
+  '});',
+  'export async function resolve(c) {',
+  '  return lookup(c.token);',
+  '}',
+  'export function lookup(token) {',
+  "  if (token === 'known') return { token };",
+  '  return null;',
+  '}',
+  'export function describe(resolved) {',
+  '  if (resolved !== null) return active(resolved);',
+  '  return INACTIVE;',
+  '}',
+  'export function active(resolved) {',
+  '  return { active: true };',
+  '}',
+];
+
+/** The id of a function of introspect.ts. */
+const tokenFn = (name: string) => `hono:introspect.ts#${name}`;
+
+/** A tree of introspect.ts: the endpoint's body, or a function. */
+function tokenTree(name: string, lines: [number, number], nodes: TreeNode[]): FlowTree {
+  return { id: name.startsWith('endpoint:') ? name : tokenFn(name), name, signature: `${name}()`, file: 'hono:introspect.ts', lines, head: [lines[0], lines[0]], nodes };
+}
+
+const TOKEN_ROOT = tokenTree('endpoint:introspect', [1, 4], [call('s0', at(2), tokenFn('resolve')), node('s1', 'return', at(3), 'return respond(describe(resolved))', { pre: [call('s1i0', at(3), tokenFn('describe'))] })]);
+const TOKEN_TREES = [
+  TOKEN_ROOT,
+  tokenTree('resolve', [5, 7], [node('s0', 'return', at(6), 'return lookup(c.token)', { pre: [call('s0i0', at(6), tokenFn('lookup'))] })]),
+  tokenTree('lookup', [8, 11], [returnsIf('s0', 9, "if (token === 'known')"), node('s1', 'return', at(10), 'return null')]),
+  tokenTree('describe', [12, 15], [
+    node('s0', 'if', at(13), 'if (resolved !== null)', { form: 'guard', branches: [side('true', '成立', [node('s0t0', 'return', at(13), 'return active(resolved)', { pre: [call('s0t0i0', at(13), tokenFn('active'))] })]), side('false', '不成立')] }),
+    node('s1', 'return', at(14), 'return INACTIVE'),
+  ]),
+  tokenTree('active', [16, 18], [node('s0', 'return', at(17), 'return { active: true }')]),
+];
+const TOKENS = new Map(TOKEN_TREES.map((tree) => [tree.id, tree]));
+const TOKEN_CALLS: Record<string, string[]> = { resolve: ['lookup'], describe: ['active'] };
+const TOKEN_DATA: Pick<MapData, 'functions' | 'bodies' | 'sources'> = {
+  functions: Object.fromEntries(
+    TOKEN_TREES.filter((tree) => tree !== TOKEN_ROOT).map((tree) => [tree.id, { ...entry(tree.id, tree.lines[0], tree.lines[0], tree.lines[1], (TOKEN_CALLS[tree.name] ?? []).map(tokenFn)), source: { file: 'hono:introspect.ts', start: tree.lines[0], end: tree.lines[1] } }]),
+  ),
+  bodies: { 'endpoint:introspect': { id: 'endpoint:introspect', endpoint: 'introspect', name: 'POST /introspect', package: 'hono', module: 'introspect.ts', line: 1, summary: '', calls: ['resolve', 'describe'].map(tokenFn), sites: [], frame: '', source: { file: 'hono:introspect.ts', start: 1, end: 4 } } },
+  sources: { 'hono:introspect.ts': { path: TOKEN_PATH, url: '' } },
+};
+const TOKEN_CATALOG = new FrameCatalog(TOKEN_DATA);
+const TOKEN_SOURCES = { treeOf: (id: string) => TOKENS.get(id), pathOf: (file: string) => (file === 'hono:introspect.ts' ? TOKEN_PATH : undefined), linesOf: (path: string) => (path === TOKEN_PATH ? TOKEN_TEXT : undefined), frameAt: (path: string, line: number) => TOKEN_CATALOG.frameAt(path, line)?.id };
+
+/** The column of a word on a line of introspect.ts. */
+function tokenColumn(line: number, word: string): number {
+  const column = TOKEN_TEXT[line - 1]?.indexOf(word) ?? -1;
+  if (column < 0) throw new Error(`no ${word} on line ${line}`);
+  return column;
+}
+/** The probes of introspect.ts by name, as NAMED names those of steps.ts. */
+const TOKEN_NAMED: Record<string, TraceProbes['probes'][number]> = {};
+const TS = (name: string, line: number, word: string, end = 0) => (TOKEN_NAMED[name] = [0, 0, line, tokenColumn(line, word), end]);
+const TB = (name: string, line: number, side: number) => (TOKEN_NAMED[name] = [0, 1, line, tokenColumn(line, 'if'), 0, side, 2]);
+const TF = (name: string, line: number) => (TOKEN_NAMED[name] = [0, 2, line, 0, -1]);
+TF('introspect', 1); TS('introspect.resolved', 2, 'const'); TS('introspect.return', 3, 'return', 2);
+TF('resolve', 5); TS('resolve.return', 6, 'return', 2);
+TF('lookup', 8); TS('lookup.if', 9, 'if'); TB('lookup.true', 9, 0); TB('lookup.false', 9, 1); TS('lookup.found', 9, 'return', 2); TS('lookup.null', 10, 'return', 2);
+TF('describe', 12); TS('describe.if', 13, 'if'); TB('describe.true', 13, 0); TB('describe.false', 13, 1); TS('describe.active', 13, 'return', 2); TS('describe.inactive', 14, 'return', 2);
+TF('active', 16); TS('active.return', 17, 'return', 2);
+const TOKEN_TABLE: TraceProbes = { hash: 'token', files: [TOKEN_PATH], types: ['if'], names: [], probes: Object.values(TOKEN_NAMED) };
+const TOKEN_INDEX = new Map(Object.keys(TOKEN_NAMED).map((name, index) => [name, index]));
+
+/** A trace of introspect.ts from the names of the probes it ran, in order. */
+function tokenTrace(...names: string[]): RequestTrace {
+  return new RequestTrace({ probes: 'token', events: names.map((name) => TOKEN_INDEX.get(name) ?? -1) }, TOKEN_TABLE, TOKEN_CATALOG);
+}
+
+describe('followTrace: a request followed against the one it was edited from', () => {
+  const UP_TO_LOOKUP = ['introspect', 'introspect.resolved', 'resolve', 'resolve.return', 'lookup', 'lookup.if'];
+  const known = () => tokenTrace(...UP_TO_LOOKUP, 'lookup.true', 'lookup.found', 'introspect.return', 'describe', 'describe.if', 'describe.true', 'describe.active', 'active', 'active.return');
+  const unknown = () => tokenTrace(...UP_TO_LOOKUP, 'lookup.false', 'lookup.null', 'introspect.return', 'describe', 'describe.if', 'describe.false', 'describe.inactive');
+  /** The second check passes as the first did, and the endpoint answers. */
+  const passed = () => new RequestTrace({ probes: 'test', events: [0, 1, 2, 6, 7, 9, 11, 3, 6, 7, 9, 11, 4] }, TABLE, CATALOG);
+
+  it('should open no frame for two requests that only part below a root both take the same way, when followed against none', () => {
+    const followed = followTrace(unknown(), TOKEN_ROOT, TOKEN_SOURCES);
+
+    expect([followed.open, followed.apart, framesOf(followed.walk)]).toEqual([[], undefined, ['']]);
+  });
+
+  it('should open the frames of the calls the two ran another way, down to where their ways part, and name those frames in the order the walk comes to them', () => {
+    const followed = followTrace(unknown(), TOKEN_ROOT, TOKEN_SOURCES, { against: known() });
+
+    expect(followed.open).toEqual(['s0', 's1i0', 's0.s0i0']);
+    expect(followed.apart).toEqual([
+      { frame: 's0.s0i0', tree: tokenFn('lookup'), at: { node: 's0', side: 'false', other: 'true' } },
+      { frame: 's1i0', tree: tokenFn('describe'), at: { node: 's0', side: 'false', other: 'true' } },
+    ]);
+    expect(framesOf(followed.walk)).toEqual(['', 's0', 's0.s0i0', 's1i0']);
+    expect([followed.needs, followed.mismatches]).toEqual([[], []]);
+  });
+
+  it('should read the parting the other way round', () => {
+    const followed = followTrace(known(), TOKEN_ROOT, TOKEN_SOURCES, { against: unknown() });
+
+    expect(followed.open).toEqual(['s0', 's1i0', 's0.s0i0']);
+    expect(followed.apart?.map(({ frame, at }) => `${frame} ${at?.side} (${at?.other})`)).toEqual(['s0.s0i0 true (false)', 's1i0 true (false)']);
+  });
+
+  it('should open nothing more and name no parting for a request that takes the way of the other', () => {
+    const followed = followTrace(unknown(), TOKEN_ROOT, TOKEN_SOURCES, { against: unknown() });
+
+    expect([followed.open, followed.apart]).toEqual([[], []]);
+  });
+
+  it('should name in needs the tree it has to read below a call the two ran another way, and not open that call until it is given', () => {
+    const without = (missing: string) => ({ ...TOKEN_SOURCES, treeOf: (id: string) => (id === tokenFn(missing) ? undefined : TOKENS.get(id)) });
+    const first = followTrace(unknown(), TOKEN_ROOT, without('resolve'), { against: known() });
+    const second = followTrace(unknown(), TOKEN_ROOT, without('lookup'), { against: known() });
+
+    expect([first.open, first.needs, first.apart?.map(({ frame }) => frame)]).toEqual([['s1i0'], [tokenFn('resolve')], ['s1i0']]);
+    expect([second.open, second.needs, second.apart?.map(({ frame }) => frame)]).toEqual([['s1i0'], [tokenFn('lookup')], ['s1i0']]);
+  });
+
+  it('should not go into a call the two ran another way when the map reads every side below it the same', () => {
+    // The callback of all() ran once more: another run of the same statements, on the same sides.
+    const twice = stepsTrace('all', 'all.return', 'all.callback', 'all.callback.body', 'check', 'check.return', 'all.callback', 'all.callback.body', 'check', 'check.return');
+    const once = stepsTrace('all', 'all.return', 'all.callback', 'all.callback.body', 'check', 'check.return');
+    const caller = stepsTree('endpoint:list', [75, 77], [call('s0', at(76), fn('all'))]);
+    const callerRoot: FlowTree = { ...caller, id: fn('all'), nodes: treeOfStep('all').nodes };
+    const followed = followTrace(twice, callerRoot, STEPS_SOURCES, { against: once });
+
+    expect(sameRun(twice, twice.invocations[0] as Invocation, once, once.invocations[0] as Invocation)).toBe(false);
+    expect([followed.open, followed.apart]).toEqual([[], []]);
+  });
+
+  it('should name the frame that threw, not the frames above it that only went on another way after it', () => {
+    const followed = followTrace(FAILED, ROOT, SOURCES, { against: passed() });
+
+    expect(followed.open).toEqual(['s0t1', 's0t1.s0t0']);
+    expect(followed.apart).toEqual([{ frame: 's0t1', tree: CHECK, at: { node: 's0', side: 'true', other: 'false' } }]);
+  });
+
+  it('should name the root when the way parts in the root itself', () => {
+    // guard() evaluated check(b) in one request, and short-circuited before it in the other.
+    const evaluated = stepsTrace('guard', 'guard.if', 'guard.a', 'guard.check', 'check', 'check.return', 'guard.false', 'guard.return');
+    const shortCircuited = stepsTrace('guard', 'guard.if', 'guard.a', 'guard.false', 'guard.return');
+
+    expect(followTrace(evaluated, treeOfStep('guard'), STEPS_SOURCES, { against: shortCircuited }).apart).toEqual([{ frame: '', tree: fn('guard'), at: { node: 's0i0', other: SKIPS } }]);
+  });
+
+  it('should read the handlers of a root that has them written in it against each other', () => {
+    const POST = ['post', 'post.body', 'post.return'];
+    const sent = pageTrace(...POST, 'submitCode', 'submitCode.if', 'submitCode.false', 'submitCode.login', 'respond', 'respond.if', 'respond.false', 'respond.login');
+    const edited = pageTrace(...POST, 'submitCode', 'submitCode.if', 'submitCode.true', 'submitCode.error', 'respond', 'respond.if', 'respond.true', 'respond.error');
+    const followed = followTrace(edited, DEVICE_ROOT, PAGE_SOURCES, { against: sent });
+
+    expect(followed.open).toEqual(['s0c1s1i0', 's0c1s1i1']);
+    expect(followed.apart?.map(({ frame, at }) => `${frame} ${at?.node} ${at?.side} (${at?.other})`)).toEqual(['s0c1s1i0 s0 true (false)', 's0c1s1i1 s0 true (false)']);
+  });
+
+  it('should name the choice of handler when the two requests ran another handler of a root made of handlers', () => {
+    const submitted = new RequestTrace({ probes: 'test', events: [15] }, TABLE, CATALOG);
+    const prepared = new RequestTrace({ probes: 'test', events: [14] }, TABLE, CATALOG);
+
+    expect(followTrace(submitted, HANDLERS, SOURCES, { against: prepared }).apart).toEqual([{ frame: '', tree: 'endpoint:login', at: { node: 's0', side: 'c1', other: 'c0' } }]);
+    expect(followTrace(submitted, HANDLERS, SOURCES, { against: submitted }).apart).toEqual([]);
+  });
+
+  it('should not read a request against one of another build of the OP, nor against one that did not run the root', () => {
+    const otherBuild = new RequestTrace({ probes: 'other', events: known().run.events }, { ...TOKEN_TABLE, hash: 'other' }, TOKEN_CATALOG);
+
+    expect(followTrace(unknown(), TOKEN_ROOT, TOKEN_SOURCES, { against: otherBuild }).apart).toBeUndefined();
+    expect(followTrace(unknown(), TOKEN_ROOT, TOKEN_SOURCES, { against: tokenTrace() }).apart).toBeUndefined();
+  });
+});
+
 // A loop that skips some items with a `continue` and makes a call of the map for the others.
 
 const KEYS_PATH = 'apps/hono/src/keys.ts';
@@ -828,5 +1009,34 @@ describe('followTrace: a loop that leaves a pass with a continue', () => {
 
   it('should read the pass that made the call when it is the last one', () => {
     expect(walked(keysTrace('collect', 'out', 'for', ...SKIPPED, ...DESCRIBED, 'return'))).toEqual({ stops: ['s0', 's1:body', 's1l0:false', 's1l1i0', 's1l1', 's2'], mismatches: [] });
+  });
+});
+
+describe('sameRun', () => {
+  it('should tell two invocations that ran the same probes and the same calls from two that did not', () => {
+    const first = stepsTrace('guard', 'guard.if', 'guard.a', 'guard.check', 'check', 'check.return', 'guard.false', 'guard.return');
+    const again = stepsTrace('guard', 'guard.if', 'guard.a', 'guard.check', 'check', 'check.return', 'guard.false', 'guard.return');
+    const shortCircuited = stepsTrace('guard', 'guard.if', 'guard.a', 'guard.false', 'guard.return');
+    const root = (trace: RequestTrace) => trace.invocations[0] as Invocation;
+
+    expect([sameRun(first, root(first), again, root(again)), sameRun(first, root(first), shortCircuited, root(shortCircuited))]).toEqual([true, false]);
+  });
+
+  it('should tell two invocations apart by a call below them that ran another way', () => {
+    const passes = stepsTrace('parse', 'parse.a', 'optional', 'optional.if', 'optional.false', 'optional.return', 'parse.return');
+    const loops = stepsTrace('parse', 'parse.a', 'optional', 'optional.if', 'optional.false', 'optional.return', 'optional.return', 'parse.return');
+    const root = (trace: RequestTrace) => trace.invocations[0] as Invocation;
+
+    expect(sameRun(passes, root(passes), loops, root(loops))).toBe(false);
+  });
+
+  it('should leave the closures run under an invocation out: one that fills a cache runs another way the first time', () => {
+    const START = ['issue.endpoint', 'issue.issuer', 'makeIssuer', 'makeIssuer.return', 'issue.token'];
+    const filled = stepsTrace(...START, 'issue', 'issue.body', 'sign', 'sign.if', 'sign.false', 'sign.return', 'issue.respond');
+    const cached = stepsTrace(...START, 'issue', 'issue.body', 'issue.respond');
+    const root = (trace: RequestTrace) => trace.invocations[0] as Invocation;
+
+    expect(said(filled)).toContain('~makeIssuer[0]');
+    expect(sameRun(filled, root(filled), cached, root(cached))).toBe(true);
   });
 });

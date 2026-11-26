@@ -14,6 +14,7 @@ export const SOURCE_WORDS: Readonly<Record<ExchangeSource, string>> = {
   scenario: 'ケースの準備',
   grant: 'グラント',
   http: 'ブラウザ・クライアントから',
+  preview: '試算（送っていない）',
 };
 
 /** The path of a request without its query and fragment (`/token?x=1` → `/token`). */

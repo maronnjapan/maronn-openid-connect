@@ -152,6 +152,8 @@ export interface FlowPlayerProps {
   onOpenCode: (id: string) => void;
   /** Leave the flow view for the outline, on a scene's row when one is given. */
   onOutline: (scene?: Scene) => void;
+  /** Show the request panel beside the stage, while the reader keeps it hidden: what the player says the panel holds (why a run failed, the response of a request that ran no step) is a button away. */
+  onShowRequest?: (() => void) | undefined;
   /** The chart of the frame shown: drawn between the controls and the scene. */
   children: ReactNode;
 }
@@ -174,9 +176,10 @@ function plain(text: string): string {
  * above it, which way the request takes (a ready-made choice, the sides the
  * reader chose, or the way a request took on the live OP), the controls of
  * the playback and, for a request followed, what it answered and how it
- * ended; below it, what happens in the scene shown, in the words the
+ * ended; below it (beside it, on a stage wide enough for both, see the
+ * stage's styles), what happens in the scene shown, in the words the
  * outline uses. A node of the chart goes to its scene. The request itself is
- * written beside the stage (FlowRequest).
+ * written beside the stage (FlowRequest), in a panel the reader may hide.
  *
  * A decision the way does not decide is taken on an assumed side, marked 仮:
  * its other sides are buttons, and taking one makes it part of the way (the
@@ -191,7 +194,7 @@ function plain(text: string): string {
  * the request parts from the one it was edited from, when read against it,
  * else lib/playback.ts departureScene), and stays when it does not depart.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, steer, readerMoved, picked, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, partings, settled, ending, idle, children }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, steer, readerMoved, picked, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, onShowRequest, run, partings, settled, ending, idle, children }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
   const scene = scenes[at];
   const choice = state.choices[0];
@@ -365,13 +368,20 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     );
   };
 
+  // The button that shows the request panel the reader hid, after words that send the reader there.
+  const showRequest =
+    onShowRequest === undefined ? null : (
+      <button type="button" className="link small" onClick={onShowRequest} title="リクエストの欄を開く（ケースの選択、リクエストの書き換えと実行、応答、最近のリクエスト、地図の OP の状態）">
+        リクエストの欄を開く
+      </button>
+    );
   // What the request the playback follows answered, and how its way ends, on one line above the chart: the edits of the request show here as they land.
   const now = (() => {
     const shown = run.state;
     const pending = run.previewing ? <span className="flow-now-pending">試算中…</span> : null;
     if (shown === undefined) return pending === null ? null : <p className="flow-now">{pending}</p>;
     if (shown.status === 'running') return <p className="flow-now"><span className="flow-label">{shown.opening !== undefined ? '読み込み中' : '送っています…'}</span></p>;
-    if (shown.status === 'failed') return <p className="flow-now req-problem">{shown.unreachable ? '地図の OP に接続できません' : '実行できませんでした'}（理由は「リクエスト」の欄にあります）{pending}</p>;
+    if (shown.status === 'failed') return <p className="flow-now req-problem">{shown.unreachable ? '地図の OP に接続できません' : '実行できませんでした'}（理由は「リクエスト」の欄にあります）{showRequest}{pending}</p>;
     const { response } = shown.exchange;
     const error = response === undefined ? undefined : oauthErrorOf(response);
     const brief = briefBody(response?.body);
@@ -514,7 +524,10 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
       {children}
       <section className="flow-scene" aria-label="いまの場面" onKeyDown={onKey}>
         {scene === undefined || title === undefined ? (
-          <p className="note pad">{idle ?? (loading ? '読み込んでいます…' : 'この道筋で通る処理がありません。')}</p>
+          <p className="note pad">
+            {idle ?? (loading ? '読み込んでいます…' : 'この道筋で通る処理がありません。')}
+            {idle !== undefined && showRequest !== null ? <> {showRequest}</> : null}
+          </p>
         ) : (
           <article className={`scene-card tone-${scene.tone}`} aria-live="polite" aria-atomic="true">
             <p className="scene-where">

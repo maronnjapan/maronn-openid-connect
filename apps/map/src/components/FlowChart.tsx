@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { openingCamera, STAGE_SCALE, type Rect, type Size } from '../lib/camera';
+import { openingCamera, stageScale, type Rect, type Size } from '../lib/camera';
 import type { Mark } from '../lib/changes';
 import { boxActions, boxOf, spokenLabel, type CardAction, type Diagram, type DiagramNode } from '../lib/diagram';
 import { GROUP_HEADER, layoutChart, NODE_INSET, rhombusPoints, wayAt, type Chart, type ChartNode, type ChartWay, type WayEdgeState, type WayNodeState } from '../lib/flowchart';
@@ -41,6 +41,8 @@ export interface FlowChartProps {
   onOpen: (box: DiagramNode, keyboard: boolean) => void;
   /** The card's その場で開く or その場で畳む. */
   onToggleStep: (step: string, keyboard: boolean) => void;
+  /** The element of the bar above the stage the chart's tools (its direction, zoom and fit) go into, so the chart keeps their row's height; none draws them above the chart. */
+  toolsIn?: Element | null | undefined;
 }
 
 /** Whether the reader asked for less motion: the token then does not travel, the links do not flow, and the states change at once. */
@@ -117,8 +119,13 @@ const STATE_WORDS: Record<WayNodeState, string> = { visited: 'このリクエス
  * side pane's diagram, and offers the same buttons: every node and every
  * region's title takes a press, so a tap pins the card and Tab goes into its
  * buttons whether the request takes the node or not.
+ *
+ * The chart opens enlarged up to what its view's height allows (stageScale),
+ * and stays steady when the stage is resized (the request panel shown or
+ * hidden, the stage filling the screen): its middle stays in the middle and
+ * the scene's node stays in view.
  */
-export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, onScene, onOpen, onToggleStep }: FlowChartProps) {
+export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, onScene, onOpen, onToggleStep, toolsIn }: FlowChartProps) {
   const [direction, setDirection] = useState<LayoutDirection>('TB');
   const marker = useId();
   const svg = useRef<SVGSVGElement>(null);
@@ -392,11 +399,13 @@ export function FlowChart({ chart, diagram, play, openOn, reveal, label, marks, 
       key={`${chart.key}:${direction}`}
       width={placed.width}
       height={placed.height}
-      opening={(view: Size) => openingCamera(view, placed, anchor, STAGE_SCALE)}
+      opening={(view: Size) => openingCamera(view, placed, anchor, stageScale(view))}
       reveal={reveal === null ? null : { box: revealRect, key: reveal.key }}
       overlay={cards.overlay}
       onMove={cards.close}
       onView={cards.follow}
+      toolsIn={toolsIn}
+      steady
       controls={
         <div className="seg" role="group" aria-label="フローの向き">
           <button type="button" aria-pressed={direction === 'TB'} aria-label="縦方向" title="縦方向" onClick={() => setDirection('TB')}>↓ 縦</button>

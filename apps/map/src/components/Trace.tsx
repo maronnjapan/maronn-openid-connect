@@ -117,6 +117,36 @@ function readPaneOpen(): boolean {
 /** Where the reader's choice to show the code of every row is kept (a convenience of this browser only). */
 const CODE_KEY = 'map.outline.code';
 
+/**
+ * Where the reader's choice to show or hide the request panel of the flow
+ * view is kept (a convenience of this browser only), and the screens wide
+ * enough to show it by default: there the stage beside the panel still keeps
+ * the scene beside a chart of a good width. A laptop's screen gives the
+ * panel's width to the chart until the reader shows the panel.
+ */
+const FLOW_REQUEST_KEY = 'map.flowRequest';
+const FLOW_REQUEST_WIDE = '(min-width: 1600px)';
+
+/** Whether the flow view shows its request panel: the reader's last choice, else whether the screen is wide (FLOW_REQUEST_WIDE). */
+function readFlowRequest(): boolean {
+  try {
+    const saved = globalThis.localStorage?.getItem(FLOW_REQUEST_KEY);
+    if (saved === '1' || saved === '0') return saved === '1';
+  } catch {
+    // Storage may be unavailable (a private window); the width of the screen then decides.
+  }
+  return typeof window.matchMedia === 'function' && window.matchMedia(FLOW_REQUEST_WIDE).matches;
+}
+
+/** Keep the reader's choice to show (true) or hide the request panel for the next flow. */
+function writeFlowRequest(value: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(FLOW_REQUEST_KEY, value ? '1' : '0');
+  } catch {
+    // Storage may be unavailable (a private window); the choice then lasts for this page only.
+  }
+}
+
 function readPaneWidth(): number {
   try {
     const saved = Number(globalThis.localStorage?.getItem(PANE_KEY));
@@ -198,6 +228,24 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     if (!next) paneToggle.current?.focus();
   };
   useEffect(() => setOverlay(false), [mobile]);
+  // The request panel of the flow view, beside its stage unless the reader hides it (a phone reads it below the stage whatever the choice).
+  const [requestShown, setRequestShown] = useState(readFlowRequest);
+  const requestHidden = !mobile && !requestShown;
+  const requestSide = useRef<HTMLDivElement>(null);
+  const [focusSide, setFocusSide] = useState(false);
+  /** Show or hide the request panel, and keep the choice for the next flow. */
+  const showRequest = (show: boolean) => {
+    setRequestShown(show);
+    writeFlowRequest(show);
+  };
+  // A button that showed the panel goes away with it hidden no more: the focus goes on into the panel.
+  useEffect(() => {
+    if (!focusSide || !requestShown) return;
+    setFocusSide(false);
+    requestSide.current?.focus();
+  }, [focusSide, requestShown]);
+  // The element of the bar above the stage that the chart's tools go into (DiagramViewport toolsIn): the chart keeps the height of their row.
+  const [chartTools, setChartTools] = useState<HTMLElement | null>(null);
   // The share of the width the pane takes, set by dragging the splitter (or its keys) and kept for this browser.
   const [paneWidth, setPaneWidth] = useState(readPaneWidth);
   const work = useRef<HTMLDivElement>(null);
@@ -980,7 +1028,15 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
         regenerate();
         selectRequest(scenario?.id);
       }}
-      onTry={!flowOn && live && prepared !== undefined && scenario?.external === undefined ? () => onState({ ...state, flow: true }) : undefined}
+      onTry={
+        !flowOn && live && prepared !== undefined && scenario?.external === undefined
+          ? () => {
+              // Trying the case is writing and sending its request: the flow shows the request panel this time, whatever the reader keeps.
+              setRequestShown(true);
+              onState({ ...state, flow: true });
+            }
+          : undefined
+      }
       onOpenExchange={openExchange}
     />
   ) : undefined;
@@ -990,8 +1046,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     const peekName = peeking === undefined ? undefined : crumbs[crumbs.length - 1]?.label;
     return (
       <div className={`trace-area flow-area${maximized ? ' maximized' : ''}`}>
-        <div className="work flow-work">
-          <div className="flow-side">
+        <div className={`work flow-work${requestHidden ? ' request-hidden' : ''}`}>
+          {/* Hidden, the panel stays drawn (its draft, its result and its polls go on): the styles take it out of the page. */}
+          <div className="flow-side" id={`${tabsId}-request`} ref={requestSide} tabIndex={-1}>
             {requestCase}
             {root === undefined || walked === undefined ? null : (
               <FlowRequest
@@ -1033,85 +1090,114 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
             )}
           </div>
           <div className="flow-stage">
-            <nav className="pane-note crumbs" aria-label="図に出しているフレーム">
-              {crumbTrail}
-              {peekName === undefined && crumbs.length <= 2 ? <span className="note crumb-hint">流れる線がこのリクエストの通った道、濃い箱がいまの場所、破線がこの先です。</span> : null}
-              <span className="flow-view-actions">
-                <button type="button" className="code-button" onClick={() => leaveFlow()} title="フローを閉じて、処理の流れを行の一覧（アウトライン）で読む">
-                  アウトライン
+            <div className="flow-stage-body">
+              <div className="flow-bar">
+                <button
+                  type="button"
+                  className="code-button flow-request-toggle"
+                  aria-expanded={!requestHidden}
+                  aria-controls={`${tabsId}-request`}
+                  onClick={() => showRequest(requestHidden)}
+                  title={requestHidden ? 'リクエストの欄を開く（ケースの選択、リクエストの書き換えと実行、応答、最近のリクエスト、地図の OP の状態）' : 'リクエストの欄を隠して、フローチャートと場面の説明を広げる'}
+                >
+                  <span aria-hidden="true">{requestHidden ? '▸' : '◂'}</span> リクエスト
                 </button>
-                <button type="button" className="code-button flow-max" aria-pressed={maximized} onClick={() => setMaximized(!maximized)} title={maximized ? '元の大きさに戻す（Esc）' : '図と再生を画面いっぱいに広げる'}>
-                  {maximized ? '元の大きさ' : '画面いっぱい'}
-                </button>
-              </span>
-            </nav>
-            {root === undefined || walked === undefined ? (
-              <p className="note pad">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
-            ) : (
-              <FlowPlayer
-                data={data}
-                selections={flowSelections}
-                state={state}
-                onState={onState}
-                enabled={enabled}
-                walked={walked}
-                scenes={scenes}
-                playback={player}
-                steer={playback}
-                readerMoved={readerMoved}
-                picked={picked}
-                titleOf={sceneTitle}
-                endpoint={endpoint}
-                hasFrame={hasFrame}
-                loading={loading}
-                run={requestRun}
-                partings={partings}
-                settled={settled}
-                ending={runEnding}
-                idle={notRan ? 'このリクエストではエンドポイントの処理は動いていません。再生する道筋はありません（「リクエスト」の応答を見てください）。' : undefined}
-                deeper={enterable.length}
-                canFold={state.open.length > 0}
-                onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}
-                onFold={() => onState({ ...state, open: withoutDeepest(state.open) })}
-                onEnter={enter}
-                onLeave={leave}
-                onOpenCode={onOpenCode}
-                onOutline={leaveFlow}
-              >
-                {peekName !== undefined ? (
-                  <p className="flow-peek" role="status">
-                    <span>
-                      このリクエストは <code className="mono">{peekName}</code> を通りません。中の流れだけを見ています。
+                <nav className="crumbs" aria-label="図に出しているフレーム">
+                  {crumbTrail}
+                  {peekName === undefined && crumbs.length <= 2 ? (
+                    <span className="note crumb-hint" title="流れる線がこのリクエストの通った道、濃い箱がいまの場所、破線がこの先です。">
+                      流れる線がこのリクエストの通った道、濃い箱がいまの場所、破線がこの先です。
                     </span>
-                    <button type="button" className="link small" onClick={() => setPeek(null)}>
-                      再生の場所に戻る
-                    </button>
-                  </p>
-                ) : null}
-                {diagram !== undefined && chart !== undefined ? (
-                  <FlowChart
-                    chart={chart}
-                    diagram={diagram}
-                    play={play}
-                    openOn={peeking !== undefined ? null : (scene?.node.id ?? null)}
-                    reveal={scene === undefined || peeking !== undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
-                    label="リクエストの流れのフローチャート"
-                    marks={marks}
-                    onScene={(index) => {
-                      // A node picked on the stage moves the playback to the scene that reaches it.
-                      player.play(false);
-                      player.go(index);
-                    }}
-                    onOpen={(box) => {
-                      if (box.opens !== undefined) enter(childFrame(focusKey, box.opens.node));
-                    }}
-                    onToggleStep={toggleStep}
-                  />
-                ) : (
-                  <p className="note pad flow-canvas-note">{entering !== null || loading ? '読み込んでいます…' : frames.failed.get(focusId) !== undefined ? `読み込めませんでした: ${frames.failed.get(focusId)}` : '読み込んでいます…'}</p>
-                )}
-              </FlowPlayer>
-            )}
+                  ) : null}
+                </nav>
+                {/* The chart's tools (its direction, zoom and fit) come here, beside the frames they draw: the chart keeps the height of their row. */}
+                {mobile ? null : <span className="flow-chart-tools" ref={setChartTools} />}
+                <span className="flow-view-actions">
+                  <button type="button" className="code-button" onClick={() => leaveFlow()} title="フローを閉じて、処理の流れを行の一覧（アウトライン）で読む">
+                    アウトライン
+                  </button>
+                  <button type="button" className="code-button flow-max" aria-pressed={maximized} onClick={() => setMaximized(!maximized)} title={maximized ? '元の大きさに戻す（Esc）' : '図と再生を画面いっぱいに広げる'}>
+                    {maximized ? '元の大きさ' : '画面いっぱい'}
+                  </button>
+                </span>
+              </div>
+              {root === undefined || walked === undefined ? (
+                <p className="note pad flow-loading">{frames.failed.get(rootId) !== undefined ? `読み込めませんでした: ${frames.failed.get(rootId)}` : '読み込んでいます…'}</p>
+              ) : (
+                <FlowPlayer
+                  data={data}
+                  selections={flowSelections}
+                  state={state}
+                  onState={onState}
+                  enabled={enabled}
+                  walked={walked}
+                  scenes={scenes}
+                  playback={player}
+                  steer={playback}
+                  readerMoved={readerMoved}
+                  picked={picked}
+                  titleOf={sceneTitle}
+                  endpoint={endpoint}
+                  hasFrame={hasFrame}
+                  loading={loading}
+                  run={requestRun}
+                  partings={partings}
+                  settled={settled}
+                  ending={runEnding}
+                  idle={notRan ? 'このリクエストではエンドポイントの処理は動いていません。再生する道筋はありません（「リクエスト」の応答を見てください）。' : undefined}
+                  deeper={enterable.length}
+                  canFold={state.open.length > 0}
+                  onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}
+                  onFold={() => onState({ ...state, open: withoutDeepest(state.open) })}
+                  onEnter={enter}
+                  onLeave={leave}
+                  onOpenCode={onOpenCode}
+                  onOutline={leaveFlow}
+                  onShowRequest={
+                    requestHidden
+                      ? () => {
+                          showRequest(true);
+                          setFocusSide(true);
+                        }
+                      : undefined
+                  }
+                >
+                  {peekName !== undefined ? (
+                    <p className="flow-peek" role="status">
+                      <span>
+                        このリクエストは <code className="mono">{peekName}</code> を通りません。中の流れだけを見ています。
+                      </span>
+                      <button type="button" className="link small" onClick={() => setPeek(null)}>
+                        再生の場所に戻る
+                      </button>
+                    </p>
+                  ) : null}
+                  {diagram !== undefined && chart !== undefined ? (
+                    <FlowChart
+                      chart={chart}
+                      diagram={diagram}
+                      play={play}
+                      openOn={peeking !== undefined ? null : (scene?.node.id ?? null)}
+                      reveal={scene === undefined || peeking !== undefined ? null : { node: scene.node.id, key: scene.index + 1 }}
+                      label="リクエストの流れのフローチャート"
+                      marks={marks}
+                      onScene={(index) => {
+                        // A node picked on the stage moves the playback to the scene that reaches it.
+                        player.play(false);
+                        player.go(index);
+                      }}
+                      onOpen={(box) => {
+                        if (box.opens !== undefined) enter(childFrame(focusKey, box.opens.node));
+                      }}
+                      onToggleStep={toggleStep}
+                      toolsIn={chartTools}
+                    />
+                  ) : (
+                    <p className="note pad flow-canvas-note">{entering !== null || loading ? '読み込んでいます…' : frames.failed.get(focusId) !== undefined ? `読み込めませんでした: ${frames.failed.get(focusId)}` : '読み込んでいます…'}</p>
+                  )}
+                </FlowPlayer>
+              )}
+            </div>
           </div>
         </div>
       </div>

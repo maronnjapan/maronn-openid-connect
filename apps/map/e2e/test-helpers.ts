@@ -1,6 +1,7 @@
 /**
  * What the map's E2E specs read on the page, as a reader finds it: the
- * flow of an endpoint, its request panel and the response, the line that
+ * flow of an endpoint, its request panel (and the button that shows and
+ * hides it) and the response, the line that
  * says how the replay follows the request (sent, opened or previewed), where an edited request parts from the one before the edits, the playback and the flowchart
  * of the frame it shows, the recent requests of the workspace; and the
  * workspace the page uses, for the requests a spec sends outside the page.
@@ -34,9 +35,29 @@ function literal(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Open the flow of an endpoint of the Hono OP as a playback (`#hono--<endpoint>;p`), with more options of the hash (`;x=x3`). */
+/**
+ * Open the flow of an endpoint of the Hono OP as a playback (`#hono--<endpoint>;p`), with more options of the hash (`;x=x3`),
+ * its request panel shown: a screen narrower than 1600px (the specs' 1440px) hides the panel until the reader shows it.
+ */
 export async function openFlow(page: Page, endpoint: string, more = ''): Promise<void> {
   await page.goto(`/#hono--${endpoint};p${more}`);
+  await showRequestPanel(page);
+}
+
+/** The button of the bar above the stage that shows and hides the request panel (aria-expanded says which). */
+export function requestPanelToggle(page: Page): Locator {
+  return page.getByRole('button', { name: 'リクエスト', exact: true });
+}
+
+/** Show the request panel of the flow shown, when it is hidden; a panel shown stays shown. */
+export async function showRequestPanel(page: Page): Promise<void> {
+  const toggle = requestPanelToggle(page);
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
+/** The area the chart of the flow is drawn in, where it pans and zooms (not the chart itself, which moves inside it). */
+export function chartArea(page: Page): Locator {
+  return page.getByRole('group', { name: /^フロー図（/ });
 }
 
 /** The select of the cases of the endpoint shown (想定リクエスト). */
@@ -119,7 +140,7 @@ export function playbackPosition(page: Page): Locator {
   return player(page).getByRole('slider', { name: '再生の位置' });
 }
 
-/** What happens in the scene the playback shows, below the chart (いまの場面). */
+/** What happens in the scene the playback shows, below the chart or beside it (いまの場面). */
 export function sceneShown(page: Page): Locator {
   return page.getByRole('region', { name: 'いまの場面' });
 }

@@ -266,8 +266,8 @@ export interface FlowRequestProps {
   previewing: boolean;
   /** Why the last preview could not be run; undefined when it could. */
   previewProblem: PreviewProblem | undefined;
-  /** Make the playback follow the request the editor shows (useRun.ts RequestRun.show): called once the reader stops writing on it, with the request it was edited from (lib/preview.ts comparedStart) to read it against. */
-  onPreview: (draft: RequestDraft, from?: RequestDraft) => void;
+  /** Make the playback follow the request the editor shows (useRun.ts RequestRun.show): called once the reader stops writing on it, with the request it was edited from (lib/preview.ts comparedStart) to read it against, and whether the reader wrote on it. */
+  onPreview: (draft: RequestDraft, from: RequestDraft | undefined, edited: boolean) => void;
   /** Let go of the preview: the editor shows a blank request nobody wrote on again (useRun.ts RequestRun.release). */
   onRelease: () => void;
   /** The ready-made way the run ended by, in words. */
@@ -328,17 +328,17 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
   const plan = draft === undefined || base === undefined ? undefined : previewPlan({ draft, start: base, base: baseKind, edited: changed, origin: originKey, blocked: !served || unrunnable !== undefined || offline });
   // The request the edits were made on: the edited request is read against it, to show where the edits make the way part.
   const from = draft === undefined || base === undefined ? undefined : comparedStart({ draft, start: base, base: baseKind, edited: changed });
-  const shownDraft = useRef({ draft, from, onPreview, onRelease });
-  shownDraft.current = { draft, from, onPreview, onRelease };
+  const shownDraft = useRef({ draft, from, changed, onPreview, onRelease });
+  shownDraft.current = { draft, from, changed, onPreview, onRelease };
   const planKey = plan?.key;
   const planDelay = plan?.delay;
   const planRelease = plan?.release === true;
   useEffect(() => {
     if (planKey === undefined || planDelay === undefined) return undefined;
     const timer = window.setTimeout(() => {
-      const { draft: shown, from: start, onPreview: show, onRelease: release } = shownDraft.current;
+      const { draft: shown, from: start, changed: edited, onPreview: show, onRelease: release } = shownDraft.current;
       if (planRelease) release();
-      else if (shown !== undefined) show(shown, start);
+      else if (shown !== undefined) show(shown, start, edited);
     }, planDelay);
     return () => window.clearTimeout(timer);
   }, [planKey, planDelay, planRelease]);

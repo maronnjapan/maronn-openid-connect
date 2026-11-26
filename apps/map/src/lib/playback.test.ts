@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, Selection, TreeNode } from '../types';
-import { callsToEnter, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, selectionKey, SPEEDS, stopKey, walkTrace, withoutDeepest } from './playback';
+import { callsToEnter, departureScene, depthOf, sceneAt, sceneDuration, sceneLines, scenarioOf, scenesOf, selectionKey, SPEEDS, stopKey, walkTrace, withoutDeepest } from './playback';
 import { nodesRun } from './trace';
 
 /** A tree of nodes written by hand. */
@@ -127,6 +127,34 @@ describe('sceneLines', () => {
   });
 });
 
+describe('departureScene', () => {
+  const scenesFor = (choice: Record<string, string>, open: string[]) => scenesOf(walkTrace(root, choice, { open, trees }), shapeOf);
+  const stopsFor = (choice: Record<string, string>, open: string[]) => walkTrace(root, choice, { open, trees }).stops;
+
+  it('should find the decision both ways reach that the new way takes on the other side', () => {
+    // verify() fails now where it went on before: the guard that takes the other side, before the throw after it.
+    expect(departureScene(stopsFor({}, ['s0b0s0']), scenesFor({ 's0b0s0.s0': 'true' }, ['s0b0s0']))).toBe(1);
+    // And back: the guard that no longer fails.
+    expect(departureScene(stopsFor({ 's0b0s0.s0': 'true' }, ['s0b0s0']), scenesFor({}, ['s0b0s0']))).toBe(1);
+  });
+
+  it('should find the failure the way before did not have, when it went past the call without going into it', () => {
+    expect(departureScene(stopsFor({}, []), scenesFor({ 's0b0s0.s0': 'true' }, ['s0b0s0']))).toBe(2);
+  });
+
+  it('should find nothing for the same way, for a failure at the same place, and for a frame only one of them goes into', () => {
+    expect(departureScene(stopsFor({}, []), scenesFor({}, []))).toBeUndefined();
+    expect(departureScene(stopsFor({ 's0b0s0.s0': 'true' }, ['s0b0s0']), scenesFor({ 's0b0s0.s0': 'true' }, ['s0b0s0']))).toBeUndefined();
+    expect(departureScene(stopsFor({}, []), scenesFor({}, ['s0b0s0']))).toBeUndefined();
+    // The way before failed inside verify(); the new one steps over it and does not fail: nothing to tell apart in the frames both show.
+    expect(departureScene(stopsFor({ 's0b0s0.s0': 'true' }, ['s0b0s0']), scenesFor({}, []))).toBeUndefined();
+  });
+
+  it('should find nothing in no scenes', () => {
+    expect(departureScene(stopsFor({}, []), [])).toBeUndefined();
+  });
+});
+
 describe('the frames a playback opens', () => {
   it('should list the calls stepped over that have a frame, by the key of that frame', () => {
     const walked = walkTrace(root, {}, { open: [], trees });
@@ -178,8 +206,8 @@ describe('scenarioOf', () => {
 
 describe('sceneDuration', () => {
   it('should stay 2.6 s on a scene at the normal pace, shorter at a higher speed, and never stop', () => {
-    expect(SPEEDS).toEqual([0.5, 1, 2]);
-    expect(SPEEDS.map((speed) => sceneDuration(speed))).toEqual([5200, 2600, 1300]);
+    expect(SPEEDS).toEqual([0.5, 1, 2, 4]);
+    expect(SPEEDS.map((speed) => sceneDuration(speed))).toEqual([5200, 2600, 1300, 650]);
     expect(sceneDuration(0)).toBe(10400);
   });
 });

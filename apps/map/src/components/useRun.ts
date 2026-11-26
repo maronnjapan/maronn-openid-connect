@@ -63,7 +63,10 @@ function useLines(files: ReadonlyArray<{ path: string; url: string }>): Readonly
  * through a state with neither. `against`: what the request the editor's
  * was written from would do, previewed on the same state right before (the
  * request the reader edited, before the edits): the replay is read against
- * it, to go into the frames where the edits make the way part.
+ * it, to go into the frames where the edits make the way part. `edited`:
+ * the flow came to it because the reader wrote on the editor's request (an
+ * edit, not the request a case prepared or an exchange opened as it is), so
+ * the playback moves to where its way departs from the way shown before.
  */
 export interface RequestRunDone {
   status: 'done';
@@ -76,6 +79,7 @@ export interface RequestRunDone {
   quiet?: true;
   closing?: readonly string[];
   against?: LiveExchange;
+  edited?: true;
 }
 
 /**
@@ -108,6 +112,8 @@ export interface Replay {
   rootRan: boolean;
   mismatches: readonly WalkMismatch[];
   walk: FlowWalk | undefined;
+  /** The sides the replay reads, which the trace takes as its choice while the playback follows the request; absent when the replay could not be read. */
+  decisions?: Decisions;
   problem?: string;
   apart?: readonly Parting[];
 }
@@ -146,9 +152,10 @@ export interface RequestRun {
    * `from` (the request it was edited from, lib/preview.ts comparedStart),
    * that one is previewed with it on the same state, and the replay is read
    * against it: the frames where the two ways part open, and the replay
-   * names them (Replay.apart).
+   * names them (Replay.apart). `edited`: the reader wrote on the request
+   * (RequestRunDone.edited).
    */
-  show: (draft: RequestDraft, from?: RequestDraft) => void;
+  show: (draft: RequestDraft, from?: RequestDraft, edited?: boolean) => void;
   /**
    * The editor shows no request of its own again (a blank one nobody wrote
    * on): drop the preview under way, and let go of the preview shown, back
@@ -167,13 +174,24 @@ export interface RequestRun {
   replay: Replay | undefined;
   /** The functions whose trees the replay needs to read on and are not loaded (map-analysis followTrace `needs`): the trace loads them, opened or not. */
   needs: readonly string[];
+  /**
+   * The trace shows the way of the request the playback follows: the
+   * replay is read with every tree it needs, the frames of the replay before
+   * are closed, its choice is the trace's and the frames it opens are open.
+   * False while the playback follows none, and while the trace is on its way
+   * to the replay (the walk is still the way before, or half of it).
+   */
+  shows: boolean;
 }
 
 /** What the flow showed before the editor's request was first previewed, to go back to (RequestRun.release): a request sent or opened, else the way of the trace. */
-type BeforePreview = { run: Omit<RequestRunDone, 'id' | 'follow' | 'quiet' | 'closing' | 'status'> } | { choices: Decisions[]; way: string | undefined };
+type BeforePreview = { run: Omit<RequestRunDone, 'id' | 'follow' | 'quiet' | 'closing' | 'status' | 'edited'> } | { choices: Decisions[]; way: string | undefined };
 
 /** No tree needed (one list for every render without a replay). */
 const NO_NEEDS: readonly string[] = [];
+
+/** No frame opened by a replay yet. */
+const NO_FRAMES: ReadonlySet<string> = new Set();
 
 /** Whether two choices choose the same sides. */
 function sameChoice(a: Decisions | undefined, b: Decisions | undefined): boolean {
@@ -232,7 +250,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
   const previews = useRef(0);
   const controller = useRef<AbortController | undefined>(undefined);
   // The editor's request asked to be shown while a request was being sent (with the request it was edited from): previewed once it lands.
-  const held = useRef<{ draft: RequestDraft; from: RequestDraft | undefined } | undefined>(undefined);
+  const held = useRef<{ draft: RequestDraft; from: RequestDraft | undefined; edited: boolean } | undefined>(undefined);
   // What the flow showed before the first preview since a request was sent or opened, or the case or the way picked (see release).
   const beforePreview = useRef<BeforePreview | undefined>(undefined);
   useEffect(() => () => controller.current?.abort(), []);
@@ -384,12 +402,12 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
       });
   };
   /** Follow the exchange the editor's request stands for (see RequestRun.show). */
-  const show = (draft: RequestDraft, from?: RequestDraft) => {
+  const show = (draft: RequestDraft, from?: RequestDraft, edited = false) => {
     const key = requestKey(draft);
     const current = shownRun.current;
     if (current?.status === 'running') {
       // A request is being sent (or an exchange read): the run shows it until it lands, and the editor's request is previewed after, unless it is the one sent.
-      held.current = heldAfterSend({ draft, from }, key, current.key);
+      held.current = heldAfterSend({ draft, from, edited }, key, current.key);
       return;
     }
     held.current = undefined;
@@ -402,7 +420,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     const again = step === 'recorded' ? recorded.current.get(key) : undefined;
     if (again !== undefined) {
       beforePreview.current = undefined;
-      shift(again);
+      shift({ ...again, ...(edited ? { edited: true as const } : {}) });
       return;
     }
     const seq = previews.current;
@@ -427,7 +445,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
             const trace = latest.current.state;
             beforePreview.current = was?.status === 'done' ? { run: { exchange: was.exchange, opened: was.opened, key: was.key } } : { choices: trace.choices, way: trace.way };
           }
-          shift({ exchange, opened: false, preview: true, key, ...(against === undefined ? {} : { against }) });
+          shift({ exchange, opened: false, preview: true, key, ...(against === undefined ? {} : { against }), ...(edited ? { edited: true as const } : {}) });
         },
         (error: unknown) => {
           if (previews.current !== seq || abort.signal.aborted) return;
@@ -472,19 +490,29 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     open(wanted);
   });
 
+  // Whether the trace shows the replay (RequestRun.shows): what the effect above gives the trace, given already.
+  const shows =
+    done !== undefined &&
+    done.follow &&
+    done.closing === undefined &&
+    followed !== undefined &&
+    followed.needs.length === 0 &&
+    (!followed.rootRan || (sameChoice(state.choices[0], followed.decisions) && framesToOpen(followed, openBase, hasFrame, applied.current.id === done.id ? applied.current.opened : NO_FRAMES).length === 0));
+
   // A trace the OP cut is read as far as it goes: the replay says it may stop short.
   const cut = exchange === undefined ? undefined : truncationProblem(exchange);
   const replay: Replay | undefined =
     !following ? undefined
     : table?.hash === hash && table?.problem !== undefined ? { rootRan: true, mismatches: [], walk: undefined, problem: table.problem }
     : followed === undefined ? undefined
-    : { rootRan: followed.rootRan, mismatches: followed.mismatches, walk: followed.walk, ...(cut === undefined ? {} : { problem: cut }), ...(followed.apart === undefined || followed.needs.length > 0 ? {} : { apart: followed.apart }) };
+    : { rootRan: followed.rootRan, mismatches: followed.mismatches, walk: followed.walk, decisions: followed.decisions, ...(cut === undefined ? {} : { problem: cut }), ...(followed.apart === undefined || followed.needs.length > 0 ? {} : { apart: followed.apart }) };
 
   return {
     state: runState,
     origin,
     replay,
     needs: followed?.needs ?? NO_NEEDS,
+    shows,
     previewing,
     previewProblem,
     run: (draft, from) => {
@@ -501,7 +529,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
         landed(next);
         const wanted = held.current;
         held.current = undefined;
-        if (wanted !== undefined) show(wanted.draft, wanted.from);
+        if (wanted !== undefined) show(wanted.draft, wanted.from, wanted.edited);
       };
       const client = liveClient();
       // What the request before the edits would do is previewed before the send changes the state; the request is sent whether or not that preview came.

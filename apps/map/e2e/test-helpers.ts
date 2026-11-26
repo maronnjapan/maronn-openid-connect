@@ -109,9 +109,24 @@ export function recentRequests(page: Page): Locator {
   return requestPanel(page).getByRole('group').filter({ hasText: /^最近のリクエスト/ });
 }
 
+/** The player of the flow above its chart: the way played, the controls, and what the request followed answered and how its way ends. */
+export function player(page: Page): Locator {
+  return page.getByRole('region', { name: 'フローの再生' });
+}
+
 /** The slider of the playback's position; End moves to the last scene and Home to the first. */
 export function playbackPosition(page: Page): Locator {
-  return page.getByRole('region', { name: 'フローの再生' }).getByRole('slider', { name: '再生の位置' });
+  return player(page).getByRole('slider', { name: '再生の位置' });
+}
+
+/** What happens in the scene the playback shows, below the chart (いまの場面). */
+export function sceneShown(page: Page): Locator {
+  return page.getByRole('region', { name: 'いまの場面' });
+}
+
+/** The button of the card of a flowchart node that goes into a function it calls (`selectTokenSigningKeys()`), once the card shows. */
+export function lookInside(page: Page, name: string): Locator {
+  return page.getByRole('button', { name: `${name} の中の流れを見る（図がその関数に移る）`, exact: true });
 }
 
 /** The crumbs of the frames down to the one the diagram shows (`GET | POST /login` › `submitLogin()`). */

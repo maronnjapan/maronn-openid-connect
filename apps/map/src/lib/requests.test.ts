@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RootRequests } from '../types';
-import { basicCredentials, statusLine, statusTone, wayRequestsOf } from './requests';
+import { basicCredentials, briefBody, statusLine, statusTone, wayRequestsOf } from './requests';
 
 const requests: RootRequests = {
   version: 4,
@@ -53,5 +53,17 @@ describe('basicCredentials', () => {
       undefined,
       undefined,
     ]);
+  });
+});
+
+describe('briefBody', () => {
+  it('should write a short JSON body without spaces, and keep short text as it is', () => {
+    expect(briefBody('{\n  "active": false\n}')).toBe('{"active":false}');
+    expect(briefBody(' Not Found ')).toBe('Not Found');
+  });
+
+  it('should give none for no body, an empty one, one of several lines, or a long one', () => {
+    expect([briefBody(undefined), briefBody('  '), briefBody('<p>\n</p>'), briefBody(JSON.stringify({ access_token: 'x'.repeat(80) }))]).toEqual([undefined, undefined, undefined, undefined]);
+    expect(briefBody('{"error":"invalid_grant"}', 20)).toBeUndefined();
   });
 });

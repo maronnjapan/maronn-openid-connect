@@ -16,12 +16,15 @@
  * `;f=` names the frame the diagram shows; `;p` opens the trace as a
  * playback (the flow view); `;r=` names the case selected, and `;x=` the
  * exchange of the live OP the flow view replays (a request of the reader's
- * workspace, opened on reload). Ids and names are letters,
+ * workspace, opened on reload). The choice the replay of a preview gave
+ * (TraceState.previewed) is left out: a reload cannot preview the request
+ * again. Ids and names are letters,
  * digits and hyphens, so `--` separates them; a module is written
  * URI-encoded.
  */
 import type { Decisions, MapData } from '../types';
 import { cardsNamed } from './model';
+import { sameChoice } from './playback';
 import { EMPTY_TRACE, type TraceState } from './trace';
 
 export interface View {
@@ -60,10 +63,12 @@ function decode(part: string): string {
   }
 }
 
-/** The trace part of a hash: the frames, the choices, the errors and the focus. */
+/** The trace part of a hash: the frames, the choices (but the one a preview's replay gave, TraceState.previewed), the errors and the focus. */
 export function traceHash(trace: TraceState): string {
   let hash = trace.open.map((key) => `/${key}`).join('');
-  for (const choice of trace.choices) {
+  const previewed = trace.previewed;
+  for (const [index, choice] of trace.choices.entries()) {
+    if (index === 0 && previewed !== undefined && sameChoice(choice, previewed)) continue;
     const pairs = Object.entries(choice).map(([key, side]) => `${key}:${encodeURIComponent(side)}`);
     if (pairs.length > 0) hash += `;d=${pairs.join(',')}`;
   }

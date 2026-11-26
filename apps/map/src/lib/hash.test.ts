@@ -50,6 +50,20 @@ describe('the trace in a hash', () => {
   });
 });
 
+describe('the choice of a preview in a hash', () => {
+  it('should leave out the choice a preview\'s replay gave, which a reload cannot preview again, but keep the reader\'s own choice and an exchange sent', () => {
+    const previewed = { s3: 'c1', s5: 'false' };
+    const trace: TraceState = { ...EMPTY_TRACE, open: ['s4'], choices: [previewed], flow: true, request: 'userinfo-bearer-get', previewed };
+
+    expect(traceHash(trace)).toBe('/s4;p;r=userinfo-bearer-get');
+    expect(parseTrace(traceHash(trace))).toEqual({ ...EMPTY_TRACE, open: ['s4'], flow: true, request: 'userinfo-bearer-get' });
+    // The reader took another side: the choice is the reader's own.
+    expect(traceHash({ ...trace, choices: [{ ...previewed, s5: 'true' }] })).toBe('/s4;d=s3:c1,s5:true;p;r=userinfo-bearer-get');
+    // The way of a request sent is kept with its exchange.
+    expect(traceHash({ ...trace, previewed: undefined, exchange: 'x4' })).toBe('/s4;d=s3:c1,s5:false;p;r=userinfo-bearer-get;x=x4');
+  });
+});
+
 describe('the exchange in a hash', () => {
   it('should write the exchange the flow view replays after the case, and read it back', () => {
     const trace: TraceState = { ...EMPTY_TRACE, flow: true, request: 'token-authorization-code', exchange: 'x12' };

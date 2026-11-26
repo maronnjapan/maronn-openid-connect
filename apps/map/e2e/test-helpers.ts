@@ -1,7 +1,7 @@
 /**
  * What the map's E2E specs read on the page, as a reader finds it: the
  * flow of an endpoint, its request panel and the response, the line that
- * says how the replay follows the request, the playback and the flowchart
+ * says how the replay follows the request (sent, opened or previewed), the playback and the flowchart
  * of the frame it shows, the recent requests of the workspace; and the
  * workspace the page uses, for the requests a spec sends outside the page.
  * The specs assert what these give.
@@ -69,7 +69,7 @@ export function responseLine(page: Page): Locator {
   return requestPanel(page).getByRole('paragraph').filter({ has: page.getByText('応答', { exact: true }) });
 }
 
-/** The line that names the request shown: sent from the page (実行したリクエスト) or opened from the workspace (開いたリクエスト), with its id and how it came. */
+/** The line that names the request shown: sent from the page (実行したリクエスト) or opened from the workspace (開いたリクエスト), with its id and how it came; none for a preview. */
 export function exchangeLine(page: Page): Locator {
   return requestPanel(page).getByRole('paragraph').filter({ has: page.getByText(/^(実行した|開いた)リクエスト$/) });
 }
@@ -79,9 +79,19 @@ export function replayLine(page: Page): Locator {
   return requestPanel(page).getByText(/^このリクエストが通った道筋を再生しています/);
 }
 
-/** The warning that the way replayed passes where the request ran nothing. */
+/** The line that names a preview of the request shown: run on a copy of the workspace's state, nothing sent (送る前の試算). */
+export function previewLine(page: Page): Locator {
+  return requestPanel(page).getByRole('paragraph').filter({ has: page.getByText('送る前の試算', { exact: true }) });
+}
+
+/** The line that says the playback follows the way a preview of the request shown would take, with the ending it reaches. */
+export function previewReplayLine(page: Page): Locator {
+  return requestPanel(page).getByText(/^このリクエストを送ると通る道筋を再生しています/);
+}
+
+/** The warning that the way replayed and what the request ran disagree (passes where it ran nothing, or skips a call or a side it took). */
 export function mismatchWarning(page: Page): Locator {
-  return page.getByRole('alert').filter({ hasText: '再生する道筋に、このリクエストが動かしていない所が' });
+  return page.getByRole('alert').filter({ hasText: '再生する道筋と、このリクエストが実際に動かしたコードが' });
 }
 
 /** The list of the recent requests of the workspace (最近のリクエスト). */

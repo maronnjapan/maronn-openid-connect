@@ -7,11 +7,12 @@ import { Rows } from './Rows';
 import { StoredReads, StoredWrites } from './StoredRecords';
 import { browserPath, expectationGaps, SOURCE_WORDS } from '../lib/live';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
+import { keptExchangeId, notRanWords, previewFailureWords, previewPlan, replayWords, resultLabel, staleResult, STALE_WORDS, type DraftBase } from '../lib/preview';
 import { blankDraft, bodiless, draftProblem, headerValue, liveRequestOf, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
 import type { MapData, Selection } from '../types';
 import type { RootRequestsState } from './useRequests';
 import { useLiveState } from './useLive';
-import type { Replay, RequestRunState } from './useRun';
+import type { PreviewProblem, Replay, RequestRunState } from './useRun';
 
 /** The words of the body of a request, by its kind. */
 const BODY_WORDS = { form: 'ボディ（フォーム）', json: 'ボディ（JSON）' };
@@ -31,24 +32,30 @@ interface RunResultProps {
   assumed: number;
   /** What the case selected expects of its response; undefined without a case. */
   expected: RequestScenario['expected'] | undefined;
+  /** The result is of the request before the reader's last edits, which cannot be sent (lib/preview.ts staleResult). */
+  stale: boolean;
   onFollow: () => void;
   onOpen: (id: string) => void;
 }
 
 /**
  * What a request gave on the live OP: which exchange it is (sent from the
- * page, or opened from the list), the response as the OP sent it (its
- * status, every header, each Set-Cookie and the Location among them, the
- * body) and its OAuth error, the response its case expects beside it, how
- * the replay follows the way it took, and the records it read and wrote.
- * Times are the OP's clock when the request came.
+ * page, opened from the list, or a preview of the request the editor
+ * shows, run on a copy of the workspace's state and not kept), the
+ * response as the OP sent it (its status, every header, each Set-Cookie
+ * and the Location among them, the body) and its OAuth error, the response
+ * its case expects beside it, how the replay follows the way it took, and
+ * the records it read and wrote. Times are the OP's clock when the request
+ * came. A preview shows its Location on a line of its own and folds its
+ * headers, its body and its records, which the workspace does not hold. A
+ * result of the request before edits that left it unsendable says so.
  */
-function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }: RunResultProps) {
+function RunResult({ run, replay, ending, assumed, expected, stale, onFollow, onOpen }: RunResultProps) {
   const live = useLiveState();
   const records = live.kind === 'ready' ? live.state.records : undefined;
-  // A new response is brought into view in the scroll of the request, where it comes below the form.
+  // A new response is brought into view in the scroll of the request, where it comes below the form; not one the editor's request came to while the reader writes on it.
   const panel = useRef<HTMLDivElement>(null);
-  const shownId = run.status === 'done' ? run.exchange.id : undefined;
+  const shownId = run.status === 'done' && run.quiet !== true ? run.exchange.id : undefined;
   useEffect(() => {
     if (shownId !== undefined) panel.current?.scrollIntoView({ block: 'nearest' });
   }, [shownId]);
@@ -56,6 +63,8 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
   if (run.status === 'failed') return <p className="note req-result req-problem">{run.unreachable ? run.message : `実行できませんでした: ${run.message}`}</p>;
   const { exchange } = run;
   const { response } = exchange;
+  const preview = run.preview === true;
+  const named = resultLabel({ opened: run.opened, preview });
   const error = response === undefined ? undefined : oauthErrorOf(response);
   const location = response === undefined ? undefined : headerValue(response.headers, 'location');
   const gaps = expected === undefined || response === undefined ? [] : expectationGaps(expected, { status: response.status, error, location });
@@ -66,16 +75,49 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
     // Not JSON: as it is.
   }
   const now = Math.floor(exchange.at / 1000);
+  const headers =
+    response === undefined ? null : (
+      <table className="req-table req-headers">
+        <caption>応答のヘッダー（{response.headers.length}）</caption>
+        <tbody>
+          {response.headers.map(([name, value], index) => (
+            <tr key={index}>
+              <th className="mono">{name}</th>
+              <td>
+                <code className="mono">{value}</code>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  const stored = (
+    <>
+      <StoredReads reads={exchange.store.read} records={records} now={now} onOpen={onOpen} />
+      <StoredWrites wrote={exchange.store.wrote} records={records} now={now} onOpen={onOpen} />
+    </>
+  );
   return (
-    <div className="req-result" aria-live="polite" ref={panel}>
-      <p className="req-line">
-        <span className="flow-label">{run.opened ? '開いたリクエスト' : '実行したリクエスト'}</span>
-        <span className="mono store-num">{exchange.id}</span>
-        <span className={`req-source req-source-${exchange.source}`}>{SOURCE_WORDS[exchange.source]}</span>
-        <span className="req-at" title="OP の時計">
-          {clockOf(exchange.at)}
-        </span>
-      </p>
+    <div className={`req-result${preview ? ' req-preview' : ''}`} aria-live="polite" ref={panel}>
+      {preview ? (
+        <p className="req-line">
+          <span className="flow-label">{named.label}</span>
+          <span className="req-preview-note">{named.note}</span>
+          <span className="req-at" title="OP の時計">
+            {clockOf(exchange.at)}
+          </span>
+        </p>
+      ) : (
+        <p className="req-line">
+          <span className="flow-label">{named.label}</span>
+          <span className="mono store-num">{exchange.id}</span>
+          <span className={`req-source req-source-${exchange.source}`}>{SOURCE_WORDS[exchange.source]}</span>
+          <span className="req-at" title="OP の時計">
+            {clockOf(exchange.at)}
+          </span>
+        </p>
+      )}
+      {stale ? <p className="note req-problem">{STALE_WORDS}</p> : null}
       {run.opened ? (
         <p className="req-line">
           <span className="req-method">{exchange.method}</span>
@@ -91,6 +133,12 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
           {error !== undefined ? <code className="mono req-error-code">{error}</code> : null}
         </p>
       )}
+      {preview && location !== undefined ? (
+        <p className="req-line">
+          <span className="flow-label">Location</span>
+          <code className="mono req-path">{location}</code>
+        </p>
+      ) : null}
       {expected !== undefined && response !== undefined ? (
         <p className={`req-line req-expected${gaps.length > 0 ? ' req-problem' : ''}`}>
           <span className="flow-label">ケースが期待する応答</span>
@@ -104,7 +152,7 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
       ) : null}
       {!run.follow ? (
         <p className="note">
-          ほかの側や道筋を選んだので、再生はこのリクエストの道筋から離れています。{' '}
+          ほかの側や道筋を選んだので、再生は{preview ? 'この試算' : 'このリクエスト'}の道筋から離れています。{' '}
           <button type="button" className="link small" onClick={onFollow}>
             このリクエストの道筋に戻す
           </button>
@@ -114,40 +162,37 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
       ) : replay.problem !== undefined ? (
         <p className="note req-problem">{replay.problem}</p>
       ) : !replay.rootRan ? (
-        <p className="note req-notran">このリクエストではエンドポイントの処理は動いていません（{response === undefined ? 'OP は応答せずに失敗しました' : `${response.status} はルーティングかミドルウェアが返しました`}）。再生する道筋はありません。</p>
+        <p className="note req-notran">{notRanWords(preview, response?.status)}</p>
       ) : (
-        <p className="note">
-          このリクエストが通った道筋を再生しています{ending !== undefined ? `（${ending}）` : ''}。{assumed > 0 ? `規則で読めない分岐 ${assumed} 個は、仮の側へ進みます。` : ''}
-        </p>
+        <p className="note">{replayWords(preview, ending, assumed)}</p>
       )}
       {run.follow && replay !== undefined && replay.mismatches.length > 0 ? (
         <p className="note req-problem" role="alert">
           ⚠ 再生する道筋と、このリクエストが実際に動かしたコードが {replay.mismatches.length} か所で食い違っています（通っていない所を通るか、動いた呼び出しや側を飛ばしている。地図の読み方の不具合です）: {replay.mismatches.slice(0, 3).map((mismatch) => mismatch.code).join('、')}
         </p>
       ) : null}
-      {response !== undefined ? (
-        <table className="req-table req-headers">
-          <caption>応答のヘッダー（{response.headers.length}）</caption>
-          <tbody>
-            {response.headers.map(([name, value], index) => (
-              <tr key={index}>
-                <th className="mono">{name}</th>
-                <td>
-                  <code className="mono">{value}</code>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+      {preview && headers !== null ? (
+        <details className="req-body">
+          <summary>応答のヘッダー（{response?.headers.length ?? 0}）</summary>
+          {headers}
+        </details>
+      ) : (
+        headers
+      )}
       {body !== undefined ? (
-        <details className="req-body" open={body.length <= 4000}>
+        <details className="req-body" open={!preview && body.length <= 4000}>
           <summary>応答のボディ{response?.truncated === true ? '（16 KiB で切れています）' : ''}</summary>
           <pre className="mono">{body}</pre>
         </details>
       ) : null}
-      <StoredReads reads={exchange.store.read} records={records} now={now} onOpen={onOpen} />
-      <StoredWrites wrote={exchange.store.wrote} records={records} now={now} onOpen={onOpen} />
+      {preview ? (
+        <details className="req-body">
+          <summary>試算で読み書きした OP の情報（コピーの上のことで、OP には残っていません）</summary>
+          {stored}
+        </details>
+      ) : (
+        stored
+      )}
     </div>
   );
 }
@@ -177,9 +222,17 @@ export interface FlowRequestProps {
   live: boolean;
   /** Some feature is off: the live OP runs with every feature. */
   featuresOff: boolean;
-  /** The request run last (or the exchange opened), and what it gave. */
+  /** The request run last (or the exchange opened, or the preview of the request shown), and what it gave. */
   run: RequestRunState | undefined;
   replay: Replay | undefined;
+  /** A preview of the request shown is under way. */
+  previewing: boolean;
+  /** Why the last preview could not be run; undefined when it could. */
+  previewProblem: PreviewProblem | undefined;
+  /** Make the playback follow the request the editor shows (useRun.ts RequestRun.show): called once the reader stops writing on it. */
+  onPreview: (draft: RequestDraft) => void;
+  /** Let go of the preview: the editor shows a blank request nobody wrote on again (useRun.ts RequestRun.release). */
+  onRelease: () => void;
   /** The ready-made way the run ended by, in words. */
   ending: string | undefined;
   /** The title of a case, by its id. */
@@ -200,12 +253,18 @@ export interface FlowRequestProps {
  * for a ready-made way, the cases whose request took it, to prepare one.
  * The reader writes its query, its body and its headers and sends it: the
  * response comes back, and the playback follows the way the request took
- * (useRun.ts). A GET of a page a browser opens opens in a tab as well,
+ * (useRun.ts). Before it is sent, the playback follows the request shown:
+ * the one a case prepared, and each edit once the reader stops typing, is
+ * previewed on a copy of the workspace's state (nothing is sent, lib/preview.ts
+ * previewPlan), and the result says it is a preview. A blank request again
+ * (元のリクエストに戻す, or every row written away) lets go of the preview,
+ * and a request written into a form that cannot be sent leaves the result
+ * marked as the one before. A GET of a page a browser opens opens in a tab as well,
  * whose requests come to the same workspace. Below: the recent requests of
  * the workspace (any of them opens without being sent again), and the
  * state of the workspace.
  */
-export function FlowRequest({ data, requests, selection, generatedCase, origin, assumed, framework, endpoint, endpoints, unrunnable, live: served, featuresOff, run, replay, ending, caseTitle, onRun, onFollow, onPrepareCase, onOpenExchange, onOpenExchangeId }: FlowRequestProps) {
+export function FlowRequest({ data, requests, selection, generatedCase, origin, assumed, framework, endpoint, endpoints, unrunnable, live: served, featuresOff, run, replay, previewing, previewProblem, onPreview, onRelease, ending, caseTitle, onRun, onFollow, onPrepareCase, onOpenExchange, onOpenExchangeId }: FlowRequestProps) {
   const headingId = useId();
   const live = useLiveState();
   const originKey = origin !== undefined ? origin.key : generatedCase !== undefined ? `case:${generatedCase.key}` : 'blank';
@@ -218,15 +277,33 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
   const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next });
   const ready = requests.kind === 'ready' ? requests.requests : undefined;
   const cases = generatedCase === undefined && origin === undefined && selection !== undefined ? (wayRequestsOf(ready, selection)?.scenarios ?? []) : [];
+  // The playback follows the request shown: taken up at once when a case prepared it, after a pause in the typing when the reader wrote on it; a blank one again lets go of the preview.
+  const offline = live.kind === 'failed' && live.unreachable;
+  const baseKind: DraftBase = origin !== undefined ? 'exchange' : generatedCase !== undefined ? 'case' : 'blank';
+  const plan = draft === undefined || base === undefined ? undefined : previewPlan({ draft, start: base, base: baseKind, edited: changed, origin: originKey, blocked: !served || unrunnable !== undefined || offline });
+  const shownDraft = useRef({ draft, onPreview, onRelease });
+  shownDraft.current = { draft, onPreview, onRelease };
+  const planKey = plan?.key;
+  const planDelay = plan?.delay;
+  const planRelease = plan?.release === true;
+  useEffect(() => {
+    if (planKey === undefined || planDelay === undefined) return undefined;
+    const timer = window.setTimeout(() => {
+      const { draft: shown, onPreview: show, onRelease: release } = shownDraft.current;
+      if (planRelease) release();
+      else if (shown !== undefined) show(shown);
+    }, planDelay);
+    return () => window.clearTimeout(timer);
+  }, [planKey, planDelay, planRelease]);
 
   let note: string;
-  if (origin !== undefined) note = `ワークスペースが記録したリクエスト ${origin.key.slice(2)} です。送り直さずに、その道筋を再生しています。書き換えて実行すると、地図の OP に送ります。`;
-  else if (generatedCase !== undefined) note = unrunnable ?? 'このケースのために地図の OP で準備したリクエストです。実行すると地図の OP に送り、実際に通った道筋を再生します。OP は状態を保つので、同じ認可コードを二度送れば二度目は使用済みで失敗します。';
+  if (origin !== undefined) note = `ワークスペースが記録したリクエスト ${origin.key.slice(2)} です。送り直さずに、その道筋を再生しています。書き換えると、送る前に地図の OP の状態のコピーで試算し、書き換えたリクエストが通る道筋を再生します。実行すると、地図の OP に送ります。`;
+  else if (generatedCase !== undefined) note = unrunnable ?? 'このケースのために地図の OP で準備したリクエストです。送る前は、地図の OP の状態のコピーで試算し、このリクエスト（書き換えたら、書き換えたリクエスト）が通る道筋を再生します。実行すると地図の OP に送り、実際に通った道筋を再生します。OP は状態を保つので、同じ認可コードを二度送れば二度目は使用済みで失敗します。';
   else if (selection !== undefined && requests.kind === 'loading') note = 'この道筋を通るケースを読み込んでいます…';
   else if (selection !== undefined && requests.kind === 'failed') note = `この道筋を通るケースを読み込めませんでした: ${requests.message}`;
-  else if (selection !== undefined && cases.length === 0) note = 'この道筋を通るケースは、地図のビルドでは見つかっていません。フローはこの道筋を再生しています（決まらない分岐は仮の側）。リクエストを書いて実行すると、そのリクエストが通った道筋に替わります。';
+  else if (selection !== undefined && cases.length === 0) note = 'この道筋を通るケースは、地図のビルドでは見つかっていません。フローはこの道筋を再生しています（決まらない分岐は仮の側）。リクエストを書くと、そのリクエストが通る道筋（送る前の試算）に替わります。';
   else if (selection !== undefined) note = 'この道筋は、次のケースのリクエストが地図の OP で通りました。ケースを選ぶと、そのリクエストを地図の OP で準備します。';
-  else note = '値を書いて実行すると、地図の OP に送り、実際に通った道筋を再生します。「想定リクエスト」のケースか、「コードの道筋」で選んだ道筋を通るケースから、リクエストを作れます。';
+  else note = '値を書くと、送る前に地図の OP の状態のコピーで試算し、そのリクエストが通る道筋を再生します。実行すると、地図の OP に送り、実際に通った道筋を再生します。「想定リクエスト」のケースか、「コードの道筋」で選んだ道筋を通るケースから、リクエストを作れます。';
 
   const connection = !served ? null : live.kind === 'failed' && live.unreachable ? (
     <p className="note req-problem" role="alert">{live.message}</p>
@@ -242,7 +319,7 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
         <h4 id={headingId}>リクエスト</h4>
         {connection}
         {generatedCase === undefined ? <p className="note req-empty">エンドポイントの画面でリクエストを書いて実行できます。</p> : <p className="note req-empty">{unrunnable ?? '地図の OP で、このケースのリクエストを準備しています…'}</p>}
-        {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={run?.status === 'done' ? run.exchange.id : undefined} onOpen={onOpenExchange} /> : null}
+        {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={keptExchangeId(run)} onOpen={onOpenExchange} /> : null}
       </section>
     );
   }
@@ -332,8 +409,18 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
         </div>
         {opens !== undefined ? <p className="note">新しいタブが地図の OP へ送るリクエスト（ログイン、同意など）は、下の「最近のリクエスト」に出て、そこから道筋を再生できます。</p> : null}
       </form>
-      {run !== undefined ? <RunResult run={run} replay={replay} ending={ending} assumed={assumed} expected={generatedCase?.scenario.expected} onFollow={onFollow} onOpen={onOpenExchangeId} /> : null}
-      {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={run?.status === 'done' ? run.exchange.id : undefined} onOpen={onOpenExchange} /> : null}
+      {previewing ? (
+        <p className="note req-pending" role="status">
+          試算中…
+        </p>
+      ) : null}
+      {previewProblem !== undefined && !(previewProblem.unreachable && connection !== null) ? (
+        <p className="note req-problem" role="alert">
+          {previewFailureWords(previewProblem)}
+        </p>
+      ) : null}
+      {run !== undefined ? <RunResult run={run} replay={replay} ending={ending} assumed={assumed} expected={generatedCase?.scenario.expected} stale={staleResult(draft, changed, run.status === 'done')} onFollow={onFollow} onOpen={onOpenExchangeId} /> : null}
+      {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={keptExchangeId(run)} onOpen={onOpenExchange} /> : null}
       {served ? <LiveStatePanel onOpen={onOpenExchangeId} /> : null}
     </section>
   );

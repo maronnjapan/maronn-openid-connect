@@ -180,11 +180,17 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
   const picked = ran ? -1 : scenarioOf(selections, choice, state.way);
   const custom = !ran && picked === -1 && choice !== undefined && Object.keys(choice).length > 0;
   // A request run (or an exchange opened) plays the way it took from the start, once that way is read.
+  // One the editor's request came to (a preview of an edit, or a request sent before that it came back to) keeps the place and does not play on its own:
+  // a playback still playing the way before stops there.
   const played = useRef(0);
   useEffect(() => {
     const ranState = run.state;
     if (ranState?.status !== 'done' || !ranState.follow || run.replay === undefined || played.current === ranState.id) return;
     played.current = ranState.id;
+    if (ranState.quiet === true) {
+      playback.play(false);
+      return;
+    }
     playback.go(0);
     if (run.replay.rootRan) playback.play(true);
   }, [run.state, run.replay, playback]);
@@ -195,13 +201,13 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     // Another way leaves the way of the request run.
     run.forget();
     if (value === 'auto') {
-      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, exchange: undefined, focus: '' });
+      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, exchange: undefined, previewed: undefined, focus: '' });
       return;
     }
     const selection = selections[Number(value)];
     if (selection === undefined) return;
     // A way is played on its own: its frames open, its sides chosen, from the start.
-    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, exchange: undefined, focus: '' });
+    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, exchange: undefined, previewed: undefined, focus: '' });
   };
   const failures = selections.map((selection, index) => ({ selection, index })).filter((item) => item.selection.kind === 'failure');
   const failureIndex = new Map(failures.map((item) => [item.selection, item.index]));
@@ -312,7 +318,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
           <span className="flow-label">コードの道筋</span>
           <select value={ran ? 'run' : picked !== -1 ? String(picked) : custom ? 'custom' : 'auto'} onChange={(event) => pick(event.target.value)}>
             <option value="auto">おまかせ（分岐は仮の側へ進む）</option>
-            {ran ? <option value="run">実行したリクエストが通った道筋</option> : null}
+            {ran ? <option value="run">{run.state?.status === 'done' && run.state.preview === true ? 'このリクエストを送ると通る道筋（試算）' : '実行したリクエストが通った道筋'}</option> : null}
             {custom ? <option value="custom">自分で選んだ道筋</option> : null}
             {GROUP_HEADINGS.map(({ kind, heading }) => {
               const items = selections.map((selection, index) => ({ selection, index })).filter((item) => item.selection.kind === kind);
@@ -467,6 +473,10 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         featuresOff={data.features.some((feature) => !enabled.has(feature.id))}
         run={run.state}
         replay={run.replay}
+        previewing={run.previewing}
+        previewProblem={run.previewProblem}
+        onPreview={run.show}
+        onRelease={run.release}
         ending={ending}
         caseTitle={caseTitle}
         onRun={(draft) => {

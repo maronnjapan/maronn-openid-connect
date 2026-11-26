@@ -7,7 +7,7 @@
  * requests did (packages/live-op StoreAccess and LiveRecord). Nothing here
  * touches the DOM or fetches.
  */
-import type { StoreChange } from '@maronn-openid-connect/live-op/api';
+import type { LiveRecord, StoreChange } from '@maronn-openid-connect/live-op/api';
 
 /** The words of the collections of the OP's memory database (apps/hono db/memory/database.ts) and of the stores of its features (packages/live-op feature-stores.ts). */
 const COLLECTION_WORDS: Readonly<Record<string, string>> = {
@@ -46,6 +46,17 @@ export function changeWords(change: Pick<StoreChange, 'change' | 'fields'>): str
   if (change.change === 'added') return 'を保存した';
   if (change.change === 'removed') return 'を消した';
   return change.fields === undefined || change.fields.length === 0 ? 'を変えた' : `の ${change.fields.join('、')} を変えた`;
+}
+
+/**
+ * The exchanges that changed a record after it was stored, each once, in
+ * the order they first changed it. The workspace notes an exchange for
+ * every change it made (packages/live-op workspace.ts noteProvenance), and
+ * one exchange may change a record more than once (the device approval
+ * writes its device code twice).
+ */
+export function changersOf(record: Pick<LiveRecord, 'changedBy'>): string[] {
+  return [...new Set(record.changedBy ?? [])];
 }
 
 /** Whether a field of a record holds a time (`expiresAt`, `authTime`, `iat`, …). */

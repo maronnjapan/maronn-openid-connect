@@ -81,18 +81,24 @@ export class LiveOpClient {
     readonly origin: string = typeof location === 'undefined' ? 'http://127.0.0.1:3610' : location.origin,
   ) {}
 
-  /** Call the control API and read its JSON answer; a LiveOpError for any other status than 2xx. */
-  private async call<T>(route: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  /**
+   * Call the control API and read its JSON answer; a LiveOpError for any
+   * other status than 2xx. A call the caller aborted (`signal`) rejects with
+   * the abort's own error, not a LiveOpError: it is no OP out of reach.
+   */
+  private async call<T>(route: string, init: { method?: string; body?: unknown; signal?: AbortSignal | undefined } = {}): Promise<T> {
     let response: Response;
     try {
       response = await fetch(new URL(`${LIVE_PREFIX}${route}`, this.origin), {
         method: init.method ?? 'GET',
         headers: { [WORKSPACE_HEADER]: this.workspace, ...(init.body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+        ...(init.signal === undefined ? {} : { signal: init.signal }),
         credentials: 'same-origin',
         cache: 'no-store',
       });
     } catch (error) {
+      if (init.signal?.aborted === true) throw error;
       throw new LiveOpError(0, `地図の OP に接続できません（${error instanceof Error ? error.message : String(error)}）。`);
     }
     const text = await response.text();
@@ -112,6 +118,11 @@ export class LiveOpClient {
   /** Send a request a reader wrote to the OP: the exchange it was recorded as. */
   run(request: LiveRequest): Promise<LiveExchange> {
     return this.call('run', { method: 'POST', body: { request } });
+  }
+
+  /** What a request would do if it were sent now, without sending it: the exchange of a run on a copy of the workspace's state, which keeps nothing. `signal` stops waiting for it (a newer preview took its place). */
+  preview(request: LiveRequest, options: { signal?: AbortSignal } = {}): Promise<LiveExchange> {
+    return this.call('preview', { method: 'POST', body: { request }, signal: options.signal });
   }
 
   /** Prepare a case's request on the workspace by the requests that lead up to it. */

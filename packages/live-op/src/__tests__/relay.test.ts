@@ -133,6 +133,21 @@ describe('answerLive refusals', () => {
     expect(workspace.summaries()).toHaveLength(1);
   });
 
+  it('should preview a request through the control API without keeping an exchange, and refuse one that is not a request of the OP', async () => {
+    const workspace = await LiveWorkspace.open('relay-preview', ISSUER);
+    const prepared = await answered(await answerLive(workspace, control('scenario', { id: 'login-open-transaction' })));
+    const kept = workspace.summaries().length;
+    const previewed = await answered(await answerLive(workspace, control('preview', { request: prepared.body['request'] })));
+    const refused = await answered(await answerLive(workspace, control('preview', { request: { method: 'GET', path: 'https://elsewhere.example/', headers: [] } })));
+    const crossSite = await answerLive(workspace, at(`${LIVE_PREFIX}preview`, { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }, body: JSON.stringify({ request: prepared.body['request'] }) }));
+    expect(previewed.status).toBe(200);
+    expect(previewed.body).toMatchObject({ source: 'preview', status: 200 });
+    expect((previewed.body['trace'] as LiveOp.TraceEvents).events.length).toBeGreaterThan(0);
+    expect(workspace.summaries()).toHaveLength(kept);
+    expect(refused.status).toBe(400);
+    expect(crossSite.status).toBe(403);
+  });
+
   it('should refuse a control request that changes something unless the map\'s own page could have sent it', async () => {
     const workspace = await LiveWorkspace.open('relay-csrf', ISSUER);
     await answerLive(workspace, at('/.well-known/jwks.json'));

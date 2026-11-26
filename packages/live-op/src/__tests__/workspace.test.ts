@@ -202,6 +202,16 @@ describe('LiveWorkspace', () => {
     expect(records.filter((record) => record.collection === 'clients').every((record) => record.addedBy === undefined)).toBe(true);
   });
 
+  it('should name a request that changed a record twice once among its changers (a device approval writes its code twice)', async () => {
+    const workspace = await LiveWorkspace.open('provenance-once', ISSUER);
+    const prepared = await prepareRecipe(workspace, 'device-approve', RECIPES['device-approve']!);
+    const approved = await workspace.send(prepared.request, 'relay');
+    const device = workspace.state().records.find((record) => record.collection === 'deviceCodes');
+    expect(approved.exchange.status).toBe(200);
+    expect(device?.changedBy).toContain(approved.exchange.id);
+    expect(new Set(device?.changedBy).size).toBe(device?.changedBy?.length);
+  });
+
   it('should record the order of what a request ran against the probe table of the build', async () => {
     const workspace = await LiveWorkspace.open('trace', ISSUER);
     const { exchange } = await workspace.send(DISCOVERY, 'relay');
@@ -212,6 +222,51 @@ describe('LiveWorkspace', () => {
     expect(exchange.trace.events.every((probe) => probe >= 0 && probe < table.probes.length)).toBe(true);
     expect(kept?.trace).toEqual(exchange.trace);
     expect(workspace.state().probes).toBe(table.hash);
+  });
+});
+
+describe('LiveWorkspace.preview', () => {
+  it('should give what a request would do, traced, and keep none of it: the code it would use up is still there', async () => {
+    const workspace = await LiveWorkspace.open('preview', ISSUER);
+    const prepared = await prepareRecipe(workspace, 'token-authorization-code', RECIPES['token-authorization-code']!);
+    const before = workspace.state();
+    const exchangesBefore = workspace.summaries();
+    const previewed = await workspace.preview(prepared.request);
+    const again = await workspace.preview(prepared.request);
+    const after = workspace.state();
+    const sent = await workspace.send(prepared.request, 'relay');
+    expect(previewed).toMatchObject({ source: 'preview', status: 200 });
+    expect(previewed.id).toMatch(/^p\d+$/);
+    expect(previewed.trace.events.length).toBeGreaterThan(0);
+    expect(previewed.store.wrote.some((change) => change.collection === 'codes' && change.change === 'changed')).toBe(true);
+    expect(again.status).toBe(200);
+    expect(again.id).not.toBe(previewed.id);
+    expect(after.records).toEqual(before.records);
+    expect(after.exchanges).toBe(before.exchanges);
+    expect(workspace.summaries()).toHaveLength(exchangesBefore.length + 1);
+    expect(sent.exchange.status).toBe(200);
+    expect(sent.exchange.id).toBe(`x${before.exchanges + 1}`);
+  });
+
+  it('should answer on the state as it is now: a code already exchanged previews as invalid_grant', async () => {
+    const workspace = await LiveWorkspace.open('preview-after-send', ISSUER);
+    const prepared = await prepareRecipe(workspace, 'token-authorization-code', RECIPES['token-authorization-code']!);
+    await workspace.send(prepared.request, 'relay');
+    const previewed = await workspace.preview(prepared.request);
+    const edited = await workspace.preview({ ...prepared.request, body: (prepared.request.body ?? '').replace(/code_verifier=[^&]*/, 'code_verifier=edited') });
+    expect(previewed.status).toBe(400);
+    expect(previewed.error).toBe('invalid_grant');
+    expect(edited.error).toBe('invalid_grant');
+  });
+
+  it('should keep the stores of the features as they were (a pushed request it would use up)', async () => {
+    const workspace = await LiveWorkspace.open('preview-features', ISSUER);
+    const prepared = await prepareRecipe(workspace, 'authorize-par', RECIPES['authorize-par']!);
+    const previewed = await workspace.preview(prepared.request);
+    const sent = await workspace.send(prepared.request, 'relay');
+    expect(previewed.status).toBe(302);
+    expect(sent.exchange.status).toBe(302);
+    expect(new URL(sent.exchange.response?.headers.find(([name]) => name === 'location')?.[1] ?? '', ISSUER).pathname).toBe('/login');
   });
 });
 

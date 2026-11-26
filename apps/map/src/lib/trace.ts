@@ -34,6 +34,13 @@ export interface TraceState {
   request?: string;
   /** The exchange of the live OP the flow view replays (`x3`): a request run, or one recorded that the reader opened. */
   exchange?: string;
+  /**
+   * The choice the replay of a preview gave (useRun.ts): while it is the
+   * first choice, the hash leaves it out, since a reload cannot preview the
+   * request again and would show the way as one the reader chose. Not in
+   * the hash itself.
+   */
+  previewed?: Decisions | undefined;
 }
 
 export const EMPTY_TRACE: TraceState = { open: [], choices: [], errors: false, focus: '' };

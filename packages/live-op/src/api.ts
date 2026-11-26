@@ -39,9 +39,11 @@ export interface LiveMessage {
  * How a request reached the OP: a page relayed what a reader wrote
  * (`relay`), a case sent it to prepare the request it is about
  * (`scenario`), a grant made by a page sent it (`grant`), or a browser or a
- * client sent it over HTTP to the OP's paths (`http`).
+ * client sent it over HTTP to the OP's paths (`http`); or a page asked what
+ * a request would do without sending it (`preview`: run on a copy of the
+ * workspace's state, and neither the copy nor the exchange is kept).
  */
-export type ExchangeSource = 'relay' | 'scenario' | 'grant' | 'http';
+export type ExchangeSource = 'relay' | 'scenario' | 'grant' | 'http' | 'preview';
 
 /**
  * The order of what a request ran: the probes (src/recorder.ts) whose

@@ -943,18 +943,34 @@ export interface FollowedTrace {
 }
 
 /**
+ * Whether a root is made of the handlers of its endpoint's routes, a choice
+ * of the handler whose sides are the routes (analyze.ts buildDispatch): made
+ * of the calls of their functions (synthetic, `GET | POST /login`), or an
+ * endpoint body that has them written in it (`GET | POST /device`), whose
+ * one node is that choice, a switch over the lines of the whole body.
+ */
+export function handlersRoot(root: FlowTree, catalog: FrameCatalog): boolean {
+  if (root.synthetic === true) return true;
+  const [choice] = root.nodes;
+  return root.nodes.length === 1 && choice?.kind === 'switch' && choice.lines[0] === root.lines[0] && choice.lines[1] === root.lines[1] && catalog.frame(root.id)?.body === true;
+}
+
+/**
  * Follow a request's trace through a root the way the map replays it: the
- * frames given open, and for a root made from handlers, the handler the
- * request ran; the decisions of every open frame read from the trace; then
- * the frames of the calls the walk fails at opened one after another, down
- * to the throw that started the failure. A frame whose tree is not given is
- * named in `needs`, so a page that loads trees as it goes calls again once
- * it has them; the build gives every tree at once.
+ * frames given open, and for a root made of handlers (handlersRoot), the
+ * handler the request ran: the frame of its function, or, for handlers
+ * written in the root, the frames of the calls of the map it made; the
+ * decisions of every open frame read from the trace; then the frames of the
+ * calls the walk fails at opened one after another, down to the throw that
+ * started the failure. A frame whose tree is not given is named in `needs`,
+ * so a page that loads trees as it goes calls again once it has them; the
+ * build gives every tree at once.
  */
 export function followTrace(trace: RequestTrace, root: FlowTree, sources: RunSources, options: { open?: readonly string[]; enabled?: ReadonlySet<string> } = {}): FollowedTrace {
   if (!trace.rootRan(root)) return { rootRan: false, open: [], decisions: {}, needs: [], mismatches: [] };
   const open: string[] = [...(options.open ?? [])];
-  if (root.synthetic === true) for (const key of trace.ranBelow(root, [{ key: '', tree: root }], sources.treeOf)) if (!open.includes(key)) open.push(key);
+  // Only the side of the handler that ran has calls that ran: those are its frames.
+  if (handlersRoot(root, trace.catalog)) for (const key of trace.ranBelow(root, [{ key: '', tree: root }], sources.treeOf)) if (!open.includes(key)) open.push(key);
   const needs = new Set<string>();
   let decisions: Decisions = {};
   let walk: FlowWalk | undefined;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, MapData, TreeNode } from '../model.js';
-import { FAILS, SKIPS, walkFlow } from '../walk.js';
-import { endingSelection, followTrace, FrameCatalog, RequestTrace, takenSelections, walkMismatches, type Invocation, type TraceProbes } from '../traced.js';
+import { FAILS, SKIPS, walkFlow, type FlowWalk } from '../walk.js';
+import { endingSelection, followTrace, FrameCatalog, handlersRoot, RequestTrace, takenSelections, walkMismatches, type Invocation, type TraceProbes } from '../traced.js';
 import type { Selection } from '../model.js';
 
 // An endpoint that checks two values with the same function; the second
@@ -583,5 +583,150 @@ describe('RequestTrace: decisions the counters do not tell', () => {
 
     expect(followed.decisions).toEqual({ s0: 'false', s0i0: SKIPS });
     expect([followed.walk?.stops.map((stop) => stop.node.id), followed.mismatches]).toEqual([['s0', 's1'], []]);
+  });
+});
+
+// An endpoint body that has the handlers of its routes written in it
+// (`GET | POST /device`): its tree is the choice of the handler, each side
+// the body of a handler, which calls the functions that do the work.
+
+const PAGE_PATH = 'apps/hono/src/device.ts';
+const PAGE_TEXT = [
+  'export function renderEntry(c) {',
+  "  return c.html('entry');",
+  '}',
+  'export async function submitCode(c, code) {',
+  "  if (!code) return { kind: 'error' };",
+  "  return { kind: 'login' };",
+  '}',
+  'export function respond(c, outcome) {',
+  "  if (outcome.kind === 'error') return c.html('error', 400);",
+  "  return c.html('login');",
+  '}',
+  "devicePage.get('/', (c) =>",
+  '  renderEntry(c),',
+  ');',
+  "devicePage.post('/', async (c) => {",
+  '  const body = await c.req.parseBody();',
+  '  return respond(c, await submitCode(c, body.code));',
+  '});',
+];
+
+/** The id of a function of device.ts. */
+const pageFn = (name: string) => `hono:device.ts#${name}`;
+
+/** A tree of a function of device.ts. */
+function pageTree(name: string, lines: [number, number], nodes: TreeNode[]): FlowTree {
+  return { id: pageFn(name), name, signature: `${name}()`, file: 'hono:device.ts', lines, head: [lines[0], lines[0]], nodes };
+}
+
+/** A guard of a function of device.ts that returns on its true side. */
+function returnsIf(id: string, line: number, code: string): TreeNode {
+  return node(id, 'if', at(line), code, { form: 'guard', branches: [side('true', '成立', [node(`${id}t0`, 'return', at(line), 'return …')]), side('false', '不成立')] });
+}
+
+const DEVICE_ROOT: FlowTree = {
+  id: 'endpoint:device',
+  name: 'GET | POST /device',
+  signature: 'GET | POST /device',
+  file: 'hono:device.ts',
+  lines: [12, 18],
+  head: [12, 12],
+  nodes: [
+    node('s0', 'switch', [12, 18], 'どのリクエストか', {
+      branches: [
+        side('c0', 'GET /device', [node('s0c0s0', 'return', [12, 13], 'return renderEntry(c)', { pre: [call('s0c0s0i0', at(13), pageFn('renderEntry'))] })]),
+        side('c1', 'POST /device', [
+          node('s0c1s0', 'action', at(16), 'const body = await c.req.parseBody()'),
+          node('s0c1s1', 'return', at(17), 'return respond(…)', { pre: [call('s0c1s1i0', at(17), pageFn('submitCode')), call('s0c1s1i1', at(17), pageFn('respond'))] }),
+        ]),
+      ],
+    }),
+  ],
+};
+const PAGE_TREES = [
+  pageTree('renderEntry', [1, 3], [node('s0', 'return', at(2), "return c.html('entry')")]),
+  pageTree('submitCode', [4, 7], [returnsIf('s0', 5, 'if (!code)'), node('s1', 'return', at(6), "return { kind: 'login' }")]),
+  pageTree('respond', [8, 11], [returnsIf('s0', 9, "if (outcome.kind === 'error')"), node('s1', 'return', at(10), "return c.html('login')")]),
+  DEVICE_ROOT,
+];
+const PAGES = new Map(PAGE_TREES.map((tree) => [tree.id, tree]));
+const PAGE_DATA: Pick<MapData, 'functions' | 'bodies' | 'sources'> = {
+  functions: Object.fromEntries(PAGE_TREES.filter((tree) => tree !== DEVICE_ROOT).map((tree) => [tree.id, { ...entry(tree.id, tree.lines[0], tree.lines[0], tree.lines[1], []), source: { file: 'hono:device.ts', start: tree.lines[0], end: tree.lines[1] } }])),
+  // The body is declared on the line of its first handler; the others are functions of its lines.
+  bodies: { 'endpoint:device': { id: 'endpoint:device', endpoint: 'device', name: 'GET | POST /device', package: 'hono', module: 'device.ts', line: 12, summary: '', calls: ['renderEntry', 'submitCode', 'respond'].map(pageFn), sites: [], frame: '', source: { file: 'hono:device.ts', start: 12, end: 18 } } },
+  sources: { 'hono:device.ts': { path: PAGE_PATH, url: '' } },
+};
+const PAGE_CATALOG = new FrameCatalog(PAGE_DATA);
+const PAGE_SOURCES = { treeOf: (id: string) => PAGES.get(id), pathOf: (file: string) => (file === 'hono:device.ts' ? PAGE_PATH : undefined), linesOf: (path: string) => (path === PAGE_PATH ? PAGE_TEXT : undefined), frameAt: (path: string, line: number) => PAGE_CATALOG.frameAt(path, line)?.id };
+
+/** The column of a word on a line of device.ts. */
+function pageColumn(line: number, word: string): number {
+  const column = PAGE_TEXT[line - 1]?.indexOf(word) ?? -1;
+  if (column < 0) throw new Error(`no ${word} on line ${line}`);
+  return column;
+}
+/** The probes of device.ts by name, as NAMED names those of steps.ts. */
+const PAGE_NAMED: Record<string, TraceProbes['probes'][number]> = {};
+const PS = (name: string, line: number, word: string, end = 0) => (PAGE_NAMED[name] = [0, 0, line, pageColumn(line, word), end]);
+const PB = (name: string, line: number, side: number) => (PAGE_NAMED[name] = [0, 1, line, pageColumn(line, 'if'), 0, side, 2]);
+const PF = (name: string, line: number) => (PAGE_NAMED[name] = [0, 2, line, 0, -1]);
+PF('renderEntry', 1); PS('renderEntry.return', 2, 'return', 2);
+PF('submitCode', 4); PS('submitCode.if', 5, 'if'); PB('submitCode.true', 5, 0); PB('submitCode.false', 5, 1); PS('submitCode.error', 5, 'return', 2); PS('submitCode.login', 6, 'return', 2);
+PF('respond', 8); PS('respond.if', 9, 'if'); PB('respond.true', 9, 0); PB('respond.false', 9, 1); PS('respond.error', 9, 'return', 2); PS('respond.login', 10, 'return', 2);
+PF('get', 12); PS('get.body', 13, 'renderEntry');
+PF('post', 15); PS('post.body', 16, 'const'); PS('post.return', 17, 'return', 2);
+const PAGE_TABLE: TraceProbes = { hash: 'page', files: [PAGE_PATH], types: ['if'], names: [], probes: Object.values(PAGE_NAMED) };
+const PAGE_INDEX = new Map(Object.keys(PAGE_NAMED).map((name, index) => [name, index]));
+
+/** A trace of device.ts from the names of the probes it ran, in order. */
+function pageTrace(...names: string[]): RequestTrace {
+  return new RequestTrace({ probes: 'page', events: names.map((name) => PAGE_INDEX.get(name) ?? -1) }, PAGE_TABLE, PAGE_CATALOG);
+}
+
+/** The frames the stops of a walk are in, each once, in order. */
+function framesOf(walk: FlowWalk | undefined): string[] {
+  return [...new Set((walk?.stops ?? []).map((stop) => stop.frame))];
+}
+
+describe('followTrace: a root that has its handlers written in it', () => {
+  const POST = ['post', 'post.body', 'post.return'];
+  const sent = pageTrace(...POST, 'submitCode', 'submitCode.if', 'submitCode.false', 'submitCode.login', 'respond', 'respond.if', 'respond.false', 'respond.login');
+  const edited = pageTrace(...POST, 'submitCode', 'submitCode.if', 'submitCode.true', 'submitCode.error', 'respond', 'respond.if', 'respond.true', 'respond.error');
+
+  it('should take a root made of handlers for one, and a body or a function whose one node is another switch not', () => {
+    const inner: FlowTree = { ...DEVICE_ROOT, nodes: [{ ...(DEVICE_ROOT.nodes[0] as TreeNode), lines: [13, 17] }] };
+    const asFunction: FlowTree = { ...DEVICE_ROOT, id: pageFn('respond') };
+
+    expect([handlersRoot(DEVICE_ROOT, PAGE_CATALOG), handlersRoot(HANDLERS, CATALOG), handlersRoot(inner, PAGE_CATALOG), handlersRoot(asFunction, PAGE_CATALOG), handlersRoot(ROOT, CATALOG)]).toEqual([true, true, false, false, false]);
+  });
+
+  it('should go into the handler that ran: the frames of the calls it made open, and their decisions are read', () => {
+    const followed = followTrace(sent, DEVICE_ROOT, PAGE_SOURCES);
+
+    expect(followed.open).toEqual(['s0c1s1i0', 's0c1s1i1']);
+    expect(followed.decisions).toEqual({ s0: 'c1', 's0c1s1i0.s0': 'false', 's0c1s1i1.s0': 'false' });
+    expect(framesOf(followed.walk)).toEqual(['', 's0c1s1i0', 's0c1s1i1']);
+    expect([followed.walk?.assumed, followed.mismatches]).toEqual([[], []]);
+  });
+
+  it('should follow another request of the same route on the sides it took in the frames of the handler', () => {
+    const followed = followTrace(edited, DEVICE_ROOT, PAGE_SOURCES);
+    const returned = (followed.walk?.stops ?? []).filter((stop) => stop.event === 'returns' && stop.depth === 1).map((stop) => `${stop.frame} ${stop.node.id}`);
+
+    expect(followed.decisions).toEqual({ s0: 'c1', 's0c1s1i0.s0': 'true', 's0c1s1i1.s0': 'true' });
+    expect(returned).toEqual(['s0c1s1i0 s0t0', 's0c1s1i1 s0t0']);
+    expect(followed.mismatches).toEqual([]);
+  });
+
+  it('should go into the handler of the route declared on the line of the body too', () => {
+    const followed = followTrace(pageTrace('get', 'get.body', 'renderEntry', 'renderEntry.return'), DEVICE_ROOT, PAGE_SOURCES);
+
+    expect([followed.open, followed.decisions, framesOf(followed.walk), followed.mismatches]).toEqual([['s0c0s0i0'], { s0: 'c0' }, ['', 's0c0s0i0'], []]);
+  });
+
+  it('should keep the frames the reader opened, and open none for a request no handler answered', () => {
+    expect(followTrace(sent, DEVICE_ROOT, PAGE_SOURCES, { open: ['s0c1s1i1'] }).open).toEqual(['s0c1s1i1', 's0c1s1i0']);
+    expect(followTrace(pageTrace(), DEVICE_ROOT, PAGE_SOURCES)).toEqual({ rootRan: false, open: [], decisions: {}, needs: [], mismatches: [] });
   });
 });

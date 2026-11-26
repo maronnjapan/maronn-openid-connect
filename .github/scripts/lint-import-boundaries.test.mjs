@@ -487,6 +487,18 @@ describe('lintSource', () => {
       assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
     });
 
+    it('should not take the // of a URL in a string literal for a comment', () => {
+      const source = route(
+        ['    // [respond] Respond', "    return oauthError('https://example.com', dispatchCiba(request));"],
+        [
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
     it('should read the names after a backtick that no backtick closes, as in a regex literal', () => {
       const source = route(
         [

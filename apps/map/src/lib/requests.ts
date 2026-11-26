@@ -43,6 +43,25 @@ export function statusLine(example: { status: number; statusText?: string | unde
   return reason === undefined ? String(example.status) : `${example.status} ${reason}`;
 }
 
+/**
+ * A body short enough to read on one line beside its status, as the line
+ * above the flow's chart shows it: a JSON body written without spaces
+ * (`{"active":false}`), other text as it is; undefined for none, an empty
+ * one, one of several lines, or one longer than `max` characters. Two
+ * answers of the same status (an introspected token active or not) differ
+ * there.
+ */
+export function briefBody(body: string | undefined, max = 60): string | undefined {
+  if (body === undefined) return undefined;
+  let text = body.trim();
+  try {
+    text = JSON.stringify(JSON.parse(text));
+  } catch {
+    // Not JSON: the text as it is.
+  }
+  return text === '' || text.length > max || /[\r\n]/.test(text) ? undefined : text;
+}
+
 /** How a response reads at a glance: an answer, a redirect, or an error. */
 export function statusTone(status: number): 'ok' | 'redirect' | 'error' {
   if (status >= 400) return 'error';

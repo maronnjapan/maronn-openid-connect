@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import type { FlowStep, MapData, Selection } from '../types';
 import type { PartingLine } from '../lib/parting';
 import { departureScene, STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, selectionKey, type FlowWalk, type Scene, type SceneLine, type WalkStop } from '../lib/playback';
-import { statusLine, statusTone } from '../lib/requests';
+import { briefBody, statusLine, statusTone } from '../lib/requests';
 import { oauthErrorOf } from '../lib/run';
 import { choose, entryOf, type TraceState } from '../lib/trace';
 import { firstSentence } from '../lib/words';
@@ -111,7 +111,12 @@ export interface FlowPlayerProps {
   enabled: ReadonlySet<string>;
   walked: FlowWalk;
   scenes: readonly Scene[];
+  /** The playback as the reader moves it (the controls, the keys, the line above the chart). */
   playback: Playback;
+  /** The playback as the flow moves it on its own when the request followed changes (to its start, to where it parts): not the reader's move. */
+  steer: Pick<Playback, 'go' | 'play'>;
+  /** Whether the reader moved the playback since the run of an id came: the flow's own move for that run gives way. */
+  readerMoved: (run: number) => boolean;
   /** The ready-made way played, by its index in `selections`; -1 for none (おまかせ, the reader's own sides, or the way of a request followed). */
   picked: number;
   /** The words a scene is named by: those of its box in the diagram. */
@@ -186,28 +191,45 @@ function plain(text: string): string {
  * the request parts from the one it was edited from, when read against it,
  * else lib/playback.ts departureScene), and stays when it does not depart.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, picked, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, partings, settled, ending, idle, children }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, steer, readerMoved, picked, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, partings, settled, ending, idle, children }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
   const scene = scenes[at];
   const choice = state.choices[0];
   // While the playback follows the way of a request run, that is the way chosen, ready-made or not.
   const ran = run.state?.status === 'done' && run.state.follow;
   const custom = !ran && picked === -1 && choice !== undefined && Object.keys(choice).length > 0;
-  // A request run (or an exchange opened) plays the way it took from the start, once that way is read.
+  // A request run (or an exchange opened) plays the way it took from the start, once that way is read. One sent that was read against the request
+  // it was edited from plays from the first place the two part, once read: the scenes before it are those of the request before the edits, and
+  // a playback from the start showed nothing of the edit for half a minute (an introspected token the OP does not know answers 200 as one it knows).
   // One the editor's request came to (a preview of an edit, or a request sent before that it came back to) does not play on its own:
   // a playback still playing the way before stops there, and moves to where the new way departs from it (below).
+  // A move the reader made since the run came (End, a node of the chart, a place it parts) stands: the flow does not take the playback back.
   const played = useRef(0);
   useEffect(() => {
     const ranState = run.state;
     if (ranState?.status !== 'done' || !ranState.follow || run.replay === undefined || played.current === ranState.id) return;
-    played.current = ranState.id;
     if (ranState.quiet === true) {
-      playback.play(false);
+      played.current = ranState.id;
+      steer.play(false);
       return;
     }
-    playback.go(0);
-    if (run.replay.rootRan) playback.play(true);
-  }, [run.state, run.replay, playback]);
+    if (readerMoved(ranState.id)) {
+      played.current = ranState.id;
+      return;
+    }
+    if (ranState.against !== undefined && run.replay.rootRan) {
+      if (!settled || partings === undefined) return;
+      const first = partings[0];
+      if (first !== undefined && first.scene === undefined) return;
+      played.current = ranState.id;
+      steer.go(first?.scene ?? 0);
+      steer.play(true);
+      return;
+    }
+    played.current = ranState.id;
+    steer.go(0);
+    if (run.replay.rootRan) steer.play(true);
+  }, [run.state, run.replay, settled, partings, steer, readerMoved]);
   // The editor's request changed the way: once the trace shows the new way, the playback moves to where it departs from the way shown before.
   // A request read against the one it was edited from parts at the places read (its frames open with the replay); else the scenes tell (departureScene).
   const wayBefore = useWayBefore(run.state?.status === 'done' ? run.state.id : undefined, walked.stops);
@@ -216,7 +238,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     const ranState = run.state;
     if (ranState?.status !== 'done' || !ranState.follow || ranState.quiet !== true || moved.current === ranState.id) return;
     // The request as a case prepared it, or as it was sent or opened, is no edit: the playback stays where it is (at the start, for a case just picked).
-    if (ranState.edited !== true) {
+    if (ranState.edited !== true || readerMoved(ranState.id)) {
       moved.current = ranState.id;
       return;
     }
@@ -225,8 +247,8 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     if (first !== undefined && first.scene === undefined) return;
     moved.current = ranState.id;
     const target = first?.scene ?? departureScene(wayBefore, scenes);
-    if (target !== undefined) playback.go(target);
-  }, [run.state, settled, partings, wayBefore, scenes, playback]);
+    if (target !== undefined) steer.go(target);
+  }, [run.state, settled, partings, wayBefore, scenes, steer, readerMoved]);
   const pick = (value: string) => {
     if (value === 'run' || value === 'custom') return;
     playback.play(false);
@@ -352,12 +374,38 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     if (shown.status === 'failed') return <p className="flow-now req-problem">{shown.unreachable ? '地図の OP に接続できません' : '実行できませんでした'}（理由は「リクエスト」の欄にあります）{pending}</p>;
     const { response } = shown.exchange;
     const error = response === undefined ? undefined : oauthErrorOf(response);
+    const brief = briefBody(response?.body);
     const label = shown.preview === true ? '試算' : shown.opened ? `開いたリクエスト ${shown.exchange.id}` : `実行したリクエスト ${shown.exchange.id}`;
+    // Where it parts from the request it was edited from: what the edit changed, though the answer may read the same (an introspected token active or not, both 200).
+    const first = partings?.[0];
+    const parting =
+      !shown.follow || partings === undefined ? null : first === undefined ? (
+        <span className="flow-now-parting">書き換える前と同じ道筋</span>
+      ) : (
+        <span className="flow-now-parting">
+          書き換える前と分かれる所:
+          <button
+            type="button"
+            className="link small"
+            disabled={first.scene === undefined}
+            title="この場面へ移る"
+            onClick={() => {
+              if (first.scene === undefined) return;
+              playback.play(false);
+              playback.go(first.scene);
+            }}
+          >
+            {first.name}
+          </button>
+          {partings.length > 1 ? `ほか ${partings.length - 1} か所` : ''}
+        </span>
+      );
     return (
       <p className="flow-now" title={shown.preview === true ? '送る前の試算（地図の OP の今の状態のコピーで動かしました。OP の状態は変えていません）' : undefined}>
         <span className="flow-label">{label}</span>
         {response === undefined ? <span className="req-status req-error">応答なし</span> : <span className={`req-status req-${statusTone(response.status)}`}>{statusLine(response)}</span>}
         {error !== undefined ? <code className="mono req-error-code">{error}</code> : null}
+        {brief !== undefined && error === undefined ? <code className="mono flow-now-body" title="応答のボディ">{brief}</code> : null}
         {!shown.follow ? (
           <button type="button" className="link small" onClick={run.follow} title="ほかの側や道筋を選んだので、再生はこのリクエストの道筋から離れています">
             このリクエストの道筋に戻す
@@ -367,6 +415,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
             {ending}
           </button>
         ) : null}
+        {parting}
         {pending}
       </p>
     );

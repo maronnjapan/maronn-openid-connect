@@ -327,6 +327,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   // A frame the reader went into that the request does not go through: the stage shows its chart alone, without the playback, until the playback moves.
   const [peek, setPeek] = useState<string | null>(null);
   const peeking = flowOn && peek !== null && known.has(peek) ? peek : undefined;
+  // The run the reader last moved the playback in, by its id: a move the flow would make on its own for that run (to where it parts, to its start) gives way to the reader's.
+  const movedIn = useRef<number | undefined>(undefined);
+  const shownRunId = requestRun.state?.id;
 
   // The frame in focus for the diagram: in the flow view, the frame the reader looks into, else the frame of the scene shown; else the one the trace asks for (the frame of the row
   // selected last, a call opened from the diagram, the end of a ready-made choice) when the outline shows it, else the nearest frame above it that the outline shows.
@@ -477,6 +480,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
       // The flow view shows the frame of its scene: going up to a frame goes back to the last scene the request was in it;
       // a frame the request does not go through (one the reader looked into below another) shows its chart alone.
       const back = [...scenes].reverse().find((item) => item.index <= scene.index && item.frame === key);
+      movedIn.current = shownRunId;
       playback.play(false);
       setEntering(null);
       if (back !== undefined) {
@@ -844,15 +848,18 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const partings = useMemo(() => (apart === undefined ? undefined : partingLines(apart, scenes, frames.trees, data)), [apart, scenes, frames.trees, data]);
   // The calls on the way the playback could still go into: those of functions with a frame that the trace has not opened.
   const enterable = useMemo(() => (walked === undefined ? [] : callsToEnter(walked, hasFrame).filter((key) => !state.open.includes(key))), [walked, hasFrame, state.open]);
-  // The playback as the player and the request move it: moving it (or playing) ends a look into a frame the request does not go through, and a wait to go into one.
+  // The playback as the reader moves it (the player's controls, the chart, the places where a request parts): moving it (or playing) ends a look into a frame
+  // the request does not go through and a wait to go into one, and stands in for the move the flow would make on its own for the run shown.
   const player: Playback = {
     ...playback,
     go: (index) => {
+      movedIn.current = shownRunId;
       setPeek(null);
       setEntering(null);
       playback.go(index);
     },
     play: (on) => {
+      movedIn.current = shownRunId;
       if (on) {
         setPeek(null);
         setEntering(null);
@@ -860,6 +867,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
       playback.play(on);
     },
   };
+  /** Whether the reader moved the playback since the run of an id came: the flow then leaves it where the reader put it. */
+  const readerMoved = (run: number) => movedIn.current === run;
   /**
    * Go into the frame of a call, by its key (a scene's 中に入る, a card's
    * 中の流れを見る): the frame opens, so the request goes through it, and
@@ -867,6 +876,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
    * the request does not make shows its frame's chart alone (below).
    */
   const enter = (key: string) => {
+    movedIn.current = shownRunId;
     playback.play(false);
     setPeek(null);
     setEntering(key);
@@ -1047,6 +1057,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
                 walked={walked}
                 scenes={scenes}
                 playback={player}
+                steer={playback}
+                readerMoved={readerMoved}
                 picked={picked}
                 titleOf={sceneTitle}
                 endpoint={endpoint}

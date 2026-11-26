@@ -182,6 +182,16 @@ export function framesToOpen(followed: { open: readonly string[]; walk?: Pick<Fl
   return [...new Set(wanted)].filter((key) => !open.includes(key) && !closed.has(key));
 }
 
+/**
+ * What the replay of an exchange says of a trace the OP cut (the request
+ * ran more probes than the OP keeps for one): what ran after the cut is not
+ * in it, so the replay may stop short of where the request went. Undefined
+ * for a whole trace.
+ */
+export function truncationProblem(exchange: { trace: { truncated?: true } }): string | undefined {
+  return exchange.trace.truncated === true ? 'このリクエストが動かした順の記録は、OP が一つのリクエストに残す上限で切れています。再生する道筋は、切れた所から先が無く、途中で止まることがあります。' : undefined;
+}
+
 /** A ready-made way in words, as the list of the ways names it: a failure by its error (and the function that throws it below the root), an end by its name. */
 export function wayName(selection: Pick<Selection, 'kind' | 'name' | 'frames' | 'failure'>): string {
   const name = selection.name.replace(/`/g, '');

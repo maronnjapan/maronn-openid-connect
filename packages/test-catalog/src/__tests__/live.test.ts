@@ -145,6 +145,8 @@ const TABLE: TraceProbes = {
 
 /** Both checks pass and the endpoint answers. */
 const ANSWERED = [0, 1, 2, 6, 7, 9, 11, 3, 6, 7, 9, 11, 4];
+/** As ANSWERED, but the first check counts the side of its `if` that calls fail() and returns without calling it: a call that does not fail, whose frame a reader can open. */
+const MISREAD = [0, 1, 2, 6, 7, 8, 11, 3, 6, 7, 9, 11, 4];
 /** The first check fails through fail(), and the catch answers. */
 const FAILED = [0, 1, 2, 6, 7, 8, 10, 12, 13, 5];
 
@@ -161,6 +163,7 @@ const ANSWERS: Record<string, { status: number; error?: string; events: number[]
   'token-fails': { status: 400, error: 'invalid_request', events: FAILED },
   'token-405': { status: 405, events: [] },
   'token-unexpected': { status: 400, error: 'invalid_request', events: FAILED },
+  'token-misread': { status: 200, events: MISREAD },
 };
 
 /** A stand-in for the live OP: each case answered as ANSWERS says, after one request that prepared it. */
@@ -226,6 +229,12 @@ describe('followCases', () => {
       ['the OP answered 400 invalid_request where the case expects 200'],
       ['the OP could not run it (The case token-unprepared could not get its grant)'],
     ]);
+  });
+
+  it('should check every frame the request ran, not only those of the calls that failed', async () => {
+    const misread = followCases(DATA, TREES, FAILURES, await runLiveCases(SOURCE, [scenario('token-misread', 200)]), { linesOf: (path) => TEXTS[path] }).cases[0];
+
+    expect([misread?.run.mismatches, misread?.mismatches.map(({ frame, node, reason }) => `${frame}|${node} ${reason}`), misread?.faults]).toEqual([1, ['s0t0|s0t0 not-run'], ['its walk disagrees with what its request ran at 1 places']]);
   });
 
   it('should give each way the cases that took it, in the order of the cases', () => {

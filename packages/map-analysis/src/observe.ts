@@ -403,7 +403,7 @@ export function observable(node: TreeNode): boolean {
  * one node: after a loop's body, a `try`'s, a `switch`'s clause, or the
  * pre of a node (the node itself runs on after it, and may fail).
  */
-function nextOf(tree: FlowTree, place: Place): TreeNode | undefined {
+export function nextOf(tree: FlowTree, place: Place): TreeNode | undefined {
   let at: Place | undefined = place;
   while (at !== undefined) {
     const next = at.list.slice(at.index + 1).find(observable);

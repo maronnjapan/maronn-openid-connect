@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { walkFlow } from '@maronn-openid-connect/map-analysis/walk';
 import type { Branch, FlowTree, MapData, TreeNode } from '../types';
-import { blankDraft, draftOfRequest, draftProblem, failingCalls, filesOf, framesToOpen, jsonValueOf, liveRequestOf, oauthErrorOf, requestOfExchange, type RequestDraft } from './run';
+import { blankDraft, draftOfRequest, draftProblem, failingCalls, filesOf, framesToOpen, jsonValueOf, liveRequestOf, oauthErrorOf, requestOfExchange, truncationProblem, type RequestDraft } from './run';
 
 /** A request a client sends to the token endpoint: a refresh with Basic credentials. */
 const REFRESH = {
@@ -220,5 +220,11 @@ describe('oauthErrorOf', () => {
       oauthErrorOf({ headers: [['Location', 'https://rp.example.com/cb#error=login_required']] }),
       oauthErrorOf({ headers: [], body: 'plain' }),
     ]).toEqual(['invalid_grant', 'access_denied', 'login_required', undefined]);
+  });
+});
+
+describe('truncationProblem', () => {
+  it('should say that the replay of a trace the OP cut may stop short, and nothing of a whole trace', () => {
+    expect([truncationProblem({ trace: { truncated: true } })?.includes('途中で止まる'), truncationProblem({ trace: {} })]).toEqual([true, undefined]);
   });
 });

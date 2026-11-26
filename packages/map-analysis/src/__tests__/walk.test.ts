@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, TreeNode } from '../model.js';
-import { assumedSide, FAILS, stepsOf, walkFlow, type WalkStop } from '../walk.js';
+import { assumedSide, FAILS, SKIPS, stepsOf, walkFlow, type WalkStop } from '../walk.js';
 
 /** A tree of nodes written by hand. */
 function tree(id: string, nodes: TreeNode[]): FlowTree {
@@ -148,6 +148,19 @@ describe('walkFlow', () => {
     const root = tree('root', [loop, cases]);
     expect(walkFlow(root, {}).stops.map(said)).toEqual(['s0:body?', 's0b0', 's1:c0?', 's1c0s0', 's1c1s0']);
     expect(walkFlow(root, { s0: 'skip', s1: 'default' }).stops.map(said)).toEqual(['s0:skip', 's1:default', 's1ds0']);
+  });
+
+  it('should pass a call the choice says is not evaluated, and its arguments, without a stop', () => {
+    const root = tree('root', [guard('s0', [returned('s0t0')], { pre: [call('s0i0', 'check', { pre: [call('s0i0i0', 'read')] })] }), returned('s1')]);
+    const walked = walkFlow(root, { s0i0: SKIPS, s0: 'false' }, { enter: () => tree('check', [returned('s0')]) });
+    expect(walked.stops.map(said)).toEqual(['s0:false', 's1 returns']);
+  });
+
+  it('should fail at a statement the choice makes fail, what it calls outside the map throwing', () => {
+    const root = tree('root', [attempt('s0', [action('s0b0'), action('s0b1')], [action('s0h0')]), returned('s1')]);
+    const walked = walkFlow(root, { s0b0: FAILS });
+    expect(walked.stops.map(said)).toEqual(['s0b0 fails', 's0:catch catches', 's0h0', 's1 returns']);
+    expect(walked.resolved).toEqual({ s0b0: FAILS });
   });
 
   it('should go on past a return inside a callback, which ends no frame', () => {

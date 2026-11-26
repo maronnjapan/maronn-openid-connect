@@ -3,7 +3,7 @@ import type { LiveExchange, LiveRequest, ProbeTable } from '@maronn-openid-conne
 import { followTrace, FrameCatalog, RequestTrace, type WalkMismatch } from '@maronn-openid-connect/map-analysis/traced';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
 import type { Decisions, FlowTree, MapData, SourceDocument } from '../types';
-import { draftOfRequest, filesOf, framesToOpen, liveRequestOf, requestOfExchange, runSourcesOf, type RequestDraft } from '../lib/run';
+import { draftOfRequest, filesOf, framesToOpen, liveRequestOf, requestOfExchange, runSourcesOf, truncationProblem, type RequestDraft } from '../lib/run';
 import type { TraceState, TraceUpdate } from '../lib/trace';
 import { liveClient, liveProblem, notifyLiveChanged, probeTableOf, unreachable } from './useLive';
 
@@ -60,7 +60,7 @@ export type RequestRunState =
   | { status: 'done'; id: number; exchange: LiveExchange; opened: boolean; follow: boolean }
   | { status: 'failed'; id: number; message: string; unreachable: boolean };
 
-/** How the replay of an exchange reads, once read: whether the request ran the root, where the walk disagrees with what ran (none expected), the walk down to the throw, or why it could not be read. */
+/** How the replay of an exchange reads, once read: whether the request ran the root, where the walk disagrees with what ran (none expected), the walk down to the throw, or why it could not be read (or, with the walk, why it may stop short: a trace the OP cut). */
 export interface Replay {
   rootRan: boolean;
   mismatches: readonly WalkMismatch[];
@@ -221,11 +221,13 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     open(wanted);
   });
 
+  // A trace the OP cut is read as far as it goes: the replay says it may stop short.
+  const cut = exchange === undefined ? undefined : truncationProblem(exchange);
   const replay: Replay | undefined =
     !following ? undefined
     : table?.hash === hash && table?.problem !== undefined ? { rootRan: true, mismatches: [], walk: undefined, problem: table.problem }
     : followed === undefined ? undefined
-    : { rootRan: followed.rootRan, mismatches: followed.mismatches, walk: followed.walk };
+    : { rootRan: followed.rootRan, mismatches: followed.mismatches, walk: followed.walk, ...(cut === undefined ? {} : { problem: cut }) };
 
   return {
     state: runState,

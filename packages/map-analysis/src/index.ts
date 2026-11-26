@@ -28,9 +28,9 @@ export { Compiler, getLeadingCommentRanges, isAlias, SyntaxKind, type Node, type
 export { failureSelections, frameSelections, inFrame, wayTo } from './selections.js';
 export { buildTree, ends, nodesOf } from './tree.js';
 // The walk of one request through a tree: plain data, shared with the page (`@maronn-openid-connect/map-analysis/walk`).
-export { assumedSide, FAILS, stepsOf, walkFlow, type FlowWalk, type WalkEvent, type WalkOptions, type WalkStop } from './walk.js';
+export { assumedSide, FAILS, SKIPS, stepsOf, walkFlow, type FlowWalk, type WalkEvent, type WalkOptions, type WalkStop } from './walk.js';
 // The reading of a measured request against the trees: shared with the page too (`@maronn-openid-connect/map-analysis/observe`).
-export { BOTH, FrameLocator, GOES, locate, nodeRan, placesOf, RequestRun, seenDecisions, seenSide, throughTries, type Located, type Place, type RanInFile, type RanRequest, type RunSources } from './observe.js';
+export { BOTH, FrameLocator, GOES, locate, nextOf, nodeRan, placesOf, RequestRun, seenDecisions, seenSide, throughTries, type Located, type Place, type RanInFile, type RanRequest, type RunSources } from './observe.js';
 // The reading of a request traced on the live OP: shared with the page too (`@maronn-openid-connect/map-analysis/traced`); the build of the map runs the cases with it.
 export { endingSelection, followTrace, FrameCatalog, RequestTrace, takenSelections, treeAtKey, walkMismatches, type FollowedTrace, type Invocation, type TraceProbes, type TraceRun, type WalkMismatch } from './traced.js';
 export type * from './model.js';

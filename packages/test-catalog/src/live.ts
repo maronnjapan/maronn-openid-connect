@@ -8,12 +8,15 @@
  * map replays a request (map-analysis traced.ts followTrace), and the
  * ready-made ways the walk took (takenSelections) are the ways of the case.
  *
- * Each case is also checked for faithfulness: the walk agrees with what the
- * request ran (no mismatch), the request ran the root unless the case
- * expects a status the router answers, and the OP answered what the case
- * expects (its status, its OAuth error, the path it redirects to). Nothing
- * here guesses a request or a way: a case the OP could not prepare takes
- * none, and says why.
+ * Each case is also checked for faithfulness: with every frame the request
+ * ran open (all a reader can open, not only those of the calls that
+ * failed), the walk agrees with what the request ran both ways (no
+ * mismatch: it passes nothing the request did not run, and leaves out no
+ * call of the map the request made nor a side the trace tells), the
+ * request ran the root unless the case expects a status the router
+ * answers, and the OP answered what the case expects (its status, its
+ * OAuth error, the path it redirects to). Nothing here guesses a request or
+ * a way: a case the OP could not prepare takes none, and says why.
  *
  * Express and Fastify are generated from hono and share its roots, so the
  * runs of hono stand for them; Next.js runs none.
@@ -198,7 +201,8 @@ export function followCases(data: MapData, trees: ReadonlyMap<string, CaseTree>,
     else if (exchange !== undefined) {
       if (exchange.trace.probes !== live.probes.hash) faults.push(`its trace indexes the probes ${exchange.trace.probes}, not those of the OP (${live.probes.hash})`);
       if (exchange.trace.truncated === true) faults.push('its trace was cut');
-      const followed = followTrace(new RequestTrace(exchange.trace, live.probes, catalog), tree, sources);
+      const trace = new RequestTrace(exchange.trace, live.probes, catalog);
+      const followed = followTrace(trace, tree, sources, { open: trace.ranKeys(tree, sources.treeOf) });
       if (followed.needs.length > 0) faults.push(`the map has no tree of ${followed.needs.join(', ')}`);
       run.rootRan = followed.rootRan;
       run.mismatches = followed.mismatches.length;

@@ -179,17 +179,102 @@ function isRestrictedPackage(specifier) {
   return RESTRICTED_PACKAGES.some((name) => specifier === name || specifier.startsWith(`${name}/`));
 }
 
-/** The identifiers a range of lines uses, without strings and comments. */
+/**
+ * The identifiers a range of lines uses, without strings and comments. The
+ * expressions of a template literal (`${name}`) are code, so the names they
+ * read count; only the text of the template is left out.
+ */
 function identifiersIn(lines) {
-  const code = lines
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ')
-    .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, ' ')
-    .replace(/`(?:\\.|[^`\\])*`/g, ' ')
-    // A spread is no property access: ...name reads name.
-    .replace(/\.\.\./g, ' ');
+  // A spread is no property access: ...name reads name.
+  const code = codeWithoutLiterals(lines.join('\n')).replace(/\.\.\./g, ' ');
   return new Set(code.match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? []);
+}
+
+/**
+ * The code with its comments, string literals and the text of its template
+ * literals blanked, read once from the start (as packages/cli's
+ * extract/source.ts does): the expressions of `${…}` stay, since a name they
+ * read is read, and the // of a URL in a template is no comment. Regex
+ * literals are not told apart.
+ */
+function codeWithoutLiterals(code) {
+  let result = '';
+  // The brace depth at which each open `${` of a template literal started.
+  const substitutions = [];
+  let depth = 0;
+  let index = 0;
+  while (index < code.length) {
+    const char = code[index];
+    const next = code[index + 1];
+    if (char === '/' && next === '*') {
+      const end = code.indexOf('*/', index + 2);
+      index = end === -1 ? code.length : end + 2;
+      result += ' ';
+    } else if (char === '/' && next === '/') {
+      const end = code.indexOf('\n', index);
+      index = end === -1 ? code.length : end;
+      result += ' ';
+    } else if (char === "'" || char === '"') {
+      const end = endOfQuoted(code, index, char);
+      // A quote with no closing one on its line (in a regex literal such as /['"]/) starts no string.
+      if (end === undefined) {
+        result += char;
+        index += 1;
+      } else {
+        index = end;
+        result += ' ';
+      }
+    } else if (char === '`') {
+      index = endOfTemplateText(code, index + 1, substitutions, depth);
+      result += ' ';
+    } else if (char === '}' && substitutions.length > 0 && substitutions[substitutions.length - 1] === depth) {
+      // The `}` that closes a `${` goes back to the text of its template literal.
+      substitutions.pop();
+      index = endOfTemplateText(code, index + 1, substitutions, depth);
+      result += ' ';
+    } else {
+      if (char === '{') depth += 1;
+      if (char === '}') depth -= 1;
+      result += char;
+      index += 1;
+    }
+  }
+  return result;
+}
+
+/**
+ * The index after the string literal that starts at start, skipping escaped
+ * quotes; undefined when no quote closes it on its line.
+ */
+function endOfQuoted(code, start, quote) {
+  let index = start + 1;
+  while (index < code.length && code[index] !== quote && code[index] !== '\n') {
+    index += code[index] === '\\' ? 2 : 1;
+  }
+  return index < code.length && code[index] === quote ? index + 1 : undefined;
+}
+
+/**
+ * The index after the text of a template literal from start: after its
+ * closing backtick, or after a `${` (whose depth goes onto substitutions, so
+ * the matching } returns to the text).
+ */
+function endOfTemplateText(code, start, substitutions, depth) {
+  let index = start;
+  while (index < code.length) {
+    const char = code[index];
+    if (char === '\\') {
+      index += 2;
+    } else if (char === '`') {
+      return index + 1;
+    } else if (char === '$' && code[index + 1] === '{') {
+      substitutions.push(depth);
+      return index + 2;
+    } else {
+      index += 1;
+    }
+  }
+  return index;
 }
 
 /**

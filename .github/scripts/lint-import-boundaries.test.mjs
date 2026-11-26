@@ -323,6 +323,41 @@ describe('lintSource', () => {
       assert.deepEqual(rulesOf(lint('endpoints/token/pipeline.ts', source)), ['pipeline-import-not-allowed']);
     });
 
+    it('should count a feature import read inside a template expression outside its block as a use', () => {
+      const source = pipeline(
+        ['    // [respond] Respond', '    return respond(c, `request_uri=${expand(c)}`);'],
+        [
+          "import { expand } from '../../features/par/steps/resolve-pushed-request.js';",
+          "import { fail } from './steps/respond-error.js';",
+          "import { respond } from './steps/respond.js';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('endpoints/authorize/pipeline.ts', source)), [
+        'feature-import-outside-its-block',
+      ]);
+    });
+
+    it('should reject a feature block that reads a base import only inside a template expression', () => {
+      const source = pipeline(
+        [
+          '    // [resolve-pushed-request] (feature: par) Expand',
+          '    const label = `pushed ${parse(c)}`;',
+          '    // [respond] Respond',
+          '    return respond(c, label);',
+        ],
+        [
+          "import { fail } from './steps/respond-error.js';",
+          "import { parse } from './steps/parse-request.js';",
+          "import { respond } from './steps/respond.js';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('endpoints/authorize/pipeline.ts', source)), [
+        'feature-block-uses-base-import',
+      ]);
+    });
+
     it('should accept a feature pipeline holding the owner block of another feature', () => {
       const source = pipeline(
         [
@@ -417,6 +452,34 @@ describe('lintSource', () => {
         ['    // [respond] Respond', '    return oauthError([...grantsOf(request)]);'],
         [
           "import { grantsOf } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
+    it('should not take the // of a URL in a template literal for a comment', () => {
+      const source = route(
+        ['    // [respond] Respond', '    return oauthError(`https://${request.host}`, dispatchCiba(request));'],
+        [
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
+    it('should read the names after a quote that no quote closes on its line, as in a regex literal', () => {
+      const source = route(
+        [
+          '    // [respond] Respond',
+          "    if (/['\"]/.test(request.url)) return dispatchCiba(request);",
+          "    return oauthError('invalid_request');",
+        ],
+        [
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
           "import { oauthError } from '../_oidc-provider/http';",
         ],
       );

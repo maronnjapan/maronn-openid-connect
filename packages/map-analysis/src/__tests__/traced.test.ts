@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, FlowTree, MapData, TreeNode } from '../model.js';
 import { FAILS, walkFlow } from '../walk.js';
-import { FrameCatalog, RequestTrace, walkMismatches, type TraceProbes } from '../traced.js';
+import { endingSelection, followTrace, FrameCatalog, RequestTrace, takenSelections, walkMismatches, type TraceProbes } from '../traced.js';
+import type { Selection } from '../model.js';
 
 // An endpoint that checks two values with the same function; the second
 // check fails through a helper it returns the call of (a call that ends its
@@ -209,5 +210,48 @@ describe('RequestTrace', () => {
     const trace = new RequestTrace({ probes: 'test', events: [] }, TABLE, CATALOG);
 
     expect([trace.rootRan(ROOT), trace.rootRan(HANDLERS)]).toEqual([false, false]);
+  });
+});
+
+describe('followTrace', () => {
+  it('should open the frames of the calls that failed down to the throw, with no mismatch', () => {
+    const followed = followTrace(FAILED, ROOT, SOURCES);
+
+    expect(followed.open).toEqual(['s0t1', 's0t1.s0t0']);
+    expect(followed.walk?.stops.find((stop) => stop.event === 'throws')?.frame).toBe('s0t1.s0t0');
+    expect([followed.rootRan, followed.needs, followed.mismatches]).toEqual([true, [], []]);
+  });
+
+  it('should name the trees it needs to go on when they are not given', () => {
+    const followed = followTrace(FAILED, ROOT, { ...SOURCES, treeOf: (id: string) => (id === FAIL ? undefined : TREES.get(id)) });
+
+    expect(followed.needs).toEqual([FAIL]);
+  });
+
+  it('should open the handler a root made from handlers ran', () => {
+    const trace = new RequestTrace({ probes: 'test', events: [15] }, TABLE, CATALOG);
+
+    expect(followTrace(trace, HANDLERS, SOURCES).open).toEqual(['s0c1s0']);
+  });
+
+  it('should say nothing more of a request that did not run the root', () => {
+    const trace = new RequestTrace({ probes: 'test', events: [] }, TABLE, CATALOG);
+
+    expect(followTrace(trace, ROOT, SOURCES)).toEqual({ rootRan: false, open: [], decisions: {}, needs: [], mismatches: [] });
+  });
+});
+
+describe('takenSelections', () => {
+  const SELECTIONS: Selection[] = [
+    { kind: 'failure', name: 'TokenError(name)', decisions: {}, target: 's0t1.s0t0.s0', failure: { error: 'TokenError(name)', from: FAIL, name: 'fail' } },
+    { kind: 'exit', name: 'respondError', decisions: {}, target: 's0h0' },
+    { kind: 'exit', name: 'respond', decisions: {}, target: 's0t2' },
+  ];
+
+  it('should end a failed request by the way of the throw it reached, not by the catch that answered', () => {
+    const walk = followTrace(FAILED, ROOT, SOURCES).walk!;
+
+    expect(endingSelection(SELECTIONS, walk)?.target).toBe('s0t1.s0t0.s0');
+    expect(takenSelections(SELECTIONS, walk).map((selection) => selection.target)).toEqual(['s0t1.s0t0.s0']);
   });
 });

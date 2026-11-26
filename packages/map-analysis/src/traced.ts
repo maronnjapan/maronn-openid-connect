@@ -28,9 +28,9 @@
  * This module imports only types, observe.ts and walk.ts, so the page uses
  * it as it is: `@maronn-openid-connect/map-analysis/traced`.
  */
-import type { Decisions, FlowTree, MapData, TreeNode } from './model.js';
+import type { Decisions, FlowTree, MapData, Selection, TreeNode } from './model.js';
 import { nodeRan, observable, placesOf, RequestRun, seenDecisions, throughTries, type RanInFile, type RunSources } from './observe.js';
-import { FAILS, nodesOf, type FlowWalk } from './walk.js';
+import { FAILS, nodesOf, walkFlow, type FlowWalk } from './walk.js';
 
 /** The probes of one build of the live OP (packages/live-op api.ts ProbeTable). */
 export interface TraceProbes {
@@ -417,4 +417,119 @@ export function walkMismatches(trace: RequestTrace, root: FlowTree, walk: Pick<F
     if (!nodeRan({ tree, place }, run)) mismatches.push({ frame: stop.frame, node: stop.node.id, code: stop.node.code, reason: 'not-run' });
   }
   return mismatches;
+}
+
+/** The tree of a frame key of a root: the trees its call nodes call, followed down; undefined where one is not loaded. */
+export function treeAtKey(root: FlowTree, key: string, treeOf: (id: string) => FlowTree | undefined): FlowTree | undefined {
+  if (key === '') return root;
+  let tree: FlowTree | undefined = root;
+  for (const id of key.split('.')) {
+    const node: TreeNode | undefined = tree === undefined ? undefined : placesOf(tree).get(id)?.node;
+    if (node?.kind !== 'call' || node.target?.kind !== 'function') return undefined;
+    tree = treeOf(node.target.id);
+    if (tree === undefined) return undefined;
+  }
+  return tree;
+}
+
+/** The function a frame key's last call node calls; undefined for the root or a key that names no such call. */
+function calleeOf(root: FlowTree, key: string, treeOf: (id: string) => FlowTree | undefined): string | undefined {
+  const at = key.lastIndexOf('.');
+  const parent = treeAtKey(root, at < 0 ? '' : key.slice(0, at), treeOf);
+  const node = parent === undefined ? undefined : placesOf(parent).get(key.slice(at + 1))?.node;
+  return node?.target?.kind === 'function' ? node.target.id : undefined;
+}
+
+/** A request's trace followed through the frames of a root (followTrace). */
+export interface FollowedTrace {
+  /** Whether the request ran the root at all; when it did not, nothing else is said. */
+  rootRan: boolean;
+  /** The frames opened below the root, by key, in the order they were opened. */
+  open: string[];
+  /** The choice the walk took: the sides read from the trace. */
+  decisions: Decisions;
+  walk?: FlowWalk;
+  /** The functions whose trees a frame to open needs and were not given: load them and follow again. */
+  needs: string[];
+  /** Where the walk disagrees with what the request ran (walkMismatches); none expected. */
+  mismatches: WalkMismatch[];
+}
+
+/**
+ * Follow a request's trace through a root the way the map replays it: the
+ * frames given open, and for a root made from handlers, the handler the
+ * request ran; the decisions of every open frame read from the trace; then
+ * the frames of the calls the walk fails at opened one after another, down
+ * to the throw that started the failure. A frame whose tree is not given is
+ * named in `needs`, so a page that loads trees as it goes calls again once
+ * it has them; the build gives every tree at once.
+ */
+export function followTrace(trace: RequestTrace, root: FlowTree, sources: RunSources, options: { open?: readonly string[]; enabled?: ReadonlySet<string> } = {}): FollowedTrace {
+  if (!trace.rootRan(root)) return { rootRan: false, open: [], decisions: {}, needs: [], mismatches: [] };
+  const open: string[] = [...(options.open ?? [])];
+  if (root.synthetic === true) for (const key of trace.ranBelow(root, [{ key: '', tree: root }], sources.treeOf)) if (!open.includes(key)) open.push(key);
+  const needs = new Set<string>();
+  let decisions: Decisions = {};
+  let walk: FlowWalk | undefined;
+  for (let round = 0; round < 64; round += 1) {
+    const frames = [{ key: '', tree: root }];
+    for (const key of open) {
+      const tree = treeAtKey(root, key, sources.treeOf);
+      if (tree !== undefined) frames.push({ key, tree });
+      else {
+        const callee = calleeOf(root, key, sources.treeOf);
+        if (callee !== undefined) needs.add(callee);
+      }
+    }
+    decisions = trace.choice(root, frames, sources);
+    const entered = new Map(frames.map(({ key, tree }) => [key, tree]));
+    walk = walkFlow(root, decisions, { enter: (key) => entered.get(key), ...(options.enabled === undefined ? {} : { enabled: options.enabled }) });
+    const failing: string[] = [];
+    for (const stop of walk.stops) {
+      if (stop.event !== 'fails' || stop.node.kind !== 'call' || stop.node.target?.kind !== 'function' || stop.node.target.id === stop.tree) continue;
+      const key = stop.frame === '' ? stop.node.id : `${stop.frame}.${stop.node.id}`;
+      if (open.includes(key) || failing.includes(key)) continue;
+      if (sources.treeOf(stop.node.target.id) === undefined) needs.add(stop.node.target.id);
+      else failing.push(key);
+    }
+    if (failing.length === 0) break;
+    open.push(...failing);
+  }
+  return { rootRan: true, open, decisions, ...(walk === undefined ? {} : { walk }), needs: [...needs], mismatches: walk === undefined ? [] : walkMismatches(trace, root, walk, sources) };
+}
+
+/** Whether a key is a node or inside it (`s0b1` holds `s0b1s0`, not `s0b10`). */
+function within(key: string, target: string): boolean {
+  return key === target || (key.startsWith(target) && !/^\d/.test(key.slice(target.length)));
+}
+
+/**
+ * The ready-made way a walk ended by: for a failure, the way of the throw
+ * the walk reached; else the way of the end of the root it reached (its
+ * return), or for an end no way names, the way into the innermost step the
+ * end is in (a step that answers itself). Undefined for none.
+ */
+export function endingSelection(selections: readonly Selection[], walk: Pick<FlowWalk, 'stops'>): Selection | undefined {
+  const thrown = walk.stops.find((stop) => stop.event === 'throws');
+  if (thrown !== undefined) {
+    const key = thrown.frame === '' ? thrown.node.id : `${thrown.frame}.${thrown.node.id}`;
+    return selections.find((selection) => selection.kind === 'failure' && selection.target === key);
+  }
+  const end = [...walk.stops].reverse().find((stop) => stop.depth === 0 && (stop.event === 'returns' || stop.event === 'ends'));
+  if (end === undefined) return undefined;
+  const exit = selections.find((selection) => selection.kind === 'exit' && selection.target === end.node.id);
+  if (exit !== undefined) return exit;
+  const steps = selections.filter((selection) => selection.kind === 'step' && !selection.target.includes('.') && within(end.node.id, selection.target));
+  return steps.sort((a, b) => b.target.length - a.target.length)[0];
+}
+
+/**
+ * The ready-made ways a walk took: the way it ended by (endingSelection),
+ * and every way into a step whose node the walk went through. A way of a
+ * change is not one a request takes.
+ */
+export function takenSelections(selections: readonly Selection[], walk: Pick<FlowWalk, 'stops'>): Selection[] {
+  const keys = walk.stops.map((stop) => (stop.frame === '' ? stop.node.id : `${stop.frame}.${stop.node.id}`));
+  const ending = endingSelection(selections, walk);
+  return selections.filter((selection) => selection === ending || (selection.kind === 'step' && keys.some((key) => within(key, selection.target))));
 }

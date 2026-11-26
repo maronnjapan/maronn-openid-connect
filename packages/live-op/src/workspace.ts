@@ -333,6 +333,16 @@ export function requestOf(issuer: string, request: LiveRequest): Request {
   });
 }
 
+/** What a run of the OP gave: its clock when it started, the response and its body (or what it threw), the order of what ran, and the records read and written. */
+interface RunOutcome {
+  at: number;
+  response?: Response;
+  body?: ArrayBuffer;
+  thrown?: string;
+  trace: TraceEvents;
+  store: StoreAccess;
+}
+
 /** What a workspace's OP answered a request with: the response to give the client, and the exchange it was recorded as. */
 export interface Answered {
   response: Response;
@@ -361,6 +371,8 @@ export class LiveWorkspace {
   private db!: MemoryDatabase;
   private features!: FeatureStores;
   private snapshot!: WorkspaceSnapshot;
+  /** The number of the last preview (`p<n>`), counted from the workspace's start in this host. */
+  private previews = 0;
   /** The post-logout redirect URIs the environment of this workspace's issuer registers (liveEnvironment). */
   private readonly logoutRegistry: Record<string, string[]>;
   /** The run of this workspace before the next (see the module comment). */
@@ -480,14 +492,31 @@ export class LiveWorkspace {
 
   /** Answer a request whose body was read (answer), while nothing else of the workspace runs. */
   private async answerAlone(request: Request, sentBody: string, source: ExchangeSource, scenario: string | undefined): Promise<Answered> {
-    const sent = { method: request.method, url: request.url, headers: keptRequestHeaders(request.headers, source === 'http', this.id === PUBLIC_WORKSPACE), ...keptBody(sentBody) };
     const outcome = await exclusive(() => this.run(request));
     this.snapshot.counter += 1;
     const id = `x${this.snapshot.counter}`;
+    const exchange = this.exchangeOf(id, request, sentBody, source, outcome, scenario);
+    const response = outcome.response;
+    this.noteProvenance(id, outcome.store.wrote);
+    await this.keep(exchange);
+    const headers = new Headers();
+    if (response !== undefined) {
+      for (const [name, value] of response.headers) if (name.toLowerCase() !== 'set-cookie') headers.append(name, value);
+      for (const cookie of response.headers.getSetCookie()) headers.append('set-cookie', cookie);
+    }
+    const given = response === undefined
+      ? new Response(JSON.stringify({ error: 'server_error', error_description: outcome.thrown }), { status: 500, headers: { 'content-type': 'application/json' } })
+      : new Response(outcome.body === undefined || [101, 204, 205, 304].includes(response.status) ? null : outcome.body, { status: response.status, statusText: response.statusText, headers });
+    return { response: given, exchange };
+  }
+
+  /** A request answered (or thrown at) as an exchange: what was sent, what the OP answered, the order of what ran, and the records read and written. */
+  private exchangeOf(id: string, request: Request, sentBody: string, source: ExchangeSource, outcome: RunOutcome, scenario?: string): LiveExchange {
+    const sent = { method: request.method, url: request.url, headers: keptRequestHeaders(request.headers, source === 'http', this.id === PUBLIC_WORKSPACE), ...keptBody(sentBody) };
     const text = outcome.body === undefined ? '' : new TextDecoder().decode(outcome.body);
     const response = outcome.response;
     const error = response === undefined ? undefined : oauthErrorOf(response.status, response.headers, text);
-    const exchange: LiveExchange = {
+    return {
       id,
       source,
       at: outcome.at,
@@ -502,27 +531,43 @@ export class LiveWorkspace {
       trace: outcome.trace,
       store: outcome.store,
     };
-    this.noteProvenance(id, outcome.store.wrote);
-    await this.keep(exchange);
-    const headers = new Headers();
-    if (response !== undefined) {
-      for (const [name, value] of response.headers) if (name.toLowerCase() !== 'set-cookie') headers.append(name, value);
-      for (const cookie of response.headers.getSetCookie()) headers.append('set-cookie', cookie);
-    }
-    const given = response === undefined
-      ? new Response(JSON.stringify({ error: 'server_error', error_description: outcome.thrown }), { status: 500, headers: { 'content-type': 'application/json' } })
-      : new Response(outcome.body === undefined || [101, 204, 205, 304].includes(response.status) ? null : outcome.body, { status: response.status, statusText: response.statusText, headers });
-    return { response: given, exchange };
   }
 
-  /** Run a request on the app with the workspace's state on the global scope, recording what ran (one at a time in the isolate). */
-  private async run(request: Request): Promise<{ at: number; response?: Response; body?: ArrayBuffer; thrown?: string; trace: TraceEvents; store: StoreAccess }> {
+  /**
+   * What a request would do if it were sent now, without sending it: the
+   * OP answers it on a copy of the workspace's state (its database and the
+   * stores of its features, at its clock), and the copy is dropped. The
+   * exchange it gives (source `preview`, id `p<n>`) is not kept, and the
+   * workspace's records, exchanges and counter stay as they were, so a code
+   * the request would use up is still there for the request that is sent.
+   * The map's flow view replays it while the reader edits a request.
+   */
+  async preview(request: LiveRequest): Promise<LiveExchange> {
+    const sent = requestOf(this.issuer, request);
+    const sentBody = sent.body === null ? '' : await sent.clone().text();
+    return this.serial(async () => {
+      const db = decodeValue(encodeValue(this.db)) as MemoryDatabase;
+      const features = await exclusive(() => FeatureStores.restore(this.features.writes));
+      const outcome = await exclusive(() => this.run(sent, { db, features }));
+      this.previews += 1;
+      return this.exchangeOf(`p${this.previews}`, sent, sentBody, 'preview', outcome);
+    });
+  }
+
+  /**
+   * Run a request on the app with a state on the global scope (the
+   * workspace's, else the copy a preview runs on), recording what ran (one
+   * at a time in the isolate). The workspace's snapshot takes the database
+   * after the run only when the run is on the workspace's own state.
+   */
+  private async run(request: Request, on: { db: MemoryDatabase; features: FeatureStores } = { db: this.db, features: this.features }): Promise<RunOutcome> {
     const at = this.now();
-    return onDatabase(this.db, async () => {
-      const reads = watchDatabase(this.db);
-      const before = plainDatabase(this.db);
+    const own = on.db === this.db;
+    return onDatabase(on.db, async () => {
+      const reads = watchDatabase(on.db);
+      const before = plainDatabase(on.db);
       let trace: TraceEvents = { probes: probeTable().hash, events: [] };
-      const { result, access } = await this.features.bind(() => withClockOffset(this.snapshot.clockOffset * 1000, async () => {
+      const { result, access } = await on.features.bind(() => withClockOffset(this.snapshot.clockOffset * 1000, async () => {
         startRecording();
         try {
           const response = await this.app.fetch(request);
@@ -535,8 +580,8 @@ export class LiveWorkspace {
           trace = stopRecording();
         }
       }));
-      const wrote: StoreChange[] = [...changesBetween(before, plainDatabase(this.db)), ...access.wrote];
-      this.snapshot.database = encodeValue(this.db);
+      const wrote: StoreChange[] = [...changesBetween(before, plainDatabase(on.db)), ...access.wrote];
+      if (own) this.snapshot.database = encodeValue(this.db);
       return { at, ...result, trace, store: { read: [...reads, ...access.read], wrote } };
     }, this.logoutRegistry);
   }

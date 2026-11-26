@@ -114,6 +114,11 @@ export class LiveOpClient {
     return this.call('run', { method: 'POST', body: { request } });
   }
 
+  /** What a request would do if it were sent now, without sending it: the exchange of a run on a copy of the workspace's state, which keeps nothing. */
+  preview(request: LiveRequest): Promise<LiveExchange> {
+    return this.call('preview', { method: 'POST', body: { request } });
+  }
+
   /** Prepare a case's request on the workspace by the requests that lead up to it. */
   prepare(id: string): Promise<PreparedScenario> {
     return this.call('scenario', { method: 'POST', body: { id } });

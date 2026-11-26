@@ -5,6 +5,7 @@
  * the control API of the pages under LIVE_PREFIX:
  *
  * - `POST /__live/run` `{ request }`: send a request a reader wrote; gives the exchange
+ * - `POST /__live/preview` `{ request }`: what a request would do, run on a copy of the workspace's state and not kept
  * - `POST /__live/scenario` `{ id }`: prepare a case's request (PreparedScenario)
  * - `POST /__live/grant` `{ plan }`: run an authorization as a browser and a client (GrantResult)
  * - `GET /__live/exchanges[?after=<id>]`: the exchanges kept, oldest first (summaries)
@@ -218,6 +219,12 @@ async function control(workspace: LiveWorkspace, request: Request, url: URL): Pr
     if (new URL(body['request'].path, workspace.issuer).href.length > REQUEST_URL_LIMIT) throw new LiveLimitError();
     const { exchange } = await workspace.send(body['request'], 'relay');
     return json(exchange);
+  }
+  if (route === 'preview' && method === 'POST') {
+    const body = await bodyOf(request);
+    if (!isLiveRequest(body['request'])) throw new LiveRequestError('request must be { method, path, headers, body? } with a path of the OP.');
+    if (new URL(body['request'].path, workspace.issuer).href.length > REQUEST_URL_LIMIT) throw new LiveLimitError();
+    return json(await workspace.preview(body['request']));
   }
   if (route === 'scenario' && method === 'POST') {
     const id = (await bodyOf(request))['id'];

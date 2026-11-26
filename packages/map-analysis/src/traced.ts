@@ -51,7 +51,9 @@
  * or from code outside the map, which no node made.
  *
  * The decisions of an invocation are the rules' (observe.ts); a decision a
- * loop took both ways reads as the last time it ran; a decision the rules
+ * loop took both ways reads as the last time it ran (unless that side
+ * leaves the loop past calls of the map made in other passes: then as the
+ * side that goes on, sideOfLastPass); a decision the rules
  * cannot tell takes the one side whose calls of the map ran, or, where it
  * ran, the one side that does not start with a call of the map that did
  * not run; a callback's loop takes its body when the invocation entered a
@@ -59,12 +61,21 @@
  * node evaluates first (`a && f()`) that did not run where its node ran is
  * not evaluated (SKIPS).
  *
+ * Two requests of one build of the OP are read against each other by what
+ * each invocation ran (sameRun): the same probes on its own lines in the
+ * same order, and the same calls of the map, each run the same. A request
+ * followed against another (followTrace's `against`: the request a reader
+ * edited, against the one it was written from) opens the frames below the
+ * root down to those where the map reads a side apart (readsApart), and
+ * names the frames where the way parts of its own accord (Parting), not
+ * those that only went on another way after a call below them did.
+ *
  * This module imports only types, observe.ts and walk.ts, so the page uses
  * it as it is: `@maronn-openid-connect/map-analysis/traced`.
  */
 import type { Decisions, FlowTree, MapData, Selection, TreeNode } from './model.js';
 import { BOTH, GOES, nextOf, nodeRan, observable, placesOf, RequestRun, seenDecisions, seenSide, throughTries, type Place, type RanInFile, type RunSources } from './observe.js';
-import { FAILS, nodesOf, SKIPS, walkFlow, type FlowWalk } from './walk.js';
+import { ends, FAILS, leavesLoop, nodesOf, SKIPS, walkFlow, type FlowWalk } from './walk.js';
 
 /** The probes of one build of the live OP (packages/live-op api.ts ProbeTable). */
 export interface TraceProbes {
@@ -240,6 +251,27 @@ function featureOff(tree: FlowTree, place: Place, enabled: ReadonlySet<string> |
   return false;
 }
 
+/**
+ * The side a decision a loop took both ways reads as: the one taken last
+ * (the last pass of the loop is the one the frame goes on from), unless
+ * that side leaves the loop (a `continue`, a `break`) past calls of the map
+ * the invocation made in other passes. A walk runs the body of a loop once
+ * and leaves it there (walk.ts), so it would pass none of those calls: the
+ * one other side that goes on is taken instead, and the walk passes them.
+ */
+function sideOfLastPass(tree: FlowTree, place: Place, last: string, calls: ReadonlyMap<string, Invocation>): string {
+  const { node } = place;
+  const sides = node.branches ?? [];
+  if (sides.find((branch) => branch.key === last)?.nodes.some(leavesLoop) !== true) return last;
+  // The loop that side leaves: the innermost one the decision is in.
+  let loop: TreeNode | undefined;
+  for (let at: Place | undefined = place; at !== undefined && loop === undefined; at = ownerPlace(tree, at)) if (at.owner?.kind === 'loop') loop = at.owner;
+  if (loop === undefined) return last;
+  const past = [...nodesOf((loop.branches ?? []).flatMap((branch) => branch.nodes))].some((inner) => inner.lines[0] > node.lines[1] && callsFunction(inner) && calls.has(inner.id));
+  const goesOn = sides.filter((branch) => branch.key !== last && branch.always !== true && !branch.nodes.some(leavesLoop) && !ends(branch.nodes));
+  return past && goesOn.length === 1 && goesOn[0] !== undefined ? goesOn[0].key : last;
+}
+
 /** What a request ran, read into invocations (see the module comment). */
 export class RequestTrace {
   readonly invocations: Invocation[] = [];
@@ -386,6 +418,16 @@ export class RequestTrace {
       .map((child) => this.invocations[child])
       .filter((child): child is Invocation => child !== undefined)
       .sort((a, b) => a.start - b.start);
+  }
+
+  /** The probes an invocation ran on its own lines, in the order it ran them: the same list for two invocations that ran the same statements and sides of their frame. */
+  probesOf(invocation: Invocation): number[] {
+    return invocation.events.map((event) => this.run.events[event] ?? -1);
+  }
+
+  /** The invocations of the frames an invocation called, in the order they started; not the closures run under it (anonymous), which no call of its frame made. */
+  calledBy(invocation: Invocation): Invocation[] {
+    return this.childrenOf(invocation).filter((child) => child.anonymous !== true);
   }
 
   /**
@@ -672,13 +714,13 @@ export class RequestTrace {
     const keyed = (node: TreeNode) => keyIn(key, node.id);
     const calls = this.callsOf(invocation, tree);
     const nodes = [...nodesOf(tree.nodes)];
-    // A decision the frame took both ways (in a loop) reads as the last time it was taken.
+    // A decision the frame took both ways (in a loop) reads as the last time it was taken (but see sideOfLastPass).
     const lastly = new RequestRun({ ran: this.ranOf(invocation, true) }, sources);
     for (const node of nodes) {
       const place = places.get(node.id);
       if (!READ.has(node.kind) || place === undefined || decisions[keyed(node)] !== undefined) continue;
       const side = seenSide({ tree, place }, lastly);
-      if (side !== undefined && side !== BOTH && side !== GOES) decisions[keyed(node)] = side;
+      if (side !== undefined && side !== BOTH && side !== GOES) decisions[keyed(node)] = sideOfLastPass(tree, place, side, calls);
     }
     // A decision the rules cannot tell (`??=`, a local function's) takes the one side whose calls of the map ran; else, where it ran, the one side that does not start with a call of the map that did not run.
     for (const node of nodes) {
@@ -927,6 +969,73 @@ function calleeOf(root: FlowTree, key: string, treeOf: (id: string) => FlowTree 
   return node?.target?.kind === 'function' ? node.target.id : undefined;
 }
 
+/**
+ * Whether two invocations of one frame ran the same, in two requests of one
+ * build of the OP (or in one): the same probes on their own lines in the
+ * same order, and the same calls of frames of the map in the same order,
+ * each run the same. The closures run under them are left out with what
+ * they called (calledBy): no call node made them, and one that fills a
+ * cache (a signing key read once) runs another way the first time for no
+ * reason of the request. `known` keeps what was found, by the indexes of
+ * the two.
+ */
+export function sameRun(trace: RequestTrace, invocation: Invocation, other: RequestTrace, counterpart: Invocation, known: Map<string, boolean> = new Map()): boolean {
+  const memo = `${invocation.index}:${counterpart.index}`;
+  const found = known.get(memo);
+  if (found !== undefined) return found;
+  const mine = trace.probesOf(invocation);
+  const theirs = other.probesOf(counterpart);
+  const called = trace.calledBy(invocation);
+  const calledThere = other.calledBy(counterpart);
+  const same =
+    invocation.frame === counterpart.frame &&
+    mine.length === theirs.length &&
+    mine.every((probe, at) => probe === theirs[at]) &&
+    called.length === calledThere.length &&
+    called.every((child, at) => {
+      const there = calledThere[at];
+      return there !== undefined && sameRun(trace, child, other, there, known);
+    });
+  known.set(memo, same);
+  return same;
+}
+
+/**
+ * The event of an invocation where what it ran on its own lines stops being
+ * what its counterpart ran: the first of its own events whose probe is not
+ * the counterpart's at the same place; Infinity when it ran less of the
+ * same (it stopped where the other went on); undefined when both ran the
+ * same on their own lines.
+ */
+function ownDifference(trace: RequestTrace, invocation: Invocation, other: RequestTrace, counterpart: Invocation): number | undefined {
+  const mine = trace.probesOf(invocation);
+  const theirs = other.probesOf(counterpart);
+  const at = mine.findIndex((probe, index) => probe !== theirs[index]);
+  if (at >= 0) return invocation.events[at];
+  return mine.length < theirs.length ? Infinity : undefined;
+}
+
+/**
+ * A frame where a request's way parts from another request's (followTrace's
+ * `against`): both ran it from the same call, the sides the map reads in it
+ * are not the same, and no call of the map it made before its own lines ran
+ * another way reads apart below (a frame that only goes on another way
+ * after such a call is not one: the way parted below it).
+ */
+export interface Parting {
+  /** The key of the frame (`''` the root). */
+  frame: string;
+  /** The id of that frame's tree. */
+  tree: string;
+  /**
+   * The first node the walk comes to in the frame whose side the two
+   * requests read apart: a decision, or a call that fails or is not
+   * evaluated in one of them; with the side each took (undefined: it took
+   * none there, the call went on).
+   */
+  at: { node: string; side?: string; other?: string };
+}
+
 /** A request's trace followed through the frames of a root (followTrace). */
 export interface FollowedTrace {
   /** Whether the request ran the root at all; when it did not, nothing else is said. */
@@ -940,6 +1049,14 @@ export interface FollowedTrace {
   needs: string[];
   /** Where the walk disagrees with what the request ran (walkMismatches); none expected. */
   mismatches: WalkMismatch[];
+  /**
+   * Where the request's way parts from that of the request it was followed
+   * against (Parting), in the order the walk comes to them; none when both
+   * took the same way. Absent when it was followed against none (or one of
+   * another build of the OP, or one that did not run the root). While
+   * `needs` names trees, the frames below them are not read yet.
+   */
+  apart?: Parting[];
 }
 
 /**
@@ -955,6 +1072,115 @@ export function handlersRoot(root: FlowTree, catalog: FrameCatalog): boolean {
   return root.nodes.length === 1 && choice?.kind === 'switch' && choice.lines[0] === root.lines[0] && choice.lines[1] === root.lines[1] && catalog.frame(root.id)?.body === true;
 }
 
+/** Two requests read against each other in the frames of a root (followTrace's `against`). */
+interface Against {
+  trace: RequestTrace;
+  other: RequestTrace;
+  root: FlowTree;
+  sources: RunSources;
+  /** What sameRun found so far. */
+  known: Map<string, boolean>;
+  /** The functions whose trees the reading needs and were not given. */
+  needs: Set<string>;
+}
+
+/** The calls of a frame both requests made from the same node and ran another way (sameRun), each with the key of the frame it opens: only those of a function with a frame other than its own. */
+function callsApart({ trace, other, root, sources, known }: Against, key: string, tree: FlowTree): Array<{ key: string; child: Invocation }> {
+  const invocation = trace.invocationAt(root, key, sources.treeOf);
+  const counterpart = other.invocationAt(root, key, sources.treeOf);
+  if (invocation === undefined || counterpart === undefined) return [];
+  const there = other.callsOf(counterpart, tree);
+  const found: Array<{ key: string; child: Invocation }> = [];
+  for (const [node, child] of trace.callsOf(invocation, tree)) {
+    const twin = there.get(node);
+    if (twin === undefined || child.frame === tree.id || trace.catalog.frame(child.frame) === undefined) continue;
+    if (!sameRun(trace, child, other, twin, known)) found.push({ key: keyIn(key, node), child });
+  }
+  return found;
+}
+
+/** Whether the map reads a side of a frame apart in the two requests: a decision, or a call that fails or is not evaluated in one of them. */
+function sidesApart({ trace, other, root, sources }: Against, key: string, tree: FlowTree): boolean {
+  const taken = trace.decisionsOf(root, key, tree, sources);
+  const others = other.decisionsOf(root, key, tree, sources);
+  return [...Object.keys(taken), ...Object.keys(others)].some((decision) => taken[decision] !== others[decision]);
+}
+
+/**
+ * Whether the two requests read apart in a frame or below it: the map
+ * reads a side of the frame apart (sidesApart), or of a frame of a call
+ * the two ran another way (callsApart), down the trees given. Two
+ * invocations can run another way with every side the same (a callback run
+ * once a character of a value, an operand of an expression): the flow of
+ * the frame is then the same for both, and it is not gone into. A frame
+ * whose tree is not given is named in `needs`, and reads as not apart until
+ * it is.
+ */
+function readsApart(against: Against, key: string, tree: FlowTree, seen: Map<string, boolean>): boolean {
+  const found = seen.get(key);
+  if (found !== undefined) return found;
+  seen.set(key, false);
+  let apart = sidesApart(against, key, tree);
+  for (const call of callsApart(against, key, tree)) {
+    const below = against.sources.treeOf(call.child.frame);
+    if (below === undefined) against.needs.add(call.child.frame);
+    else if (readsApart(against, call.key, below, seen)) apart = true;
+  }
+  seen.set(key, apart);
+  return apart;
+}
+
+/** The calls of some frames to go into to come to where the two requests read apart (readsApart), by the key of the frame each opens; a call whose tree is not given is named in `needs`. */
+function framesApart(against: Against, frames: ReadonlyArray<{ key: string; tree: FlowTree }>, seen: Map<string, boolean>): string[] {
+  const keys: string[] = [];
+  for (const { key, tree } of frames) {
+    for (const call of callsApart(against, key, tree)) {
+      const below = against.sources.treeOf(call.child.frame);
+      if (below === undefined) against.needs.add(call.child.frame);
+      else if (readsApart(against, call.key, below, seen)) keys.push(call.key);
+    }
+  }
+  return keys;
+}
+
+/**
+ * The frames among those given where the request's way parts from the other
+ * request's (Parting), in the order the walk comes to them. A root made of
+ * handlers parts where the two ran another handler.
+ */
+function partingsOf(against: Against, frames: ReadonlyArray<{ key: string; tree: FlowTree }>, walk: Pick<FlowWalk, 'stops'>, seen: Map<string, boolean>): Parting[] {
+  const { trace, other, root, sources } = against;
+  const entered = new Map<string, number>();
+  walk.stops.forEach((stop, index) => {
+    if (!entered.has(stop.frame)) entered.set(stop.frame, index);
+  });
+  const found: Array<{ order: number; parting: Parting }> = [];
+  for (const { key, tree } of frames) {
+    const order = entered.get(key);
+    if (order === undefined || !sidesApart(against, key, tree)) continue;
+    if (!(key === '' && root.synthetic === true)) {
+      const invocation = trace.invocationAt(root, key, sources.treeOf);
+      const counterpart = other.invocationAt(root, key, sources.treeOf);
+      if (invocation === undefined || counterpart === undefined) continue;
+      // A call of the map it made before its own lines ran another way, that reads apart below: the frame went on from what that call did.
+      const at = ownDifference(trace, invocation, other, counterpart) ?? Infinity;
+      const below = callsApart(against, key, tree).some((call) => {
+        const called = sources.treeOf(call.child.frame);
+        return call.child.start < at && called !== undefined && readsApart(against, call.key, called, seen);
+      });
+      if (below) continue;
+    }
+    const taken = trace.decisionsOf(root, key, tree, sources);
+    const others = other.decisionsOf(root, key, tree, sources);
+    const stop = walk.stops.find((candidate) => candidate.frame === key && taken[keyIn(key, candidate.node.id)] !== others[keyIn(key, candidate.node.id)]);
+    if (stop === undefined) continue;
+    const side = taken[keyIn(key, stop.node.id)];
+    const otherSide = others[keyIn(key, stop.node.id)];
+    found.push({ order, parting: { frame: key, tree: tree.id, at: { node: stop.node.id, ...(side === undefined ? {} : { side }), ...(otherSide === undefined ? {} : { other: otherSide }) } } });
+  }
+  return found.sort((a, b) => a.order - b.order).map(({ parting }) => parting);
+}
+
 /**
  * Follow a request's trace through a root the way the map replays it: the
  * frames given open, and for a root made of handlers (handlersRoot), the
@@ -965,17 +1191,32 @@ export function handlersRoot(root: FlowTree, catalog: FrameCatalog): boolean {
  * started the failure. A frame whose tree is not given is named in `needs`,
  * so a page that loads trees as it goes calls again once it has them; the
  * build gives every tree at once.
+ *
+ * With `against` (the trace of another request of the same build of the OP
+ * that ran the root: the request the one followed was edited from), the
+ * frames of the calls the two ran another way open as well, down to the
+ * frames where the map reads a side apart (readsApart), and `apart` names
+ * the frames where their ways part (Parting): a root's flow is the same for
+ * two requests that part inside a call that does not fail (a token found or
+ * not, described as active or not), so the replay goes in there to show it.
+ * The trees it needs to read below a call that ran another way are named
+ * in `needs` too, though their frames may not open.
  */
-export function followTrace(trace: RequestTrace, root: FlowTree, sources: RunSources, options: { open?: readonly string[]; enabled?: ReadonlySet<string> } = {}): FollowedTrace {
+export function followTrace(trace: RequestTrace, root: FlowTree, sources: RunSources, options: { open?: readonly string[]; enabled?: ReadonlySet<string>; against?: RequestTrace } = {}): FollowedTrace {
   if (!trace.rootRan(root)) return { rootRan: false, open: [], decisions: {}, needs: [], mismatches: [] };
   const open: string[] = [...(options.open ?? [])];
   // Only the side of the handler that ran has calls that ran: those are its frames.
   if (handlersRoot(root, trace.catalog)) for (const key of trace.ranBelow(root, [{ key: '', tree: root }], sources.treeOf)) if (!open.includes(key)) open.push(key);
   const needs = new Set<string>();
+  const other = options.against;
+  const against: Against | undefined = other !== undefined && other.table.hash === trace.table.hash && other.rootRan(root) ? { trace, other, root, sources, known: new Map(), needs } : undefined;
+  /** Whether the two requests read apart in each frame or below it, by key. */
+  const seen = new Map<string, boolean>();
   let decisions: Decisions = {};
   let walk: FlowWalk | undefined;
+  let frames: Array<{ key: string; tree: FlowTree }> = [];
   for (let round = 0; round < 64; round += 1) {
-    const frames = [{ key: '', tree: root }];
+    frames = [{ key: '', tree: root }];
     for (const key of open) {
       const tree = treeAtKey(root, key, sources.treeOf);
       if (tree !== undefined) frames.push({ key, tree });
@@ -987,16 +1228,18 @@ export function followTrace(trace: RequestTrace, root: FlowTree, sources: RunSou
     decisions = trace.choice(root, frames, sources);
     const entered = new Map(frames.map(({ key, tree }) => [key, tree]));
     walk = walkFlow(root, decisions, { enter: (key) => entered.get(key), ...(options.enabled === undefined ? {} : { enabled: options.enabled }) });
-    const failing: string[] = [];
+    const opening: string[] = [];
     for (const stop of walk.stops) {
       if (stop.event !== 'fails' || stop.node.kind !== 'call' || stop.node.target?.kind !== 'function' || stop.node.target.id === stop.tree) continue;
       const key = keyIn(stop.frame, stop.node.id);
-      if (open.includes(key) || failing.includes(key)) continue;
+      if (open.includes(key) || opening.includes(key)) continue;
       if (sources.treeOf(stop.node.target.id) === undefined) needs.add(stop.node.target.id);
-      else failing.push(key);
+      else opening.push(key);
     }
-    if (failing.length === 0) break;
-    open.push(...failing);
+    // The calls of the open frames the other request ran another way, where the two read apart at or below the frame of the call.
+    for (const key of against === undefined ? [] : framesApart(against, frames, seen)) if (!open.includes(key) && !opening.includes(key)) opening.push(key);
+    if (opening.length === 0) break;
+    open.push(...opening);
   }
   return {
     rootRan: true,
@@ -1005,6 +1248,7 @@ export function followTrace(trace: RequestTrace, root: FlowTree, sources: RunSou
     ...(walk === undefined ? {} : { walk }),
     needs: [...needs],
     mismatches: walk === undefined ? [] : walkMismatches(trace, root, walk, sources, options.enabled === undefined ? {} : { enabled: options.enabled }),
+    ...(against === undefined || walk === undefined ? {} : { apart: partingsOf(against, frames, walk, seen) }),
   };
 }
 

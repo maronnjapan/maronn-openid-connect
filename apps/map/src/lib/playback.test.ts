@@ -92,6 +92,15 @@ describe('sceneAt', () => {
     expect(sceneAt(scenes, { frame: '', node: 's0b1s0' }, 0)).toBe(3);
   });
 
+  it('should go to the call that opened the frame it was in, when that frame is no longer gone into', () => {
+    const closed = scenesOf(walkTrace(root, {}, { open: [], trees }), shapeOf);
+
+    // The playback was inside verify(), and a frame below it: the scene of the call of verify() in the root.
+    expect(sceneAt(closed, { frame: 's0b0s0', node: 's1' }, 3)).toBe(0);
+    expect(sceneAt(closed, { frame: 's0b0s0.s5', node: 's2' }, 3)).toBe(0);
+    expect(closed[0]?.stops.map((stop) => stop.node.id)).toContain('s0b0s0');
+  });
+
   it('should keep the place, inside the list, when the node is gone', () => {
     expect(sceneAt(scenes, { frame: 'gone', node: 's9' }, 2)).toBe(2);
     expect(sceneAt(scenes, undefined, 99)).toBe(scenes.length - 1);

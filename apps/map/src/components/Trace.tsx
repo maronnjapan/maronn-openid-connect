@@ -40,6 +40,7 @@ import { FlowPlayer, usePlayback } from './FlowPlayer';
 import { Chips, Description } from './Parts';
 import { useMobileMenu } from './MobileMenu';
 import { RequestCase, useRequestCase } from './RequestCase';
+import { partingLines } from '../lib/parting';
 import { SelectionBar } from './SelectionBar';
 import { rootedName, TraceView, type MemberDiff } from './TraceView';
 import { useFrames } from './useFrames';
@@ -219,7 +220,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   // The trees load level by level: the frames a level opens are known once its tree is; the changed implementations of the members called load too.
   const [ids, setIds] = useState<Map<string, string>>(() => new Map([['', rootId]]));
   const [implementations, setImplementations] = useState<string>('');
-  const frames = useFrames(data, [...new Set([rootId, ...ids.values(), ...(implementations === '' ? [] : implementations.split('\n'))])]);
+  // The trees the replay of a request needs to read on (useRun.ts RequestRun.needs): loaded whether or not their frames open.
+  const [replayNeeds, setReplayNeeds] = useState<string>('');
+  const frames = useFrames(data, [...new Set([rootId, ...ids.values(), ...(implementations === '' ? [] : implementations.split('\n')), ...(replayNeeds === '' ? [] : replayNeeds.split('\n'))])]);
   const known = useMemo(() => frameIds(rootId, state.open, frames.trees), [rootId, state.open, frames.trees]);
   if ([...known].some(([key, id]) => ids.get(key) !== id) || ids.size !== known.size) setIds(known);
   const hasFrame = useMemo(() => (id: string) => (entryOf(data, id)?.frame ?? '') !== '', [data]);
@@ -238,6 +241,10 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const live = source === 'hono';
   // The request the reader runs in the flow view on the live OP, or an exchange of the workspace the reader opened: while the playback follows it, the way its trace took is the trace's choice.
   const requestRun = useRequestRun({ data, root, trees: frames.trees, state, onState, enabled, hasFrame });
+  const neededTrees = requestRun.needs.join('\n');
+  useEffect(() => {
+    if (neededTrees !== '') setReplayNeeds(neededTrees);
+  }, [neededTrees]);
   const scenarios = requestScenariosFor(endpoint?.id ?? '', undefined, framework);
   const scenario = scenarios.find((candidate) => candidate.id === state.request);
   const { revision, result, regenerate } = useRequestCase(scenario, live);
@@ -820,6 +827,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     const said = nodeWords(item.node, data);
     return { text: said.text, code: said.code };
   };
+  // Where the request followed parts from the request it was edited from, as the request panel says it and the playback moves to.
+  const apart = requestRun.replay?.apart;
+  const partings = useMemo(() => (apart === undefined ? undefined : partingLines(apart, scenes, frames.trees, data)), [apart, scenes, frames.trees, data]);
   // The calls on the way the playback could still go into: those of functions with a frame that the trace has not opened.
   const enterable = useMemo(() => (walked === undefined ? [] : callsToEnter(walked, hasFrame).filter((key) => !state.open.includes(key))), [walked, hasFrame, state.open]);
   // Escape gives the page back from a flow view that fills the screen.
@@ -920,6 +930,7 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               hasFrame={hasFrame}
               loading={loading}
               run={requestRun}
+              partings={partings}
               ending={runEnding}
               unrunnable={scenario?.external ?? (live ? undefined : '地図の中でリクエストを実行できるのは、Hono・Express・Fastify の OP です。')}
               live={live}

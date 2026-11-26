@@ -1,7 +1,7 @@
 /**
  * What the map's E2E specs read on the page, as a reader finds it: the
  * flow of an endpoint, its request panel and the response, the line that
- * says how the replay follows the request (sent, opened or previewed), the playback and the flowchart
+ * says how the replay follows the request (sent, opened or previewed), where an edited request parts from the one before the edits, the playback and the flowchart
  * of the frame it shows, the recent requests of the workspace; and the
  * workspace the page uses, for the requests a spec sends outside the page.
  * The specs assert what these give.
@@ -87,6 +87,16 @@ export function previewLine(page: Page): Locator {
 /** The line that says the playback follows the way a preview of the request shown would take, with the ending it reaches. */
 export function previewReplayLine(page: Page): Locator {
   return requestPanel(page).getByText(/^このリクエストを送ると通る道筋を再生しています/);
+}
+
+/** The line that says where the request shown parts from the request it was edited from (how many places), or that both take the same way. */
+export function partingNote(page: Page): Locator {
+  return requestPanel(page).getByText(/^書き換える前のリクエストと/);
+}
+
+/** The button of a place where the request shown parts from the request it was edited from, by the function it is in (`describeIntrospectedToken()`): it moves the playback to that scene. */
+export function partingButton(page: Page, name: string): Locator {
+  return requestPanel(page).getByRole('button', { name, exact: true });
 }
 
 /** The warning that the way replayed and what the request ran disagree (passes where it ran nothing, or skips a call or a side it took). */

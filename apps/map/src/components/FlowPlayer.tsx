@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ExchangeSummary } from '@maronn-openid-connect/live-op/api';
 import type { FlowStep, MapData, Selection } from '../types';
+import type { PartingLine } from '../lib/parting';
 import { STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, scenarioOf, selectionKey, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
 import { choose, entryOf, type TraceState } from '../lib/trace';
 import { firstSentence } from '../lib/words';
@@ -69,7 +70,9 @@ export function usePlayback(scenes: readonly Scene[]): Playback {
     speed,
     go: (index) => {
       const next = Math.max(0, Math.min(last, index));
-      if (next === 0) was.current = undefined;
+      // The node gone to is the one to stay on, should the scenes change before the next render shows it (frames a replay opens one after another).
+      const target = next === 0 ? undefined : scenes[next];
+      was.current = target === undefined ? undefined : { frame: target.frame, node: target.node.id };
       setFrom(next === shown + 1 ? shown : undefined);
       setAt(next);
     },
@@ -119,6 +122,8 @@ export interface FlowPlayerProps {
   endpoint?: { id: string; name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
   /** The request the reader runs on the live OP, and what it gave (useRun.ts). */
   run: RequestRun;
+  /** Where the request followed parts from the request it was edited from (lib/parting.ts), once read; undefined for a request read against none. */
+  partings: readonly PartingLine[] | undefined;
   /** The ready-made way the request run ended by, in words, while the playback follows it. */
   ending: string | undefined;
   /** Why a request cannot be run on the live OP here; undefined when it can. */
@@ -171,7 +176,7 @@ function plain(text: string): string {
  * same choice the outline's side buttons make). A call that has a frame can
  * be entered, which makes the request go through that function too.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, endpoints, caseTitle, onPrepareCase, onOpenExchange, onOpenExchangeId, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable, live, idle }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, endpoints, caseTitle, onPrepareCase, onOpenExchange, onOpenExchangeId, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, partings, ending, unrunnable, live, idle }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
   const scene = scenes[at];
   const choice = state.choices[0];
@@ -180,8 +185,8 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
   const picked = ran ? -1 : scenarioOf(selections, choice, state.way);
   const custom = !ran && picked === -1 && choice !== undefined && Object.keys(choice).length > 0;
   // A request run (or an exchange opened) plays the way it took from the start, once that way is read.
-  // One the editor's request came to (a preview of an edit, or a request sent before that it came back to) keeps the place and does not play on its own:
-  // a playback still playing the way before stops there.
+  // One the editor's request came to (a preview of an edit, or a request sent before that it came back to) does not play on its own:
+  // a playback still playing the way before stops there, and stays unless the request parts from the one it was edited from (below).
   const played = useRef(0);
   useEffect(() => {
     const ranState = run.state;
@@ -194,6 +199,17 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     playback.go(0);
     if (run.replay.rootRan) playback.play(true);
   }, [run.state, run.replay, playback]);
+  // An edited request the editor came to parts from the request before the edits: the playback moves to the first scene where it does, once that scene shows
+  // (its frame opens with the replay). The chart of the root is the same for two requests that part inside a call, so staying there would show no change.
+  const parted = useRef(0);
+  useEffect(() => {
+    const ranState = run.state;
+    if (ranState?.status !== 'done' || !ranState.follow || ranState.quiet !== true || parted.current === ranState.id || partings === undefined) return;
+    const first = partings[0];
+    if (first !== undefined && first.scene === undefined) return;
+    parted.current = ranState.id;
+    if (first?.scene !== undefined) playback.go(first.scene);
+  }, [run.state, partings, playback]);
   const pick = (value: string) => {
     if (value === 'run' || value === 'custom') return;
     playback.play(false);
@@ -477,11 +493,16 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         previewProblem={run.previewProblem}
         onPreview={run.show}
         onRelease={run.release}
+        partings={partings}
+        onScene={(index) => {
+          playback.play(false);
+          playback.go(index);
+        }}
         ending={ending}
         caseTitle={caseTitle}
-        onRun={(draft) => {
+        onRun={(draft, from) => {
           playback.play(false);
-          run.run(draft);
+          run.run(draft, from);
         }}
         onFollow={run.follow}
         onPrepareCase={onPrepareCase}

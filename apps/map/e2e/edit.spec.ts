@@ -9,6 +9,8 @@ import {
   mismatchWarning,
   NOT_TAKEN,
   openFlow,
+  partingButton,
+  partingNote,
   PASSED,
   playbackPosition,
   previewLine,
@@ -18,6 +20,7 @@ import {
   requestPanel,
   responseLine,
   runButton,
+  shownFrames,
   workspaceOf,
 } from './test-helpers';
 
@@ -35,7 +38,10 @@ function otherValue(value: string): string {
  * the workspace's state (POST /__live/preview), and the playback follows
  * the way the preview took. Nothing is sent: the exchanges of the
  * workspace stay as they were until the request is run. The case selected
- * stays selected while the request is edited.
+ * stays selected while the request is edited. An edited request is read
+ * against the request before the edits: the flow goes into the functions
+ * where their ways part and the playback moves there, also when the
+ * endpoint answers both the same way through its own steps.
  */
 test.describe('the flow follows the request as the reader edits it', () => {
   test('should preview the prepared code exchange, an edited code_verifier that fails the PKCE check, and the request again, without sending any, then send it', async ({ page, context, request }) => {
@@ -57,11 +63,18 @@ test.describe('the flow follows the request as the reader edits it', () => {
       expect(await exchangeIds(request, workspace)).toEqual(prepared);
     });
 
-    await test.step('another code_verifier, not run: the flow follows the PKCE check that fails, and the case stays selected', async () => {
+    await test.step('another code_verifier, not run: the flow follows the PKCE check that fails, the playback moves to that check, and the case stays selected', async () => {
       await formValue(page, 'code_verifier').fill(otherValue(verifier));
       await expect(previewReplayLine(page)).toContainText('失敗: TokenError(invalid_grant)（verifyPkceCodeVerifier から）');
       await expect(responseLine(page)).toContainText('400 Bad Request');
       await expect(responseLine(page)).toContainText('invalid_grant');
+      // The one place the edit makes the way part: the playback is there, in the function that checks the verifier.
+      await expect(partingNote(page)).toContainText('次の 1 か所で道筋が分かれます');
+      await expect(partingButton(page, 'verifyPkceCodeVerifier()')).toBeEnabled();
+      await expect(shownFrames(page)).toContainText('verifyPkceCodeVerifier()');
+      // The case expects the answer of its own request: an edited one is not held against it.
+      await expect(requestPanel(page).getByText('ケースが準備したリクエストではないので、ケースの期待とは比べていません')).toBeVisible();
+      await playbackPosition(page).press('Home');
       await expect(flowNode(page, 'authorization_code グラントを検証する')).toHaveAccessibleName(AHEAD);
       await expect(flowNode(page, 'アクセストークンを発行する')).toHaveAccessibleName(NOT_TAKEN);
       await expect(caseSelect(page)).toHaveValue('token-authorization-code');
@@ -74,6 +87,7 @@ test.describe('the flow follows the request as the reader edits it', () => {
       await formValue(page, 'code_verifier').fill(verifier);
       await expect(previewReplayLine(page)).toContainText('終わり方: return respondToken(c, tokenResponse)');
       await expect(responseLine(page)).toContainText('200 OK');
+      await expect(partingNote(page)).toHaveCount(0);
       await expect(flowNode(page, 'アクセストークンを発行する')).toHaveAccessibleName(AHEAD);
       await expect(caseSelect(page)).toHaveValue('token-authorization-code');
       expect(await exchangeIds(request, workspace)).toEqual(prepared);
@@ -236,7 +250,8 @@ test.describe('the flow follows the request as the reader edits it', () => {
       await expect(responseLine(page)).toContainText('200 OK');
       await expect(runButton(page)).toBeEnabled();
       await expect(requestPanel(page).getByRole('status').filter({ hasText: '試算中…' })).toBeVisible();
-      await expect.poll(() => previews).toBe(1);
+      // Two previews for the one edit: the request before the edit, and the edited one read against it.
+      await expect.poll(() => previews).toBe(2);
     });
 
     await test.step('the preview lands: the flow follows the scope refused, and only the one request was sent', async () => {
@@ -255,8 +270,75 @@ test.describe('the flow follows the request as the reader edits it', () => {
       await headers.getByRole('textbox', { name: /^ヘッダーの\d+ 行目の名前$/ }).last().fill('bad header');
       await expect(requestPanel(page).getByText('この結果は書き換える前のリクエストのものです', { exact: false })).toBeVisible();
       await page.waitForTimeout(PAST_THE_PAUSE);
-      expect(previews).toBe(1);
+      expect(previews).toBe(2);
       await expect(responseLine(page)).toContainText('invalid_scope');
+    });
+  });
+
+  test('should go into the functions where an edited token parts from the prepared one, though the endpoint answers 200 through the same steps, and come back when the edit is undone', async ({ page, context, request }) => {
+    await openFlow(page, 'introspection');
+    await caseSelect(page).selectOption({ label: '有効なアクセストークンを確認する' });
+    await expect(formValue(page, 'token')).not.toHaveValue('');
+    const workspace = await workspaceOf(context);
+    const prepared = await exchangeIds(request, workspace);
+    const inactive = '返して終わる。INACTIVE_INTROSPECTION_RESPONSE を返す';
+    const active = '返して終わる。有効なトークンのレスポンスを組み立てて返す';
+
+    await test.step('the prepared token: the steps of the endpoint, and nothing to tell apart', async () => {
+      await expect(previewLine(page)).toBeVisible();
+      await expect(responseLine(page)).toContainText('200 OK');
+      await expect(previewReplayLine(page)).toBeVisible();
+      await expect(partingNote(page)).toHaveCount(0);
+      await expect(flowNode(page, 'トークンの情報をまとめる（有効かどうか）')).toHaveAccessibleName(AHEAD);
+      await expect(shownFrames(page)).not.toContainText('()');
+    });
+
+    await test.step('a token the OP never issued, not run: 200 again, and the playback moves into the lookup that finds no token', async () => {
+      await formValue(page, 'token').fill('not-a-token-the-op-issued');
+      await expect(partingNote(page)).toContainText('次の 2 か所で道筋が分かれます');
+      await expect(responseLine(page)).toContainText('200 OK');
+      await expect(shownFrames(page)).toContainText('resolveIntrospectionToken()');
+      await expect(partingButton(page, 'resolveIntrospectionToken()')).toBeEnabled();
+      await expect(requestPanel(page).getByText('ケースが準備したリクエストではないので、ケースの期待とは比べていません')).toBeVisible();
+      await expect(caseSelect(page)).toHaveValue('introspection-active-access-token');
+      await expect(mismatchWarning(page)).toHaveCount(0);
+      expect(await exchangeIds(request, workspace)).toEqual(prepared);
+    });
+
+    await test.step('the second place: the token is described as inactive', async () => {
+      await partingButton(page, 'describeIntrospectedToken()').click();
+      await expect(shownFrames(page)).toContainText('describeIntrospectedToken()');
+      await expect(flowNode(page, inactive)).toHaveAccessibleName(AHEAD);
+      await expect(flowNode(page, active)).toHaveAccessibleName(NOT_TAKEN);
+    });
+
+    await test.step('元のリクエストに戻す: the steps of the endpoint again, at the step the playback was inside', async () => {
+      await requestPanel(page).getByRole('button', { name: '元のリクエストに戻す' }).click();
+      await expect(partingNote(page)).toHaveCount(0);
+      await expect(shownFrames(page)).not.toContainText('()');
+      await expect(flowNode(page, 'トークンの情報をまとめる（有効かどうか）')).toHaveAccessibleName(PASSED);
+      await expect(requestPanel(page).getByText('✓ ステータスと OAuth のエラーは期待どおり')).toBeVisible();
+    });
+
+    await test.step('a hint the OP does not know, not run: the same way, and the flow says so and opens nothing', async () => {
+      await formValue(page, 'token_type_hint').fill('not-a-hint');
+      await expect(partingNote(page)).toContainText('書き換える前のリクエストと同じ道筋を通ります');
+      await expect(shownFrames(page)).not.toContainText('()');
+      await requestPanel(page).getByRole('button', { name: '元のリクエストに戻す' }).click();
+      await expect(partingNote(page)).toHaveCount(0);
+    });
+
+    await test.step('run the token the OP never issued: sent once, and the replay of the request sent goes into the same two functions', async () => {
+      await formValue(page, 'token').fill('not-a-token-the-op-issued');
+      await expect(partingNote(page)).toContainText('次の 2 か所で道筋が分かれます');
+      await runButton(page).click();
+      await expect(exchangeLine(page)).toContainText('地図から送った');
+      await expect(responseLine(page)).toContainText('200 OK');
+      await expect(replayLine(page)).toBeVisible();
+      await expect(partingNote(page)).toContainText('次の 2 か所で道筋が分かれます');
+      await expect(partingButton(page, 'describeIntrospectedToken()')).toBeEnabled();
+      await expect(mismatchWarning(page)).toHaveCount(0);
+      expect(await exchangeIds(request, workspace)).toHaveLength(prepared.length + 1);
     });
   });
 });

@@ -283,7 +283,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mkdir -p work && gh api "repos/${{ github.repository }}/pulls?state=closed&per_page=100" --paginate --slurp > work/pulls.json
 
-      # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）をビルドし、全関数と
+      # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）、地図の OP（packages/live-op）をビルドし、全関数と
       # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、
       # 地図のデータとページを作り、テストのページ（apps/tests、データは apps/tests/public/data）をビルドして
       # 地図の dist/tests/ に入れ（apps/map/scripts/copy-tests-viewer.mjs）、出力を検査する（apps/map/scripts/check-map.mjs）。
@@ -305,6 +305,33 @@ jobs:
       - name: Check map types and layout
         if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
         run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
+
+      # 地図の E2E（apps/map/e2e）。ビルドした地図のページ（dist/）で地図の Worker を wrangler dev で動かし、
+      # 本番と同じ Workers のランタイム（ワークスペースごとの Durable Object）の地図の OP に、ブラウザで地図を開いて
+      # リクエストを送り、その道筋の再生を確かめる（apps/map/playwright.config.ts）。ビルドがページを作ったときだけ走る。
+      # 落ちるとジョブは失敗するが、ビルドが落ちたときと同じく、後のプレビューのデプロイとコメントは行う
+      # （main の本番へのデプロイは行わない）。
+      - name: Install Playwright browsers for the map
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}
+        run: pnpm --filter @maronn-openid-connect/map exec playwright install --with-deps chromium
+
+      - name: E2E tests of the map
+        id: e2e
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}
+        run: pnpm --filter @maronn-openid-connect/map test:e2e
+
+      # 落ちたテストのトレースとスクリーンショット。
+      - name: Upload the E2E results of the map
+        if: ${{ !cancelled() && steps.e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: map-e2e-results
+          # 結果は隠しディレクトリ（.wrangler/）の下にある。Durable Object のストレージ（worker-state/）は除く。
+          path: |
+            apps/map/.wrangler/e2e/test-results
+            !apps/map/.wrangler/e2e/test-results/worker-state
+          include-hidden-files: true
+          if-no-files-found: ignore
 
       - name: Upload the map
         if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}

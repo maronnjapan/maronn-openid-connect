@@ -1,72 +1,127 @@
-import type { PreparedRequestScenario } from '@maronn-openid-connect/map-sandbox';
-import { prepareRequestScenarioInSandbox } from '@maronn-openid-connect/map-sandbox/browser';
-import { requestText, type RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
 import { useEffect, useState } from 'react';
+import type { ExchangeSummary, PreparedScenario } from '@maronn-openid-connect/live-op/api';
+import { requestText, type RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
+import { statusLine, statusTone } from '../lib/requests';
+import { liveClient, liveProblem, notifyLiveChanged } from './useLive';
 
-type RequestResult =
-  | { id: string; framework: string; revision: number; prepared: PreparedRequestScenario }
-  | { id: string; framework: string; revision: number; error: string };
+/** The preparations sent, by the hook that asked, the case and the revision: an effect run again for the same ones (React's development checks run each twice) takes the one sent, as a preparation sends requests that change the workspace. */
+const preparing = new Map<string, Promise<PreparedScenario>>();
 
-/** Generate a fresh request for the selected case and discard older selections' results. */
-export function useRequestCase(scenario: RequestScenario | undefined, framework: string) {
-  const id = scenario?.id;
-  const [selection, setSelection] = useState({ id, framework, revision: 0 });
-  const sameSelection = selection.id === id && selection.framework === framework;
-  if (!sameSelection) setSelection({ id, framework, revision: selection.revision + 1 });
+/** Prepare a case once for a key (see preparing). */
+function prepareOnce(key: string, id: string): Promise<PreparedScenario> {
+  let pending = preparing.get(key);
+  if (pending === undefined) {
+    pending = liveClient().prepare(id);
+    preparing.set(key, pending);
+    pending.then(notifyLiveChanged, () => undefined);
+  }
+  return pending;
+}
+
+/** A case prepared on the reader's workspace, or why it could not be. */
+export type RequestCaseResult = { id: string; revision: number; prepared: PreparedScenario } | { id: string; revision: number; error: string };
+
+/**
+ * Prepare the request of the selected case on the reader's workspace of the
+ * live OP (`POST /__live/scenario`): the OP answers the requests that lead
+ * up to it (an authorization, a login, a code exchanged…), and gives the
+ * request to send, its values the workspace's own. Prepared again on asking
+ * (`regenerate`), and only where the map runs requests (`runnable`).
+ */
+export function useRequestCase(scenario: RequestScenario | undefined, runnable: boolean) {
+  const id = runnable ? scenario?.id : undefined;
+  const [selection, setSelection] = useState({ id, revision: 0 });
+  const same = selection.id === id;
+  if (!same) setSelection({ id, revision: selection.revision + 1 });
   const { revision } = selection;
-  const [result, setResult] = useState<RequestResult>();
+  const [asker] = useState(() => Math.random().toString(36).slice(2));
+  const [result, setResult] = useState<RequestCaseResult>();
   useEffect(() => {
-    if (id === undefined) return;
+    if (id === undefined) return undefined;
     let active = true;
-    prepareRequestScenarioInSandbox(id, framework).then(
-      (prepared) => { if (active) setResult({ id, framework, revision, prepared }); },
-      (error: unknown) => { if (active) setResult({ id, framework, revision, error: error instanceof Error ? error.message : String(error) }); },
-    );
-    return () => { active = false; };
-  }, [id, framework, revision]);
+    prepareOnce(`${asker}:${id}:${revision}`, id).then(
+        (prepared) => {
+          if (active) setResult({ id, revision, prepared });
+        },
+        (error: unknown) => {
+          if (active) setResult({ id, revision, error: liveProblem(error) });
+        },
+      );
+    return () => {
+      active = false;
+    };
+  }, [asker, id, revision]);
   return {
     revision,
-    result: sameSelection && result?.id === id && result?.framework === framework && result?.revision === revision ? result : undefined,
+    result: same && result?.id === id && result?.revision === revision ? result : undefined,
     regenerate: () => setSelection((current) => ({ ...current, revision: current.revision + 1 })),
   };
 }
 
-/** The purpose, generated HTTP request and expected response of an endpoint case. */
-export function RequestCase({ scenarios, selected, result, testsUrl, compact, onSelect, onRegenerate, onTry }: {
+/** What a case panel shows and what it tells the trace (see RequestCase). */
+export interface RequestCaseProps {
   scenarios: readonly RequestScenario[];
   selected: RequestScenario | undefined;
-  result: RequestResult | undefined;
+  result: RequestCaseResult | undefined;
+  /** Why the map does not run this case's request (Next.js); undefined where it does. */
+  unrunnable: string | undefined;
   testsUrl: string;
   compact: boolean;
   onSelect: (id: string) => void;
   onRegenerate: () => void;
-  onTry?: () => void;
-}) {
+  onTry?: (() => void) | undefined;
+  /** Open an exchange of the preparation in the flow of its endpoint. */
+  onOpenExchange: (summary: ExchangeSummary) => void;
+}
+
+/** The purpose of an endpoint's case, the response it expects, and the request prepared for it on the live OP with the requests that prepared it. */
+export function RequestCase({ scenarios, selected, result, unrunnable, testsUrl, compact, onSelect, onRegenerate, onTry, onOpenExchange }: RequestCaseProps) {
   return (
     <section className="request-case" aria-label="想定リクエスト">
       <label className="flow-way">
         <span className="flow-label">想定リクエスト</span>
         <select value={selected?.id ?? ''} onChange={(event) => onSelect(event.target.value)}>
           <option value="">目的からケースを選ぶ</option>
-          {scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.title}</option>)}
+          {scenarios.map((scenario) => (
+            <option key={scenario.id} value={scenario.id}>
+              {scenario.title}
+            </option>
+          ))}
         </select>
       </label>
       {selected !== undefined ? (
         <div className="request-case-detail" key={selected.id}>
           <p>{selected.purpose}</p>
-          <p><strong>期待する応答</strong> <code>{selected.expected.status}</code> {selected.expected.error === undefined ? null : <><code>{selected.expected.error}</code> </>}{selected.expected.description}</p>
+          <p>
+            <strong>期待する応答</strong> <code>{selected.expected.status}</code> {selected.expected.error === undefined ? null : <><code>{selected.expected.error}</code> </>}
+            {selected.expected.description}
+          </p>
           {selected.external === undefined ? null : <p className="note">{selected.external}</p>}
-          {result === undefined ? <p role="status">リクエストを生成しています…</p> : 'error' in result ? (
-            <p role="alert">リクエストを生成できませんでした（{result.error}）</p>
+          {unrunnable !== undefined ? (
+            <p className="note">{unrunnable}</p>
+          ) : result === undefined ? (
+            <p role="status">地図の OP で、このケースのリクエストを準備しています…</p>
+          ) : 'error' in result ? (
+            <p role="alert" className="req-problem">リクエストを準備できませんでした（{result.error}）</p>
           ) : compact ? (
             <details>
-              <summary>生成した HTTP リクエスト</summary>
-              <RequestExample key={result.revision} prepared={result.prepared} />
+              <summary>準備したリクエスト（準備に {result.prepared.steps.length} 件のリクエスト）</summary>
+              <PreparedRequest key={result.revision} prepared={result.prepared} onOpenExchange={onOpenExchange} />
             </details>
-          ) : <RequestExample key={result.revision} prepared={result.prepared} />}
+          ) : (
+            <PreparedRequest key={result.revision} prepared={result.prepared} onOpenExchange={onOpenExchange} />
+          )}
           <div className="request-case-actions">
-            {onTry !== undefined ? <button type="button" className="code-button" onClick={onTry}>地図の OP で試す</button> : null}
-            <button type="button" className="code-button" onClick={onRegenerate}>再生成</button>
+            {onTry !== undefined ? (
+              <button type="button" className="code-button" onClick={onTry}>
+                地図の OP で試す
+              </button>
+            ) : null}
+            {unrunnable === undefined ? (
+              <button type="button" className="code-button" onClick={onRegenerate} title="地図の OP で、準備のリクエストからもう一度送る">
+                準備し直す
+              </button>
+            ) : null}
             <a href={testsUrl}>このケースを tests で見る</a>
           </div>
         </div>
@@ -75,9 +130,10 @@ export function RequestCase({ scenarios, selected, result, testsUrl, compact, on
   );
 }
 
-/** The generated HTTP message and the preparation used to create it. */
-function RequestExample({ prepared: { generated, premises } }: { prepared: PreparedRequestScenario }) {
-  const text = requestText(generated.request);
+/** The request prepared for a case, as HTTP, to copy; the requests that prepared it on the workspace, each to open in its endpoint's flow; and what the preparation did besides requests (the clock moved on). */
+function PreparedRequest({ prepared, onOpenExchange }: { prepared: PreparedScenario; onOpenExchange: (summary: ExchangeSummary) => void }) {
+  const { request, steps, notes = [] } = prepared;
+  const text = requestText({ method: request.method, path: request.path, host: location.host, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
   const [copyStatus, setCopyStatus] = useState('');
   async function copyRequest() {
     try {
@@ -89,24 +145,36 @@ function RequestExample({ prepared: { generated, premises } }: { prepared: Prepa
   }
   return (
     <>
-      <pre tabIndex={0} aria-label="生成した HTTP リクエスト">{text}</pre>
+      <pre tabIndex={0} aria-label="準備した HTTP リクエスト">
+        {text}
+      </pre>
       <div className="request-case-actions">
-        <button type="button" className="code-button" onClick={() => void copyRequest()}>リクエストをコピー</button>
+        <button type="button" className="code-button" onClick={() => void copyRequest()}>
+          リクエストをコピー
+        </button>
         <span role="status">{copyStatus}</span>
       </div>
-      {premises.steps.length === 0 ? null : (
+      {notes.length > 0 ? (
+        <ul className="plain note">
+          {notes.map((note, index) => (
+            <li key={index}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
+      {steps.length === 0 ? null : (
         <details>
-          <summary>準備に使ったリクエスト（{premises.steps.length} 件）</summary>
-          <ol>
-            {premises.steps.map(({ request, response }, index) => <li key={index}><code>{request.method} {new URL(request.url).pathname}</code> → <code>{response.status}</code></li>)}
+          <summary>準備に送ったリクエスト（{steps.length} 件。押すとそのエンドポイントのフローで道筋を見られる）</summary>
+          <ol className="case-steps">
+            {steps.map((step) => (
+              <li key={step.id}>
+                <button type="button" className="link small case-step" onClick={() => onOpenExchange(step)} title="このリクエストを、そのエンドポイントのフローで開く">
+                  <span className="mono store-num">{step.id}</span> <code>{step.method} {step.path.split('?')[0]}</code>
+                  {step.status !== undefined ? <span className={`req-status req-${statusTone(step.status)}`}> → {statusLine({ status: step.status })}</span> : null}
+                  {step.error !== undefined ? <code className="mono req-error-code"> {step.error}</code> : null}
+                </button>
+              </li>
+            ))}
           </ol>
-        </details>
-      )}
-      {generated.registration === undefined && generated.codeVerifier === undefined ? null : (
-        <details>
-          <summary>送信に使うクライアント設定</summary>
-          {generated.registration === undefined ? null : <pre aria-label="クライアント登録情報">{JSON.stringify(generated.registration, null, 2)}</pre>}
-          {generated.codeVerifier === undefined ? null : <p className="note">認可コードの交換に使う <code>code_verifier</code> <code>{generated.codeVerifier}</code></p>}
         </details>
       )}
     </>

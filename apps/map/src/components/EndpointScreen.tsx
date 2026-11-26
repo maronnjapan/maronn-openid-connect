@@ -24,6 +24,8 @@ export interface EndpointScreenProps {
   target?: string | null;
   onTrace: TraceUpdate;
   onOpenFunction: (id: string) => void;
+  /** Open an exchange of the live OP in the flow of an endpoint (its id). */
+  onOpenExchange?: (endpoint: string, exchange: string) => void;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface EndpointScreenProps {
  * A step selected shows its facts beside the outline; a step or a node a
  * link names is selected and shown.
  */
-export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, step = null, target = null, onTrace, onOpenFunction }: EndpointScreenProps) {
+export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, step = null, target = null, onTrace, onOpenFunction, onOpenExchange }: EndpointScreenProps) {
   const [code, setCode] = useState<string | null>(null);
   const extra = useMemo(() => waySelections(data, changes, framework, endpoint.id, enabled), [data, changes, framework, endpoint.id, enabled]);
   const root = entryOf(data, endpoint.root);
@@ -87,6 +89,7 @@ export function EndpointScreen({ data, changes, framework, endpoint, trace, enab
           onOpenFunction={onOpenFunction}
           onOpenCode={setCode}
           endpoint={named}
+          {...(onOpenExchange === undefined ? {} : { onOpenExchange })}
           renderStep={(mark) => {
             const step = endpoint.steps.find((candidate) => candidate.id === mark.id);
             if (step === undefined) return <p className="note">{mark.label}（このフレームワークの構成には無いステップです）</p>;

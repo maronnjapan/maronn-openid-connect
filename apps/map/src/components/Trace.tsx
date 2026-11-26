@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import type { ExchangeSummary } from '@maronn-openid-connect/live-op/api';
+import { endingSelection } from '@maronn-openid-connect/map-analysis/traced';
 import { requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 import type { DiffHunk, FlowStep, FrameChange, MapData, Selection, StepMark, TreeNode } from '../types';
 import { allHunks, belowCounts, changeName, frameMark, hunksWithin, markOf, memberChanges, type ChangeIndex, type Mark } from '../lib/changes';
 import { activeOf, boxOf, frameDiagram, markOfBox, type Diagram, type DiagramGroup, type DiagramNode } from '../lib/diagram';
 import { chartWay, flowChart } from '../lib/flowchart';
-import { callsToEnter, sceneDuration, scenesOf, walkTrace, withoutDeepest, type Scene } from '../lib/playback';
+import { callsToEnter, sceneDuration, scenesOf, walkTrace, withoutDeepest, type FlowWalk, type Scene } from '../lib/playback';
 import {
   changedIdsOf,
   childFrame,
@@ -27,7 +29,8 @@ import {
   type TraceUpdate,
 } from '../lib/trace';
 import { locationOf } from '../lib/model';
-import { draftOfRequest, endingWay, wayName } from '../lib/run';
+import { endpointForPath } from '../lib/live';
+import { draftOfRequest, wayName } from '../lib/run';
 import { nodeWords } from '../lib/words';
 import { Badge, ChangeDetail, DiffView, Inline } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
@@ -40,8 +43,12 @@ import { RequestCase, useRequestCase } from './RequestCase';
 import { SelectionBar } from './SelectionBar';
 import { rootedName, TraceView, type MemberDiff } from './TraceView';
 import { useFrames } from './useFrames';
+import { liveClient } from './useLive';
 import { useRootRequests } from './useRequests';
 import { useRequestRun } from './useRun';
+
+/** The walk of a request that did not run the root: no stop, so the playback shows no way. */
+const NO_WALK: FlowWalk = { stops: [], outcome: 'returns', resolved: {}, assumed: [] };
 
 /** What a trace starts from, what it shows and what it tells the page (see Trace). */
 export interface TraceProps {
@@ -75,6 +82,8 @@ export interface TraceProps {
    * scenes and the chart say. Absent for the trace of a function.
    */
   endpoint?: { id: string; name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
+  /** Open an exchange of the live OP in the flow of another endpoint (its id). */
+  onOpenExchange?: (endpoint: string, exchange: string) => void;
 }
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
@@ -162,7 +171,7 @@ interface PathDiff {
  * always speaks of a frame the outline shows. A narrow screen shows the
  * outline alone and opens the others over it.
  */
-export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null, endpoint }: TraceProps) {
+export function Trace({ data, changes, framework, rootId, extraSelections = [], state, onState, enabled, onOpenFunction, onOpenCode, renderStep, tabs = [], step = null, target = null, endpoint, onOpenExchange }: TraceProps) {
   const { mobile } = useMobileMenu();
   const source = sourceOf(framework);
   const tabsId = useId();
@@ -223,20 +232,21 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   const loading = rows.some((row) => row.kind === 'loading');
   const root = frames.trees.get(rootId);
   const selections = useMemo(() => [...(frames.selections.get(rootId) ?? []).filter((selection) => selection.kind !== 'change'), ...extraSelections], [frames.selections, rootId, extraSelections]);
-  // The requests the OP of the map took the ways of the root with: the flow view starts the request of the way chosen from its one.
+  // What the cases do at the root (the ways their requests took on the live OP): the flow view offers the cases that take the way chosen.
   const requests = useRootRequests(data, rootId);
-  // The request the reader runs in the flow view on the OP of the map: while the playback follows it, the sides it was seen to take are the trace's choice.
-  const requestRun = useRequestRun({ data, rootId, root, trees: frames.trees, state, onState, enabled, hasFrame });
+  // The live OP runs the flows of hono and of the OPs generated from it (express, fastify); Next.js is not run.
+  const live = source === 'hono';
+  // The request the reader runs in the flow view on the live OP, or an exchange of the workspace the reader opened: while the playback follows it, the way its trace took is the trace's choice.
+  const requestRun = useRequestRun({ data, root, trees: frames.trees, state, onState, enabled, hasFrame });
   const scenarios = requestScenariosFor(endpoint?.id ?? '', undefined, framework);
   const scenario = scenarios.find((candidate) => candidate.id === state.request);
-  const { revision, result, regenerate } = useRequestCase(scenario, framework);
+  const { revision, result, regenerate } = useRequestCase(scenario, live);
   const prepared = result !== undefined && 'prepared' in result ? result.prepared : undefined;
-  const scenarioId = scenario?.id;
   const generatedCase = useMemo(() => {
-    if (scenarioId === undefined) return undefined;
-    const key = `${scenarioId}:${revision}`;
-    return prepared === undefined ? { key } : { key, draft: draftOfRequest(prepared.generated.request), premises: prepared.premises };
-  }, [scenarioId, revision, prepared]);
+    if (scenario === undefined) return undefined;
+    const key = `${scenario.id}:${revision}`;
+    return prepared === undefined ? { key, scenario } : { key, scenario, draft: draftOfRequest(prepared.request) };
+  }, [scenario, revision, prepared]);
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
@@ -276,9 +286,11 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
   // The flow view: one request walked through the frames the trace has open (lib/playback.ts), a scene a box of the diagram of its frame.
   const flowOn = state.flow === true;
   const [maximized, setMaximized] = useState(false);
+  // A request followed that did not run the root (the router or a middleware answered it) has no way: the playback shows none rather than assumed sides.
+  const notRan = requestRun.replay !== undefined && !requestRun.replay.rootRan;
   const walked = useMemo(
-    () => (flowOn && root !== undefined ? walkTrace(root, state.choices[0] ?? {}, { open: state.open, trees: frames.trees, enabled }) : undefined),
-    [flowOn, root, state.choices, state.open, frames.trees, enabled],
+    () => (flowOn && root !== undefined ? (notRan ? NO_WALK : walkTrace(root, state.choices[0] ?? {}, { open: state.open, trees: frames.trees, enabled })) : undefined),
+    [flowOn, notRan, root, state.choices, state.open, frames.trees, enabled],
   );
   const flowDiagrams = useMemo(() => {
     const byFrame = new Map<string, Diagram>();
@@ -774,12 +786,13 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     const on = new Set(nodesBelow(root.nodes, enabled).map((node) => node.id));
     return selections.filter((selection) => on.has(selection.target.split('.')[0] ?? ''));
   }, [selections, root, enabled]);
-  // The ready-made way the request run in the flow view ended by, while the playback follows it.
+  // The ready-made way the request run in the flow view ended by, while the playback follows it: read on the walk of its trace, which goes down to the throw (a failure names the exact throw).
+  const replayWalk = requestRun.replay?.walk;
   const runEnding = useMemo(() => {
-    if (requestRun.state?.status !== 'done' || !requestRun.state.follow || walked === undefined) return undefined;
-    const ending = endingWay(flowSelections, walked);
+    if (replayWalk === undefined) return undefined;
+    const ending = endingSelection(flowSelections, replayWalk);
     return ending === undefined ? undefined : wayName(ending);
-  }, [requestRun.state, walked, flowSelections]);
+  }, [replayWalk, flowSelections]);
   // The flow view's stage: the frame's diagram drawn as a flowchart (lib/flowchart.ts), the root of an endpoint starting at the endpoint and saying what its steps hand on.
   const chart = useMemo(
     () =>
@@ -830,13 +843,41 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     requestRun.forget();
     playback.play(false);
     playback.go(0);
-    onState({ ...state, request: id, way: undefined, open: [], choices: [], focus: '' });
+    onState({ ...state, request: id, exchange: undefined, way: undefined, open: [], choices: [], focus: '' });
+  };
+  /** Prepare a case whose request took the way played: the way stays, and the request becomes the case's. */
+  const prepareCase = (id: string) => {
+    requestRun.forget();
+    onState({ ...state, request: id, exchange: undefined });
+  };
+  // The endpoints of the OP, to tell which endpoint a request of the workspace is for.
+  const allEndpoints = data.flows[framework]?.endpoints ?? [];
+  /** Open an exchange of the workspace: in this flow when its path is of this endpoint (without sending it again), else in the flow of its own endpoint. */
+  const openExchange = (summary: Pick<ExchangeSummary, 'id' | 'path'>) => {
+    const target = endpointForPath(allEndpoints, summary.path);
+    if (target === undefined) return;
+    if (target.id !== endpoint?.id) {
+      onOpenExchange?.(target.id, summary.id);
+      return;
+    }
+    playback.play(false);
+    requestRun.open(summary.id, flowOn ? undefined : { flow: true });
+  };
+  /** Open an exchange known by its id alone (the provenance of a record, the steps of a grant): its path says where. */
+  const openExchangeId = (id: string) => {
+    liveClient()
+      .exchange(id)
+      .then(
+        (recorded) => openExchange(recorded),
+        () => undefined,
+      );
   };
   const requestCase = endpoint !== undefined && scenarios.length > 0 ? (
     <RequestCase
       scenarios={scenarios}
       selected={scenario}
       result={result}
+      unrunnable={live ? undefined : '地図の OP は Hono の OP なので、Next.js のケースは地図では動かしません（期待する応答とパスは tests で読めます）。'}
       testsUrl={`./tests/#/endpoint/${source}/${encodeURIComponent(endpoint.id)}?case=${encodeURIComponent(scenario?.id ?? '')}`}
       compact={flowOn}
       onSelect={(id) => selectRequest(id || undefined)}
@@ -844,7 +885,8 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
         regenerate();
         selectRequest(scenario?.id);
       }}
-      onTry={!flowOn && source === 'hono' && prepared !== undefined && scenario?.external === undefined ? () => onState({ ...state, flow: true }) : undefined}
+      onTry={!flowOn && live && prepared !== undefined && scenario?.external === undefined ? () => onState({ ...state, flow: true }) : undefined}
+      onOpenExchange={openExchange}
     />
   ) : undefined;
 
@@ -867,6 +909,11 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               requests={requests}
               requestCase={requestCase}
               generatedCase={generatedCase}
+              endpoints={allEndpoints}
+              caseTitle={(id) => scenarios.find((candidate) => candidate.id === id)?.title}
+              onPrepareCase={prepareCase}
+              onOpenExchange={openExchange}
+              onOpenExchangeId={openExchangeId}
               framework={framework}
               titleOf={sceneTitle}
               endpoint={endpoint}
@@ -874,7 +921,9 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
               loading={loading}
               run={requestRun}
               ending={runEnding}
-              unrunnable={scenario?.external ?? (source === 'hono' ? undefined : '地図の中でリクエストを実行できるのは、Hono・Express・Fastify の OP です。')}
+              unrunnable={scenario?.external ?? (live ? undefined : '地図の中でリクエストを実行できるのは、Hono・Express・Fastify の OP です。')}
+              live={live}
+              idle={notRan ? 'このリクエストではエンドポイントの処理は動いていません。再生する道筋はありません（下の応答を見てください）。' : undefined}
               deeper={enterable.length}
               canFold={state.open.length > 0}
               onDeeper={() => onState({ ...state, open: [...new Set([...state.open, ...enterable])] })}

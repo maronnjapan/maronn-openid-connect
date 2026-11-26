@@ -27,23 +27,31 @@
  * MARONN_REACH=1): its results and reach join the cards. Without it the cards
  * are those the code says.
  *
- * Before the analysis, the OP of the map (packages/map-sandbox) makes its
- * premises by the requests that issue them (the codes and tokens of its
- * grants), written to premises/ for the page to hand to its OP, and the
- * requests it tries at its endpoints run on them, one after another: the
- * cases they take get them as samples, which the flow view starts the
- * request of a case from (packages/test-catalog samples.ts). Without the
- * built OP of the map the build goes on without premises and samples, and
- * says so.
+ * Once the analysis has the trees, every request case of hono that needs
+ * nothing outside the OP (packages/test-catalog src/scenarios) runs on the
+ * live OP in this process (packages/live-op, the OP the map deploys), each
+ * prepared on a fresh workspace by the requests its recipe sends and its
+ * request sent; the trace of that request, followed through the root of
+ * its endpoint (map-analysis traced.ts), names the ways it took. What the
+ * cases do at each root goes beside map.json (requests/<hash>.json,
+ * MapData.requests), the flow view prepares the request of the way chosen
+ * by one of its cases, and the probes of the OP go in MapData.liveOp. A
+ * case that is not faithful (its walk disagrees with what its request ran,
+ * its request did not run the root, or the OP did not answer what it
+ * expects) is printed here, and fails the check of the map
+ * (scripts/check-map.mjs). Without the built live OP the build goes on
+ * without the cases, and says so.
  *
- * Reads the built CLI, the built analysis and the built OP of the map, so
- * run `pnpm run build:map` at the root (it builds them first).
+ * Reads the built CLI, the built analysis, the built test catalog and the
+ * built live OP, so run `pnpm run build:map` at the root (it builds them
+ * first).
  */
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, originRepository, pullRequestOf, removeStale, writeHashed } from '@maronn-openid-connect/map-analysis';
-import { buildTests, runSamples } from '@maronn-openid-connect/test-catalog';
+import { KIND_ORDER, KIND_WORDS, buildMap, changesMarkdown, originRepository, pullRequestOf } from '@maronn-openid-connect/map-analysis';
+import { buildTests, describeFault, fileReading, followCases, liveCounts, liveScenarios, runLiveCases } from '@maronn-openid-connect/test-catalog';
+import { REQUEST_SCENARIOS } from '@maronn-openid-connect/test-catalog/premises';
 
 /**
  * The pull requests of the JSON file MAP_PULLS names (an array, or the pages
@@ -77,27 +85,48 @@ const started = Date.now();
 const reports = process.env.MAP_TEST_REPORTS?.trim() ? resolve(process.env.MAP_TEST_REPORTS.trim()) : undefined;
 const pulls = readPulls(process.env.MAP_PULLS);
 const github = process.env.MAP_REPOSITORY?.trim() || process.env.GITHUB_REPOSITORY?.trim() || originRepository(repository);
-// The premises of the OP of the map, made by requests, and the requests it tries, run on them before the analysis: the OP stops the clock of the process while one runs.
-const { premises, samples } = await (async () => {
-  let sandbox;
+/** The issuer of the workspaces the cases run on: the origin the map's dev server answers at. */
+const ISSUER = 'http://127.0.0.1:3610';
+/**
+ * Run the request cases on the live OP in this process, each on a fresh
+ * workspace: what the OP answered the case's request with, and the probes
+ * of its build. Undefined when the live OP is not built, with a warning.
+ */
+async function runCases() {
+  let live;
   try {
-    sandbox = await import('@maronn-openid-connect/map-sandbox');
+    live = await import('@maronn-openid-connect/live-op');
   } catch (error) {
-    console.warn(`The OP of the map is not built (pnpm --filter @maronn-openid-connect/map-sandbox build): no premises, and the cases get no sample (${error instanceof Error ? error.message : String(error)})`);
-    return {};
+    console.warn(`The live OP is not built (pnpm --filter @maronn-openid-connect/live-op build): the cases are not run, and the map has no requests of them (${error instanceof Error ? error.message : String(error)})`);
+    return undefined;
   }
-  const made = await sandbox.preparePremises();
-  // The premises of the map are what its pages say the OP holds: a grant the OP refused fails the build.
-  if (made.failures !== undefined) throw new Error(`The OP of the map gave no code for a grant of its premises: ${made.failures.map((failure) => failure.message).join('; ')}`);
-  console.log(`premises: ${made.records.length} records, ${made.records.filter((record) => record.addedBy !== undefined).length} of them stored by the ${made.steps.length} requests that made them`);
-  return { premises: made, samples: await runSamples({ endpoints: sandbox.SAMPLED_ENDPOINTS, candidates: (endpoint) => sandbox.candidateRequests(endpoint, made), run: (request) => sandbox.runRequest(request, made) }) };
-})();
-/** Write the premises beside map.json (premises/<hash>.json, the earlier build's removed) and name them in the index. */
-function writePremises(data) {
-  const directory = join(out, 'premises');
-  const written = new Set();
-  if (premises !== undefined) data.premises = `./data/premises/${writeHashed(directory, 'premises', JSON.stringify(premises), written)}`;
-  removeStale(directory, written);
+  let count = 0;
+  return runLiveCases(
+    {
+      probes: live.probeTable(),
+      async run(id) {
+        const recipe = live.RECIPES[id];
+        if (recipe === undefined) throw new Error(`the live OP has no recipe of ${id}`);
+        count += 1;
+        const workspace = await live.LiveWorkspace.open(`build-${count}`, ISSUER);
+        const prepared = await live.prepareRecipe(workspace, id, recipe);
+        const { exchange } = await workspace.send(prepared.request, 'relay');
+        return { exchange, steps: prepared.steps.length };
+      },
+    },
+    liveScenarios(REQUEST_SCENARIOS),
+  );
+}
+/** Print what the cases did: the numbers, and each case that is not faithful with what the OP answered. */
+function printCases(followed) {
+  const counted = liveCounts(followed);
+  console.log(
+    `cases: ${counted.cases} run on the live OP in ${(followed.took / 1000).toFixed(1)}s, ${counted.faithful} faithful, ${counted.mismatches} mismatches, ` +
+      `${counted.assumedCases} cases with ${counted.assumed} assumed decisions, ${counted.ways} ways reached by a case`,
+  );
+  const unfaithful = followed.cases.filter((item) => item.faults.length > 0);
+  for (const item of unfaithful) for (const line of describeFault(item)) console.warn(`✗ ${line}`);
+  if (unfaithful.length > 0) console.warn(`${unfaithful.length} cases are not faithful: the check of the map (pnpm run check) fails on them`);
 }
 const result = await buildMap({
   repository,
@@ -105,9 +134,12 @@ const result = await buildMap({
   ...(base === undefined ? {} : { base }),
   ...(pullRequest === undefined ? {} : { pullRequest }),
   history: { ...(pulls === undefined ? {} : { pulls }), ...(github === undefined ? {} : { github }) },
-  extend: (context) => {
-    writePremises(context.data);
-    return buildTests(context, { out: testsOut, ...(reports === undefined ? {} : { reports }), ...(samples === undefined ? {} : { samples }) });
+  extend: async (context) => {
+    const live = await runCases();
+    const read = (path) => readFileSync(join(repository, path), 'utf8');
+    const followed = live === undefined ? undefined : followCases(context.data, context.repository.head.trees, context.failures, live, fileReading(context.data, read));
+    if (followed !== undefined) printCases(followed);
+    return buildTests(context, { out: testsOut, ...(reports === undefined ? {} : { reports }), ...(followed === undefined ? {} : { live: followed }) });
   },
 });
 for (const line of result.log) console.log(`Wrote ${join(out, 'map.json')}: ${line} (${((Date.now() - started) / 1000).toFixed(1)}s)`);

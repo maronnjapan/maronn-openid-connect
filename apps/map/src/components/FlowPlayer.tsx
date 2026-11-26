@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { ExchangeSummary } from '@maronn-openid-connect/live-op/api';
 import type { FlowStep, MapData, Selection } from '../types';
 import { STEP_KIND_WORDS, SPEEDS, sceneAt, sceneDuration, sceneLines, scenarioOf, selectionKey, type FlowWalk, type Scene, type SceneLine } from '../lib/playback';
 import { choose, entryOf, type TraceState } from '../lib/trace';
@@ -7,7 +8,7 @@ import { Inline } from './ChangeParts';
 import { FeatureBadge } from './FeatureBadge';
 import { FlowRequest, type FlowRequestProps } from './FlowRequest';
 import { failureGroups } from './SelectionBar';
-import { useCurrentPremises, type RootRequestsState } from './useRequests';
+import type { RootRequestsState } from './useRequests';
 import type { RequestRun } from './useRun';
 
 /** Where a playback is and how it moves (see usePlayback). */
@@ -95,24 +96,37 @@ export interface FlowPlayerProps {
   walked: FlowWalk;
   scenes: readonly Scene[];
   playback: Playback;
-  /** The requests the OP of the map took the ways of the root with (useRootRequests): the request of the way chosen starts from its one. */
+  /** What the cases do at the root (useRootRequests): the cases whose request took the way chosen. */
   requests: RootRequestsState;
   /** The endpoint's purpose-based request selector. */
   requestCase?: ReactNode;
-  /** The selected purpose and the draft it generated, once ready. */
+  /** The case selected and the request prepared for it, once ready. */
   generatedCase?: FlowRequestProps['generatedCase'];
+  /** The endpoints of the OP, for the list of the recent requests. */
+  endpoints: FlowRequestProps['endpoints'];
+  /** The title of a case, by its id. */
+  caseTitle: (id: string) => string | undefined;
+  /** Select a case and prepare its request. */
+  onPrepareCase: (id: string) => void;
+  /** Open an exchange of the workspace: from a list, or by its id. */
+  onOpenExchange: (summary: ExchangeSummary) => void;
+  onOpenExchangeId: (id: string) => void;
   /** The framework the map shows (TraceProps.framework). */
   framework: string;
   /** The words a scene is named by: those of its box in the diagram. */
   titleOf: (scene: Scene) => { text: string; code: boolean };
   /** The endpoint whose root the trace starts from (see TraceProps.endpoint): a scene of one of its steps says the step's kind and values, and a request to it is written with its method and path. */
-  endpoint?: { name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
-  /** The request the reader runs on the OP of the map, and what it gave (useRun.ts). */
+  endpoint?: { id: string; name: string; steps: readonly FlowStep[]; request?: { method: string; path: string } } | undefined;
+  /** The request the reader runs on the live OP, and what it gave (useRun.ts). */
   run: RequestRun;
   /** The ready-made way the request run ended by, in words, while the playback follows it. */
   ending: string | undefined;
-  /** Why a request cannot be run on the OP of the map here; undefined when it can. */
+  /** Why a request cannot be run on the live OP here; undefined when it can. */
   unrunnable: string | undefined;
+  /** The live OP runs the requests of this framework's flows. */
+  live: boolean;
+  /** Why the playback shows no way, when it follows a request that did not run the root. */
+  idle?: string | undefined;
   /** Whether a function has a frame the playback can go into. */
   hasFrame: (id: string) => boolean;
   /** Frames of the trace are still being read: the playback may grow. */
@@ -145,9 +159,10 @@ function plain(text: string): string {
 
 /**
  * The player of the flow view: which way the request takes (a ready-made
- * choice, or the sides the reader chose), the controls of the playback, what
- * happens in the scene shown, and the draft to run on the map's OP (FlowRequest).
- * The chart beside it shows where the scene is
+ * choice, the sides the reader chose, or the way a request took on the live
+ * OP), the controls of the playback, what happens in the scene shown, and
+ * the request to run on the live OP with the recent requests of the
+ * workspace and its state (FlowRequest). The chart beside it shows where the scene is
  * (a node of it goes to its scene); this says what happens there, in the
  * words the outline uses.
  *
@@ -156,24 +171,23 @@ function plain(text: string): string {
  * same choice the outline's side buttons make). A call that has a frame can
  * be entered, which makes the request go through that function too.
  */
-export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable }: FlowPlayerProps) {
+export function FlowPlayer({ data, selections, state, onState, enabled, walked, scenes, playback, requests, requestCase, generatedCase, endpoints, caseTitle, onPrepareCase, onOpenExchange, onOpenExchangeId, framework, titleOf, endpoint, hasFrame, loading, deeper, canFold, onDeeper, onFold, onEnter, onLeave, onOpenCode, onOutline, run, ending, unrunnable, live, idle }: FlowPlayerProps) {
   const { at, playing, speed } = playback;
-  const premises = useCurrentPremises(data);
   const scene = scenes[at];
   const choice = state.choices[0];
   // While the playback follows the way of a request run, that is the way chosen, ready-made or not.
   const ran = run.state?.status === 'done' && run.state.follow;
   const picked = ran ? -1 : scenarioOf(selections, choice, state.way);
   const custom = !ran && picked === -1 && choice !== undefined && Object.keys(choice).length > 0;
-  // A request run plays the way it took from the start, once that way is read.
+  // A request run (or an exchange opened) plays the way it took from the start, once that way is read.
   const played = useRef(0);
   useEffect(() => {
     const ranState = run.state;
-    if (ranState?.status !== 'done' || !ranState.follow || run.walked === undefined || played.current === ranState.id) return;
+    if (ranState?.status !== 'done' || !ranState.follow || run.replay === undefined || played.current === ranState.id) return;
     played.current = ranState.id;
     playback.go(0);
-    playback.play(true);
-  }, [run.state, run.walked, playback]);
+    if (run.replay.rootRan) playback.play(true);
+  }, [run.state, run.replay, playback]);
   const pick = (value: string) => {
     if (value === 'run' || value === 'custom') return;
     playback.play(false);
@@ -181,13 +195,13 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     // Another way leaves the way of the request run.
     run.forget();
     if (value === 'auto') {
-      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, focus: '' });
+      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, exchange: undefined, focus: '' });
       return;
     }
     const selection = selections[Number(value)];
     if (selection === undefined) return;
     // A way is played on its own: its frames open, its sides chosen, from the start.
-    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, focus: '' });
+    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, exchange: undefined, focus: '' });
   };
   const failures = selections.map((selection, index) => ({ selection, index })).filter((item) => item.selection.kind === 'failure');
   const failureIndex = new Map(failures.map((item) => [item.selection, item.index]));
@@ -370,7 +384,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
 
       <div className="flow-scene">
       {scene === undefined || title === undefined ? (
-        <p className="note pad">{loading ? '読み込んでいます…' : 'この道筋で通る処理がありません。'}</p>
+        <p className="note pad">{idle ?? (loading ? '読み込んでいます…' : 'この道筋で通る処理がありません。')}</p>
       ) : (
         <article className={`scene-card tone-${scene.tone}`} aria-live="polite" aria-atomic="true">
           <p className="scene-where">
@@ -438,24 +452,31 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
       </div>
 
       <FlowRequest
-        state={requests}
-        premises={premises}
-        // The request of a ready-made way the reader picked; a request run keeps the request it ran, whatever way its sides match.
+        data={data}
+        requests={requests}
+        // The ready-made way the reader picked: the cases that take it are offered; a request run shows the way it took instead.
         selection={run.state !== undefined || picked === -1 ? undefined : selections[picked]}
-        keep={run.state !== undefined}
         generatedCase={generatedCase}
+        origin={run.origin}
         assumed={assumedCount}
         framework={framework}
-        endpoint={endpoint?.request}
+        endpoint={endpoint === undefined || endpoint.request === undefined ? undefined : { id: endpoint.id, ...endpoint.request }}
+        endpoints={endpoints}
         unrunnable={unrunnable}
+        live={live}
         featuresOff={data.features.some((feature) => !enabled.has(feature.id))}
         run={run.state}
+        replay={run.replay}
         ending={ending}
+        caseTitle={caseTitle}
         onRun={(draft) => {
           playback.play(false);
-          run.run(draft, generatedCase?.premises);
+          run.run(draft);
         }}
         onFollow={run.follow}
+        onPrepareCase={onPrepareCase}
+        onOpenExchange={onOpenExchange}
+        onOpenExchangeId={onOpenExchangeId}
       />
       <p className="flow-foot">
         <button type="button" className="link" onClick={() => onOutline()}>

@@ -21,6 +21,8 @@
  *   not.
  * - With the requests of a measured run (examples.ts), a case gets the
  *   requests that took it as its examples.
+ * - With the request cases run on the live OP (live.ts), a case gets the
+ *   cases whose request took it.
  *
  * These are rules, not guesses: a case with no test under them is shown as
  * having none, and nothing is inferred from the title of a test.
@@ -30,7 +32,7 @@ import { FAILS, failureSelections, frameSelections, stepsOf, walkFlow, type Fail
 import { attachExamples, conditionOf, type CaseSources, type CaseWay, type ExampleCounts, type SentRequest } from './examples.js';
 import { errorCodeOf, type Joined } from './join.js';
 import type { CaseCondition, EndpointCase, EndpointCases, FailureTests, TestCase } from './model.js';
-import { attachSamples, type SampleRun } from './samples.js';
+import type { FollowedCases } from './live.js';
 
 /** A tree with the uses of the values its steps make, as the analysis builds it (map-analysis BuiltTree). */
 export interface CaseTree {
@@ -140,14 +142,10 @@ function hasSteps(nodes: readonly TreeNode[]): boolean {
   return nodes.some((node) => node.step !== undefined || hasSteps(node.pre ?? []) || (node.branches ?? []).some((branch) => hasSteps(branch.nodes)));
 }
 
-/** The requests run on the OP of the map, for the samples of the cases (samples.ts), with what the rules read them with. */
-export interface CaseSamples {
-  /** The runs at each endpoint, by `hono:<endpoint>` (runSamples). */
-  byEndpoint: ReadonlyMap<string, readonly SampleRun[]>;
-  /** The lines of a file of the repository, by its path. */
-  linesOf(path: string): readonly string[] | undefined;
-  /** The frame a line of a file is in (run.ts FrameLocator). */
-  frameAt(path: string, line: number): string | undefined;
+/** The ready-made choices of an endpoint's root a case can be: those of its own frame (with the value uses its step choices read) and the failures that can come up from below. */
+export function endpointSelections(data: MapData, root: string, built: CaseTree, trees: ReadonlyMap<string, FlowTree>, failures: ReadonlyMap<string, readonly Failure[]>): Selection[] {
+  const nameOf = (id: string) => data.functions[id]?.name ?? trees.get(id)?.name ?? id;
+  return [...frameSelections(built.tree, built.uses), ...failureSelections(root, trees, failures, nameOf)];
 }
 
 /** The requests of a measured run, for the examples of the cases (examples.ts). */
@@ -166,14 +164,12 @@ export interface CaseRequests {
  * working tree (with the value uses the step choices read), `failures` the
  * failures that leave each frame; with `requests`, the cases get the
  * requests of the measured run that took them, and `counts` adds up what
- * that join saw. With `samples`, the cases of an endpoint the OP of the map
- * ran requests at get the first that takes each (samples.ts), and
- * `counts.sampled` adds up how many did.
+ * that join saw. With `live`, the cases of an endpoint the build ran the
+ * request cases at get the cases whose request took each (live.ts).
  */
-export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 }, samples?: CaseSamples): Map<string, EndpointCases> {
+export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree>, failures: ReadonlyMap<string, readonly Failure[]>, joined: Joined, requests?: CaseRequests, counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 }, live?: FollowedCases): Map<string, EndpointCases> {
   const plain = new Map([...trees].map(([id, built]) => [id, built.tree]));
   const treeOf = (id: string) => plain.get(id);
-  const nameOf = (id: string) => data.functions[id]?.name ?? plain.get(id)?.name ?? id;
   const sources: CaseSources | undefined =
     requests === undefined ? undefined : { treeOf, pathOf: (file) => data.sources[file]?.path, linesOf: (path) => requests.linesOf(path), frameAt: (path, line) => requests.frameAt(path, line) };
   const found = new Map<string, EndpointCases>();
@@ -182,7 +178,7 @@ export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree
       const built = trees.get(endpoint.root);
       if (built === undefined || !hasSteps(built.tree.nodes)) continue;
       const key = `${source}:${endpoint.id}`;
-      const selections = [...frameSelections(built.tree, built.uses), ...failureSelections(endpoint.root, plain, failures, nameOf)];
+      const selections = endpointSelections(data, endpoint.root, built, plain, failures);
       const ways = waysOf(built.tree, selections, joined.endpoints.get(key)?.tests ?? [], (frame) => joined.frames.get(frame)?.tests ?? [], treeOf);
       const sent = requests?.byEndpoint.get(key) ?? [];
       if (sources !== undefined && sent.length > 0) {
@@ -193,10 +189,10 @@ export function endpointCases(data: MapData, trees: ReadonlyMap<string, CaseTree
         counts.took += seen.took;
         counts.unpinned += seen.unpinned;
       }
-      const runs = samples?.byEndpoint.get(key) ?? [];
-      if (samples !== undefined && runs.length > 0) {
-        const sampled = attachSamples(ways, runs, built.tree, { treeOf, pathOf: (file) => data.sources[file]?.path, linesOf: (path) => samples.linesOf(path), frameAt: (path, line) => samples.frameAt(path, line) });
-        counts.sampled = (counts.sampled ?? 0) + sampled;
+      const taken = new Map((live?.endpoints.get(key)?.ways ?? []).map((way) => [way.id, way.scenarios]));
+      for (const way of ways) {
+        const scenarios = taken.get(way.made.id);
+        if (scenarios !== undefined) way.made.scenarios = scenarios;
       }
       if (ways.length > 0) found.set(key, { version: 1, key, cases: ways.map((way) => way.made) });
     }

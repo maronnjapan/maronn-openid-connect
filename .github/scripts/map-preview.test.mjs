@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { deploymentUrlOf, extractJson, previewNameOf, previewUrlOf, urlsIn, workerBaseName, workerNameOf } from './map-preview.mjs';
+import { deploymentUrlOf, extractJson, parseJsonc, previewNameOf, previewUrlOf, urlsIn, usesDurableObjects, workerBaseName, workerNameOf } from './map-preview.mjs';
 
 describe('previewNameOf / workerNameOf', () => {
-  it('should name the Preview and the fallback Worker after the pull request number', () => {
+  it('should name the Preview and the Worker of a pull request after its number', () => {
     assert.equal(previewNameOf('42'), 'pr-42');
     assert.equal(workerNameOf('maronn-oidc-map', 42), 'maronn-oidc-map-pr-42');
   });
@@ -16,6 +17,27 @@ describe('workerBaseName', () => {
 
   it('should refuse a config without a name', () => {
     assert.throws(() => workerBaseName('{}'), /has no name/);
+  });
+});
+
+describe('parseJsonc', () => {
+  it('should leave out comments and trailing commas but keep strings that look like them', () => {
+    const text = '{\n  // the routes\n  "run_worker_first": ["/__live/*", "/login/*", /* exact */ "/token",],\n  "$schema": "https://example.com//schema", "note": "a, }",\n}\n';
+    assert.deepEqual(parseJsonc(text), { run_worker_first: ['/__live/*', '/login/*', '/token'], $schema: 'https://example.com//schema', note: 'a, }' });
+  });
+});
+
+describe('usesDurableObjects', () => {
+  it('should tell a Worker with Durable Object bindings from one of assets only', () => {
+    assert.equal(usesDurableObjects('{ "name": "m", "durable_objects": { "bindings": [{ "name": "LIVE_OP", "class_name": "LiveOpWorkspace" }] } }'), true);
+    assert.equal(usesDurableObjects('{ "name": "m", "assets": { "directory": "./dist" } }'), false);
+    assert.equal(usesDurableObjects('{ "name": "m", "durable_objects": { "bindings": [] } }'), false);
+  });
+
+  it('should find the Durable Objects of the map, whose previews are Workers of their own', () => {
+    const wranglerJsonc = readFileSync(new URL('../../apps/map/wrangler.jsonc', import.meta.url), 'utf8');
+    assert.equal(usesDurableObjects(wranglerJsonc), true);
+    assert.equal(workerBaseName(wranglerJsonc), 'maronn-oidc-map');
   });
 });
 

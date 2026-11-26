@@ -9,7 +9,7 @@
  * `@maronn-openid-connect/test-catalog/model`, so this module has no code and
  * has only type imports.
  */
-import type { FeatureRange, MapFeature, StepKind, StoreAccess } from '@maronn-openid-connect/map-analysis';
+import type { FeatureRange, MapFeature, StepKind } from '@maronn-openid-connect/map-analysis';
 
 /**
  * What kind of test a case is, by where it is and what it does:
@@ -147,7 +147,7 @@ export interface TestCase {
   /** A stable id (see id.ts): the `@id` tag, the `// @test-id` comment, else a hash of the root, the describe path and the title. */
   id: string;
   kind: TestKind;
-  /** The root it belongs to: core, experimental, google-login, hono, nextjs, e2e, features, or the tool (cli, map, map-analysis, map-sandbox, test-catalog, test-reach, tests-viewer, scripts). */
+  /** The root it belongs to: core, experimental, google-login, hono, nextjs, e2e, features, or the tool (cli, map, map-analysis, live-op, test-catalog, test-reach, tests-viewer, scripts). */
   root: string;
   source: { file: string; lines: [number, number]; form: 'code' | 'feature' };
   /** The name of the `it`, or of the scenario, in English. */
@@ -528,15 +528,8 @@ export interface EndpointCase {
   examples?: CaseExample[];
   /** How many recorded requests took this way in all (at least examples.length). */
   exampleCount?: number;
-  /** A request the OP of the map was seen to take this way with (samples.ts); absent when none of the requests the build tried there took it. */
-  sample?: CaseSample;
-}
-
-/** A request the OP of the map (packages/map-sandbox) took a way with, what the OP answered, and what it read and wrote of the records the OP held. */
-export interface CaseSample {
-  request: ExampleRequest;
-  response: ExampleResponse;
-  store?: StoreAccess;
+  /** The request cases (RequestScenario.id) whose request took this way when the build ran them on the live OP (live.ts), in the order of the cases; absent when none did. */
+  scenarios?: string[];
 }
 
 /** A decision and the side a way takes at it, in words. */

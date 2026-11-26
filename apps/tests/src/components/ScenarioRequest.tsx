@@ -1,19 +1,62 @@
-import type { PreparedRequestScenario } from '@maronn-openid-connect/map-sandbox';
-import { prepareRequestScenarioInSandbox } from '@maronn-openid-connect/map-sandbox/browser';
-import { requestText, type RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
+import type { LiveExchange, PreparedScenario } from '@maronn-openid-connect/live-op/api';
+import { LiveOpClient, readerWorkspace } from '@maronn-openid-connect/live-op/client';
+import { requestScenario, requestText, type RequestScenario } from '@maronn-openid-connect/test-catalog/premises';
 import { useEffect, useState } from 'react';
-import { reasonPhrase, requestBlock, statusTone } from '../lib/exchange';
+import { reasonPhrase, requestBlock, responseBlock, statusTone } from '../lib/exchange';
+import { exampleRequestOf, exchangeResponse, mapExchangeLink, outcomeDifferences } from '../lib/live';
 import { HttpView } from './CaseFlow';
 import { Words } from './ui';
 
-/** Generate the request for the active purpose and show what is needed to send it. */
+/** The client of the reader's workspace on the map's OP, at the origin the page is served from (the OP answers at its root). */
+function liveClient(): LiveOpClient {
+  return new LiveOpClient(readerWorkspace(), location.origin);
+}
+
+/** What the OP answered the case's request with, side by side with what the case expects, and the link that replays it on the map. */
+function LiveAnswer({ exchange, scenario, framework }: { exchange: LiveExchange; scenario: RequestScenario; framework: string }) {
+  // The map's OP is the OP of hono: its answer is read against what the case expects of hono.
+  const expected = requestScenario(scenario.id, 'hono')?.expected ?? scenario.expected;
+  const differences = outcomeDifferences(expected, exchange, location.origin);
+  const response = exchangeResponse(exchange);
+  return (
+    <div className="scenario-request">
+      <h3 className="flow-part-title">地図の OP の応答</h3>
+      {exchange.status === undefined ? (
+        <p className="result-line result-error" role="alert">OP が応答せずに例外を投げました（{exchange.thrown ?? '理由なし'}）</p>
+      ) : (
+        <p className={`result-line result-${statusTone(exchange.status)}`}>
+          <span className="result-status num">{exchange.status} {reasonPhrase(exchange.status, exchange.response?.statusText)}</span>
+          {exchange.error === undefined ? null : <code>{exchange.error}</code>}
+        </p>
+      )}
+      {differences.length === 0 ? (
+        <p className="result-detail">期待する応答のとおり</p>
+      ) : (
+        <>
+          <p className="result-detail">期待する応答と違う</p>
+          <ul className="result-detail" aria-label="期待との違い">
+            {differences.map(({ what, expected: want, actual }) => <li key={what}>{what}：期待 <code>{want}</code>、実際 <code>{actual}</code></li>)}
+          </ul>
+        </>
+      )}
+      {response === undefined ? null : <HttpView block={responseBlock(response)} label="地図の OP の応答" />}
+      <div className="scenario-actions">
+        <a href={mapExchangeLink(framework, scenario.endpoint, exchange.id)}>この交換を map のフローで開く</a>
+        <span className="flow-part-note">交換 {exchange.id}{framework === 'nextjs' ? '（地図の OP は Hono の OP）' : ''}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Prepare the case's request on the map's OP, show it with the requests that prepared it, and send it there to see the real answer. */
 export function ScenarioRequest({ scenario, framework }: { scenario: RequestScenario; framework: string }) {
-  const [prepared, setPrepared] = useState<PreparedRequestScenario | Error>();
+  const [prepared, setPrepared] = useState<PreparedScenario | Error>();
   const [revision, setRevision] = useState(0);
   const [copy, setCopy] = useState('');
+  const [sent, setSent] = useState<LiveExchange | Error | 'sending'>();
   useEffect(() => {
     let active = true;
-    prepareRequestScenarioInSandbox(scenario.id, framework).then(
+    liveClient().prepare(scenario.id).then(
       (value) => {
         if (active) setPrepared(value);
       },
@@ -24,64 +67,85 @@ export function ScenarioRequest({ scenario, framework }: { scenario: RequestScen
     return () => {
       active = false;
     };
-  }, [scenario.id, framework, revision]);
+  }, [scenario.id, revision]);
 
-  /** Recreate the preparation and the request using the selected case. */
+  /** Prepare the case again on the workspace: a new request, made by new requests. */
   function regenerate() {
     setPrepared(undefined);
+    setSent(undefined);
     setCopy('');
     setRevision((current) => current + 1);
   }
 
+  /** Send the prepared request to the map's OP and keep the exchange it was recorded as. */
+  async function send(request: PreparedScenario['request']) {
+    setSent('sending');
+    try {
+      setSent(await liveClient().run(request));
+    } catch (error) {
+      setSent(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  const shown = prepared === undefined || prepared instanceof Error ? undefined : exampleRequestOf(prepared.request, location.host);
   return (
     <section className="case-flow" aria-labelledby="scenario-title">
       <h2 id="scenario-title" className="check-title">{scenario.title}</h2>
       <p className="scenario-purpose"><Words text={scenario.purpose} /></p>
       {scenario.external === undefined ? null : <p className="flow-part-note">{scenario.external}</p>}
       <div className="scenario-request">
-        <h3 className="flow-part-title">生成したリクエスト</h3>
+        <h3 className="flow-part-title">地図の OP で準備したリクエスト</h3>
         {prepared === undefined ? (
-          <p className="flow-part-note" role="status">リクエストを生成しています…</p>
-        ) : prepared instanceof Error ? (
+          <p className="flow-part-note" role="status">地図の OP でリクエストを準備しています…</p>
+        ) : prepared instanceof Error || shown === undefined ? (
           <>
-            <p className="note" role="alert">リクエストを生成できませんでした（{prepared.message}）</p>
-            <button type="button" className="text-button" onClick={regenerate}>再生成</button>
+            <p className="note" role="alert">リクエストを準備できませんでした（{prepared instanceof Error ? prepared.message : '理由なし'}）</p>
+            <button type="button" className="text-button" onClick={regenerate}>準備し直す</button>
           </>
         ) : (
           <>
-            <HttpView block={requestBlock(prepared.generated.request)} label="生成したリクエスト" />
+            <HttpView block={requestBlock(shown)} label="地図の OP で準備したリクエスト" />
             <div className="scenario-actions">
+              {scenario.external === undefined ? (
+                <button type="button" className="text-button" disabled={sent === 'sending'} onClick={() => void send(prepared.request)}>
+                  {sent === 'sending' ? '送っています…' : '地図の OP で送る'}
+                </button>
+              ) : null}
               <button type="button" className="text-button" onClick={async () => {
                 try {
-                  await navigator.clipboard.writeText(requestText(prepared.generated.request));
+                  await navigator.clipboard.writeText(requestText(shown));
                   setCopy('リクエストをコピーしました。');
                 } catch {
                   setCopy('リクエストをコピーできませんでした。');
                 }
               }}>HTTP リクエストをコピー</button>
-              <button type="button" className="text-button" onClick={regenerate}>再生成</button>
+              <button type="button" className="text-button" onClick={regenerate}>準備し直す</button>
               <a href={`../#${framework}--${encodeURIComponent(scenario.endpoint)};r=${encodeURIComponent(scenario.id)}`}>このケースを map で開く</a>
               <span className="flow-part-note" role="status">{copy}</span>
             </div>
-            {prepared.premises.steps.length === 0 ? null : (
+            {prepared.steps.length === 0 && (prepared.notes ?? []).length === 0 ? null : (
               <details className="scenario-details">
-                <summary>準備に使ったリクエスト（{prepared.premises.steps.length} 件）</summary>
-                <p className="flow-part-note">ここで発行したコードやトークンは、地図の OP が準備した状態で使えます。</p>
+                <summary>準備に送ったリクエスト（{prepared.steps.length} 件）</summary>
+                <p className="flow-part-note">コード、トークン、Cookie、CSRF トークンは、どれもこのリクエストに地図の OP が返した値です。ワークスペースの状態は残るので、同じコードは二度使えません。</p>
                 <ol>
-                  {prepared.premises.steps.map(({ request, response }, index) => <li key={index}><code>{request.method} {new URL(request.url).pathname}</code> → <code>{response.status}</code></li>)}
+                  {prepared.steps.map((step) => (
+                    <li key={step.id}>
+                      <code>{step.method} {step.path.split('?')[0]}</code> → <code>{step.status ?? '例外'}</code>
+                      {step.error === undefined ? null : <> <code>{step.error}</code></>}
+                    </li>
+                  ))}
                 </ol>
-              </details>
-            )}
-            {prepared.generated.registration === undefined && prepared.generated.codeVerifier === undefined ? null : (
-              <details className="scenario-details">
-                <summary>クライアント設定と PKCE</summary>
-                {prepared.generated.registration === undefined ? null : <pre aria-label="クライアント登録情報">{JSON.stringify(prepared.generated.registration, null, 2)}</pre>}
-                {prepared.generated.codeVerifier === undefined ? null : <><p className="flow-part-note">認可コードの交換で使う <code>code_verifier</code> です。</p><pre>{prepared.generated.codeVerifier}</pre></>}
+                {(prepared.notes ?? []).length === 0 ? null : <ul>{(prepared.notes ?? []).map((note) => <li key={note}>{note}</li>)}</ul>}
               </details>
             )}
           </>
         )}
       </div>
+      {sent === undefined || sent === 'sending' ? null : sent instanceof Error ? (
+        <p className="note" role="alert">地図の OP に送れませんでした（{sent.message}）</p>
+      ) : (
+        <LiveAnswer exchange={sent} scenario={scenario} framework={framework} />
+      )}
       <div className="scenario-request">
         <h3 className="flow-part-title">期待する応答</h3>
         <p className={`result-line result-${statusTone(scenario.expected.status)}`}>

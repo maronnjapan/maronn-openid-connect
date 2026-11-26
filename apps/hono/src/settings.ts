@@ -223,15 +223,16 @@ export interface RotatingSigningKeys {
 
 /**
  * RS256 の署名鍵を起動時に作り、実行中にローテーションできるプロバイダと、ローテーションする関数を返す。
+ * `initialKey` を渡すと、起動時に鍵を作らず、その鍵を最初の鍵にする（`readSigningKey()` が読む `OIDC_SIGNING_KEY_JWK` の鍵）。
  *
  * 最初の鍵の `kid` は `keyId` で、ローテーションのたびに `keyId-rotated-<回数>` の `kid` の鍵を作って先頭に足し、それまでの鍵を後ろに残す（OIDC Core 1.0 §10.1.1）。
  * プロバイダは 60 秒キャッシュするが、ローテーションした直後にキャッシュを捨てる（core の `createCachedSigningKeyProvider()` の `invalidate()`）ので、次のリクエストから新しい鍵で署名し、JWKS に公開する。
- * 鍵はメモリにだけあり、再起動で消える。
+ * 作った鍵はメモリにだけあり、再起動で消える。再起動しても同じ鍵で署名するには `OIDC_SIGNING_KEY_JWK` を設定する。
  *
  * @spec OIDC Core 1.0 §10.1.1
  */
-export function createRotatingSigningKeyProvider(keyId: string): RotatingSigningKeys {
-  const keys: Array<Promise<SigningKey>> = [generateSigningKey(keyId)];
+export function createRotatingSigningKeyProvider(keyId: string, initialKey?: Promise<SigningKey>): RotatingSigningKeys {
+  const keys: Array<Promise<SigningKey>> = [initialKey ?? generateSigningKey(keyId)];
   let rotations = 0;
   const signingKeyProvider = createCachedSigningKeyProvider(
     {
@@ -273,4 +274,31 @@ async function generateSigningKey(keyId: string): Promise<SigningKey> {
   publicJwk.use = 'sig';
   publicJwk.kid = keyId;
   return { privateKey: keyPair.privateKey, publicJwk, keyId };
+}
+
+/**
+ * The signing key of OIDC_SIGNING_KEY_JWK: a private RS256 JWK (with its
+ * kid, else OIDC_SIGNING_KEY_ID), imported, so the app signs with the same
+ * key after a restart and the tokens it issued before still verify (OIDC
+ * Core 1.0 §10.1.1). undefined when the variable is unset: the app then
+ * generates a key at startup (createRotatingSigningKeyProvider). A value
+ * that is not a private RSA JWK stops the app.
+ */
+export function readSigningKey(env: Environment): Promise<SigningKey> | undefined {
+  const encoded = env['OIDC_SIGNING_KEY_JWK'];
+  if (!encoded) return undefined;
+  const jwk = JSON.parse(encoded) as JsonWebKey & { kid?: string };
+  if (jwk.kty !== 'RSA' || typeof jwk.d !== 'string' || typeof jwk.n !== 'string' || typeof jwk.e !== 'string') {
+    throw new Error('OIDC_SIGNING_KEY_JWK must be a private RSA JWK');
+  }
+  const keyId = jwk.kid ?? env['OIDC_SIGNING_KEY_ID'] ?? 'app-hono-rs256-key';
+  return importSigningKey(jwk, keyId);
+}
+
+/** A private RS256 JWK as the app's signing key, with its public half published under keyId. */
+async function importSigningKey(jwk: JsonWebKey, keyId: string): Promise<SigningKey> {
+  const { kty, n, e, d, p, q, dp, dq, qi } = jwk;
+  const privateKey = await crypto.subtle.importKey('jwk', { kty, n, e, d, p, q, dp, dq, qi }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, true, ['sign']);
+  const publicJwk = { kty: 'RSA', n, e, alg: 'RS256', use: 'sig', kid: keyId } as JsonWebKey & { alg?: string; use?: string; kid?: string };
+  return { privateKey, publicJwk, keyId };
 }

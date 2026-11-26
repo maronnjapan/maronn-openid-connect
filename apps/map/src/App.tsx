@@ -217,6 +217,8 @@ function ProviderMap({ data }: { data: MapData }) {
     const trace: TraceState = { open: way.frames, choices: Object.keys(way.decisions).length === 0 ? [] : [way.decisions], errors: false, focus: way.frames[way.frames.length - 1] ?? '' };
     navigate({ framework, endpoint: way.endpoint, step: null, fn: null, changes: false, trace, target: way.target }, 'push');
   };
+  /** Open an exchange of the live OP in the flow of its endpoint: the flow view opens it (`;x=`) and replays the way it took. */
+  const openExchange = (endpointId: string, exchange: string) => navigate({ ...leave(), endpoint: endpointId, step: null, fn: null, changes: false, wiring: false, trace: { ...EMPTY_TRACE, flow: true, exchange } }, 'push');
   /** Change the trace of the open page: its frames, choices and focus, kept in the hash without a new entry of the history. */
   const onTrace: TraceUpdate = (trace, basedOn) => {
     const current = currentView.current;
@@ -324,6 +326,7 @@ function ProviderMap({ data }: { data: MapData }) {
               target={view.target ?? null}
               onTrace={onTrace}
               onOpenFunction={openFunction}
+              onOpenExchange={openExchange}
             />
           ) : (
             <p className="empty">左の一覧からエンドポイントを選んでください。</p>

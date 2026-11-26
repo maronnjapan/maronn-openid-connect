@@ -1,28 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { RootRequests, WaySample } from '../types';
+import type { RootRequests } from '../types';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf } from './requests';
 
-const sample: WaySample = {
-  method: 'POST',
-  path: '/token',
-  params: [
-    { name: 'grant_type', value: 'refresh_token', in: 'form' },
-    { name: 'refresh_token', value: 'refresh-1', in: 'form' },
-  ],
-  headers: [['content-type', 'application/x-www-form-urlencoded']],
-  status: 200,
-};
-
 const requests: RootRequests = {
-  version: 3,
+  version: 4,
   root: 'endpoint:token',
   source: 'hono',
   endpoint: 'token',
   ways: [
-    { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', sample },
-    { id: 'c-exit-a', kind: 'exit', name: 'return a', target: 's0b9s0', sample },
-    { id: 'c-exit-b', kind: 'exit', name: 'return b', target: 's0b9s0', sample },
+    { id: 'c-refresh', kind: 'step', name: 'refresh_token グラントを検証する', target: 's0b9', scenarios: ['token-refresh'] },
+    { id: 'c-exit-a', kind: 'exit', name: 'return a', target: 's0b9s0', scenarios: ['token-refresh'] },
+    { id: 'c-exit-b', kind: 'exit', name: 'return b', target: 's0b9s0', scenarios: [] },
   ],
+  cases: [{ id: 'token-refresh', status: 200, ways: ['c-refresh', 'c-exit-a'], rootRan: true, mismatches: 0, assumed: 0 }],
 };
 
 describe('wayRequestsOf', () => {

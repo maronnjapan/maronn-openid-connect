@@ -388,7 +388,7 @@ function loopSide(file: FileRun, node: TreeNode): string | undefined {
 }
 
 /** Whether a node runs a statement Istanbul counts whenever it runs (a declaration of a function, a type or a bare variable runs none). */
-function observable(node: TreeNode): boolean {
+export function observable(node: TreeNode): boolean {
   if (node.kind === 'end') return false;
   if (node.kind === 'block') return (node.branches?.[0]?.nodes ?? []).some(observable);
   if (node.kind !== 'action') return true;
@@ -403,7 +403,7 @@ function observable(node: TreeNode): boolean {
  * one node: after a loop's body, a `try`'s, a `switch`'s clause, or the
  * pre of a node (the node itself runs on after it, and may fail).
  */
-function nextOf(tree: FlowTree, place: Place): TreeNode | undefined {
+export function nextOf(tree: FlowTree, place: Place): TreeNode | undefined {
   let at: Place | undefined = place;
   while (at !== undefined) {
     const next = at.list.slice(at.index + 1).find(observable);

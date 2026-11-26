@@ -1,10 +1,9 @@
-import type { PreparedPremises, PremiseRecord, PremiseStep, StoreChange, StoreRead } from '@maronn-openid-connect/map-sandbox';
-import { changeWords, collectionWord, originOf, premiseRecordOf, recordsIn, shortKey, stepLine, stepNumber, valueRows } from '../lib/premises';
-import { statusLine, statusTone } from '../lib/requests';
-import type { PremisesState } from './useRequests';
+import type { LiveRecord, StoreAccess } from '@maronn-openid-connect/live-op/api';
+import { recordOf } from '../lib/live';
+import { changeWords, collectionWord, shortKey, valueRows } from '../lib/records';
 
-/** The fields of a record, one row each, a time with how it stands to the clock of the premises. */
-function RecordValue({ value, now }: { value: unknown; now: number }) {
+/** The fields of a record, one row each, a time with how it stands to the OP's clock (Unix seconds). */
+export function RecordValue({ value, now }: { value: unknown; now: number }) {
   return (
     <table className="req-table store-value">
       <tbody>
@@ -22,139 +21,90 @@ function RecordValue({ value, now }: { value: unknown; now: number }) {
   );
 }
 
-/** A request of the premises: its number, method and path, status, what it sent (the query, the form, the cookies, the client of its credentials), where it was sent next, and the records it wrote; marked where it stored or changed the record read. */
-export function StepItem({ index, step, did }: { index: number; step: PremiseStep; did?: 'added' | 'changed' | undefined }) {
-  const line = stepLine(step);
+/** A button that opens an exchange of the workspace by its id (in the flow of its endpoint). */
+export function ExchangeLink({ id, onOpen }: { id: string; onOpen: (id: string) => void }) {
   return (
-    <li className={`store-step${did !== undefined ? ' store-step-did' : ''}`}>
-      <p className="req-line">
-        <span className="store-num">{stepNumber(index)}</span>
-        <span className="req-method">{line.method}</span>
-        <code className="req-path">{line.path}</code>
-        <span className={`req-status req-${statusTone(line.status)}`}>→ {statusLine({ status: line.status })}</span>
-        {did !== undefined ? <span className="store-did">{did === 'added' ? 'ここで保存' : 'ここで変更'}</span> : null}
-      </p>
-      {(
-        [
-          ['クエリ', line.query],
-          ['フォーム', line.form],
-        ] as const
-      ).map(([label, fields]) =>
-        fields.length > 0 ? (
-          <p key={label} className="store-sent">
-            <span className="store-sent-label">{label}</span>
-            {fields.map(([name, value], at) => (
-              <span key={at} className="mono">
-                {name}={shortKey(value, 48)}
-              </span>
-            ))}
-          </p>
-        ) : null,
-      )}
-      {line.cookies.length > 0 ? <p className="req-note mono">Cookie: {line.cookies.map(([name, value]) => `${name}=${shortKey(value, 24)}`).join('; ')}</p> : null}
-      {line.client !== undefined ? <p className="req-note">Basic の client_id: {line.client}</p> : null}
-      {line.setCookies.length > 0 ? <p className="req-note mono">Set-Cookie: {line.setCookies.map(([name, value]) => (value === undefined ? `${name}（消す）` : `${name}=${shortKey(value, 24)}`)).join('; ')}</p> : null}
-      {line.location !== undefined ? <p className="req-note">Location: {shortKey(line.location, 96)}</p> : null}
-      {step.wrote.length > 0 ? (
-        <p className="req-note">
-          {step.wrote.map((change, at) => (
-            <span key={at}>
-              {at > 0 ? '、' : ''}
-              {collectionWord(change.collection)} <code className="mono">{shortKey(change.key, 24)}</code> {changeWords(change)}
-            </span>
-          ))}
-        </p>
-      ) : null}
-    </li>
+    <button type="button" className="link small mono" onClick={() => onOpen(id)} title={`リクエスト ${id} を、そのエンドポイントのフローで開く`}>
+      {id}
+    </button>
   );
 }
 
-/** Where a record of the premises came from: the requests of its grant up to the one that stored it (and those that changed it after), or the OP's configuration. */
-function Origin({ premises, record, made }: { premises: PreparedPremises; record: PremiseRecord; made: boolean }) {
-  const origin = originOf(premises, record);
-  if (origin === undefined) return <p className="note">OP の設定で登録したもので、リクエストでは作っていません。</p>;
-  return (
-    <div className="store-origin">
-      <p className="note">
-        グラント <code className="mono">{origin.grant}</code> のリクエストを地図の OP で動かして保存したものです（{made ? 'このページで前提を作り直したときに動かしたもの' : '地図のビルドが前提を作るときに動かしたもの'}）。
-      </p>
-      <ol className="store-steps">
-        {origin.steps.map(({ index, step, did }) => (
-          <StepItem key={index} index={index} step={step} did={did} />
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-/** The words of where a record came from, on one line: the request that stored it (and the last that changed it), or the configuration. */
-function originWords(premises: PreparedPremises, record: PremiseRecord): string {
-  const origin = originOf(premises, record);
-  if (origin === undefined) return 'OP の設定で登録';
-  const words = (index: number) => {
-    const line = stepLine(premises.steps[index] as PremiseStep);
-    return `${stepNumber(index)} ${line.method} ${line.path}`;
-  };
+/** Where a record of the workspace came from, on one line: the exchange that stored it and those that changed it after, each to open, or the OP's configuration. */
+export function Provenance({ record, onOpen }: { record: LiveRecord; onOpen: (id: string) => void }) {
+  if (record.addedBy === undefined && (record.changedBy ?? []).length === 0) return <span className="req-note">（OP の設定で登録したもの）</span>;
   const changed = record.changedBy ?? [];
-  return `${words(record.addedBy as number)} で保存${changed.length > 0 ? `、${words(changed[changed.length - 1] as number)} で変更` : ''}`;
+  return (
+    <span className="req-note store-provenance">
+      （{record.addedBy !== undefined ? (
+        <>
+          <ExchangeLink id={record.addedBy} onOpen={onOpen} /> で保存
+        </>
+      ) : (
+        '保存したリクエストは記録に残っていない'
+      )}
+      {changed.length > 0 ? (
+        <>
+          、
+          {changed.map((id, at) => (
+            <span key={id}>
+              {at > 0 ? '・' : ''}
+              <ExchangeLink id={id} onOpen={onOpen} />
+            </span>
+          ))}{' '}
+          で変更
+        </>
+      ) : null}
+      ）
+    </span>
+  );
 }
 
-/** A record of the premises a request read or wrote, to open: its key, where it came from on one line, then its fields and the requests that stored it; `words` follows the key (what the request did to it). */
-function RecordItem({ premises, record, words, made }: { premises: PreparedPremises; record: PremiseRecord; words?: string; made: boolean }) {
+/** A record the workspace holds, to open: its key and where it came from on one line, then its fields as they are now. */
+export function RecordItem({ record, now, words, onOpen }: { record: LiveRecord; now: number; words?: string; onOpen: (id: string) => void }) {
   return (
     <details>
       <summary>
         <span className="store-what">{collectionWord(record.collection)}</span> <code className="mono">{shortKey(record.key)}</code>
         {words !== undefined ? <span className="req-note">{words}</span> : null}
-        <span className="req-note">（{originWords(premises, record)}）</span>
+        <Provenance record={record} onOpen={onOpen} />
       </summary>
-      <RecordValue value={record.value} now={premises.now} />
-      <Origin premises={premises} record={record} made={made} />
+      <RecordValue value={record.value} now={now} />
     </details>
   );
 }
 
-/** What the props of the records a request reads are (see StoredReads). */
+/** What the records a request read are shown with (see StoredReads). */
 export interface StoredReadsProps {
   /** The records read, in the order read. */
-  reads: readonly StoreRead[];
-  premises: PremisesState;
-  /** The heading of the list. */
-  title: string;
-  /** What the list is of, when it is not of the request as written. */
-  note?: string | undefined;
+  reads: StoreAccess['read'];
+  /** The records the workspace holds now (LiveState.records), to say where each came from; undefined while they are read. */
+  records: readonly LiveRecord[] | undefined;
+  /** The OP's clock when the request ran, in Unix seconds. */
+  now: number;
+  onOpen: (id: string) => void;
 }
 
 /**
- * The records of the OP a request reads, each with what the OP held: the
- * record (its fields), and the requests that stored it, or that the OP held
- * none; a collection it went through whole, with how many records it held.
+ * The records of the OP a request read, in the order read, each with
+ * whether the OP held it: a record the workspace still holds opens to its
+ * fields (as they are now) and names the exchange that stored it; a
+ * collection the request went through whole, with how many records it
+ * holds now.
  */
-export function StoredReads({ reads, premises, title, note }: StoredReadsProps) {
-  const ready = premises.kind === 'ready' ? premises.premises : undefined;
+export function StoredReads({ reads, records, now, onOpen }: StoredReadsProps) {
   return (
-    <section className="store" aria-label={title}>
-      <h5 className="store-title">{title}</h5>
-      {note !== undefined ? <p className="note">{note}</p> : null}
-      {reads.length === 0 ? <p className="note">OP が保存している情報は読みません。</p> : null}
+    <section className="store" aria-label="このリクエストが読んだ、OP の保存済みの情報">
+      <h5 className="store-title">このリクエストが読んだ、OP の保存済みの情報</h5>
+      {reads.length === 0 ? <p className="note">OP が保存している情報は読んでいません。</p> : null}
       <ul className="store-list">
         {reads.map((read, at) => {
-          const record = read.key === undefined ? undefined : premiseRecordOf(ready, read.collection, read.key);
           if (read.key === undefined) {
-            const records = recordsIn(ready, read.collection);
+            const all = records?.filter((record) => record.collection === read.collection) ?? [];
             return (
               <li key={at} className="store-item">
                 <span className="store-what">{collectionWord(read.collection)}（すべて）</span>
-                <span className="req-note">を調べた{ready !== undefined ? `（OP が持っているのは ${records.length} 件）` : ''}</span>
-                {ready !== undefined && records.length > 0 ? (
-                  <ul className="store-list store-walk">
-                    {records.map((record) => (
-                      <li key={record.key} className="store-item">
-                        <RecordItem premises={ready} record={record} made={premises.kind === 'ready' && premises.made === true} />
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
+                <span className="req-note">を調べた{records !== undefined ? `（いまは ${all.length} 件）` : ''}</span>
               </li>
             );
           }
@@ -166,22 +116,15 @@ export function StoredReads({ reads, premises, title, note }: StoredReadsProps) 
               </li>
             );
           }
-          if (!read.found) {
-            return (
-              <li key={at} className="store-item">
-                <span className="store-what">{collectionWord(read.collection)}</span> <code className="mono">{shortKey(read.key)}</code>
-                <span className="store-missing">OP に無い</span>
-              </li>
-            );
-          }
+          const record = read.found ? recordOf(records, read.collection, read.key) : undefined;
           return (
             <li key={at} className="store-item">
-              {ready !== undefined && record !== undefined ? (
-                <RecordItem premises={ready} record={record} made={premises.kind === 'ready' && premises.made === true} />
+              {record !== undefined ? (
+                <RecordItem record={record} now={now} onOpen={onOpen} />
               ) : (
                 <>
                   <span className="store-what">{collectionWord(read.collection)}</span> <code className="mono">{shortKey(read.key)}</code>
-                  <span className="req-note">OP が持っていた{premises.kind === 'failed' ? `（前提を読み込めませんでした: ${premises.message}）` : premises.kind === 'loading' ? '（前提を読み込んでいます…）' : ''}</span>
+                  {read.found ? <span className="req-note">OP が持っていた（いまは持っていない）</span> : <span className="store-missing">OP に無い</span>}
                 </>
               )}
             </li>
@@ -192,27 +135,28 @@ export function StoredReads({ reads, premises, title, note }: StoredReadsProps) 
   );
 }
 
-/** The records a request run stored, changed or removed, each with its fields as they were left, and for one the premises held, where it came from. */
-export function StoredWrites({ wrote, now, premises }: { wrote: readonly StoreChange[]; now: number; premises: PremisesState }) {
-  const ready = premises.kind === 'ready' ? premises.premises : undefined;
+/** The records a request stored, changed or removed, each with its fields as the request left them, and for one the workspace holds, the exchanges that stored and changed it. */
+export function StoredWrites({ wrote, records, now, onOpen }: { wrote: StoreAccess['wrote']; records: readonly LiveRecord[] | undefined; now: number; onOpen: (id: string) => void }) {
   return (
     <section className="store" aria-label="このリクエストが保存・変更・削除したもの">
       <h5 className="store-title">このリクエストが保存・変更・削除したもの</h5>
       {wrote.length === 0 ? <p className="note">ありません。</p> : null}
       <ul className="store-list">
-        {wrote.map((change, at) => (
-          <li key={at} className="store-item">
-            <details>
-              <summary>
-                <span className="store-what">{collectionWord(change.collection)}</span> <code className="mono">{shortKey(change.key)}</code>
-                <span className="req-note">{changeWords(change)}</span>
-                {ready !== undefined && premiseRecordOf(ready, change.collection, change.key) !== undefined ? <span className="req-note">（{originWords(ready, premiseRecordOf(ready, change.collection, change.key) as PremiseRecord)}）</span> : null}
-              </summary>
-              <RecordValue value={change.change === 'removed' ? change.before : change.value} now={now} />
-              {ready !== undefined && premiseRecordOf(ready, change.collection, change.key) !== undefined ? <Origin premises={ready} record={premiseRecordOf(ready, change.collection, change.key) as PremiseRecord} made={premises.kind === 'ready' && premises.made === true} /> : null}
-            </details>
-          </li>
-        ))}
+        {wrote.map((change, at) => {
+          const record = recordOf(records, change.collection, change.key);
+          return (
+            <li key={at} className="store-item">
+              <details>
+                <summary>
+                  <span className="store-what">{collectionWord(change.collection)}</span> <code className="mono">{shortKey(change.key)}</code>
+                  <span className="req-note">{changeWords(change)}</span>
+                  {record !== undefined ? <Provenance record={record} onOpen={onOpen} /> : null}
+                </summary>
+                <RecordValue value={change.change === 'removed' ? change.before : change.value} now={now} />
+              </details>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

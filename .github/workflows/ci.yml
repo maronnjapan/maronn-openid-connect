@@ -213,16 +213,20 @@ jobs:
   # ヘッダの「テスト」がそこへのリンク）。テストの後に置くのは、テストのページ（テストカタログ、結果、到達、
   # PR のテストの差分）と PR のコメントのテストの節が test ジョブの出力を読むため。
   # テストが落ちても、そこまでの結果で作る（if: !cancelled()）。
+  # Worker はページ（静的アセット）と同じオリジンで地図の OP（packages/live-op、apps/map/worker）も動かし、
+  # OP の状態を読者ごとのワークスペースの Durable Object に持つ（apps/map/wrangler.jsonc）。
   #
-  # - PR: その PR のコードから地図をビルドし、同じ Worker の Worker Preview `pr-<番号>` を作る・更新する。
+  # - PR: その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ wrangler deploy する
+  #   （作る・更新する）。Worker Preview を使わないのは、Preview の Durable Object のバインディングが本番の名前空間に
+  #   届き、PR の地図が main のコードの OP を動かすことになるため。
   #   PR の地図は base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
   #   変更メモ（apps/map/changes/*.md）の意図を並べる。テストの差分（足した、変えた、消したテスト、
   #   関連するテストが変わっていない実装の変更）は PR のコメントのテストの節とテストのページに出る。URL と変更の表は PR にコメントする
   #   （push ごとに同じコメントを書き換える）。エンドポイントに届く変更に説明の節が無いとき、
   #   または関連するテストを足しも変えもせず理由（テストを変えない理由:）も無いとき、地図のビルド
   #   （pnpm run build:map の最後の検査）が落ちてこのジョブが失敗する。そのときもページのデプロイと
-  #   コメントは行う。Worker Previews が失敗したときは PR ごとの Worker へ wrangler deploy する
-  #   （.github/scripts/map-preview.mjs）。PR を閉じたときのプレビューの削除は map-preview.yml が行う。
+  #   コメントは行う（.github/scripts/map-preview.mjs）。PR を閉じたときの PR の Worker（とその Durable Object）の
+  #   削除は map-preview.yml が行う。
   #   削除とこのジョブは同じ concurrency の group（map-preview-<番号>）で順に走り、このジョブは PR が
   #   閉じていればプレビューを作らずコメントもしない。test ジョブの間に閉じた PR のプレビューが、
   #   削除の後に作り直されて残らないようにするため。
@@ -279,7 +283,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mkdir -p work && gh api "repos/${{ github.repository }}/pulls?state=closed&per_page=100" --paginate --slurp > work/pulls.json
 
-      # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）をビルドし、全関数と
+      # CLI、解析（packages/map-analysis）、テストカタログ（packages/test-catalog）、地図の OP（packages/live-op）をビルドし、全関数と
       # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、
       # 地図のデータとページを作り、テストのページ（apps/tests、データは apps/tests/public/data）をビルドして
       # 地図の dist/tests/ に入れ（apps/map/scripts/copy-tests-viewer.mjs）、出力を検査する（apps/map/scripts/check-map.mjs）。
@@ -298,9 +302,40 @@ jobs:
           MAP_PULLS: ${{ github.workspace }}/work/pulls.json
         run: pnpm run build:map
 
+      # 地図の Worker（apps/map/worker）は地図の OP（apps/hono のソース）を読み込むので、その型検査は
+      # test ジョブと同じく、ビルドしたライブラリ（core、experimental、google-login）の型を読む。
       - name: Check map types and layout
         if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
-        run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
+        run: |
+          pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login run build
+          pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
+
+      # 地図の E2E（apps/map/e2e）。ビルドした地図のページ（dist/）で地図の Worker を wrangler dev で動かし、
+      # 本番と同じ Workers のランタイム（ワークスペースごとの Durable Object）の地図の OP に、ブラウザで地図を開いて
+      # リクエストを送り、その道筋の再生を確かめる（apps/map/playwright.config.ts）。ビルドがページを作ったときだけ走る。
+      # 落ちるとジョブは失敗するが、ビルドが落ちたときと同じく、後のプレビューのデプロイとコメントは行う
+      # （main の本番へのデプロイは行わない）。
+      - name: Install Playwright browsers for the map
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}
+        run: pnpm --filter @maronn-openid-connect/map exec playwright install --with-deps chromium
+
+      - name: E2E tests of the map
+        id: e2e
+        if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}
+        run: pnpm --filter @maronn-openid-connect/map test:e2e
+
+      # 落ちたテストのトレースとスクリーンショット。
+      - name: Upload the E2E results of the map
+        if: ${{ !cancelled() && steps.e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: map-e2e-results
+          # 結果は隠しディレクトリ（.wrangler/）の下にある。Durable Object のストレージ（worker-state/）は除く。
+          path: |
+            apps/map/.wrangler/e2e/test-results
+            !apps/map/.wrangler/e2e/test-results/worker-state
+          include-hidden-files: true
+          if-no-files-found: ignore
 
       - name: Upload the map
         if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' }}

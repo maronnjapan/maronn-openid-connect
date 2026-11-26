@@ -20,6 +20,10 @@
       "types": "./src/observe.ts",
       "import": "./src/observe.ts"
     },
+    "./traced": {
+      "types": "./src/traced.ts",
+      "import": "./src/traced.ts"
+    },
     "./code-index": {
       "types": "./src/code-index.ts",
       "import": "./src/code-index.ts"

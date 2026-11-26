@@ -9,16 +9,21 @@
  *   so is every line a pull request changes in a frame;
  * - in the map of a pull request (MAP_BASE), every change that reaches an
  *   endpoint, and every change of an endpoint body, has a change note;
- * - every way the requests of the OP of the map name is a ready-made choice
- *   of its root;
- * - every record of the premises of the OP of the map was written by the
- *   request it names, and every record a sample read is held by them
- *   exactly when the sample found it (the samples ran on those premises);
+ * - every way the request cases took on the live OP (MapData.requests) is a
+ *   ready-made choice of its root, the cases a way names took it, and every
+ *   case of hono that needs nothing outside the OP was run at the root of
+ *   its endpoint, once;
+ * - every case run is faithful: the walk of its trace agrees with what its
+ *   request ran (no mismatch), its request ran the root unless the case
+ *   expects 404 or 405 (the router answers those), and the OP answered the
+ *   status and the OAuth error the case expects;
  * - every link of the code (Ctrl/⌘ + click in the code view) sits on a name
  *   and goes to the name of a declaration in a file the map carries.
  *
  * It measures the map, not the code it reads: a failure of the first two is
- * a bug of the map. Prints the measures, and exits with 1 on a failure.
+ * a bug of the map. Prints the measures (with how many cases took a side
+ * the rules could not read, which the walk assumed), and exits with 1 on a
+ * failure.
  *
  * Usage: node scripts/check-map.mjs [data directory] (default public/data)
  */
@@ -26,7 +31,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkLinks, checkMap } from '@maronn-openid-connect/map-analysis';
-import { REQUEST_SCENARIOS, requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
+import { REQUEST_SCENARIOS, requestScenario, requestScenariosFor } from '@maronn-openid-connect/test-catalog/premises';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // pnpm passes on the `--` before the arguments of a script.
@@ -44,14 +49,17 @@ const { metrics, failures } = await checkMap(
     return source === undefined ? undefined : JSON.parse(readFileSync(fileOf(source.url), 'utf8')).code;
   },
   readJson,
-  readJson,
+  (id) => requestScenario(id, 'hono')?.expected,
 );
+const { requests } = metrics;
 console.log(
   `Checked the map: ${metrics.frames} frames, ${metrics.selections} ready-made choices (${metrics.unnamed} without a name, ${metrics.duplicateNames.length} repeated), ` +
     `${metrics.wiring.entries} wiring entries (${metrics.wiring.untraceable} untraceable, ${metrics.wiring.invalid} invalid), ` +
     `${metrics.uncovered.length} frames with lines in no node, ${metrics.changedOutside.length} frames with changed lines in no node, ${metrics.undocumented.length} changes without a note, ${metrics.untested.length} changes whose tests did not change without a reason, ` +
-    `${data.requests === undefined ? 'no requests of the OP of the map' : `the requests the OP of the map took ${metrics.requests.ways} ways of ${metrics.requests.roots} roots with (${metrics.requests.unmatched} ways no choice is)`}, ` +
-    `${data.premises === undefined ? 'no premises of the OP of the map' : `premises of ${metrics.premises.records} records (${metrics.premises.made} stored by the ${metrics.premises.steps} requests that made them; ${metrics.premises.reads} records the samples read, ${metrics.premises.unmatched} the premises disagree with)`}`,
+    (data.requests === undefined
+      ? 'no cases run on the live OP'
+      : `${requests.cases} cases run on the live OP (probes ${data.liveOp?.probes ?? 'unknown'}) at ${requests.roots} roots, ${requests.cases - requests.unfaithful} faithful, ${requests.mismatches} mismatches, ` +
+        `${requests.assumedCases} cases with ${requests.assumed} assumed decisions, ${requests.ways} ways reached by a case (${requests.unmatched} no choice is)`),
 );
 for (const [framework, names] of Object.entries(metrics.token)) console.log(`  /token (${framework}): ${names.join(' | ')}`);
 const links = checkLinks(new Map(Object.entries(data.sources).map(([id, source]) => [id, JSON.parse(readFileSync(fileOf(source.url), 'utf8'))])));
@@ -75,6 +83,16 @@ for (const { id } of REQUEST_SCENARIOS) {
   ids.add(id);
 }
 console.log(`Checked the request scenarios: ${seenScenarios.size} scenarios across ${endpointCount} framework endpoints`);
+// Every case of hono that needs nothing outside the OP was run, at one root (the build runs them all).
+if (data.requests !== undefined) {
+  const runs = new Map();
+  for (const url of Object.values(data.requests)) for (const run of (await readJson(url)).cases) runs.set(run.id, (runs.get(run.id) ?? 0) + 1);
+  for (const scenario of REQUEST_SCENARIOS) {
+    if (scenario.external !== undefined || scenario.frameworks?.includes('hono') === false) continue;
+    const count = runs.get(scenario.id) ?? 0;
+    if (count !== 1) failures.push(`The case ${scenario.id} was run at ${count} roots on the live OP, not 1`);
+  }
+}
 if (failures.length > 0) {
   for (const failure of failures) console.error(`✗ ${failure}`);
   process.exit(1);

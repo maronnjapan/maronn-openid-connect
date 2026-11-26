@@ -70,7 +70,7 @@ export function SelectionBar({ selections, state, onState, onExpandChanges, chan
     const focus = selection.frames !== undefined && selection.frames.length > 0 ? (selection.frames[selection.frames.length - 1] as string) : state.focus;
     const choices = at === 0 ? active : [...active, selection.decisions];
     const way = active.length === 0 || at === 0 ? selectionKey(selection) : state.way;
-    onState({ ...state, open, focus, choices, way, request: undefined });
+    onState({ ...state, open, focus, choices, way, request: undefined, exchange: undefined });
     onPick?.(selection);
   };
   const count = active.length;

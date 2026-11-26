@@ -9,9 +9,13 @@
  * runs without an exception, a loop runs its body once). The sides it assumed
  * are told apart from the chosen ones, so a page can offer the others.
  *
- * - A call the choice decides `fails` (FAILS) throws there. A call whose
- *   frame the walk enters fails when that frame does, whatever the choice
- *   says: the walk is what runs.
+ * - A call the choice decides `fails` (FAILS) throws there, and so does a
+ *   statement of no call the map tells (what it calls outside the map
+ *   throws). A call whose frame the walk enters fails when that frame does,
+ *   whatever the choice says: the walk is what runs.
+ * - A call the choice decides `skips` (SKIPS) is not evaluated (the right
+ *   operand of a `&&` or `||` that short-circuited): the walk passes it, its
+ *   arguments too, without a stop.
  * - A failure goes up to the innermost `try` with a `catch` around it in its
  *   frame, whose catch runs (a stop on the `try` says so), then up through
  *   the call that opened the frame; with no `try` on the way it leaves the
@@ -27,6 +31,9 @@ import type { Branch, Decisions, FlowTree, TreeNode } from './model.js';
 
 /** The side a choice gives a call node to say that the call throws there (Decisions). */
 export const FAILS = 'fails';
+
+/** The side a choice gives a call node to say that the call is not evaluated there: the operand it is in was short-circuited (Decisions). */
+export const SKIPS = 'skips';
 
 /** The kinds of node that take a side. */
 const DECISIONS: ReadonlySet<string> = new Set(['if', 'switch', 'loop', 'try', 'cond-expr']);
@@ -93,9 +100,10 @@ export interface WalkStop {
   /**
    * enters: the walk goes into the frame of this call; returns: this return
    * ends its frame; ends: the body ends without a return; throws: this throw
-   * fails; fails: this call fails here (the choice says so, and the walk did
-   * not see the throw below it); catches: the catch of this `try` takes the
-   * failure, or runs because the choice says so.
+   * fails; fails: this call (or a statement calling outside the map) fails
+   * here (the choice says so, and the walk did not see the throw below it);
+   * catches: the catch of this `try` takes the failure, or runs because the
+   * choice says so.
    */
   event?: WalkEvent;
   /** The failure in words (`TokenError(invalid_client)`), where it is thrown, where it comes up through a call and where it is caught, when the tree names it. */
@@ -215,10 +223,12 @@ export function walkFlow(tree: FlowTree, decisions: Decisions, options: WalkOpti
 
   const one = (node: TreeNode, frame: Frame, outer: string | undefined): Flow => {
     const step = node.step?.id ?? outer;
+    const key = keyOf(frame.key, node.id);
+    // A call the choice says is not evaluated runs nothing, its arguments neither.
+    if (node.kind === 'call' && decisions[key] === SKIPS) return 'goes';
     // What is evaluated before the node runs first: the arguments of a call, the calls of a condition.
     const before = list(node.pre ?? [], frame, step);
     if (before !== 'goes') return before;
-    const key = keyOf(frame.key, node.id);
     switch (node.kind) {
       case 'call':
         return call(node, frame, step, key);
@@ -239,6 +249,13 @@ export function walkFlow(tree: FlowTree, decisions: Decisions, options: WalkOpti
         return attempt(node, frame, step, key);
       default:
         if (node.branches === undefined || !DECISIONS.has(node.kind)) {
+          if (node.kind === 'action' && decisions[key] === FAILS) {
+            // What the statement calls outside the map throws there.
+            failure = undefined;
+            resolved[key] = FAILS;
+            push(frame, node, step, { event: 'fails' });
+            return 'fails';
+          }
           push(frame, node, step);
           return 'goes';
         }

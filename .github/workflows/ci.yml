@@ -213,16 +213,20 @@ jobs:
   # ヘッダの「テスト」がそこへのリンク）。テストの後に置くのは、テストのページ（テストカタログ、結果、到達、
   # PR のテストの差分）と PR のコメントのテストの節が test ジョブの出力を読むため。
   # テストが落ちても、そこまでの結果で作る（if: !cancelled()）。
+  # Worker はページ（静的アセット）と同じオリジンで地図の OP（packages/live-op、apps/map/worker）も動かし、
+  # OP の状態を読者ごとのワークスペースの Durable Object に持つ（apps/map/wrangler.jsonc）。
   #
-  # - PR: その PR のコードから地図をビルドし、同じ Worker の Worker Preview `pr-<番号>` を作る・更新する。
+  # - PR: その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ wrangler deploy する
+  #   （作る・更新する）。Worker Preview を使わないのは、Preview の Durable Object のバインディングが本番の名前空間に
+  #   届き、PR の地図が main のコードの OP を動かすことになるため。
   #   PR の地図は base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
   #   変更メモ（apps/map/changes/*.md）の意図を並べる。テストの差分（足した、変えた、消したテスト、
   #   関連するテストが変わっていない実装の変更）は PR のコメントのテストの節とテストのページに出る。URL と変更の表は PR にコメントする
   #   （push ごとに同じコメントを書き換える）。エンドポイントに届く変更に説明の節が無いとき、
   #   または関連するテストを足しも変えもせず理由（テストを変えない理由:）も無いとき、地図のビルド
   #   （pnpm run build:map の最後の検査）が落ちてこのジョブが失敗する。そのときもページのデプロイと
-  #   コメントは行う。Worker Previews が失敗したときは PR ごとの Worker へ wrangler deploy する
-  #   （.github/scripts/map-preview.mjs）。PR を閉じたときのプレビューの削除は map-preview.yml が行う。
+  #   コメントは行う（.github/scripts/map-preview.mjs）。PR を閉じたときの PR の Worker（とその Durable Object）の
+  #   削除は map-preview.yml が行う。
   #   削除とこのジョブは同じ concurrency の group（map-preview-<番号>）で順に走り、このジョブは PR が
   #   閉じていればプレビューを作らずコメントもしない。test ジョブの間に閉じた PR のプレビューが、
   #   削除の後に作り直されて残らないようにするため。

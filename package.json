@@ -34,7 +34,7 @@
         "build:cli": "pnpm --filter @maronn-openid-connect/cli build && pnpm install",
         "build:core": "pnpm --filter @maronn-openid-connect/core build && pnpm install",
         "build:docs": "pnpm --filter @maronn-openid-connect/docs build:doc",
-        "build:map": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/map-analysis build && pnpm --filter @maronn-openid-connect/test-catalog build && pnpm --filter @maronn-openid-connect/map-sandbox build && pnpm --filter @maronn-openid-connect/map build",
+        "build:map": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/map-analysis build && pnpm --filter @maronn-openid-connect/test-catalog build && pnpm --filter @maronn-openid-connect/live-op build && pnpm --filter @maronn-openid-connect/map build",
         "map:history": "node apps/map/scripts/history.mjs",
         "changeset": "changeset",
         "ci:ensure-experimental-changeset": "node .github/scripts/ensure-experimental-changeset.mjs",

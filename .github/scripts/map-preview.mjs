@@ -2,23 +2,33 @@
  * Deploy the OIDC Provider Map (apps/map) to Cloudflare Workers from CI.
  *
  *   node .github/scripts/map-preview.mjs create --pr <number> [--sha <sha>]
- *       Create or update the Worker Preview of the pull request (`wrangler
- *       preview --name pr-<number>`): an isolated deployment of the same
- *       Worker with a URL of its own that every push updates, so several
- *       pull requests are viewable side by side while main stays one
- *       deployment. Worker Previews are an open beta; when the command
- *       fails, the script falls back to a Worker per pull request
- *       (`wrangler deploy --name <worker>-pr-<number>`), which gives the
- *       same isolation with a URL per pull request.
+ *       Deploy the map of the pull request where it is viewable beside main's
+ *       and the other pull requests', with a URL every push updates:
+ *       - When the Worker declares Durable Objects (wrangler.jsonc
+ *         `durable_objects`: the map's live OP keeps a workspace in each), a
+ *         Worker of the pull request (`wrangler deploy --name
+ *         <worker>-pr-<number>`), with Durable Objects of its own. A Worker
+ *         Preview would not do: its Durable Object bindings reach the
+ *         namespace of production, whose objects run main's code, so the
+ *         preview's OP would not be the pull request's.
+ *       - Otherwise (a Worker of assets only), the Worker Preview of the
+ *         pull request (`wrangler preview --name pr-<number>`): an isolated
+ *         deployment of the same Worker. Worker Previews are an open beta;
+ *         when the command fails, the script falls back to the Worker of the
+ *         pull request.
  *   node .github/scripts/map-preview.mjs delete --pr <number>
- *       Remove both: the Preview and the fallback Worker, each ignored
- *       when it does not exist (the pull request was closed).
+ *       Remove both: the Preview and the Worker of the pull request (its
+ *       Durable Objects with it), each ignored when it does not exist (the
+ *       pull request was closed).
  *   node .github/scripts/map-preview.mjs deploy
  *       Deploy main to production (`wrangler deploy`).
  *
  * wrangler reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from the
- * environment. The script writes `url`, `mode` (preview | worker | production
- * | none) and `note` to $GITHUB_OUTPUT when it is set, and prints them.
+ * environment. The script writes `url`, `mode` (preview | pr-worker: the
+ * Worker of the pull request because the Worker has Durable Objects |
+ * worker: the Worker of the pull request because the Preview failed |
+ * production | none) and `note` to $GITHUB_OUTPUT when it is set, and prints
+ * them.
  */
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
@@ -37,12 +47,55 @@ export function workerNameOf(baseName, prNumber) {
   return `${baseName}-pr-${Number(prNumber)}`;
 }
 
+/** The index of the first character at or after an index of a JSONC text that is neither whitespace nor in a comment. */
+function significantFrom(text, index) {
+  let at = index;
+  while (at < text.length) {
+    if (/\s/.test(text[at])) at += 1;
+    else if (text.startsWith('//', at)) at = text.indexOf('\n', at) === -1 ? text.length : text.indexOf('\n', at);
+    else if (text.startsWith('/*', at)) at = text.indexOf('*/', at + 2) === -1 ? text.length : text.indexOf('*/', at + 2) + 2;
+    else break;
+  }
+  return at;
+}
+
+/** A wrangler.jsonc as a value: its comments and trailing commas left out, its strings (`"/login/*"`, URLs) kept as they are. */
+export function parseJsonc(text) {
+  let json = '';
+  let index = 0;
+  while (index < text.length) {
+    const at = significantFrom(text, index);
+    if (at > index) {
+      json += ' ';
+      index = at;
+      continue;
+    }
+    if (text[index] === '"') {
+      const string = /"(?:[^"\\]|\\.)*"/y;
+      string.lastIndex = index;
+      const literal = string.exec(text)?.[0] ?? text.slice(index);
+      json += literal;
+      index += literal.length;
+      continue;
+    }
+    const trailingComma = text[index] === ',' && ['}', ']'].includes(text[significantFrom(text, index + 1)]);
+    if (!trailingComma) json += text[index];
+    index += 1;
+  }
+  return JSON.parse(json);
+}
+
 /** The `name` of a wrangler.jsonc (comments allowed). */
 export function workerBaseName(wranglerJsonc) {
-  const stripped = wranglerJsonc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const config = JSON.parse(stripped);
+  const config = parseJsonc(wranglerJsonc);
   if (typeof config.name !== 'string' || config.name === '') throw new Error('wrangler.jsonc has no name');
   return config.name;
+}
+
+/** Whether a wrangler.jsonc binds Durable Objects, whose previews must be Workers of their own (see the module comment). */
+export function usesDurableObjects(wranglerJsonc) {
+  const bindings = parseJsonc(wranglerJsonc).durable_objects?.bindings;
+  return Array.isArray(bindings) && bindings.length > 0;
 }
 
 /** The JSON object printed among other output (wrangler prints warnings around `--json`). */
@@ -104,11 +157,18 @@ function argValue(args, name) {
 export function main(argv, repositoryRoot) {
   const [command, ...args] = argv;
   const cwd = join(repositoryRoot, APP_DIRECTORY);
-  const baseName = workerBaseName(readFileSync(join(cwd, 'wrangler.jsonc'), 'utf8'));
+  const wranglerJsonc = readFileSync(join(cwd, 'wrangler.jsonc'), 'utf8');
+  const baseName = workerBaseName(wranglerJsonc);
   const pr = argValue(args, '--pr');
   if (command === 'create') {
     if (pr === undefined) throw new Error('create needs --pr <number>');
     const sha = argValue(args, '--sha') ?? '';
+    if (usesDurableObjects(wranglerJsonc)) {
+      const name = workerNameOf(baseName, pr);
+      const deploy = run(['deploy', '--name', name, '--message', `PR #${pr} ${sha}`.trim()], { cwd });
+      writeOutputs({ url: deploymentUrlOf(deploy.output) ?? '', mode: 'pr-worker', note: `Worker ${name} (the map's OP keeps its workspaces in Durable Objects of this Worker)` });
+      return;
+    }
     const preview = run(['preview', '--name', previewNameOf(pr), '--message', `PR #${pr} ${sha}`.trim(), '--json'], { cwd, allowFailure: true });
     if (preview.status === 0) {
       const url = previewUrlOf(extractJson(preview.stdout), preview.output);

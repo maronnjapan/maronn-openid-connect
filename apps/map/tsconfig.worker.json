@@ -1,0 +1,25 @@
+{
+  // The Worker (worker/): the map's assets and the live OP on Cloudflare Workers. It imports the live OP's sources
+  // (apps/hono's), so it is checked with their options and the DOM's types of the web platform; the part of the
+  // Workers runtime it uses is declared in worker/cloudflare.d.ts.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    // The live OP's sources import test-reach's JavaScript (packages/live-op checks them so too).
+    "allowJs": true,
+    "noEmit": true
+  },
+  "include": ["worker/**/*.ts"]
+}

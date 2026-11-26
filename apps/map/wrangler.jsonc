@@ -1,14 +1,50 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // An assets-only Worker: the built page (dist/) is served as static assets, no script runs.
-  // `wrangler deploy` puts it at https://maronn-oidc-map.<your-subdomain>.workers.dev;
-  // `wrangler versions upload` gives a preview URL per upload (the PR previews of map-preview.yml).
+  // The map's Worker: the built page (dist/) as static assets and, at the same origin, the live OP
+  // (worker/index.ts: the server app of apps/hono, one SQLite-backed Durable Object per workspace).
+  // `wrangler deploy` puts it at https://maronn-oidc-map.<your-subdomain>.workers.dev. The previews of
+  // pull requests are Workers of their own (`wrangler deploy --name maronn-oidc-map-pr-<n>`,
+  // .github/scripts/map-preview.mjs): a Worker Preview or a version's preview URL would send its
+  // requests to the Durable Objects of production, which run main's OP.
   "name": "maronn-oidc-map",
-  "compatibility_date": "2026-07-23",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-10-23",
+  // The OP's bundle imports node:crypto (the Google sign-in it is configured without).
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // The paths the Worker answers before the assets: the control API of the live OP and the OP's own
+    // paths, exactly OP_ROUTES of packages/live-op/src/relay.ts (worker/routes.test.mjs checks it).
+    "run_worker_first": [
+      "/__live/*",
+      "/.well-known/*",
+      "/authorize",
+      "/login",
+      "/login/*",
+      "/consent",
+      "/token",
+      "/userinfo",
+      "/introspect",
+      "/revoke",
+      "/par",
+      "/register",
+      "/register/*",
+      "/device_authorization",
+      "/device",
+      "/device/*",
+      "/backchannel_authentication",
+      "/ciba",
+      "/ciba/*",
+      "/logout",
+      "/logout/*"
+    ]
   },
+  "durable_objects": {
+    "bindings": [{ "name": "LIVE_OP", "class_name": "LiveOpWorkspace" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveOpWorkspace"] }],
   "preview_urls": true,
   "workers_dev": true
 }

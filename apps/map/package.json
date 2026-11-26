@@ -13,11 +13,13 @@
     "changes:draft": "node scripts/draft-notes.mjs",
     "history": "node scripts/history.mjs",
     "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
+    "worker:dev": "wrangler dev --ip ${HOST:-127.0.0.1} --port ${PORT:-8787}",
     "deploy": "pnpm run build && wrangler deploy",
     "deploy:preview": "pnpm run build && wrangler versions upload",
     "request:check": "pnpm --filter @maronn-openid-connect/test-catalog build && node scripts/check-request-scenario.mjs",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run && pnpm run test:worker",
+    "test:worker": "node --test \"worker/*.test.mjs\"",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.worker.json",
     "check:wiring": "node ../../scripts/audit-wiring.mjs && node ../../scripts/check-wiring-audit.mjs"
   },
   "dependencies": {
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@dagrejs/dagre": "^3.1.3",
+    "@maronn-openid-connect/live-op": "workspace:*",
     "@maronn-openid-connect/map-analysis": "workspace:*",
     "@maronn-openid-connect/map-sandbox": "workspace:*",
     "@maronn-openid-connect/test-catalog": "workspace:*",

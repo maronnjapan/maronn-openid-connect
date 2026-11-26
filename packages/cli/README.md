@@ -441,6 +441,8 @@ src/app/
 
 生成物に `layout.tsx` は含まれないので、プロジェクトのルートレイアウトがそのまま使われる。
 
+`tsc` で生成物を型検査するときは、`tsconfig.json` の `include` に `.well-known` のディレクトリを名指しする（出力先が `./src/app` なら `"src/app/.well-known/**/*.ts"`）。TypeScript の `**` はドットで始まるディレクトリに入らないので、`src/**/*.ts` だけでは discovery と JWKS の Route Handler が型検査から漏れる。`apps/nextjs` と `samples/nextjs-vercel` はこの設定を持つ。
+
 Next.js の生成物でも、画面はブラウザにも中間のキャッシュにも保存させない。Route Handler が返す画面（device、CIBA、RP-Initiated Logout とそのエラー）は、`_oidc-provider/html.ts` の `htmlResponse()` が `Cache-Control: no-store` を付ける（`headers` を渡せば上書きできる）。ログイン、同意、`oidc-error` の各ページは React のページなので、ページからはレスポンスヘッダーを設定できない。Next.js が動的に描くページに `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` を付けるので、そのままでも保存はされない。ほかの画面と同じ `no-store` を明示するには、プロジェクトの `next.config.mjs` の `headers()` で指定する。Next.js は、ここで指定した `Cache-Control` を動的なページに付ける値より優先する。`apps/nextjs` と `samples/nextjs-vercel` はこの設定を持つ。
 
 ```js

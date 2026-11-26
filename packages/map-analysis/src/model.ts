@@ -257,38 +257,55 @@ export interface FrameFile {
 }
 
 /**
- * data/requests/<hash>.json: for the ready-made ways of a root (an endpoint
- * body), the request the OP of the map (packages/map-sandbox) was seen to
- * take each with, which the flow view starts the request of the way chosen
- * from. The build finds them by running the requests the OP tries and
- * reading each with the rules the test catalog reads a request with
- * (packages/test-catalog samples.ts); a way none of them took is not listed.
- * The tests play no part: what a test sent is the tests page's to show.
- * Each sample says what it read and wrote of the records the OP held, which
- * the premises (MapData.premises) say the origin of.
+ * data/requests/<hash>.json: what the request cases (packages/test-catalog
+ * src/scenarios) do at a root (an endpoint body), found by running each on
+ * the live OP at the build (packages/live-op, a fresh workspace each) and
+ * following its trace through the trees (traced.ts followTrace): the
+ * ready-made ways each case's request took, and for each way the cases
+ * that take it, so the flow view prepares a request that takes the way
+ * chosen by preparing one of those cases on the reader's workspace.
  */
 export interface RootRequests {
-  version: 3;
+  version: 4;
   /** The root the ways are of, by frame id. */
   root: string;
   /** The source of the OP that ran them (`hono`: express and fastify, generated from it, share its roots). */
   source: string;
   /** The endpoint of the source, by id. */
   endpoint: string;
-  /** The ways a request took, in the order of the cases. */
+  /** The ways a case's request took, in the order of the ways. */
   ways: WayRequests[];
+  /** The cases of the endpoint as the build ran them, in the order of the cases. */
+  cases: CaseRun[];
 }
 
-/** The request the OP of the map took one ready-made way of a root with (a Selection, found by its kind and target). */
+/** A ready-made way of a root (a Selection, found by its kind and target) and the cases whose request took it. */
 export interface WayRequests {
-  /** The case it is (EndpointCase.id of the test catalog). */
+  /** The way (EndpointCase.id of the test catalog). */
   id: string;
   kind: Selection['kind'];
   name: string;
   /** Selection.target. */
   target: string;
-  /** The first of the requests the build ran on the OP of the map that took it. */
-  sample: WaySample;
+  /** The ids of the cases (RequestScenario.id) whose request took it, in the order of the cases. */
+  scenarios: string[];
+}
+
+/** A request case as the build ran it on the live OP: what the OP answered and the ways its request took. */
+export interface CaseRun {
+  /** RequestScenario.id. */
+  id: string;
+  status?: number;
+  /** The OAuth error of the response. */
+  error?: string;
+  /** The ways (WayRequests.id) its request took: the way it ended by and the steps it went through. */
+  ways: string[];
+  /** Whether the request ran the root (a request a router or middleware answered did not). */
+  rootRan: boolean;
+  /** Where the walk of its trace disagreed with what it ran (traced.ts walkMismatches); none expected. */
+  mismatches: number;
+  /** How many decisions the walk took on an assumed side (the rules could not read them). */
+  assumed: number;
 }
 
 /** A parameter a request sends: in its query, as a field of its form body, or as a top-level member of its JSON body. */
@@ -298,43 +315,12 @@ export interface RequestParam {
   in: 'query' | 'form' | 'json';
 }
 
-/** A request the OP of the map took a way with, as the flow view shows it, and the status the OP answered with. */
-export interface WaySample {
-  method: string;
-  /** The path of its URL, without the query. */
-  path: string;
-  /** What it sent in its query and its body: the fields of a form, the top-level members of a JSON object. */
-  params: RequestParam[];
-  /** Its headers (lower-case names, as sent) but Host and Content-Length. */
-  headers: Array<[string, string]>;
-  /** The status the OP answered with, and its reason phrase when it had one. */
-  status: number;
-  statusText?: string;
-  /** What it read and wrote of the records the OP of the map held. */
-  store?: StoreAccess;
-}
-
-/** What a request run on the OP of the map read and wrote of the records of its memory database (packages/map-sandbox store.ts). */
+/** What a request run on the live OP read and wrote of the records it holds (packages/live-op store.ts). */
 export interface StoreAccess {
   /** The records it read, the first read of each, in the order read (`key` absent for a collection it went through whole, `member` the key looked up inside a record that is a Map itself: a user's consent to a client); not those it wrote before reading them. */
   read: Array<{ collection: string; key?: string; member?: string; found: boolean }>;
   /** The records it added, changed (with the top-level fields whose values changed) or removed, as plain JSON. */
   wrote: Array<{ collection: string; key: string; change: 'added' | 'changed' | 'removed'; value?: unknown; before?: unknown; fields?: string[] }>;
-}
-
-/**
- * data/premises/<hash>.json: what the OP of the map held before any request
- * (packages/map-sandbox PreparedPremises, made by requests at the build):
- * the requests run to make them and the records each wrote, and the records
- * held with the request that added each. The page hands it to the OP it
- * runs a request on. Only what the map reads of it is typed here.
- */
-export interface PremisesFile {
-  version: 1;
-  issuer: string;
-  now: number;
-  steps: Array<{ grant: string; request: { method: string; url: string }; response: { status: number }; wrote: StoreAccess['wrote'] }>;
-  records: Array<{ collection: string; key: string; value: unknown; addedBy?: number; changedBy?: number[] }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -532,13 +518,13 @@ export interface MapData {
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
   /**
-   * The url of the requests the OP of the map took the ways of each root
-   * with (RootRequests), by the root's frame id; a root no request took has
-   * none. Absent when the build ran no request on the OP of the map.
+   * The url of what the request cases do at each root (RootRequests), by
+   * the root's frame id; a root no case was run at has none. Absent when the
+   * build ran no case on the live OP.
    */
   requests?: Record<string, string>;
-  /** The url of what the OP of the map held before any request (PremisesFile, `./data/premises/<hash>.json`); absent when the build made no premises. */
-  premises?: string;
+  /** The live OP the cases were run on at the build (packages/live-op): the hash of its probe table, which the page compares with the OP it runs on. Absent when the build ran no case. */
+  liveOp?: { probes: string };
   /** The url of the changes that reached main (HistoryData, `./data/history/<hash>.json`); absent when the build read no git history. */
   history?: string;
 }

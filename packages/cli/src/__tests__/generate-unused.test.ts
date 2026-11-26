@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dropUnusedBindings, dropUnusedImports } from '../generate.js';
+import { dropUnusedBindings, dropUnusedImports, transformRouteHandler } from '../generate.js';
 
 // The generator drops what a removed owner block was the only reader of. A name read only inside `${…}`
 // is still read: dropping it would leave the output without the import or the value it needs.
@@ -20,18 +20,19 @@ describe('dropUnusedImports', () => {
 });
 
 describe('dropUnusedBindings', () => {
-  it('should keep a binding of an owner block that a later block reads only inside a template expression', () => {
+  it('should keep a binding that a later block reads only inside a template expression and drop one only its text names', () => {
     const source = [
       'export async function POST(request: Request) {',
       '  // [read-host] Read the host',
       '  const host = new URL(request.url).host;',
+      '  const port = new URL(request.url).port;',
       '  // [respond] Respond',
-      '  return Response.json({ issuer: `https://${host}` });',
+      '  return Response.json({ issuer: `https://${host}/port` });',
       '}',
       '',
     ].join('\n');
 
-    expect(dropUnusedBindings(source)).toBe(source);
+    expect(dropUnusedBindings(source)).toBe(source.replace('  const port = new URL', '  new URL'));
   });
 
   // Without its declaration line, the rest of a template literal that the line opens has no opening backtick.
@@ -64,5 +65,41 @@ describe('dropUnusedBindings', () => {
     ].join('\n');
 
     expect(dropUnusedBindings(source)).toBe(source);
+  });
+});
+
+describe('transformRouteHandler', () => {
+  it('should leave undefined the value of a removed block that a later block reads only inside a template expression', () => {
+    const route = [
+      'export async function POST(request: Request) {',
+      '  // [read-host] (feature: demo) Read the host',
+      '  const host = new URL(request.url).host;',
+      '',
+      '  // [respond] Respond',
+      '  return Response.json({ issuer: `https://${host}` });',
+      '}',
+      '',
+    ].join('\n');
+    const endpoint = [
+      'export const endpoint = defineEndpoint({',
+      '  steps: [',
+      "    { id: 'read-host', feature: 'demo', consumes: [], produces: ['host'] },",
+      "    { id: 'respond', consumes: ['host'], produces: [] },",
+      '  ],',
+      '});',
+      '',
+    ].join('\n');
+
+    expect(transformRouteHandler(route, new Set(), endpoint)).toBe(
+      [
+        'export async function POST(request: Request) {',
+        '  const host = undefined;',
+        '',
+        '  // [respond] Respond',
+        '  return Response.json({ issuer: `https://${host}` });',
+        '}',
+        '',
+      ].join('\n'),
+    );
   });
 });

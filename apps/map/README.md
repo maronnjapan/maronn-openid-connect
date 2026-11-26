@@ -502,6 +502,7 @@ Drawer の「別タブで読む ↗」と、テストの画面のコードの欄
 ## データとビルド
 
 React + Vite の静的ページで、Cloudflare Workers に静的アセットとして置く（`wrangler.jsonc`）。
+同じ Worker（`worker/index.ts`）が、OP のパスと `/__live/*` を地図の OP（前の「地図の OP」）のワークスペースの Durable Object へ渡し、ほかのパスにはページを返す。
 ページは表示だけを受け持ち、解析は非公開のワークスペースパッケージ [`@maronn-openid-connect/map-analysis`](../../packages/map-analysis) がビルド時に行う。
 例外は木をたどる歩み（`packages/map-analysis/src/walk.ts`）で、読者が選んだ道筋に沿ってページの中で動かす。
 型だけを import する小さなモジュールなので、ページは `@maronn-openid-connect/map-analysis/walk` としてそのまま読み、テストカタログも同じものでケースのステップを求める。
@@ -510,7 +511,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 1. CLI の `explain --format json` を全機能オンで 4 フレームワーク分まとめ、関数カタログを読む
 2. 関数とエンドポイントの処理本体を TypeScript のコンパイラ API で読み、処理の流れの木にする。呼び先は型で解決する
 3. MAP_BASE があれば、変更前のコードからも木を作り、木の差分、式の差分、影響範囲、変更メモの対応づけを求める
-4. テストを読んでカタログにし、関数カタログとエンドポイントに結び付ける。MAP_TEST_REPORTS があれば、その実行の結果と到達も結び付ける。地図の OP（`packages/map-sandbox`）がビルドしてあれば、前提をリクエストで作り（前の「地図の OP」）、その上で試すリクエストを先に動かし、通ったケースに添える（前の「リクエスト」）。MAP_BASE があれば、変更前のカタログとの差分を求め、関連するテストの変わらない変更を検査の対象にし、`changes.md` の説明の無い変更の次にその一覧を、末尾に畳んだテストの差分を足す
+4. テストを読んでカタログにし、関数カタログとエンドポイントに結び付ける。MAP_TEST_REPORTS があれば、その実行の結果と到達も結び付ける。地図の OP（`packages/live-op`）がビルドしてあれば、OP の外のものを要らない全ケースを、ビルドのプロセスの中の地図の OP で、ケースごとに新しいワークスペースに準備して送り、その記録を根の木でたどって、ケースが通った道筋を求める（前の「リクエスト」）。MAP_BASE があれば、変更前のカタログとの差分を求め、関連するテストの変わらない変更を検査の対象にし、`changes.md` の説明の無い変更の次にその一覧を、末尾に畳んだテストの差分を足す
 5. 次のファイルを `public/data/` に書く
 
 - `map.json`：索引。フレームワーク、コマンド、機能、エンドポイントとステップ、関数カタログ（呼び先、呼び出し元、外へ出る失敗）、interface のメンバー（説明、実装、実装が呼ぶもの）、PR の変更の一覧。木は含まない
@@ -518,7 +519,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `sources/<hash>.json`：ハイライト済みのソース。Drawer を開いたときに読む。名前ごとに宣言の場所（`links`）を、宣言ごとにそれを使う場所（`uses`）を持つ（`packages/map-analysis/src/symbols.ts`。型検査器で引き、地図の根の外の宣言は持たない）。リンクの先を開けるよう、地図の根のファイルはすべて書く
 - `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
-- `premises/<hash>.json`：地図の OP の前提（`PreparedPremises`）。作ったリクエストとその応答、書いた記録、DB にある記録ごとの出どころ、DB の中身とトークンに署名した鍵。フローを開いたときに読み、リクエストを実行するときに Web Worker の OP に渡す
+- `requests/<hash>.json`：エンドポイントの処理本体一つ分の、ケースのリクエストの記録（`RootRequests`）。道筋ごとにそれを通ったケースと、ケースごとの応答のステータスと OAuth のエラー、通った道筋、根が動いたか、食い違いと仮の側の数を持つ。`map.json` の `requests` が根ごとの URL を、`liveOp.probes` がケースを動かした OP のプローブの表のハッシュを持つ。フローを開いたときに読む
 - `history/<hash>.json`：main に入った変更の一覧。main（PR の地図では MAP_BASE の、ほかはリモートの main（`origin/main`、`upstream/main` など）のうち、HEAD の持つコミットを main に入れた最も新しいコミット（HEAD のブランチをマージしたもの、その上に積んだブランチのマージを含む。PR の変更の起点 `git merge-base` までの履歴がそろう。その間の HEAD の持たない変更も並ぶ）。リモートの main を持たない clone では HEAD）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる
 - `history/<hash>.json`（変更ごと）：変更の、OSS が出すコード（関数カタログの根のファイル）だけの差分（`HistoryDetail`）。git の差分（前後 3 行の文脈、GitHub と同じもの）を、変更した関数ごとと関数の外とに切り分けて持つ（ほかの関数の行が変わるところで hunk を切るので、一つの関数の差分にはその関数の行だけが入る）。変更が書いた変更メモの本文も持つ。テスト、文書、道具の変更は入れない。変更のページを開いたときと、`pnpm map:history` が読む。差分が長すぎるファイル（2,000 行を超えるもの）と、変更全体で 20,000 行を超えた後のファイルは hunk を持たず、どちらの理由かを残す（ライブラリのファイルを先に入れる）
 
@@ -536,6 +537,8 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 名前の無い選択（exit ケース）と、同じフレームで重なる名前（番号だけで区別した名前を含む）、ノードに属さない行、PR が変えた行のうちノードに属さないもの、説明の無い変更である。
 全機能オンの `/token` に、refresh_token と authorization_code の名前付きの選択があることも確かめる。
 コードのリンク（`links`）がどれも名前の上にあり、地図が持つファイルの宣言の名前へ行くことも確かめる（`checkLinks`）。
+ケースを地図の OP で動かしたビルドでは、OP の外のものを要らない hono のケースがどれも一つの根で一度動いたこと、ケースが通った道筋がどれもその根のよく使う選択であることを確かめる。
+どのケースも、再生する道筋がそのリクエストが動かしたものだけを通り、根を動かし（404 や 405 を期待するケースを除く）、期待するステータスと OAuth のエラーを OP が返したことも確かめる。
 これは地図の出力に対する検査で、貢献者のコードの形には向けない。
 図の検査（`src/lib/diagram.data.test.ts`）も同じ考えで、ビルドしたデータがあるときだけ走る（`ci.yml` の `map` ジョブでは `build:map` の後のテスト）。
 決定と終わりがどのフレームの図からも欠けないこと、`try` の枠が自分の箱だけを囲むこと、図がステップと守りをアウトラインと同じに畳むこと、幅に合わせて見出しが 11px に届くフレームが 9 割を下回らないことを確かめる。
@@ -551,19 +554,20 @@ rebase でマージした PR のコミットは番号を持たず、GitHub も�
 無ければ `GITHUB_REPOSITORY` を、それも無ければ `origin` の URL を使う。
 
 ```bash
-# ルートで: CLI と解析パッケージと地図の OP（packages/map-sandbox）をビルドしてから地図をビルドする（dist/ に静的ページ、dist/tests/ にテストの画面）
+# ルートで: CLI、解析パッケージ、テストカタログ、地図の OP（packages/live-op）をビルドしてから地図をビルドする（dist/ に静的ページ、dist/tests/ にテストの画面）
 pnpm run build:map
 
 # このディレクトリで
-pnpm run dev              # データを作って Vite の開発サーバー（http://127.0.0.1:3610）
+pnpm run dev              # データを作って Vite の開発サーバー（http://127.0.0.1:3610。同じオリジンで地図の OP が Node で答える）
 MAP_BASE=origin/main pnpm run dev   # origin/main からの変更（コミットしていないものを含む）を載せた地図
 MAP_BASE=origin/main pnpm run data  # 開発サーバーを動かしたまま、データだけを作り直す（ページを読み込み直すと載る）
 pnpm run build            # データを作って dist/ にビルドし、テストの画面を dist/tests/ に入れ、地図の出力を検査する
 pnpm run check            # public/data の地図の出力だけを検査する
 pnpm run changes:draft    # MAP_BASE からの差分で変更メモの雛形を書く
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
-pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらない）
-pnpm test                 # ページの純粋な部分（トレース、決定、図、フローの再生、ハッシュ、変更の札、検索）のテスト
+pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらないが、地図の OP は本番の Durable Object に届く）
+pnpm run worker:dev       # デプロイするのと同じ Worker（ビルドした dist/ と、Durable Object の地図の OP）を wrangler dev で手元に動かす（http://127.0.0.1:8787）
+pnpm test                 # ページの純粋な部分（トレース、決定、図、フローの再生、ハッシュ、変更の札、検索）のテストと、Worker のテスト（worker/*.test.mjs）
 ```
 
 開発サーバーは地図だけを配るので、ヘッダの「テスト」は開発サーバーでは開かない。
@@ -604,12 +608,15 @@ pnpm --filter @maronn-openid-connect/map request:check "$(cat samples/hono-cloud
 読めなくても地図は作り、履歴は git のタイトルとコミットだけになる。
 テストの画面は地図の `dist/tests/` に入るので、どのデプロイでも地図の URL の `/tests/` で開く。
 
-- **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。プレビューへのリンクと、畳んだ変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更か、関連するテストの変わらない変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
-- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Preview を `wrangler preview delete --name pr-<番号>` で消す。`map` ジョブと同じ concurrency の group で順に走り、`map` ジョブは PR が閉じていればプレビューを作らない
+- **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy --name maronn-oidc-map-pr-<番号>` する（`.github/scripts/map-preview.mjs`）。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。プレビューへのリンクと、畳んだ変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更か、関連するテストの変わらない変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
+- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Worker を（Durable Object ごと）`wrangler delete --name maronn-oidc-map-pr-<番号>` で消す。`map` ジョブと同じ concurrency の group で順に走り、`map` ジョブは PR が閉じていればプレビューを作らない
 - **main への push**：`wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`）を更新する
 
-Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`wrangler preview` が失敗したときは `.github/scripts/map-preview.mjs` が PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` し、閉じたときにその Worker も消す。
-どの場合も Actions の artifact（`oidc-provider-map`）にビルド結果が残り、`dist/` を静的に配信すれば同じ地図が見られる。
+PR ごとに Worker を分けるのは、地図の OP のワークスペースが Durable Object にあるからである（[docs/design-live-op.md](docs/design-live-op.md) の「ホスト」）。
+同じ Worker の Worker Preview（`wrangler preview`）やバージョンのプレビュー URL は、本番の Durable Object の名前空間に届き、そこでは main の OP が動く。
+`map-preview.mjs` は、`wrangler.jsonc` が Durable Object を持たないときだけ Worker Preview `pr-<番号>` を作り（失敗したら PR ごとの Worker へ `wrangler deploy` する）、閉じたときは Preview と Worker の両方を消す。
+どの場合も Actions の artifact（`oidc-provider-map`）にビルド結果が残る。
+`dist/` を静的に配信すれば同じ地図が見られるが、地図の OP は動かないので、リクエストの欄は「地図の OP に接続できません」と出す。
 
 ## 直接呼ばれない配線
 

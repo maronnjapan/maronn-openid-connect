@@ -1,5 +1,5 @@
 {
-  // The options of apps/hono's tsconfig.json: the sandbox imports its sources, which are checked here as they are there.
+  // The options of apps/hono's tsconfig.json: the live OP bundles its sources, which are checked here as they are there.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],

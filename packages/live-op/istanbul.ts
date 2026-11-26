@@ -81,7 +81,7 @@ export function istanbul(options: IstanbulOptions): Plugin {
     ignoreLines: true,
   });
   return {
-    name: 'map-sandbox:istanbul',
+    name: 'live-op:istanbul',
     enforce: 'post',
     transform(code, id) {
       const path = repositoryPath(options.repository, id);

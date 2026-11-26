@@ -10,8 +10,6 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: './',
   plugins: [liveOp()],
-  // The sandbox OP shared with the tests viewer runs in a module worker.
-  worker: { format: 'es' },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

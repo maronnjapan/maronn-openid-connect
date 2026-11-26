@@ -9,6 +9,5 @@ import { liveOp } from '@maronn-openid-connect/live-op/vite';
 export default defineConfig({
   base: './',
   plugins: [liveOp()],
-  worker: { format: 'es' },
   build: { outDir: 'dist', emptyOutDir: true, sourcemap: false },
 });

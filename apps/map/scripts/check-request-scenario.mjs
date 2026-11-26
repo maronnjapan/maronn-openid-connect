@@ -1,6 +1,6 @@
 import { generateRequestScenario } from '@maronn-openid-connect/test-catalog/premises';
 
-// Smoke-test the same signed Request Object that the map and tests generate.
+// Smoke-test a signed Request Object made by the generator of the test catalog (premises.ts generateRequestScenario) on a deployed OP: one client registered for it, then the authorization request.
 const scenario = 'authorize-request-object';
 const issuer = new URL(process.argv[2] ?? 'http://127.0.0.1:3010').href.replace(/\/$/, '');
 const redirectUri = new URL('/request-scenario-callback', issuer).href;

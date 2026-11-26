@@ -17,16 +17,18 @@
  * - Wiring outside ordinary call paths retains its source and a reason when
  *   unresolved; claiming a destination requires a target and destinations.
  * - Every unresolved call node explains why it cannot be followed.
- * - With the requests the OP of the map took ways with (MapData.requests):
- *   every way they name is a ready-made choice of its root (its kind and
- *   target), so the flow view finds the request of the way chosen.
- * - With the premises of the OP of the map (MapData.premises): the request
- *   each record says added or changed it wrote it so, and every record a
- *   sample read (a member of a record that is a Map, for a lookup inside
- *   it) is held by the premises exactly when the sample found it, so the
- *   samples were run on the premises the page hands to its OP.
+ * - With what the request cases do at each root (MapData.requests, run on
+ *   the live OP at the build): every way named is a ready-made choice of its
+ *   root (its kind and target), so the flow view finds the cases of the way
+ *   chosen; every case a way names is a case run at the root, and the ways
+ *   of each case are those that name it.
+ * - Each case run is faithful: the walk of its trace agrees with what its
+ *   request ran (no mismatch), its request ran the root unless the case
+ *   expects a status the router answers (404, 405), and the OP answered the
+ *   status the case expects, with the OAuth error it names (none when it
+ *   names only the path it redirects to), when the expectations are given.
  */
-import type { FlowTree, FrameFile, MapData, PremisesFile, RootRequests, SourceDocument, StoreAccess, TreeNode } from './model.js';
+import type { CaseRun, FlowTree, FrameFile, MapData, RootRequests, SourceDocument, TreeNode } from './model.js';
 
 export interface MapMetrics {
   frames: number;
@@ -46,11 +48,25 @@ export interface MapMetrics {
   untested: string[];
   /** Wiring inventory entries, their unresolved count, and malformed output entries. */
   wiring: { entries: number; untraceable: number; invalid: number };
-  /** The requests the OP of the map took ways with (MapData.requests): the roots, the ways, and the ways no choice of their root is. */
-  requests: { roots: number; ways: number; unmatched: number };
-  /** The premises of the OP of the map (MapData.premises): the requests that made them, the records, those a request added, and the reads of the samples that disagree with them. */
-  premises: { steps: number; records: number; made: number; reads: number; unmatched: number };
+  /**
+   * What the request cases do at the roots (MapData.requests): the roots,
+   * the ways the cases took and those no choice of their root is, the cases
+   * run, those not faithful (see the module comment), the mismatches of
+   * their walks, the cases with a decision on an assumed side and those
+   * decisions in all.
+   */
+  requests: { roots: number; ways: number; unmatched: number; cases: number; unfaithful: number; mismatches: number; assumedCases: number; assumed: number };
 }
+
+/** What a request case expects the OP to answer (RequestScenario.expected of the test catalog): its status, and the OAuth error it names, or the path it redirects to, which it expects without an error. */
+export interface CaseExpectation {
+  status: number;
+  error?: string;
+  redirectPath?: string;
+}
+
+/** The statuses the router of the OP answers itself, before any root runs: a path it has no route of, a method a route does not take. */
+const ROUTER_STATUSES: readonly number[] = [404, 405];
 
 export interface CheckResult {
   metrics: MapMetrics;
@@ -97,11 +113,33 @@ function checkTargets(nodes: readonly TreeNode[], frame: string, failures: strin
   }
 }
 
+/** What is wrong with a case run, as the check says it (see the module comment); none for one that is faithful. Without its expectation, only its walk and whether it ran the root are read. */
+export function caseFaults(run: CaseRun, expected: CaseExpectation | undefined): string[] {
+  const faults: string[] = [];
+  if (run.mismatches > 0) faults.push(`its walk disagrees with what its request ran at ${run.mismatches} places`);
+  if (!run.rootRan && !(expected !== undefined && ROUTER_STATUSES.includes(expected.status))) faults.push('its request did not run the root');
+  if (expected === undefined) return faults;
+  const namesError = expected.error !== undefined || expected.redirectPath !== undefined;
+  if (run.status !== expected.status || (namesError && run.error !== expected.error)) {
+    const said = (status: number | undefined, error: string | undefined) => `${status ?? 'no response'}${error === undefined ? '' : ` ${error}`}`;
+    faults.push(`the OP answered ${said(run.status, run.error)} where the case expects ${said(expected.status, namesError ? expected.error : undefined)}`);
+  }
+  return faults;
+}
+
 /**
- * Check the requests the OP of the map took ways with against the frames of their roots
- * (see the module comment), adding to the metrics and the failures.
+ * Check what the request cases do at each root against the frames of the
+ * roots, against each other and against what each case expects (see the
+ * module comment), adding to the metrics and the failures.
  */
-async function checkRequests(data: MapData, readFrame: (url: string) => Promise<FrameFile>, readRequests: (url: string) => Promise<RootRequests>, metrics: MapMetrics, failures: string[], reads: Array<{ root: string; way: string; read: StoreAccess['read'][number] }>): Promise<void> {
+async function checkRequests(
+  data: MapData,
+  readFrame: (url: string) => Promise<FrameFile>,
+  readRequests: (url: string) => Promise<RootRequests>,
+  expected: ((id: string) => CaseExpectation | undefined) | undefined,
+  metrics: MapMetrics,
+  failures: string[],
+): Promise<void> {
   for (const [root, url] of Object.entries(data.requests ?? {})) {
     const entry = data.bodies[root] ?? data.functions[root];
     if (entry === undefined || entry.frame === '') {
@@ -111,54 +149,38 @@ async function checkRequests(data: MapData, readFrame: (url: string) => Promise<
     const [file, requests] = await Promise.all([readFrame(entry.frame), readRequests(url)]);
     metrics.requests.roots += 1;
     if (requests.root !== root) failures.push(`${root}: its requests file is of ${requests.root}`);
+    const cases = new Map(requests.cases.map((run) => [run.id, run]));
     for (const way of requests.ways) {
       metrics.requests.ways += 1;
-      for (const read of way.sample.store?.read ?? []) reads.push({ root, way: way.name, read });
       if (!file.selections.some((selection) => selection.kind === way.kind && selection.target === way.target && selection.name === way.name)) {
         metrics.requests.unmatched += 1;
         failures.push(`${root}: the requests name the way ${way.kind} "${way.name}" (${way.target}), which no ready-made choice of the root is: the flow view would not show them`);
       }
+      if (way.scenarios.length === 0) failures.push(`${root}: the way "${way.name}" names no case`);
+      for (const id of way.scenarios) {
+        if (!cases.get(id)?.ways.includes(way.id)) failures.push(`${root}: the way "${way.name}" names the case ${id}, which ${cases.has(id) ? 'does not take it' : 'was not run at the root'}`);
+      }
     }
-  }
-}
-
-/**
- * Check the premises of the OP of the map against themselves and against
- * the records the samples read (see the module comment), adding to the
- * metrics and the failures.
- */
-function checkPremises(premises: PremisesFile, reads: ReadonlyArray<{ root: string; way: string; read: StoreAccess['read'][number] }>, metrics: MapMetrics, failures: string[]): void {
-  metrics.premises.steps = premises.steps.length;
-  metrics.premises.records = premises.records.length;
-  // The records the premises hold, and the members of those that are Maps themselves (a user's consents, by client_id), whose values are objects in the premises.
-  const held = new Set<string>();
-  for (const record of premises.records) {
-    held.add(JSON.stringify([record.collection, record.key]));
-    if (record.value !== null && typeof record.value === 'object' && !Array.isArray(record.value)) {
-      for (const member of Object.keys(record.value)) held.add(JSON.stringify([record.collection, record.key, member]));
+    const ways = new Map(requests.ways.map((way) => [way.id, way]));
+    for (const run of requests.cases) {
+      metrics.requests.cases += 1;
+      metrics.requests.mismatches += run.mismatches;
+      metrics.requests.assumed += run.assumed;
+      if (run.assumed > 0) metrics.requests.assumedCases += 1;
+      for (const id of run.ways) if (!ways.get(id)?.scenarios.includes(run.id)) failures.push(`${root}: the case ${run.id} took the way ${id}, which ${ways.has(id) ? 'does not name it' : 'the requests do not list'}`);
+      const faults = caseFaults(run, expected?.(run.id));
+      if (faults.length === 0) continue;
+      metrics.requests.unfaithful += 1;
+      failures.push(`${root}: the case ${run.id} (${run.status ?? 'no response'}${run.error === undefined ? '' : ` ${run.error}`}) is not faithful: ${faults.join('; ')}`);
     }
-    if (record.addedBy !== undefined) metrics.premises.made += 1;
-    const said: Array<[number | undefined, 'added' | 'changed']> = [[record.addedBy, 'added'], ...(record.changedBy ?? []).map((step): [number, 'changed'] => [step, 'changed'])];
-    for (const [step, change] of said) {
-      if (step === undefined) continue;
-      if (!premises.steps[step]?.wrote.some((wrote) => wrote.collection === record.collection && wrote.key === record.key && wrote.change === change)) failures.push(`premises: the record ${record.collection} ${record.key} says request ${step} ${change} it, which that request did not`);
-    }
-  }
-  for (const { root, way, read } of reads) {
-    if (read.key === undefined) continue;
-    metrics.premises.reads += 1;
-    const place = read.member === undefined ? [read.collection, read.key] : [read.collection, read.key, read.member];
-    if (held.has(JSON.stringify(place)) === read.found) continue;
-    metrics.premises.unmatched += 1;
-    failures.push(`${root}: the sample of "${way}" ${read.found ? 'found' : 'did not find'} ${place.join(' ')}, which the premises ${read.found ? 'do not hold' : 'hold'}: it was not run on the premises the page hands to its OP`);
   }
 }
 
 /**
  * Measure the map (see the module comment): the index, a reader of the
- * frame files by url, of the text of the source files by id, of the
- * requests files by url (MapData.requests), and of the premises file by url
- * (MapData.premises).
+ * frame files by url, of the text of the source files by id, and of the
+ * requests files by url (MapData.requests), and what each request case
+ * expects, by its id (RequestScenario.id).
  */
 export async function checkMap(
   data: MapData,
@@ -167,9 +189,7 @@ export async function checkMap(
   readRequests: (url: string) => Promise<RootRequests> = async (url) => {
     throw new Error(`no reader of the requests file ${url}`);
   },
-  readPremises: (url: string) => Promise<PremisesFile> = async (url) => {
-    throw new Error(`no reader of the premises file ${url}`);
-  },
+  expected?: (id: string) => CaseExpectation | undefined,
 ): Promise<CheckResult> {
   const metrics: MapMetrics = {
     frames: 0,
@@ -182,8 +202,7 @@ export async function checkMap(
     undocumented: data.changes?.undocumented ?? [],
     untested: data.changes?.untested ?? [],
     wiring: { entries: data.wiring?.length ?? 0, untraceable: 0, invalid: 0 },
-    requests: { roots: 0, ways: 0, unmatched: 0 },
-    premises: { steps: 0, records: 0, made: 0, reads: 0, unmatched: 0 },
+    requests: { roots: 0, ways: 0, unmatched: 0, cases: 0, unfaithful: 0, mismatches: 0, assumedCases: 0, assumed: 0 },
   };
   const failures: string[] = [];
   for (const wiring of data.wiring ?? []) {
@@ -249,9 +268,7 @@ export async function checkMap(
     const file = await readFrame(root.frame);
     metrics.token[framework] = file.selections.filter((selection) => selection.kind === 'step' || selection.kind === 'exit').map((selection) => selection.name);
   }
-  const reads: Array<{ root: string; way: string; read: StoreAccess['read'][number] }> = [];
-  await checkRequests(data, readFrame, readRequests, metrics, failures, reads);
-  if (data.premises !== undefined) checkPremises(await readPremises(data.premises), reads, metrics, failures);
+  await checkRequests(data, readFrame, readRequests, expected, metrics, failures);
   if (metrics.unnamed > 0) failures.push(`${metrics.unnamed} ready-made choices have no name`);
   for (const duplicate of metrics.duplicateNames.slice(0, 10)) failures.push(`${duplicate.frame}: two choices are named "${duplicate.name}"`);
   for (const frame of metrics.uncovered.slice(0, 10)) failures.push(`${frame.frame}: lines ${frame.lines.join(', ')} of the body are in no node`);

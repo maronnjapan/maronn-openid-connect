@@ -334,8 +334,6 @@ export interface ExampleCounts {
   took: number;
   /** The requests left out because no line of their test sent them (SentRequest.sent). */
   unpinned: number;
-  /** The cases that got a sample from the requests run on the OP of the map (samples.ts). */
-  sampled?: number;
 }
 
 /**

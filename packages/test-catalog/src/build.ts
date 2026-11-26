@@ -18,8 +18,14 @@
  *     are no endpoint of (TestsIndex.sources);
  *   - tests/cases/<hash>.json: the cases of an endpoint (the ways a request
  *     takes through it, cases.ts), with the requests of the measured run
- *     that took each (examples.ts), read when its page opens;
+ *     that took each (examples.ts) and the request cases whose request took
+ *     each on the live OP (live.ts), read when its page opens;
  *   - tests/diff.json: in the build of a pull request, the diff of the tests.
+ *
+ * With the request cases run on the live OP (live.ts followCases), beside
+ * map.json: requests/<hash>.json, what the cases do at each root
+ * (RootRequests), named by MapData.requests, and MapData.liveOp, the probes
+ * of the OP they ran on.
  *
  * The run (MAP_TEST_REPORTS: the directory a run with MARONN_TEST_REPORTS
  * wrote, see run.ts) is optional: without it the cards are those of the
@@ -38,11 +44,11 @@ import { listFiles, supportFiles, testFileOf, testFiles, type TestFile } from '.
 import { requestsByEndpoint, type ExampleCounts } from './examples.js';
 import { countTests, entryOf, joinTests, type Joined } from './join.js';
 import { testsMarkdown, untestedMarkdown } from './markdown.js';
-import type { FlowTree, MapData, RootRequests, WayRequests, WaySample } from '@maronn-openid-connect/map-analysis';
-import type { CodeRef, EndpointCases, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
+import type { FlowTree, MapData } from '@maronn-openid-connect/map-analysis';
+import { liveCounts, rootRequests, type FollowedCases } from './live.js';
+import type { CodeRef, FileTests, FrameTestsRef, OutlineFunction, OutlineStep, Subject, TestCase, TestsIndex, TestsOutline } from './model.js';
 import { FrameLocator, readRun, type JoinedRun } from './run.js';
-import type { SampleRun } from './samples.js';
-import { recordedRequests, requestParams } from './sent.js';
+import { recordedRequests } from './sent.js';
 import { Translations, Vocabulary } from './vocabulary.js';
 
 export interface TestBuildOptions {
@@ -50,8 +56,8 @@ export interface TestBuildOptions {
   reports?: string;
   /** The data directory of the tests viewer (apps/tests/public/data); without it the build writes no file. */
   out?: string;
-  /** The requests run on the OP of the map at each endpoint, by `hono:<endpoint>` (samples.ts runSamples): the cases they take get them as samples. */
-  samples?: ReadonlyMap<string, readonly SampleRun[]>;
+  /** The request cases run on the live OP and followed through their roots (live.ts followCases): what they do at each root, beside map.json, and the ways of the tests viewer they took. */
+  live?: FollowedCases;
 }
 
 /** The cards with what a run says: their results, their reach, and the subjects the reach confirms or adds. */
@@ -363,45 +369,6 @@ export function caseRequests(data: MapData, run: Pick<JoinedRun, 'exchanges'>, t
   return { byEndpoint: requestsByEndpoint(run.exchanges, byId, endpointOf, reading.linesOf), ...reading };
 }
 
-/** A request as the flow view of the map shows it: the path without the query, the parameters it sent, the headers but Host and Content-Length. */
-function shownRequest(request: { method: string; path: string; headers: Array<[string, string]>; body?: string; truncated?: true }): Pick<WaySample, 'method' | 'path' | 'params' | 'headers'> {
-  const { method, path, headers, body, truncated } = request;
-  return {
-    method,
-    path: path.split('?')[0] ?? path,
-    params: requestParams({ path, headers, ...(body === undefined ? {} : { body }), ...(truncated === true ? { truncated } : {}) }),
-    headers: headers.filter(([name]) => name.toLowerCase() !== 'host' && name.toLowerCase() !== 'content-length'),
-  };
-}
-
-/**
- * The requests the OP of the map took the ways of each root with, for the
- * flow view of the map (RootRequests): the sample of each case that has one
- * (samples.ts), with the parameters it sent, the status the OP answered
- * with, and what it read and wrote of the records the OP held. Only the
- * cases with a sample; only the endpoints with one. What the tests sent
- * stays with the tests page (the examples of its cases).
- */
-export function rootRequests(data: MapData, found: ReadonlyArray<readonly [string, EndpointCases]>): RootRequests[] {
-  const roots: RootRequests[] = [];
-  for (const [key, endpoint] of found) {
-    const colon = key.indexOf(':');
-    const source = key.slice(0, colon);
-    const id = key.slice(colon + 1);
-    const root = data.flows[source]?.endpoints.find((candidate) => candidate.id === id)?.root;
-    if (root === undefined) continue;
-    const ways: WayRequests[] = [];
-    for (const item of endpoint.cases) {
-      if (item.sample === undefined) continue;
-      const { status, statusText } = item.sample.response;
-      const { store } = item.sample;
-      ways.push({ id: item.id, kind: item.kind, name: item.name, target: item.target, sample: { ...shownRequest(item.sample.request), status, ...(statusText === undefined ? {} : { statusText }), ...(store === undefined ? {} : { store }) } });
-    }
-    if (ways.length > 0) roots.push({ version: 3, root, source, endpoint: id, ways });
-  }
-  return roots;
-}
-
 /** What reading a catalog needs besides the revision: the tables of the repository. */
 interface Tables {
   aspects: AspectTable;
@@ -512,27 +479,12 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
   if (out !== undefined) {
     const writtenCases = new Set<string>();
     const requests = run === undefined || run.exchanges.size === 0 ? undefined : caseRequests(data, run, tests, endpoints, read);
-    const samples = options.samples === undefined || options.samples.size === 0 ? undefined : { byEndpoint: options.samples, ...fileReading(data, read) };
     const counts: ExampleCounts = { read: 0, took: 0, unpinned: 0 };
-    const found = [...endpointCases(data, repository.head.trees, context.failures, joined, requests, counts, samples)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const found = [...endpointCases(data, repository.head.trees, context.failures, joined, requests, counts, options.live)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     for (const [key, endpoint] of found) {
       cases[key] = `./data/tests/cases/${writeHashed(join(out, 'tests', 'cases'), key, JSON.stringify(endpoint), writtenCases)}`;
     }
     removeStale(join(out, 'tests', 'cases'), writtenCases);
-    // The requests the OP of the map took the ways of each root with, beside map.json: the flow view of the map starts the request of the way chosen from it.
-    const writtenRequests = new Set<string>();
-    if (samples !== undefined) {
-      const urls: Record<string, string> = {};
-      for (const root of rootRequests(data, found)) urls[root.root] = `./data/requests/${writeHashed(join(context.out, 'requests'), root.root, JSON.stringify(root), writtenRequests)}`;
-      data.requests = urls;
-    }
-    if (samples !== undefined) {
-      const tried = [...samples.byEndpoint.values()].reduce((sum, list) => sum + list.length, 0);
-      const keys = [...samples.byEndpoint.keys()];
-      const cases = found.filter(([key]) => keys.includes(key)).flatMap(([, endpoint]) => endpoint.cases);
-      context.log.push(`samples: ${tried} requests run on the OP of the map at ${keys.join(', ')}; ${counts.sampled ?? 0} of ${cases.length} cases took one`);
-    }
-    removeStale(join(context.out, 'requests'), writtenRequests);
     if (run !== undefined && requests !== undefined) {
       const all = found.flatMap(([, endpoint]) => endpoint.cases);
       const sent = [...run.exchanges.values()].reduce((sum, list) => sum + list.length, 0);
@@ -544,6 +496,18 @@ export async function buildTests(context: BuildContext, options: TestBuildOption
       );
     }
   }
+  // What the request cases do at each root, beside map.json: the flow view of the map prepares the request of the way chosen by one of its cases.
+  const writtenRequests = new Set<string>();
+  if (options.live !== undefined) {
+    const urls: Record<string, string> = {};
+    for (const root of rootRequests(options.live)) urls[root.root] = `./data/requests/${writeHashed(join(context.out, 'requests'), root.root, JSON.stringify(root), writtenRequests)}`;
+    data.requests = urls;
+    data.liveOp = { probes: options.live.probes };
+    const counted = liveCounts(options.live);
+    const reached = [...options.live.endpoints.values()].reduce((sum, endpoint) => sum + endpoint.cases.filter((item) => item.run.ways.length > 0).length, 0);
+    context.log.push(`cases: ${counted.cases} run on the live OP at ${counted.endpoints} endpoints in ${(options.live.took / 1000).toFixed(1)}s, ${counted.faithful} faithful, ${counted.mismatches} mismatches, ${counted.assumedCases} with ${counted.assumed} assumed decisions, ${reached} took a way, ${counted.ways} ways reached by a case`);
+  }
+  removeStale(join(context.out, 'requests'), writtenRequests);
   const index: TestsIndex = {
     version: 1,
     ...(run === undefined ? {} : { run: run.run.run }),

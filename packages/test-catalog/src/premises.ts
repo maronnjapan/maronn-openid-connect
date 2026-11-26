@@ -14,7 +14,7 @@ export interface RequestScenario {
   feature?: string;
   requires?: readonly string[];
   frameworks?: readonly string[];
-  /** Setup required outside the in-browser OP. */
+  /** Setup required outside the live OP (packages/live-op): the build does not run such a case, and the tests viewer shows its request without sending it. */
   external?: string;
   nextjs?: { path?: string; expected?: RequestScenario['expected'] };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { checkLinks, checkMap } from '../check.js';
-import type { FrameFile, MapChanges, MapData, PremisesFile, RootRequests, SourceDocument, StoreAccess, WaySample } from '../model.js';
+import { caseFaults, checkLinks, checkMap } from '../check.js';
+import type { CaseRun, FrameFile, MapChanges, MapData, RootRequests, SourceDocument } from '../model.js';
 
 /** A map of one function whose frame offers some choices by name. */
 function mapOf(names: readonly string[]): { data: MapData; frame: FrameFile } {
@@ -50,34 +50,33 @@ function changesOf(changedLines: number[]): MapChanges {
   };
 }
 
-/** A request the OP of the map took a way with. */
-function sample(): WaySample {
-  return { method: 'POST', path: '/token', params: [{ name: 'grant_type', value: 'authorization_code', in: 'form' }], headers: [], status: 200 };
+/** A case run at the root that took the way `c1`, as the build ran it on the live OP. */
+function caseRun(overrides: Partial<CaseRun> = {}): CaseRun {
+  return { id: 'token-code', status: 200, ways: ['c1'], rootRan: true, mismatches: 0, assumed: 0, ...overrides };
 }
 
-describe('checkMap, with the requests the OP of the map took ways with', () => {
-  it('should pass ways that are choices of their root, and count them', async () => {
+/** The requests of the root `core:a.ts#f`: its way `return x` taken by the case given. */
+function requestsOf(run: CaseRun, ways: RootRequests['ways'] = [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', scenarios: [run.id] }]): RootRequests {
+  return { version: 4, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways, cases: [run] };
+}
+
+describe('checkMap, with what the request cases do at the roots', () => {
+  it('should pass ways that are choices of their root and cases that answered as they expect, and count them', async () => {
     const { data, frame } = mapOf(['return x']);
     data.requests = { 'core:a.ts#f': 'requests.json' };
-    const requests: RootRequests = { version: 3, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', sample: sample() }] };
-    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
-    expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, unmatched: 0 }, []]);
+    const requests = requestsOf(caseRun({ assumed: 2 }));
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, () => ({ status: 200 }));
+    expect([metrics.requests, failures]).toEqual([{ roots: 1, ways: 1, unmatched: 0, cases: 1, unfaithful: 0, mismatches: 0, assumedCases: 1, assumed: 2 }, []]);
   });
 
   it('should fail on a way no choice of its root is, and a root with no frame', async () => {
     const { data, frame } = mapOf(['return x']);
     data.requests = { 'core:a.ts#f': 'requests.json', 'core:b.ts#g': 'other.json' };
-    const requests: RootRequests = {
-      version: 3,
-      root: 'core:a.ts#f',
-      source: 'hono',
-      endpoint: 'token',
-      ways: [
-        { id: 'c1', kind: 'step', name: 'a step', target: 's0', sample: sample() },
-        { id: 'c2', kind: 'exit', name: 'return x', target: 's0', sample: sample() },
-        { id: 'c3', kind: 'exit', name: 'return y', target: 's0', sample: sample() },
-      ],
-    };
+    const requests = requestsOf(caseRun({ ways: ['c1', 'c2', 'c3'] }), [
+      { id: 'c1', kind: 'step', name: 'a step', target: 's0', scenarios: ['token-code'] },
+      { id: 'c2', kind: 'exit', name: 'return x', target: 's0', scenarios: ['token-code'] },
+      { id: 'c3', kind: 'exit', name: 'return y', target: 's0', scenarios: ['token-code'] },
+    ]);
     const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
     expect([metrics.requests.unmatched, failures]).toEqual([
       2,
@@ -88,80 +87,47 @@ describe('checkMap, with the requests the OP of the map took ways with', () => {
       ],
     ]);
   });
-});
 
-/** Premises made by two requests: a code added by the first and changed by the second, and a client of the configuration. */
-function premisesFile(): PremisesFile {
-  return {
-    version: 1,
-    issuer: 'https://op.example.com',
-    now: 0,
-    steps: [
-      { grant: 'g', request: { method: 'POST', url: 'https://op.example.com/consent' }, response: { status: 302 }, wrote: [{ collection: 'codes', key: 'c1', change: 'added', value: {} }] },
-      { grant: 'g', request: { method: 'POST', url: 'https://op.example.com/token' }, response: { status: 200 }, wrote: [{ collection: 'codes', key: 'c1', change: 'changed', value: {}, fields: ['used'] }] },
-    ],
-    records: [
-      { collection: 'codes', key: 'c1', value: {}, addedBy: 0, changedBy: [1] },
-      { collection: 'clients', key: 'client-1', value: {} },
-    ],
-  };
-}
-
-/** The requests of a root whose one way's sample read what is given. */
-function requestsReading(read: StoreAccess['read']): RootRequests {
-  return { version: 3, root: 'core:a.ts#f', source: 'hono', endpoint: 'token', ways: [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', sample: { ...sample(), store: { read, wrote: [] } } }] };
-}
-
-describe('checkMap, with the premises of the OP of the map', () => {
-  it('should pass premises whose records were written by the requests they name, and samples that read what they hold', async () => {
+  it('should fail on a way that names a case not run at the root, and a case whose ways do not name it', async () => {
     const { data, frame } = mapOf(['return x']);
     data.requests = { 'core:a.ts#f': 'requests.json' };
-    data.premises = 'premises.json';
-    const requests = requestsReading([
-      { collection: 'clients', key: 'client-1', found: true },
-      { collection: 'codes', key: 'c1', found: true },
-      { collection: 'codes', key: 'c9', found: false },
-      { collection: 'accessTokens', found: false },
+    const requests = requestsOf(caseRun({ ways: ['c1', 'c9'] }), [{ id: 'c1', kind: 'exit', name: 'return x', target: 's0', scenarios: ['token-code', 'token-other'] }]);
+    const { failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests);
+    expect(failures).toEqual([
+      'core:a.ts#f: the way "return x" names the case token-other, which was not run at the root',
+      'core:a.ts#f: the case token-code took the way c9, which the requests do not list',
     ]);
-    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, async () => premisesFile());
-    expect([metrics.premises, failures]).toEqual([{ steps: 2, records: 2, made: 1, reads: 3, unmatched: 0 }, []]);
   });
 
-  it('should read a lookup inside a record that is a Map (a consent to a client) against the members of the record', async () => {
+  it('should fail on a case whose walk disagrees with its trace, whose request did not run the root, or that answered other than it expects', async () => {
     const { data, frame } = mapOf(['return x']);
     data.requests = { 'core:a.ts#f': 'requests.json' };
-    data.premises = 'premises.json';
-    const premises = premisesFile();
-    premises.records.push({ collection: 'consentScopes', key: 'testuser', value: { 'client-1': ['openid'] }, addedBy: 0 });
-    premises.steps[0]?.wrote.push({ collection: 'consentScopes', key: 'testuser', change: 'added', value: { 'client-1': ['openid'] } });
-    const requests = requestsReading([
-      { collection: 'consentScopes', key: 'testuser', member: 'client-1', found: true },
-      { collection: 'consentScopes', key: 'testuser', member: 'client-2', found: false },
-      { collection: 'consentScopes', key: 'testuser', member: 'client-9', found: true },
-    ]);
-    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, async () => premises);
-    expect([metrics.premises.unmatched, failures]).toEqual([1, ['core:a.ts#f: the sample of "return x" found consentScopes testuser client-9, which the premises do not hold: it was not run on the premises the page hands to its OP']]);
-  });
-
-  it('should fail on a record that names a request that did not write it, and on a sample that read records the premises disagree with', async () => {
-    const { data, frame } = mapOf(['return x']);
-    data.requests = { 'core:a.ts#f': 'requests.json' };
-    data.premises = 'premises.json';
-    const premises = premisesFile();
-    premises.records[0] = { collection: 'codes', key: 'c1', value: {}, addedBy: 1 };
-    const requests = requestsReading([
-      { collection: 'codes', key: 'c2', found: true },
-      { collection: 'clients', key: 'client-1', found: false },
-    ]);
-    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, async () => premises);
-    expect([metrics.premises.unmatched, failures]).toEqual([
-      2,
+    const requests = requestsOf(caseRun({ status: 400, error: 'invalid_grant', rootRan: false, mismatches: 3 }));
+    const { metrics, failures } = await checkMap(data, async () => frame, async () => undefined, async () => requests, () => ({ status: 400, error: 'invalid_client' }));
+    expect([metrics.requests.unfaithful, metrics.requests.mismatches, failures]).toEqual([
+      1,
+      3,
       [
-        'premises: the record codes c1 says request 1 added it, which that request did not',
-        'core:a.ts#f: the sample of "return x" found codes c2, which the premises do not hold: it was not run on the premises the page hands to its OP',
-        'core:a.ts#f: the sample of "return x" did not find clients client-1, which the premises hold: it was not run on the premises the page hands to its OP',
+        'core:a.ts#f: the case token-code (400 invalid_grant) is not faithful: its walk disagrees with what its request ran at 3 places; its request did not run the root; the OP answered 400 invalid_grant where the case expects 400 invalid_client',
       ],
     ]);
+  });
+});
+
+describe('caseFaults', () => {
+  it('should take a request the router answered when the case expects its status', () => {
+    expect(caseFaults(caseRun({ status: 405, rootRan: false, ways: [] }), { status: 405 })).toEqual([]);
+  });
+
+  it('should read the error only when the case names one or the path it redirects to', () => {
+    expect([
+      caseFaults(caseRun({ status: 400, error: 'invalid_request' }), { status: 400 }),
+      caseFaults(caseRun({ status: 302, error: 'access_denied' }), { status: 302, redirectPath: '/callback' }),
+    ]).toEqual([[], ['the OP answered 302 access_denied where the case expects 302']]);
+  });
+
+  it('should read only the walk and the root without an expectation', () => {
+    expect(caseFaults(caseRun({ status: 500, rootRan: false }), undefined)).toEqual(['its request did not run the root']);
   });
 });
 

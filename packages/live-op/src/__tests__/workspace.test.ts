@@ -202,6 +202,16 @@ describe('LiveWorkspace', () => {
     expect(records.filter((record) => record.collection === 'clients').every((record) => record.addedBy === undefined)).toBe(true);
   });
 
+  it('should name a request that changed a record twice once among its changers (a device approval writes its code twice)', async () => {
+    const workspace = await LiveWorkspace.open('provenance-once', ISSUER);
+    const prepared = await prepareRecipe(workspace, 'device-approve', RECIPES['device-approve']!);
+    const approved = await workspace.send(prepared.request, 'relay');
+    const device = workspace.state().records.find((record) => record.collection === 'deviceCodes');
+    expect(approved.exchange.status).toBe(200);
+    expect(device?.changedBy).toContain(approved.exchange.id);
+    expect(new Set(device?.changedBy).size).toBe(device?.changedBy?.length);
+  });
+
   it('should record the order of what a request ran against the probe table of the build', async () => {
     const workspace = await LiveWorkspace.open('trace', ISSUER);
     const { exchange } = await workspace.send(DISCOVERY, 'relay');

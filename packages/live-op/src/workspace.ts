@@ -592,7 +592,11 @@ export class LiveWorkspace {
       const key = recordKey(change.collection, change.key);
       if (change.change === 'added') this.snapshot.provenance[key] = { addedBy: id };
       else if (change.change === 'removed') delete this.snapshot.provenance[key];
-      else this.snapshot.provenance[key] = { ...this.snapshot.provenance[key], changedBy: [...(this.snapshot.provenance[key]?.changedBy ?? []), id] };
+      else {
+        // A request that changes a record twice (the device approval writes the device code twice) changed it once.
+        const changedBy = this.snapshot.provenance[key]?.changedBy ?? [];
+        this.snapshot.provenance[key] = { ...this.snapshot.provenance[key], changedBy: changedBy[changedBy.length - 1] === id ? changedBy : [...changedBy, id] };
+      }
     }
   }
 

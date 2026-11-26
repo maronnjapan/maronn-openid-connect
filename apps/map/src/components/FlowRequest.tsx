@@ -7,7 +7,7 @@ import { Rows } from './Rows';
 import { StoredReads, StoredWrites } from './StoredRecords';
 import { browserPath, expectationGaps, SOURCE_WORDS } from '../lib/live';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
-import { notRanWords, previewPlan, replayWords, resultLabel, type DraftBase } from '../lib/preview';
+import { keptExchangeId, notRanWords, previewFailureWords, previewPlan, replayWords, resultLabel, staleResult, STALE_WORDS, type DraftBase } from '../lib/preview';
 import { blankDraft, bodiless, draftProblem, headerValue, liveRequestOf, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
 import type { MapData, Selection } from '../types';
 import type { RootRequestsState } from './useRequests';
@@ -32,6 +32,8 @@ interface RunResultProps {
   assumed: number;
   /** What the case selected expects of its response; undefined without a case. */
   expected: RequestScenario['expected'] | undefined;
+  /** The result is of the request before the reader's last edits, which cannot be sent (lib/preview.ts staleResult). */
+  stale: boolean;
   onFollow: () => void;
   onOpen: (id: string) => void;
 }
@@ -45,9 +47,10 @@ interface RunResultProps {
  * its case expects beside it, how the replay follows the way it took, and
  * the records it read and wrote. Times are the OP's clock when the request
  * came. A preview shows its Location on a line of its own and folds its
- * headers, its body and its records, which the workspace does not hold.
+ * headers, its body and its records, which the workspace does not hold. A
+ * result of the request before edits that left it unsendable says so.
  */
-function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }: RunResultProps) {
+function RunResult({ run, replay, ending, assumed, expected, stale, onFollow, onOpen }: RunResultProps) {
   const live = useLiveState();
   const records = live.kind === 'ready' ? live.state.records : undefined;
   // A new response is brought into view in the scroll of the request, where it comes below the form; not one the editor's request came to while the reader writes on it.
@@ -114,6 +117,7 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
           </span>
         </p>
       )}
+      {stale ? <p className="note req-problem">{STALE_WORDS}</p> : null}
       {run.opened ? (
         <p className="req-line">
           <span className="req-method">{exchange.method}</span>
@@ -227,6 +231,8 @@ export interface FlowRequestProps {
   previewProblem: PreviewProblem | undefined;
   /** Make the playback follow the request the editor shows (useRun.ts RequestRun.show): called once the reader stops writing on it. */
   onPreview: (draft: RequestDraft) => void;
+  /** Let go of the preview: the editor shows a blank request nobody wrote on again (useRun.ts RequestRun.release). */
+  onRelease: () => void;
   /** The ready-made way the run ended by, in words. */
   ending: string | undefined;
   /** The title of a case, by its id. */
@@ -250,12 +256,15 @@ export interface FlowRequestProps {
  * (useRun.ts). Before it is sent, the playback follows the request shown:
  * the one a case prepared, and each edit once the reader stops typing, is
  * previewed on a copy of the workspace's state (nothing is sent, lib/preview.ts
- * previewPlan), and the result says it is a preview. A GET of a page a browser opens opens in a tab as well,
+ * previewPlan), and the result says it is a preview. A blank request again
+ * (元のリクエストに戻す, or every row written away) lets go of the preview,
+ * and a request written into a form that cannot be sent leaves the result
+ * marked as the one before. A GET of a page a browser opens opens in a tab as well,
  * whose requests come to the same workspace. Below: the recent requests of
  * the workspace (any of them opens without being sent again), and the
  * state of the workspace.
  */
-export function FlowRequest({ data, requests, selection, generatedCase, origin, assumed, framework, endpoint, endpoints, unrunnable, live: served, featuresOff, run, replay, previewing, previewProblem, onPreview, ending, caseTitle, onRun, onFollow, onPrepareCase, onOpenExchange, onOpenExchangeId }: FlowRequestProps) {
+export function FlowRequest({ data, requests, selection, generatedCase, origin, assumed, framework, endpoint, endpoints, unrunnable, live: served, featuresOff, run, replay, previewing, previewProblem, onPreview, onRelease, ending, caseTitle, onRun, onFollow, onPrepareCase, onOpenExchange, onOpenExchangeId }: FlowRequestProps) {
   const headingId = useId();
   const live = useLiveState();
   const originKey = origin !== undefined ? origin.key : generatedCase !== undefined ? `case:${generatedCase.key}` : 'blank';
@@ -268,22 +277,24 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
   const update = (next: RequestDraft) => setEdited({ key: originKey, draft: next });
   const ready = requests.kind === 'ready' ? requests.requests : undefined;
   const cases = generatedCase === undefined && origin === undefined && selection !== undefined ? (wayRequestsOf(ready, selection)?.scenarios ?? []) : [];
-  // The playback follows the request shown: taken up at once when a case prepared it, after a pause in the typing when the reader wrote on it.
+  // The playback follows the request shown: taken up at once when a case prepared it, after a pause in the typing when the reader wrote on it; a blank one again lets go of the preview.
   const offline = live.kind === 'failed' && live.unreachable;
   const baseKind: DraftBase = origin !== undefined ? 'exchange' : generatedCase !== undefined ? 'case' : 'blank';
-  const plan = draft === undefined ? undefined : previewPlan({ draft, base: baseKind, edited: changed, origin: originKey, blocked: !served || unrunnable !== undefined || offline });
-  const shownDraft = useRef({ draft, onPreview });
-  shownDraft.current = { draft, onPreview };
+  const plan = draft === undefined || base === undefined ? undefined : previewPlan({ draft, start: base, base: baseKind, edited: changed, origin: originKey, blocked: !served || unrunnable !== undefined || offline });
+  const shownDraft = useRef({ draft, onPreview, onRelease });
+  shownDraft.current = { draft, onPreview, onRelease };
   const planKey = plan?.key;
   const planDelay = plan?.delay;
+  const planRelease = plan?.release === true;
   useEffect(() => {
     if (planKey === undefined || planDelay === undefined) return undefined;
     const timer = window.setTimeout(() => {
-      const { draft: shown, onPreview: show } = shownDraft.current;
-      if (shown !== undefined) show(shown);
+      const { draft: shown, onPreview: show, onRelease: release } = shownDraft.current;
+      if (planRelease) release();
+      else if (shown !== undefined) show(shown);
     }, planDelay);
     return () => window.clearTimeout(timer);
-  }, [planKey, planDelay]);
+  }, [planKey, planDelay, planRelease]);
 
   let note: string;
   if (origin !== undefined) note = `ワークスペースが記録したリクエスト ${origin.key.slice(2)} です。送り直さずに、その道筋を再生しています。書き換えると、送る前に地図の OP の状態のコピーで試算し、書き換えたリクエストが通る道筋を再生します。実行すると、地図の OP に送ります。`;
@@ -308,7 +319,7 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
         <h4 id={headingId}>リクエスト</h4>
         {connection}
         {generatedCase === undefined ? <p className="note req-empty">エンドポイントの画面でリクエストを書いて実行できます。</p> : <p className="note req-empty">{unrunnable ?? '地図の OP で、このケースのリクエストを準備しています…'}</p>}
-        {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={run?.status === 'done' ? run.exchange.id : undefined} onOpen={onOpenExchange} /> : null}
+        {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={keptExchangeId(run)} onOpen={onOpenExchange} /> : null}
       </section>
     );
   }
@@ -405,11 +416,11 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
       ) : null}
       {previewProblem !== undefined && !(previewProblem.unreachable && connection !== null) ? (
         <p className="note req-problem" role="alert">
-          {previewProblem.unreachable ? previewProblem.message : `書き換えたリクエストを試算できませんでした（${previewProblem.message}）。フローは前の道筋のままです。`}
+          {previewFailureWords(previewProblem)}
         </p>
       ) : null}
-      {run !== undefined ? <RunResult run={run} replay={replay} ending={ending} assumed={assumed} expected={generatedCase?.scenario.expected} onFollow={onFollow} onOpen={onOpenExchangeId} /> : null}
-      {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={run?.status === 'done' && run.preview !== true ? run.exchange.id : undefined} onOpen={onOpenExchange} /> : null}
+      {run !== undefined ? <RunResult run={run} replay={replay} ending={ending} assumed={assumed} expected={generatedCase?.scenario.expected} stale={staleResult(draft, changed, run.status === 'done')} onFollow={onFollow} onOpen={onOpenExchangeId} /> : null}
+      {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={keptExchangeId(run)} onOpen={onOpenExchange} /> : null}
       {served ? <LiveStatePanel onOpen={onOpenExchangeId} /> : null}
     </section>
   );

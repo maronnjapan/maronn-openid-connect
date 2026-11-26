@@ -1,6 +1,6 @@
 import type { LiveRecord, StoreAccess } from '@maronn-openid-connect/live-op/api';
 import { recordOf } from '../lib/live';
-import { changeWords, collectionWord, shortKey, valueRows } from '../lib/records';
+import { changersOf, changeWords, collectionWord, shortKey, valueRows } from '../lib/records';
 
 /** The fields of a record, one row each, a time with how it stands to the OP's clock (Unix seconds). */
 export function RecordValue({ value, now }: { value: unknown; now: number }) {
@@ -30,10 +30,10 @@ export function ExchangeLink({ id, onOpen }: { id: string; onOpen: (id: string) 
   );
 }
 
-/** Where a record of the workspace came from, on one line: the exchange that stored it and those that changed it after, each to open, or the OP's configuration. */
+/** Where a record of the workspace came from, on one line: the exchange that stored it and those that changed it after (each once, changersOf), each to open, or the OP's configuration. */
 export function Provenance({ record, onOpen }: { record: LiveRecord; onOpen: (id: string) => void }) {
-  if (record.addedBy === undefined && (record.changedBy ?? []).length === 0) return <span className="req-note">（OP の設定で登録したもの）</span>;
-  const changed = record.changedBy ?? [];
+  const changed = changersOf(record);
+  if (record.addedBy === undefined && changed.length === 0) return <span className="req-note">（OP の設定で登録したもの）</span>;
   return (
     <span className="req-note store-provenance">
       （{record.addedBy !== undefined ? (

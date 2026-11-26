@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editorFollow, notRanWords, PREVIEW_DELAY, previewPlan, replayWords, requestKey, resultLabel } from './preview';
+import { editorFollow, heldAfterSend, keptExchangeId, notRanWords, PREVIEW_DELAY, previewFailureWords, previewPlan, replayWords, requestKey, resultLabel, staleResult, STALE_WORDS } from './preview';
 import { blankDraft, draftOfRequest, type RequestDraft } from './run';
 
 /** The request a case prepares at the token endpoint: an authorization code with its PKCE verifier. */
@@ -39,54 +39,113 @@ describe('requestKey', () => {
 
 describe('previewPlan', () => {
   it('should take up the request a case prepared at once, and an edit after a pause in the typing, keyed by where it started and the request', () => {
-    const prepared = previewPlan({ draft: CODE, base: 'case', edited: false, origin: 'case:token-code:1', blocked: false });
-    const edited = previewPlan({ draft: withParam(CODE, 'code_verifier', 'wrong'), base: 'case', edited: true, origin: 'case:token-code:1', blocked: false });
-    const again = previewPlan({ draft: CODE, base: 'case', edited: false, origin: 'case:token-code:2', blocked: false });
+    const prepared = previewPlan({ draft: CODE, start: CODE, base: 'case', edited: false, origin: 'case:token-code:1', blocked: false });
+    const edited = previewPlan({ draft: withParam(CODE, 'code_verifier', 'wrong'), start: CODE, base: 'case', edited: true, origin: 'case:token-code:1', blocked: false });
+    const again = previewPlan({ draft: CODE, start: CODE, base: 'case', edited: false, origin: 'case:token-code:2', blocked: false });
 
     expect(prepared).toEqual({ key: `case:token-code:1\n${requestKey(CODE)}`, delay: 0 });
     expect(edited?.delay).toBe(PREVIEW_DELAY);
     expect(PREVIEW_DELAY).toBe(400);
     expect(edited?.key).not.toBe(prepared?.key);
+    expect(edited?.release).toBeUndefined();
     // Prepared again: the same request is taken up again, as the case's request now.
     expect(again?.key).not.toBe(prepared?.key);
   });
 
-  it('should take up an exchange opened as it is (to follow it again when the reader comes back to it), but never a blank request nobody wrote on', () => {
+  it('should take up an exchange opened as it is (to follow it again when the reader comes back to it), and a blank request written on after the pause', () => {
     const blank = blankDraft('POST', '/token');
     const written = { ...blank, params: [{ name: 'grant_type', value: 'client_credentials', in: 'form' as const }] };
 
-    expect(previewPlan({ draft: CODE, base: 'exchange', edited: false, origin: 'x:x3', blocked: false })?.delay).toBe(0);
-    expect(previewPlan({ draft: blank, base: 'blank', edited: false, origin: 'blank', blocked: false })).toBeUndefined();
-    expect(previewPlan({ draft: written, base: 'blank', edited: true, origin: 'blank', blocked: false })?.delay).toBe(PREVIEW_DELAY);
+    expect(previewPlan({ draft: CODE, start: CODE, base: 'exchange', edited: false, origin: 'x:x3', blocked: false })?.delay).toBe(0);
+    expect(previewPlan({ draft: written, start: blank, base: 'blank', edited: true, origin: 'blank', blocked: false })).toEqual({ key: `blank\n${requestKey(written)}`, delay: PREVIEW_DELAY });
+  });
+
+  it('should let go of the preview for a blank request nobody wrote on: at once when the reader went back to it, after the pause when every row was written away', () => {
+    const blank = blankDraft('GET', '/userinfo');
+    const garbage = { ...blank, headers: [['Authorization', 'Bearer garbage']] as Array<[string, string]> };
+    const emptied = { ...blank, headers: [['', 'Bearer garbage']] as Array<[string, string]> };
+
+    expect(previewPlan({ draft: blank, start: blank, base: 'blank', edited: false, origin: 'blank', blocked: false })).toEqual({ key: 'blank\nrelease', delay: 0, release: true });
+    // A row without a name sends nothing: the request is the blank one again.
+    expect(previewPlan({ draft: emptied, start: blank, base: 'blank', edited: true, origin: 'blank', blocked: false })).toEqual({ key: 'blank\nrelease', delay: PREVIEW_DELAY, release: true });
+    // Even where nothing is previewed: there is nothing to preview, only a preview to let go of.
+    expect(previewPlan({ draft: blank, start: blank, base: 'blank', edited: false, origin: 'blank', blocked: true })?.release).toBe(true);
+    expect(previewPlan({ draft: garbage, start: blank, base: 'blank', edited: true, origin: 'blank', blocked: false })?.release).toBeUndefined();
   });
 
   it('should take up nothing where the request cannot be run (Next.js, an OP out of reach) or sent (a body on a GET, a header name that is not one)', () => {
     const get = blankDraft('GET', '/userinfo');
 
-    expect(previewPlan({ draft: CODE, base: 'case', edited: false, origin: 'case:token-code:1', blocked: true })).toBeUndefined();
-    expect(previewPlan({ draft: { ...get, params: [{ name: 'a', value: '1', in: 'form' }] }, base: 'blank', edited: true, origin: 'blank', blocked: false })).toBeUndefined();
-    expect(previewPlan({ draft: { ...CODE, headers: [['bad header', 'x']] }, base: 'case', edited: true, origin: 'case:token-code:1', blocked: false })).toBeUndefined();
+    expect(previewPlan({ draft: CODE, start: CODE, base: 'case', edited: false, origin: 'case:token-code:1', blocked: true })).toBeUndefined();
+    expect(previewPlan({ draft: { ...get, params: [{ name: 'a', value: '1', in: 'form' }] }, start: get, base: 'blank', edited: true, origin: 'blank', blocked: false })).toBeUndefined();
+    expect(previewPlan({ draft: { ...CODE, headers: [['bad header', 'x']] }, start: CODE, base: 'case', edited: true, origin: 'case:token-code:1', blocked: false })).toBeUndefined();
   });
 });
 
 describe('editorFollow', () => {
   const recorded = new Set(['sent']);
 
-  it('should wait for a preview under way of the same request, and stay on the request the playback follows', () => {
-    expect(editorFollow('edited', { pending: 'edited', shown: { key: 'case', follow: true }, recorded })).toBe('wait');
-    expect(editorFollow('case', { pending: 'edited', shown: { key: 'case', follow: true }, recorded })).toBe('stay');
-    expect(editorFollow('sent', { shown: { key: 'sent', follow: true }, recorded })).toBe('stay');
+  it('should wait for a preview under way of the same request, and stay on the request the run shows', () => {
+    expect(editorFollow('edited', { pending: 'edited', shown: { key: 'case' }, recorded })).toBe('wait');
+    expect(editorFollow('case', { pending: 'edited', shown: { key: 'case' }, recorded })).toBe('stay');
+    expect(editorFollow('sent', { shown: { key: 'sent' }, recorded })).toBe('stay');
   });
 
-  it('should follow again the way of the request shown when the reader had left it, and the exchange of a request sent or opened before', () => {
-    expect(editorFollow('case', { shown: { key: 'case', follow: false }, recorded })).toBe('resume');
-    expect(editorFollow('sent', { shown: { key: 'edited', follow: true }, recorded })).toBe('recorded');
+  it('should not take the way of the request shown again on its own when the reader left it: an edit typed and undone in the pause comes back to the same request', () => {
+    // The playback left the preview of `case` (the reader took another side); the editor's request is `case` again after `case` + `x` and its undo.
+    expect(editorFollow('case', { shown: { key: 'case' }, recorded })).toBe('stay');
+  });
+
+  it('should follow again the exchange of a request sent or opened before', () => {
+    expect(editorFollow('sent', { shown: { key: 'edited' }, recorded })).toBe('recorded');
   });
 
   it('should preview any other request: one written on, the one a case prepared, one after a run that failed', () => {
-    expect(editorFollow('edited', { shown: { key: 'case', follow: true }, recorded })).toBe('preview');
+    expect(editorFollow('edited', { shown: { key: 'case' }, recorded })).toBe('preview');
     expect(editorFollow('case', { recorded: new Set() })).toBe('preview');
     expect(editorFollow('edited', { pending: 'other', recorded })).toBe('preview');
+  });
+});
+
+describe('heldAfterSend', () => {
+  it('should hold the editor\'s request to preview once the send lands, but not the request being sent, nor any after an exchange read', () => {
+    const held = withParam(CODE, 'code_verifier', 'other');
+
+    expect(heldAfterSend(held, requestKey(held), requestKey(CODE))).toBe(held);
+    expect(heldAfterSend(CODE, requestKey(CODE), requestKey(CODE))).toBeUndefined();
+    // An exchange being read has no key: the request is held, and the opening drops it when it lands (the editor starts over from the exchange).
+    expect(heldAfterSend(held, requestKey(held), undefined)).toBe(held);
+  });
+});
+
+describe('keptExchangeId', () => {
+  it('should name the exchange of a request sent or opened, never a preview, which the workspace does not keep', () => {
+    expect(keptExchangeId({ status: 'done', exchange: { id: 'x4' } })).toBe('x4');
+    expect(keptExchangeId({ status: 'done', exchange: { id: 'p2' }, preview: true })).toBeUndefined();
+    expect(keptExchangeId({ status: 'running' })).toBeUndefined();
+    expect(keptExchangeId(undefined)).toBeUndefined();
+  });
+});
+
+describe('staleResult', () => {
+  it('should mark the result shown as the one before when the reader wrote the request into a form that cannot be sent', () => {
+    const get = blankDraft('GET', '/userinfo');
+    const withBody = { ...get, params: [{ name: 'a', value: '1', in: 'form' as const }] };
+
+    expect(staleResult(withBody, true, true)).toBe(true);
+    expect(staleResult({ ...CODE, headers: [['bad header', 'x']] }, true, true)).toBe(true);
+    expect(staleResult(withParam(CODE, 'code_verifier', 'other'), true, true)).toBe(false);
+    // Nothing shown, or a request nobody wrote on (an exchange opened as it was recorded).
+    expect(staleResult(withBody, true, false)).toBe(false);
+    expect(staleResult(withBody, false, true)).toBe(false);
+    expect(STALE_WORDS.startsWith('この結果は書き換える前のリクエストのものです')).toBe(true);
+  });
+});
+
+describe('previewFailureWords', () => {
+  it('should say a preview failed for the request shown, edited or as a case prepared it, and an OP out of reach in its own words', () => {
+    expect(previewFailureWords({ message: 'internal error', unreachable: false })).toBe('このリクエストを試算できませんでした（internal error）。フローは前の道筋のままです。');
+    expect(previewFailureWords({ message: '地図の OP に接続できません。', unreachable: true })).toBe('地図の OP に接続できません。');
   });
 });
 

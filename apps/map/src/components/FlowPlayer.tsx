@@ -201,13 +201,13 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
     // Another way leaves the way of the request run.
     run.forget();
     if (value === 'auto') {
-      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, exchange: undefined, focus: '' });
+      onState({ ...state, open: [], choices: [], way: undefined, request: undefined, exchange: undefined, previewed: undefined, focus: '' });
       return;
     }
     const selection = selections[Number(value)];
     if (selection === undefined) return;
     // A way is played on its own: its frames open, its sides chosen, from the start.
-    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, exchange: undefined, focus: '' });
+    onState({ ...state, open: [...(selection.frames ?? [])], choices: [selection.decisions], way: selectionKey(selection), request: undefined, exchange: undefined, previewed: undefined, focus: '' });
   };
   const failures = selections.map((selection, index) => ({ selection, index })).filter((item) => item.selection.kind === 'failure');
   const failureIndex = new Map(failures.map((item) => [item.selection, item.index]));
@@ -476,6 +476,7 @@ export function FlowPlayer({ data, selections, state, onState, enabled, walked, 
         previewing={run.previewing}
         previewProblem={run.previewProblem}
         onPreview={run.show}
+        onRelease={run.release}
         ending={ending}
         caseTitle={caseTitle}
         onRun={(draft) => {

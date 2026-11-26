@@ -843,12 +843,12 @@ export function Trace({ data, changes, framework, rootId, extraSelections = [], 
     requestRun.forget();
     playback.play(false);
     playback.go(0);
-    onState({ ...state, request: id, exchange: undefined, way: undefined, open: [], choices: [], focus: '' });
+    onState({ ...state, request: id, exchange: undefined, way: undefined, open: [], choices: [], previewed: undefined, focus: '' });
   };
   /** Prepare a case whose request took the way played: the way stays, and the request becomes the case's. */
   const prepareCase = (id: string) => {
     requestRun.forget();
-    onState({ ...state, request: id, exchange: undefined });
+    onState({ ...state, request: id, exchange: undefined, previewed: undefined });
   };
   // The endpoints of the OP, to tell which endpoint a request of the workspace is for.
   const allEndpoints = data.flows[framework]?.endpoints ?? [];

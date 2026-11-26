@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeWords, collectionWord, shortKey, timeWords, valueRows } from './records';
+import { changersOf, changeWords, collectionWord, shortKey, timeWords, valueRows } from './records';
 
 describe('collectionWord', () => {
   it('should name a collection of the memory database or of a feature in words, and one it does not know by its name', () => {
@@ -31,6 +31,11 @@ describe('valueRows', () => {
 describe('the words of the records', () => {
   it('should say what a request did to a record', () => {
     expect([changeWords({ change: 'added' }), changeWords({ change: 'changed', fields: ['used'] }), changeWords({ change: 'changed' }), changeWords({ change: 'removed' })]).toEqual(['を保存した', 'の used を変えた', 'を変えた', 'を消した']);
+  });
+
+  it('should name each exchange that changed a record once, in the order it first changed it', () => {
+    // The device approval (x4) writes its device code twice.
+    expect([changersOf({ changedBy: ['x2', 'x4', 'x4'] }), changersOf({ changedBy: ['x5', 'x3', 'x5'] }), changersOf({})]).toEqual([['x2', 'x4'], ['x5', 'x3'], []]);
   });
 
   it('should shorten a long key around an ellipsis and keep a short one whole', () => {

@@ -1,4 +1,5 @@
 import { WebRouter } from '../../web-router.js';
+import { BEARER_CHALLENGE, type UserInfoChallenge } from './response.js';
 import { buildUserInfoResponse } from './steps/build-response.js';
 import { parseUserInfoRequest } from './steps/parse-access-token.js';
 import { resolveUserInfoToken } from './steps/resolve-access-token.js';
@@ -12,8 +13,9 @@ import { respondUserInfo } from './steps/respond.js';
  *
  * Each block below calls one step of the endpoint (steps/), one box of
  * `maronn-oidc graph --detail steps --endpoint userinfo`: read the Bearer
- * token, resolve and validate it, resolve the claims it may see, build the
- * response (JSON, or a signed JWT when the client registered
+ * token (with dpop, a DPoP token and its proof), resolve and validate it,
+ * check the key it is bound to (dpop), resolve the claims it may see, build
+ * the response (JSON, or a signed JWT when the client registered
  * userinfo_signed_response_alg) and answer. A step that throws ends in
  * respondUserInfoError().
  */
@@ -21,9 +23,15 @@ export const userinfoApp = new WebRouter();
 
 /** アクセストークンを検証し、開示できる UserInfo を JSON か署名付き JWT で返す。 */
 async function handler(c: any): Promise<Response> {
+  // 失敗の応答のチャレンジ（`WWW-Authenticate`）。
+  // 既定は Bearer で、DPoP スキームのトークンを読んだ機能（dpop）のブロックが DPoP のチャレンジに置き換える（RFC 9449 §7.1）。
+  // どのステップが失敗してもエラーのステップが読めるよう、`try` の前で宣言する。
+  let challenge: UserInfoChallenge = BEARER_CHALLENGE;
   try {
+    const dpopAccessToken = undefined;
+
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
-    const accessToken = await parseUserInfoRequest(c);
+    const accessToken = dpopAccessToken ?? (await parseUserInfoRequest(c));
 
     // [resolve-access-token] アクセストークンを取得して検証する — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
     const tokenInfo = await resolveUserInfoToken(c, accessToken);
@@ -37,7 +45,7 @@ async function handler(c: any): Promise<Response> {
     // [respond] 応答する（no-store） — RFC 6750 §5.2
     return respondUserInfo(c, userInfoResponse);
   } catch (error) {
-    return respondUserInfoError(c, error);
+    return respondUserInfoError(c, error, challenge);
   }
 }
 

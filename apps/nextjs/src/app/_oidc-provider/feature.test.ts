@@ -6,6 +6,7 @@ import { createProviderConfig } from './config';
 import {
   configOf,
   contextOf,
+  corsHeadersOf,
   defineFeature,
   discoveryOf,
   loginMethodsOf,
@@ -278,5 +279,17 @@ describe('loginMethodsOf', () => {
 
   it('should return no login method when no feature offers one', () => {
     expect(loginMethodsOf([defineFeature({ id: 'a' })])).toEqual([]);
+  });
+});
+
+describe('corsHeadersOf', () => {
+  it('should list the CORS headers of the features once each, in the order of the features', () => {
+    const features: Feature[] = [
+      defineFeature({ id: 'a', cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate'] } }),
+      defineFeature({ id: 'b' }),
+      defineFeature({ id: 'c', cors: { allowHeaders: ['DPoP', 'X-Other'] } }),
+    ];
+
+    expect(corsHeadersOf(features)).toEqual({ allowHeaders: ['DPoP', 'X-Other'], exposeHeaders: ['WWW-Authenticate'] });
   });
 });

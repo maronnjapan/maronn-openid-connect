@@ -122,6 +122,27 @@ describe('createCorsMiddleware', () => {
       });
     });
 
+    // Fetch Standard §3.2.3: the response headers a browser lets the client read.
+    it('should name the headers the client may read in Access-Control-Expose-Headers', async () => {
+      const app = new Hono();
+      app.use(
+        '/userinfo',
+        createCorsMiddleware({
+          origins: '*',
+          allowMethods: ['GET', 'OPTIONS'],
+          allowHeaders: ['Authorization', 'DPoP'],
+          exposeHeaders: ['WWW-Authenticate'],
+          maxAge: 600,
+        }),
+      );
+      app.get('/userinfo', (c) => c.json({}, 401));
+
+      const response = await app.request('/userinfo', { headers: { Origin: RP_ORIGIN } });
+
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,DPoP');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
+    });
+
     it('should leave the paths it is not mounted on without CORS headers', async () => {
       const { app } = corsApp('*');
 

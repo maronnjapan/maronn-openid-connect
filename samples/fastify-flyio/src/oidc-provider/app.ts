@@ -29,7 +29,7 @@ import { loginPage } from './endpoints/login/page.js';
 import { tokenApp } from './endpoints/token/pipeline.js';
 import { userinfoApp } from './endpoints/userinfo/pipeline.js';
 import { features } from './features/enabled.js';
-import { applyContextOf, routesOf, type FeatureRoute } from './features/feature.js';
+import { applyContextOf, corsHeadersOf, routesOf, type FeatureRoute } from './features/feature.js';
 import { createStoreResolvers } from './resolvers.js';
 import type { ProviderStores, ProviderStoresFactory } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -241,10 +241,13 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   // ブラウザで動くクライアントが呼ぶエンドポイント向けに、CORS のミドルウェアを作る（OAuth 2.1 §4.2）。
   // 対象はトークンエンドポイント、UserInfo エンドポイント、機能が `cors: 'protected'` で登録したエンドポイントで、許可するオリジンは `corsOrigins` で決まる。
   // プリフライト（`OPTIONS`）にも、このミドルウェアが応答する。
+  // 機能が加えるヘッダー（DPoP の機能の `DPoP` リクエストヘッダーなど）も、許可するヘッダーと読ませるヘッダーに加える。
+  const featureCorsHeaders = corsHeadersOf(features);
   const protectedCors = createCorsMiddleware({
     origins: options.corsOrigins ?? '*',
     allowMethods: ['POST', 'GET', 'OPTIONS'],
-    allowHeaders: ['Authorization', 'Content-Type'],
+    allowHeaders: ['Authorization', 'Content-Type', ...featureCorsHeaders.allowHeaders],
+    exposeHeaders: featureCorsHeaders.exposeHeaders,
     maxAge: 600,
   });
   const publicCors = createCorsMiddleware({

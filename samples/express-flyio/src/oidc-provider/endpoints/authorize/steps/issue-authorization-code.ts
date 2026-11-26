@@ -4,6 +4,7 @@ import {
   completeAuthTransaction,
   createAuthorizationCode,
 } from '@maronn-openid-connect/core';
+import { confirmationRecordOf } from '../../../token-binding.js';
 import { type AuthorizationOutcome, buildSuccessResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { responseTypeHandlerOf } from '../response-type.js';
@@ -81,7 +82,9 @@ export async function issueAuthorizationCodeResponse(
     // 認可コードの有効期間は `ProviderConfig` の `authorizationCodeTtl` で設定でき、既定は 300 秒である（OIDC Core 1.0 §3.1.3.1）。
     ttlSeconds: config.authorizationCodeTtl,
   });
-  await authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
+  // トークンエンドポイントは、同じ鍵の DPoP proof が付いた交換だけを受け付ける。
+  await authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
   await consentResolver?.recordGrant?.(
     session.subject,
     transaction.clientId,

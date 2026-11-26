@@ -977,6 +977,55 @@ describe('createProviderStores', () => {
     });
   });
 
+  // RFC 9449 §6.2 / §10: the dpop extension keeps the key a grant or token is bound to (cnf)
+  // in the records, outside the columns of the store.
+  describe('token binding (cnf)', () => {
+    const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+    it('should keep the cnf of a transaction', async () => {
+      await stores.transactionStore.put('auth_txn:txn-cnf', { ...transaction(), cnf } as AuthTransaction, 60);
+
+      expect(await stores.transactionStore.get('auth_txn:txn-cnf')).toMatchObject({ cnf });
+    });
+
+    it('should keep the cnf of an authorization code, an access token and a refresh token', async () => {
+      await stores.authCodeStore.set('code-cnf', {
+        code: 'code-cnf',
+        grantId: 'grant-cnf',
+        clientId: 'rp-1',
+        redirectUri: 'https://rp.example.com/callback',
+        redirectUriExplicit: true,
+        scope: ['openid'],
+        used: false,
+        expiresAt: NOW + 60,
+        cnf,
+      } as AuthorizationCodeInfo);
+      await stores.accessTokenStore.set('at-cnf', {
+        sub: 'user-1',
+        scope: ['openid'],
+        clientId: 'rp-1',
+        expiresAt: NOW + 60,
+        cnf,
+        tokenType: 'DPoP',
+      } as AccessTokenInfo);
+      await stores.refreshTokenStore.set('rt-cnf', {
+        subject: 'user-1',
+        clientId: 'rp-1',
+        scope: ['openid'],
+        expiresAt: NOW + 60,
+        used: false,
+        grantId: 'grant-cnf',
+        originalIssuedAt: NOW,
+        authTime: NOW,
+        cnf,
+      } as RefreshTokenInfo);
+
+      expect(await stores.authCodeStore.get('code-cnf')).toMatchObject({ cnf });
+      expect(await stores.accessTokenStore.get('at-cnf')).toMatchObject({ cnf, tokenType: 'DPoP' });
+      expect(await stores.refreshTokenStore.get('rt-cnf')).toMatchObject({ cnf });
+    });
+  });
+
   // OIDC Core 1.0 §9 / RFC 7523 §3: a private_key_jwt client assertion is used once.
   describe('clientAssertionJtiStore', () => {
     it('should answer true for a new key and false for the same key before it expires', async () => {

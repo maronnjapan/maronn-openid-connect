@@ -463,18 +463,27 @@ API は安定しておらず、破壊的に変更されることがあります�
 
 ### Extension Features
 
-拡張機能は、OAuth / OIDC の仕様ではなく**ログイン手段**を生成コードに足すカテゴリで、**既定では無効**です。実装は別 package にあり、`--enable` で明示したときだけ生成コードから import されます。
+拡張機能は、OP に任意で足す機能のカテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成されます。API が不安定なことを理由に分けた Experimental 機能とは別のカテゴリです。
+
+- `google-login` はログイン手段を足します。core が意図して持たないもの（上流の ID プロバイダーと、その公式クライアントライブラリ）を取り込むので、実装は別 package にあり、有効にしたときだけ生成コードから import されます
+- `dpop` は送信者制約付きのトークン（DPoP）を足します。package を持たず、DPoP のコードはすべて生成コードの `features/dpop/`（Next.js は `_oidc-provider/features/dpop/`）に入ります。DPoP の検査を読んで、方針をそのファイルで変えられます
 
 ```bash
 maronn-oidc generate express --enable google-login
-pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library
+
+maronn-oidc generate hono --enable dpop
+pnpm add @maronn-openid-connect/core   # dpop が足す package は無い
 ```
 
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
+| `dpop` | 無効 | DPoP（RFC 9449）。トークンエンドポイントが `DPoP` ヘッダーの DPoP proof を検査してアクセストークンをその鍵に束縛し（`token_type: DPoP`、`cnf.jkt`）、UserInfo エンドポイントが `Authorization: DPoP` を受け付ける。`dpop_jkt` と PAR の `DPoP` ヘッダーは認可コードを鍵に束縛する | なし。生成コードの `features/dpop/` にすべて入る（Web Crypto だけで動き、エッジランタイムでも動く） |
 
 有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
+
+`dpop` を有効にしても、DPoP proof を送らないクライアントには従来どおり Bearer トークンを発行します。設定、クライアントのメタデータ、生成されるファイルと方針の変え方、制限は [DPoP（拡張）](../dpop/) を参照してください。
 
 ## Custom Scopes
 

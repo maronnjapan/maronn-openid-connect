@@ -181,15 +181,71 @@ function isRestrictedPackage(specifier) {
 
 /** The identifiers a range of lines uses, without strings and comments. */
 function identifiersIn(lines) {
-  const code = lines
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ')
-    .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, ' ')
-    .replace(/`(?:\\.|[^`\\])*`/g, ' ')
-    // A spread is no property access: ...name reads name.
-    .replace(/\.\.\./g, ' ');
+  // A spread is no property access: ...name reads name.
+  const code = codeWithoutLiterals(lines.join('\n')).replace(/\.\.\./g, ' ');
   return new Set(code.match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? []);
+}
+
+/**
+ * The code with its comments, string literals and the text of its template
+ * literals blanked, read once from the start (as packages/cli's
+ * extract/source.ts does): the expressions of `${…}` stay, since a name they
+ * read is read, and the // of a URL in a template is no comment.
+ */
+function codeWithoutLiterals(code) {
+  let result = '';
+  const substitutions = [];
+  let depth = 0;
+  let index = 0;
+  const templateText = (start) => {
+    let at = start;
+    while (at < code.length) {
+      if (code[at] === '\\') at += 2;
+      else if (code[at] === '`') return at + 1;
+      else if (code[at] === '$' && code[at + 1] === '{') {
+        substitutions.push(depth);
+        return at + 2;
+      } else at += 1;
+    }
+    return at;
+  };
+  while (index < code.length) {
+    const char = code[index];
+    const next = code[index + 1];
+    if (char === '/' && next === '*') {
+      const end = code.indexOf('*/', index + 2);
+      index = end === -1 ? code.length : end + 2;
+      result += ' ';
+    } else if (char === '/' && next === '/') {
+      const end = code.indexOf('\n', index);
+      index = end === -1 ? code.length : end;
+      result += ' ';
+    } else if (char === "'" || char === '"') {
+      let at = index + 1;
+      while (at < code.length && code[at] !== char && code[at] !== '\n') at += code[at] === '\\' ? 2 : 1;
+      // A quote with no closing one on its line (in a regex literal such as /['"]/) starts no string.
+      if (at < code.length && code[at] === char) {
+        index = at + 1;
+        result += ' ';
+      } else {
+        result += char;
+        index += 1;
+      }
+    } else if (char === '`') {
+      index = templateText(index + 1);
+      result += ' ';
+    } else if (char === '}' && substitutions.length > 0 && substitutions[substitutions.length - 1] === depth) {
+      substitutions.pop();
+      index = templateText(index + 1);
+      result += ' ';
+    } else {
+      if (char === '{') depth += 1;
+      if (char === '}') depth -= 1;
+      result += char;
+      index += 1;
+    }
+  }
+  return result;
 }
 
 /**

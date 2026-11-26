@@ -28,8 +28,8 @@ describe('resolveFlowSelection', () => {
     });
 
     it('should reject an unknown feature flag', () => {
-      expect(() => resolveFlowSelection({ version: 1, features: { dpop: true }, endpoints: [] })).toThrow(
-        'features has an unknown feature "dpop"',
+      expect(() => resolveFlowSelection({ version: 1, features: { unknownFeature: true }, endpoints: [] })).toThrow(
+        'features has an unknown feature "unknownFeature"',
       );
     });
 
@@ -129,9 +129,9 @@ describe('resolveFlowSelection', () => {
 
     it('should reject an unknown endpoint', () => {
       const doc = document();
-      doc.endpoints.push({ ...endpointOf(doc, 'token'), id: 'dpop' });
+      doc.endpoints.push({ ...endpointOf(doc, 'token'), id: 'unknown-endpoint' });
       expect(() => resolveFlowSelection(doc)).toThrow(
-        'Unknown endpoint "dpop". Endpoints of this configuration: discovery, jwks, authorize, login, consent, token, userinfo, introspection, revocation',
+        'Unknown endpoint "unknown-endpoint". Endpoints of this configuration: discovery, jwks, authorize, login, consent, token, userinfo, introspection, revocation',
       );
     });
 
@@ -218,9 +218,9 @@ describe('resolveFlowSelection', () => {
     it('should reject an unknown step', () => {
       const doc = document();
       const token = endpointOf(doc, 'token');
-      (token as unknown as { steps: string[] }).steps = [...token.steps.map((s) => s.id), 'dpop'];
+      (token as unknown as { steps: string[] }).steps = [...token.steps.map((s) => s.id), 'unknown-step'];
       expect(() => resolveFlowSelection(doc)).toThrow(
-        'endpoint "token" has an unknown step "dpop". Steps of this endpoint: parse-request, authenticate-client, dispatch-client-credentials, validate-grant-type',
+        'endpoint "token" has an unknown step "unknown-step". Steps of this endpoint: parse-request, authenticate-client, dispatch-client-credentials, validate-grant-type',
       );
     });
 

@@ -12,7 +12,6 @@ import {
 import { discoveryOf, responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
 import { ADVERTISED_SCOPES } from '../../_oidc-provider/scopes';
-import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

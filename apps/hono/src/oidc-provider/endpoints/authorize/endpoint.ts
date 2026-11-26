@@ -38,6 +38,7 @@ export const endpoint = defineEndpoint({
     'validate-request',
     'validate-implicit-request',
     'validate-hybrid-request',
+    'validate-dpop-jkt',
     'create-transaction',
     'validate-prompt-combination',
     'verify-id-token-hint',

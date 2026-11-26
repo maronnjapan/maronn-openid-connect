@@ -6,8 +6,9 @@ import { RecentExchanges } from './RecentExchanges';
 import { Rows } from './Rows';
 import { StoredReads, StoredWrites } from './StoredRecords';
 import { browserPath, expectationGaps, SOURCE_WORDS } from '../lib/live';
+import { partingWords, type PartingLine } from '../lib/parting';
 import { basicCredentials, statusLine, statusTone, wayRequestsOf, PARAM_PLACES } from '../lib/requests';
-import { keptExchangeId, notRanWords, previewFailureWords, previewPlan, replayWords, resultLabel, staleResult, STALE_WORDS, type DraftBase } from '../lib/preview';
+import { comparedStart, keptExchangeId, notRanWords, previewFailureWords, previewPlan, replayWords, requestKey, resultLabel, staleResult, STALE_WORDS, type DraftBase } from '../lib/preview';
 import { blankDraft, bodiless, draftProblem, headerValue, liveRequestOf, oauthErrorOf, type ParamPlace, type RequestDraft } from '../lib/run';
 import type { MapData, Selection } from '../types';
 import type { RootRequestsState } from './useRequests';
@@ -32,8 +33,14 @@ interface RunResultProps {
   assumed: number;
   /** What the case selected expects of its response; undefined without a case. */
   expected: RequestScenario['expected'] | undefined;
+  /** The result is of another request than the one the case prepared (the reader wrote on it, or opened another): what the case expects is of its own request, and is not held against this one. */
+  rewritten: boolean;
   /** The result is of the request before the reader's last edits, which cannot be sent (lib/preview.ts staleResult). */
   stale: boolean;
+  /** Where the request's way parts from that of the request it was edited from (lib/parting.ts); undefined for a request read against none, or not read yet. */
+  partings: readonly PartingLine[] | undefined;
+  /** Move the playback to a scene. */
+  onScene: (index: number) => void;
   onFollow: () => void;
   onOpen: (id: string) => void;
 }
@@ -48,9 +55,13 @@ interface RunResultProps {
  * the records it read and wrote. Times are the OP's clock when the request
  * came. A preview shows its Location on a line of its own and folds its
  * headers, its body and its records, which the workspace does not hold. A
- * result of the request before edits that left it unsendable says so.
+ * result of the request before edits that left it unsendable says so. A
+ * request the reader edited says where its way parts from the way of the
+ * request before the edits, each place a button to its scene (or that both
+ * take the same way); and only the request the case prepared is held
+ * against what the case expects.
  */
-function RunResult({ run, replay, ending, assumed, expected, stale, onFollow, onOpen }: RunResultProps) {
+function RunResult({ run, replay, ending, assumed, expected, rewritten, stale, partings, onScene, onFollow, onOpen }: RunResultProps) {
   const live = useLiveState();
   const records = live.kind === 'ready' ? live.state.records : undefined;
   // A new response is brought into view in the scroll of the request, where it comes below the form; not one the editor's request came to while the reader writes on it.
@@ -140,14 +151,18 @@ function RunResult({ run, replay, ending, assumed, expected, stale, onFollow, on
         </p>
       ) : null}
       {expected !== undefined && response !== undefined ? (
-        <p className={`req-line req-expected${gaps.length > 0 ? ' req-problem' : ''}`}>
+        <p className={`req-line req-expected${gaps.length > 0 && !rewritten ? ' req-problem' : ''}`}>
           <span className="flow-label">ケースが期待する応答</span>
           <span>
             {statusLine({ status: expected.status })}
             {expected.error !== undefined ? <code className="mono"> {expected.error}</code> : null}
           </span>
           <span className="req-note req-expected-words">{expected.description}</span>
-          <span className={gaps.length > 0 ? 'req-gap' : 'req-match'}>{gaps.length > 0 ? `✗ 期待と違う: ${gaps.join('、')}` : '✓ ステータスと OAuth のエラーは期待どおり'}</span>
+          {rewritten ? (
+            <span className="req-note">ケースが準備したリクエストではないので、ケースの期待とは比べていません</span>
+          ) : (
+            <span className={gaps.length > 0 ? 'req-gap' : 'req-match'}>{gaps.length > 0 ? `✗ 期待と違う: ${gaps.join('、')}` : '✓ ステータスと OAuth のエラーは期待どおり'}</span>
+          )}
         </p>
       ) : null}
       {!run.follow ? (
@@ -166,6 +181,28 @@ function RunResult({ run, replay, ending, assumed, expected, stale, onFollow, on
       ) : (
         <p className="note">{replayWords(preview, ending, assumed)}</p>
       )}
+      {run.follow && replay !== undefined && replay.rootRan && partings !== undefined ? (
+        <div className="req-parting">
+          <p className="note">{partingWords(partings.length)}</p>
+          {partings.length > 0 ? (
+            <ul className="plain req-partings">
+              {partings.map((parting) => (
+                <li key={`${parting.frame}|${parting.node}`}>
+                  <button type="button" className="link small" disabled={parting.scene === undefined} onClick={() => (parting.scene === undefined ? undefined : onScene(parting.scene))} title="この場面へ移る">
+                    {parting.name}
+                  </button>
+                  <span className="req-parting-words">
+                    {parting.code ? <code className="mono">{parting.text}</code> : parting.text}
+                    {' → '}
+                    <strong>{parting.side}</strong>
+                    <span className="req-note">（書き換える前は {parting.other}）</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       {run.follow && replay !== undefined && replay.mismatches.length > 0 ? (
         <p className="note req-problem" role="alert">
           ⚠ 再生する道筋と、このリクエストが実際に動かしたコードが {replay.mismatches.length} か所で食い違っています（通っていない所を通るか、動いた呼び出しや側を飛ばしている。地図の読み方の不具合です）: {replay.mismatches.slice(0, 3).map((mismatch) => mismatch.code).join('、')}
@@ -229,15 +266,19 @@ export interface FlowRequestProps {
   previewing: boolean;
   /** Why the last preview could not be run; undefined when it could. */
   previewProblem: PreviewProblem | undefined;
-  /** Make the playback follow the request the editor shows (useRun.ts RequestRun.show): called once the reader stops writing on it. */
-  onPreview: (draft: RequestDraft) => void;
+  /** Make the playback follow the request the editor shows (useRun.ts RequestRun.show): called once the reader stops writing on it, with the request it was edited from (lib/preview.ts comparedStart) to read it against. */
+  onPreview: (draft: RequestDraft, from?: RequestDraft) => void;
   /** Let go of the preview: the editor shows a blank request nobody wrote on again (useRun.ts RequestRun.release). */
   onRelease: () => void;
   /** The ready-made way the run ended by, in words. */
   ending: string | undefined;
+  /** Where the request followed parts from the request it was edited from (lib/parting.ts), and the playback moved to a scene of one. */
+  partings: readonly PartingLine[] | undefined;
+  onScene: (index: number) => void;
   /** The title of a case, by its id. */
   caseTitle: (id: string) => string | undefined;
-  onRun: (draft: RequestDraft) => void;
+  /** Send the request, with the request it was edited from (lib/preview.ts comparedStart) to read its replay against. */
+  onRun: (draft: RequestDraft, from?: RequestDraft) => void;
   onFollow: () => void;
   /** Select a case and prepare its request. */
   onPrepareCase: (id: string) => void;
@@ -259,12 +300,16 @@ export interface FlowRequestProps {
  * previewPlan), and the result says it is a preview. A blank request again
  * (元のリクエストに戻す, or every row written away) lets go of the preview,
  * and a request written into a form that cannot be sent leaves the result
- * marked as the one before. A GET of a page a browser opens opens in a tab as well,
+ * marked as the one before. A request edited from the case's or from an
+ * exchange's is followed against that one (lib/preview.ts comparedStart):
+ * the replay goes into the functions where the edits make the way part,
+ * the playback moves there, and the result names those places.
+ * A GET of a page a browser opens opens in a tab as well,
  * whose requests come to the same workspace. Below: the recent requests of
  * the workspace (any of them opens without being sent again), and the
  * state of the workspace.
  */
-export function FlowRequest({ data, requests, selection, generatedCase, origin, assumed, framework, endpoint, endpoints, unrunnable, live: served, featuresOff, run, replay, previewing, previewProblem, onPreview, onRelease, ending, caseTitle, onRun, onFollow, onPrepareCase, onOpenExchange, onOpenExchangeId }: FlowRequestProps) {
+export function FlowRequest({ data, requests, selection, generatedCase, origin, assumed, framework, endpoint, endpoints, unrunnable, live: served, featuresOff, run, replay, previewing, previewProblem, onPreview, onRelease, partings, onScene, ending, caseTitle, onRun, onFollow, onPrepareCase, onOpenExchange, onOpenExchangeId }: FlowRequestProps) {
   const headingId = useId();
   const live = useLiveState();
   const originKey = origin !== undefined ? origin.key : generatedCase !== undefined ? `case:${generatedCase.key}` : 'blank';
@@ -281,17 +326,19 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
   const offline = live.kind === 'failed' && live.unreachable;
   const baseKind: DraftBase = origin !== undefined ? 'exchange' : generatedCase !== undefined ? 'case' : 'blank';
   const plan = draft === undefined || base === undefined ? undefined : previewPlan({ draft, start: base, base: baseKind, edited: changed, origin: originKey, blocked: !served || unrunnable !== undefined || offline });
-  const shownDraft = useRef({ draft, onPreview, onRelease });
-  shownDraft.current = { draft, onPreview, onRelease };
+  // The request the edits were made on: the edited request is read against it, to show where the edits make the way part.
+  const from = draft === undefined || base === undefined ? undefined : comparedStart({ draft, start: base, base: baseKind, edited: changed });
+  const shownDraft = useRef({ draft, from, onPreview, onRelease });
+  shownDraft.current = { draft, from, onPreview, onRelease };
   const planKey = plan?.key;
   const planDelay = plan?.delay;
   const planRelease = plan?.release === true;
   useEffect(() => {
     if (planKey === undefined || planDelay === undefined) return undefined;
     const timer = window.setTimeout(() => {
-      const { draft: shown, onPreview: show, onRelease: release } = shownDraft.current;
+      const { draft: shown, from: start, onPreview: show, onRelease: release } = shownDraft.current;
       if (planRelease) release();
-      else if (shown !== undefined) show(shown);
+      else if (shown !== undefined) show(shown, start);
     }, planDelay);
     return () => window.clearTimeout(timer);
   }, [planKey, planDelay, planRelease]);
@@ -332,7 +379,7 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
   if (!bodiless(draft.method) && (draft.body === 'json' || draft.body === 'form')) groups.push({ place: draft.body, label: BODY_WORDS[draft.body] });
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (problem === undefined && unrunnable === undefined && !running) onRun(draft);
+    if (problem === undefined && unrunnable === undefined && !running) onRun(draft, from);
   };
 
   return (
@@ -419,7 +466,21 @@ export function FlowRequest({ data, requests, selection, generatedCase, origin, 
           {previewFailureWords(previewProblem)}
         </p>
       ) : null}
-      {run !== undefined ? <RunResult run={run} replay={replay} ending={ending} assumed={assumed} expected={generatedCase?.scenario.expected} stale={staleResult(draft, changed, run.status === 'done')} onFollow={onFollow} onOpen={onOpenExchangeId} /> : null}
+      {run !== undefined ? (
+        <RunResult
+          run={run}
+          replay={replay}
+          ending={ending}
+          assumed={assumed}
+          expected={generatedCase?.scenario.expected}
+          rewritten={run.status === 'done' && generatedCase?.draft !== undefined && run.key !== requestKey(generatedCase.draft)}
+          stale={staleResult(draft, changed, run.status === 'done')}
+          partings={partings}
+          onScene={onScene}
+          onFollow={onFollow}
+          onOpen={onOpenExchangeId}
+        />
+      ) : null}
       {endpoint !== undefined && served ? <RecentExchanges endpoints={endpoints} endpoint={endpoint.id} current={keptExchangeId(run)} onOpen={onOpenExchange} /> : null}
       {served ? <LiveStatePanel onOpen={onOpenExchangeId} /> : null}
     </section>

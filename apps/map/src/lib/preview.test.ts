@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editorFollow, heldAfterSend, keptExchangeId, notRanWords, PREVIEW_DELAY, previewFailureWords, previewPlan, replayWords, requestKey, resultLabel, staleResult, STALE_WORDS } from './preview';
+import { comparedStart, editorFollow, heldAfterSend, keptExchangeId, notRanWords, PREVIEW_DELAY, previewFailureWords, previewPlan, replayWords, requestKey, resultLabel, staleResult, STALE_WORDS } from './preview';
 import { blankDraft, draftOfRequest, type RequestDraft } from './run';
 
 /** The request a case prepares at the token endpoint: an authorization code with its PKCE verifier. */
@@ -34,6 +34,32 @@ describe('requestKey', () => {
     // A row without a name sends nothing, so it sends the same request.
     expect(keys[4]).toBe(keys[0]);
     expect(new Set([keys[0], keys[2], keys[3], keys[5]]).size).toBe(4);
+  });
+});
+
+describe('comparedStart', () => {
+  const wrong = withParam(CODE, 'code_verifier', 'wrong');
+
+  it('should read a request the reader edited against the request it started from, the case\'s or an exchange\'s', () => {
+    expect(comparedStart({ draft: wrong, start: CODE, base: 'case', edited: true })).toBe(CODE);
+    expect(comparedStart({ draft: wrong, start: CODE, base: 'exchange', edited: true })).toBe(CODE);
+  });
+
+  it('should read against nothing the request as it started, one edited back to it, and one written from blank', () => {
+    const blank = blankDraft('POST', '/token');
+    const written = { ...blank, params: [{ name: 'grant_type', value: 'client_credentials', in: 'form' as const }] };
+
+    expect(comparedStart({ draft: CODE, start: CODE, base: 'case', edited: false })).toBeUndefined();
+    // Edited and written back: the same request is sent, so there is nothing to tell apart.
+    expect(comparedStart({ draft: withParam(wrong, 'code_verifier', 'v1'), start: CODE, base: 'case', edited: true })).toBeUndefined();
+    expect(comparedStart({ draft: written, start: blank, base: 'blank', edited: true })).toBeUndefined();
+  });
+
+  it('should read against nothing when either request cannot be sent', () => {
+    const unsendable = { ...wrong, headers: [...wrong.headers, ['bad header', '1'] as [string, string]] };
+
+    expect(comparedStart({ draft: unsendable, start: CODE, base: 'case', edited: true })).toBeUndefined();
+    expect(comparedStart({ draft: wrong, start: { ...CODE, headers: [...CODE.headers, ['bad header', '1'] as [string, string]] }, base: 'exchange', edited: true })).toBeUndefined();
   });
 });
 

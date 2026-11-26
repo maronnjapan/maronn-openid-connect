@@ -15,7 +15,7 @@
  */
 import { walkFlow, type FlowWalk, type WalkStop } from '@maronn-openid-connect/map-analysis/walk';
 import type { Branch, Decisions, FlowTree, Selection, StepKind, TreeNode } from '../types';
-import { branchesOf, childFrame } from './trace';
+import { branchesOf, childFrame, parentOf } from './trace';
 import { nodeWords, sideLabel, splitPre, type WordSource } from './words';
 
 export type { FlowWalk, WalkStop };
@@ -91,12 +91,15 @@ export function scenesOf(walked: Pick<FlowWalk, 'stops'>, shapeOf: (stop: WalkSt
 
 /**
  * The scene a playback is at after its scenes changed (a side taken, a frame
- * opened): the first scene that holds the node it was at, else the scene at
- * the same place, kept inside the list; 0 for an empty list.
+ * opened or closed): the first scene that holds the node it was at; else,
+ * when the frame it was in is no longer gone into, the scene of the call
+ * that opened that frame (the call above that, and so on up); else the
+ * scene at the same place, kept inside the list; 0 for an empty list.
  */
 export function sceneAt(scenes: readonly Scene[], was: { frame: string; node: string } | undefined, index: number): number {
-  if (was !== undefined) {
-    const found = scenes.findIndex((scene) => scene.frame === was.frame && scene.stops.some((stop) => stop.node.id === was.node));
+  for (let at = was; at !== undefined; at = parentOf(at.frame)) {
+    const { frame, node } = at;
+    const found = scenes.findIndex((scene) => scene.frame === frame && scene.stops.some((stop) => stop.node.id === node));
     if (found !== -1) return found;
   }
   return Math.max(0, Math.min(scenes.length - 1, index));

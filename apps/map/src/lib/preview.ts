@@ -4,8 +4,8 @@
  * (`POST /__live/preview`, run on a copy of the workspace's state, nothing
  * kept) and the playback follows that exchange as it follows one sent. This
  * module decides when the editor's request is taken up, what the flow does
- * for it, and how the result names a preview; nothing here touches the DOM
- * or fetches.
+ * for it, which request it is read against (the one before the edits), and
+ * how the result names a preview; nothing here touches the DOM or fetches.
  */
 import { draftProblem, liveRequestOf, type RequestDraft } from './run';
 
@@ -65,6 +65,18 @@ export function previewPlan({ draft, start, base, edited, origin, blocked }: Pre
   if (base === 'blank' && (!edited || (problem === undefined && requestKey(draft) === requestKey(start)))) return { key: `${origin}\nrelease`, delay, release: true };
   if (blocked || problem !== undefined) return undefined;
   return { key: `${origin}\n${requestKey(draft)}`, delay };
+}
+
+/**
+ * The request the flow reads the editor's request against, to show where
+ * the edits make its way part (useRun.ts RequestRun.show): the request the
+ * editor started from, when the reader wrote on it into another request
+ * and both can be sent. None for a request written from blank (there is no
+ * request before the edits), nor for the request as it started.
+ */
+export function comparedStart({ draft, start, base, edited }: Pick<PreviewInput, 'draft' | 'start' | 'base' | 'edited'>): RequestDraft | undefined {
+  if (!edited || base === 'blank' || draftProblem(draft) !== undefined || draftProblem(start) !== undefined) return undefined;
+  return requestKey(draft) === requestKey(start) ? undefined : start;
 }
 
 /**

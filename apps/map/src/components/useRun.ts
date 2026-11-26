@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LiveExchange, LiveRequest, ProbeTable } from '@maronn-openid-connect/live-op/api';
-import { followTrace, FrameCatalog, RequestTrace, type WalkMismatch } from '@maronn-openid-connect/map-analysis/traced';
+import { followTrace, FrameCatalog, RequestTrace, type Parting, type WalkMismatch } from '@maronn-openid-connect/map-analysis/traced';
 import type { FlowWalk } from '@maronn-openid-connect/map-analysis/walk';
 import type { Decisions, FlowTree, MapData, SourceDocument } from '../types';
 import { editorFollow, heldAfterSend, requestKey } from '../lib/preview';
@@ -58,9 +58,12 @@ function useLines(files: ReadonlyArray<{ path: string; url: string }>): Readonly
  * the request it stands for (lib/preview.ts requestKey). `quiet`: the flow
  * came to it because the editor's request changed (a preview, or a request
  * sent or opened before that the reader came back to), so the playback
- * keeps its place and does not play on its own. `closing`: the frames the
- * replay before it opened, closed when this one's are known, so the
- * playback does not pass through a state with neither.
+ * does not play on its own. `closing`: the frames the replay before it
+ * opened, closed when this one's are known, so the playback does not pass
+ * through a state with neither. `against`: what the request the editor's
+ * was written from would do, previewed on the same state right before (the
+ * request the reader edited, before the edits): the replay is read against
+ * it, to go into the frames where the edits make the way part.
  */
 export interface RequestRunDone {
   status: 'done';
@@ -72,6 +75,7 @@ export interface RequestRunDone {
   preview?: true;
   quiet?: true;
   closing?: readonly string[];
+  against?: LiveExchange;
 }
 
 /**
@@ -90,12 +94,22 @@ export interface PreviewProblem {
   unreachable: boolean;
 }
 
-/** How the replay of an exchange reads, once read: whether the request ran the root, where the walk disagrees with what ran (none expected), the walk down to the throw, or why it could not be read (or, with the walk, why it may stop short: a trace the OP cut). */
+/**
+ * How the replay of an exchange reads, once read: whether the request ran
+ * the root, where the walk disagrees with what ran (none expected), the
+ * walk down to the throw, or why it could not be read (or, with the walk,
+ * why it may stop short: a trace the OP cut). `apart`: for a request read
+ * against the one it was edited from (RequestRunDone.against), the frames
+ * where its way parts from that one's (none when both take the same way),
+ * once every tree the reading needs is loaded; absent until then, and for a
+ * request read against none.
+ */
 export interface Replay {
   rootRan: boolean;
   mismatches: readonly WalkMismatch[];
   walk: FlowWalk | undefined;
   problem?: string;
+  apart?: readonly Parting[];
 }
 
 /** What the run of the flow view reads besides the request (see useRequestRun). */
@@ -113,8 +127,8 @@ export interface RequestRunInput {
 /** The run of the flow view and what the reader does with it (see useRequestRun). */
 export interface RequestRun {
   state: RequestRunState | undefined;
-  /** Send a request the reader wrote to the live OP. */
-  run: (draft: RequestDraft) => void;
+  /** Send a request the reader wrote to the live OP. With `from` (the request it was edited from, lib/preview.ts comparedStart), that one is previewed right before, and the replay of the request sent is read against it. */
+  run: (draft: RequestDraft, from?: RequestDraft) => void;
   /** Open an exchange the workspace recorded (by its id), without sending anything: its request to write on, the way it took to replay; `then` changes the trace besides (the flow view shown). */
   open: (exchange: string, then?: Partial<TraceState>) => void;
   /** Follow the way the request took again, after the reader took other sides. */
@@ -128,9 +142,13 @@ export interface RequestRun {
    * latest preview asked for is taken (the one before is aborted); the
    * playback follows the one before until it comes. While a request is
    * being sent (or an exchange read), nothing is previewed: the editor's
-   * request is previewed once it lands, unless it is the one sent.
+   * request is previewed once it lands, unless it is the one sent. With
+   * `from` (the request it was edited from, lib/preview.ts comparedStart),
+   * that one is previewed with it on the same state, and the replay is read
+   * against it: the frames where the two ways part open, and the replay
+   * names them (Replay.apart).
    */
-  show: (draft: RequestDraft) => void;
+  show: (draft: RequestDraft, from?: RequestDraft) => void;
   /**
    * The editor shows no request of its own again (a blank one nobody wrote
    * on): drop the preview under way, and let go of the preview shown, back
@@ -147,10 +165,15 @@ export interface RequestRun {
   origin: { key: string; draft: RequestDraft } | undefined;
   /** The replay of the exchange while the playback follows it, once read. */
   replay: Replay | undefined;
+  /** The functions whose trees the replay needs to read on and are not loaded (map-analysis followTrace `needs`): the trace loads them, opened or not. */
+  needs: readonly string[];
 }
 
 /** What the flow showed before the editor's request was first previewed, to go back to (RequestRun.release): a request sent or opened, else the way of the trace. */
 type BeforePreview = { run: Omit<RequestRunDone, 'id' | 'follow' | 'quiet' | 'closing' | 'status'> } | { choices: Decisions[]; way: string | undefined };
+
+/** No tree needed (one list for every render without a replay). */
+const NO_NEEDS: readonly string[] = [];
 
 /** Whether two choices choose the same sides. */
 function sameChoice(a: Decisions | undefined, b: Decisions | undefined): boolean {
@@ -183,6 +206,14 @@ function sameChoice(a: Decisions | undefined, b: Decisions | undefined): boolean
  * sent. A blank request again lets go of the preview (`release`). The
  * choice a preview's replay gives is marked (TraceState.previewed) so the
  * hash leaves it out.
+ *
+ * A request the reader edited is read against the request before the
+ * edits (`show` and `run` with `from`): that one is previewed on the same
+ * state right before, and the replay opens the frames of the calls the two
+ * ran another way, down to where their ways part (followTrace `against`).
+ * The flow of a root is the same for two requests that part inside a call
+ * that does not fail (an introspected token found or not), so without this
+ * an edit that changes the answer changed nothing on the chart.
  */
 export function useRequestRun({ data, root, trees, state, onState, enabled, hasFrame }: RequestRunInput): RequestRun {
   const [runState, setRunState] = useState<RequestRunState | undefined>(undefined);
@@ -200,10 +231,10 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
   const pending = useRef<{ seq: number; key: string } | undefined>(undefined);
   const previews = useRef(0);
   const controller = useRef<AbortController | undefined>(undefined);
-  // The editor's request asked to be shown while a request was being sent: previewed once it lands.
-  const held = useRef<RequestDraft | undefined>(undefined);
+  // The editor's request asked to be shown while a request was being sent (with the request it was edited from): previewed once it lands.
+  const held = useRef<{ draft: RequestDraft; from: RequestDraft | undefined } | undefined>(undefined);
   // What the flow showed before the first preview since a request was sent or opened, or the case or the way picked (see release).
-  const before = useRef<BeforePreview | undefined>(undefined);
+  const beforePreview = useRef<BeforePreview | undefined>(undefined);
   useEffect(() => () => controller.current?.abort(), []);
   // The id of the last run: never given again, so a run after one forgotten is not taken for it.
   const lastRun = useRef(0);
@@ -236,6 +267,9 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
   const exchange = done?.exchange;
   const probes = table?.hash === hash ? table?.table : undefined;
   const trace = useMemo(() => (exchange === undefined || probes === undefined ? undefined : new RequestTrace(exchange.trace, probes, catalog)), [exchange, probes, catalog]);
+  // What the request before the edits would do, of the same build of the OP: the replay is read against it.
+  const before = done?.against;
+  const against = useMemo(() => (before === undefined || probes === undefined || before.trace.probes !== hash ? undefined : new RequestTrace(before.trace, probes, catalog)), [before, probes, hash, catalog]);
   const files = useMemo(() => (following ? filesOf(data, trees.values()) : []), [following, data, trees]);
   const lines = useLines(files);
   const sources = useMemo(() => (lines === undefined ? undefined : runSourcesOf(data, trees, lines)), [data, trees, lines]);
@@ -243,8 +277,8 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
   const closing = done?.closing;
   const openBase = useMemo(() => (closing === undefined ? state.open : state.open.filter((key) => !closing.includes(key))), [state.open, closing]);
   const followed = useMemo(
-    () => (!following || trace === undefined || root === undefined || sources === undefined ? undefined : followTrace(trace, root, sources, { open: openBase, enabled })),
-    [following, trace, root, sources, openBase, enabled],
+    () => (!following || trace === undefined || root === undefined || sources === undefined ? undefined : followTrace(trace, root, sources, { open: openBase, enabled, ...(against === undefined ? {} : { against }) })),
+    [following, trace, root, sources, openBase, enabled, against],
   );
 
   useEffect(() => {
@@ -328,7 +362,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
   const open = (exchangeId: string, then?: Partial<TraceState>) => {
     dropPreview();
     held.current = undefined;
-    before.current = undefined;
+    beforePreview.current = undefined;
     const id = begin(then);
     setRunState({ status: 'running', id, opening: exchangeId });
     liveClient()
@@ -350,12 +384,12 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
       });
   };
   /** Follow the exchange the editor's request stands for (see RequestRun.show). */
-  const show = (draft: RequestDraft) => {
+  const show = (draft: RequestDraft, from?: RequestDraft) => {
     const key = requestKey(draft);
     const current = shownRun.current;
     if (current?.status === 'running') {
       // A request is being sent (or an exchange read): the run shows it until it lands, and the editor's request is previewed after, unless it is the one sent.
-      held.current = heldAfterSend(draft, key, current.key);
+      held.current = heldAfterSend({ draft, from }, key, current.key);
       return;
     }
     held.current = undefined;
@@ -367,7 +401,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     if (step === 'stay') return;
     const again = step === 'recorded' ? recorded.current.get(key) : undefined;
     if (again !== undefined) {
-      before.current = undefined;
+      beforePreview.current = undefined;
       shift(again);
       return;
     }
@@ -376,10 +410,12 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     controller.current = abort;
     pending.current = { seq, key };
     setPreviewing(true);
-    liveClient()
-      .preview(liveRequestOf(draft), { signal: abort.signal })
+    const client = liveClient();
+    // The request before the edits is previewed first, on the same state: where the two part is read from what each would do now. Without it (it could not be previewed), the edit is followed alone.
+    const compared = from === undefined ? Promise.resolve(undefined) : client.preview(liveRequestOf(from), { signal: abort.signal }).catch(() => undefined);
+    Promise.all([client.preview(liveRequestOf(draft), { signal: abort.signal }), compared])
       .then(
-        (exchange) => {
+        ([exchange, against]) => {
           if (previews.current !== seq) return;
           pending.current = undefined;
           controller.current = undefined;
@@ -389,9 +425,9 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
           const was = shownRun.current;
           if (was?.status !== 'done' || was.preview !== true) {
             const trace = latest.current.state;
-            before.current = was?.status === 'done' ? { run: { exchange: was.exchange, opened: was.opened, key: was.key } } : { choices: trace.choices, way: trace.way };
+            beforePreview.current = was?.status === 'done' ? { run: { exchange: was.exchange, opened: was.opened, key: was.key } } : { choices: trace.choices, way: trace.way };
           }
-          shift({ exchange, opened: false, preview: true, key });
+          shift({ exchange, opened: false, preview: true, key, ...(against === undefined ? {} : { against }) });
         },
         (error: unknown) => {
           if (previews.current !== seq || abort.signal.aborted) return;
@@ -409,8 +445,8 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     dropPreview();
     setPreviewProblem(undefined);
     const current = shownRun.current;
-    const was = before.current;
-    before.current = undefined;
+    const was = beforePreview.current;
+    beforePreview.current = undefined;
     if (current?.status !== 'done' || current.preview !== true) return;
     if (was !== undefined && 'run' in was) {
       shift(was.run);
@@ -442,18 +478,19 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
     !following ? undefined
     : table?.hash === hash && table?.problem !== undefined ? { rootRan: true, mismatches: [], walk: undefined, problem: table.problem }
     : followed === undefined ? undefined
-    : { rootRan: followed.rootRan, mismatches: followed.mismatches, walk: followed.walk, ...(cut === undefined ? {} : { problem: cut }) };
+    : { rootRan: followed.rootRan, mismatches: followed.mismatches, walk: followed.walk, ...(cut === undefined ? {} : { problem: cut }), ...(followed.apart === undefined || followed.needs.length > 0 ? {} : { apart: followed.apart }) };
 
   return {
     state: runState,
     origin,
     replay,
+    needs: followed?.needs ?? NO_NEEDS,
     previewing,
     previewProblem,
-    run: (draft) => {
+    run: (draft, from) => {
       dropPreview();
       held.current = undefined;
-      before.current = undefined;
+      beforePreview.current = undefined;
       const request = liveRequestOf(draft);
       const key = requestKey(draft);
       const id = begin();
@@ -464,20 +501,24 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
         landed(next);
         const wanted = held.current;
         held.current = undefined;
-        if (wanted !== undefined) show(wanted);
+        if (wanted !== undefined) show(wanted.draft, wanted.from);
       };
-      liveClient()
-        .run(request)
-        .then((exchange) => {
-          if (forgotten.current === era) recorded.current.set(key, { status: 'done', exchange, opened: false, key });
+      const client = liveClient();
+      // What the request before the edits would do is previewed before the send changes the state; the request is sent whether or not that preview came.
+      const compared = from === undefined ? Promise.resolve(undefined) : client.preview(liveRequestOf(from)).catch(() => undefined);
+      void compared.then((against) =>
+        client.run(request).then((exchange) => {
+          const read = against === undefined ? {} : { against };
+          if (forgotten.current === era) recorded.current.set(key, { status: 'done', exchange, opened: false, key, ...read });
           notifyLiveChanged();
           if (lastRun.current !== id) return;
           setPreviewProblem(undefined);
-          after({ status: 'done', id, exchange, opened: false, follow: true, key });
+          after({ status: 'done', id, exchange, opened: false, follow: true, key, ...read });
         }, (error: unknown) => {
           if (lastRun.current !== id) return;
           after({ status: 'failed', id, message: liveProblem(error), unreachable: unreachable(error) });
-        });
+        }),
+      );
     },
     open,
     show,
@@ -492,7 +533,7 @@ export function useRequestRun({ data, root, trees, state, onState, enabled, hasF
       forgotten.current += 1;
       dropPreview();
       held.current = undefined;
-      before.current = undefined;
+      beforePreview.current = undefined;
       recorded.current.clear();
       setPreviewProblem(undefined);
       setRunState(undefined);

@@ -11,6 +11,7 @@ import {
   readRegisteredClients,
   readRequestUri,
   readServerAddress,
+  readSigningKey,
 } from './settings.js';
 
 describe('readServerAddress', () => {
@@ -215,6 +216,49 @@ describe('createRotatingSigningKeyProvider', () => {
     expect(rotated).toEqual({ kid: 'app-key-1-rotated-1', kids: ['app-key-1-rotated-1', 'app-key-1'] });
     expect(after.map((key) => key.keyId)).toEqual(['app-key-1-rotated-1', 'app-key-1']);
     expect(after[1]).toBe(before[0]);
+  });
+});
+
+describe('readSigningKey', () => {
+  /** A private RS256 JWK, as an operator keeps the key in a secret. */
+  async function privateJwk(kid?: string): Promise<JsonWebKey & { kid?: string }> {
+    const keyPair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+    const jwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+    return kid === undefined ? jwk : { ...jwk, kid };
+  }
+
+  it('should return undefined when OIDC_SIGNING_KEY_JWK is unset, so the app generates a key', () => {
+    expect(readSigningKey({})).toBeUndefined();
+  });
+
+  it('should import the key of OIDC_SIGNING_KEY_JWK with its kid and publish only its public half', async () => {
+    const jwk = await privateJwk('kept-key');
+
+    const key = await readSigningKey({ OIDC_SIGNING_KEY_JWK: JSON.stringify(jwk) })!;
+
+    expect(key.keyId).toBe('kept-key');
+    expect(key.publicJwk).toEqual({ kty: 'RSA', n: jwk.n, e: jwk.e, alg: 'RS256', use: 'sig', kid: 'kept-key' });
+    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key.privateKey, new TextEncoder().encode('payload'));
+    const publicKey = await crypto.subtle.importKey('jwk', { kty: 'RSA', n: jwk.n, e: jwk.e }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    expect(await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signature, new TextEncoder().encode('payload'))).toBe(true);
+  });
+
+  it('should name a key without a kid by OIDC_SIGNING_KEY_ID', async () => {
+    const key = await readSigningKey({ OIDC_SIGNING_KEY_JWK: JSON.stringify(await privateJwk()), OIDC_SIGNING_KEY_ID: 'env-kid' })!;
+
+    expect(key.keyId).toBe('env-kid');
+  });
+
+  it('should reject a value that is not a private RSA JWK', () => {
+    expect(() => readSigningKey({ OIDC_SIGNING_KEY_JWK: JSON.stringify({ kty: 'RSA', n: 'n', e: 'AQAB' }) })).toThrow('OIDC_SIGNING_KEY_JWK must be a private RSA JWK');
+  });
+
+  it('should make the imported key the first key of the rotating provider', async () => {
+    const initial = readSigningKey({ OIDC_SIGNING_KEY_JWK: JSON.stringify(await privateJwk('kept-key')) });
+
+    const { signingKeyProvider } = createRotatingSigningKeyProvider('unused-kid', initial);
+
+    expect((await signingKeyProvider.getSigningKeys()).map((key) => key.keyId)).toEqual(['kept-key']);
   });
 });
 

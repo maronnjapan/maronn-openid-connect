@@ -24,6 +24,7 @@ import {
   readPostLogoutRedirectUris,
   readRegisteredClients,
   readServerAddress,
+  readSigningKey,
   type Environment,
 } from './settings.js';
 
@@ -49,7 +50,8 @@ export async function createServerApp(env: Environment): Promise<Hono> {
   app.get('/', (c) => c.text('maronn-openid-connect Hono app'));
   app.get('/health', (c) => c.json({ status: 'ok' }));
   // The OP's signing keys, which the operator routes rotate while the app runs (OIDC Core 1.0 §10.1.1).
-  const signingKeys = createRotatingSigningKeyProvider(env['OIDC_SIGNING_KEY_ID'] ?? 'app-hono-rs256-key');
+  // OIDC_SIGNING_KEY_JWK keeps the key across restarts; without it the app generates one at startup.
+  const signingKeys = createRotatingSigningKeyProvider(env['OIDC_SIGNING_KEY_ID'] ?? 'app-hono-rs256-key', readSigningKey(env));
   const operatorToken = env['APP_OPERATOR_TOKEN'];
   if (operatorToken) {
     app.route('/operator', createOperatorApp(db, operatorToken, signingKeys.rotateSigningKey));

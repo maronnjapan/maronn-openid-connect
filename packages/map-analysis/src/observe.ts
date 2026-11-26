@@ -388,7 +388,7 @@ function loopSide(file: FileRun, node: TreeNode): string | undefined {
 }
 
 /** Whether a node runs a statement Istanbul counts whenever it runs (a declaration of a function, a type or a bare variable runs none). */
-function observable(node: TreeNode): boolean {
+export function observable(node: TreeNode): boolean {
   if (node.kind === 'end') return false;
   if (node.kind === 'block') return (node.branches?.[0]?.nodes ?? []).some(observable);
   if (node.kind !== 'action') return true;

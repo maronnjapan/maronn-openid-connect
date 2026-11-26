@@ -1,0 +1,41 @@
+{
+  "name": "@maronn-openid-connect/live-op",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The OP the map sends requests to: the server app of apps/hono (every feature, its clients and development users) run as it is deployed, one workspace of persistent state per reader, with the order of every statement, branch and function each request ran recorded, so the map replays the way a request really took. Runs on Cloudflare Workers (a Durable Object per workspace, apps/map/worker) and in Node (dev server, build and tests).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/live-op.js"
+    },
+    "./api": {
+      "types": "./src/api.ts",
+      "import": "./src/api.ts"
+    },
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./node": {
+      "types": "./src/node.ts",
+      "import": "./dist/node.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vite build && vitest run",
+    "serve": "node dist/node.js"
+  },
+  "devDependencies": {
+    "@maronn-openid-connect/core": "workspace:*",
+    "@maronn-openid-connect/test-catalog": "workspace:*",
+    "@maronn-openid-connect/test-reach": "workspace:*",
+    "@types/node": "^26.6.6",
+    "@vitest/istanbul-lib-instrument": "1.0.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

@@ -157,6 +157,38 @@ export function sceneLines(scene: Scene, source: WordSource, enabled?: ReadonlyS
   return lines;
 }
 
+/** Whether a stop fails there: a throw, or a call that fails without the walk going into it. */
+function failsAt(stop: WalkStop): boolean {
+  return stop.event === 'throws' || stop.event === 'fails';
+}
+
+/**
+ * Where a way departs from the way shown before it, for the playback to
+ * move there when the request the flow follows changes (an edit previewed,
+ * a request sent or opened in its place): the first scene that takes a
+ * decision on another side than the way before took it, else the first
+ * scene that fails where the way before did not. A decision the way before
+ * did not reach (in a frame it did not go into) tells nothing apart, nor
+ * does a frame one goes into and the other steps over. Undefined when the
+ * two take every decision both reach the same way and fail at the same
+ * places: the playback then stays where it is.
+ */
+export function departureScene(before: readonly WalkStop[], scenes: readonly Scene[]): number | undefined {
+  const sides = new Map<string, string>();
+  const failed = new Set<string>();
+  for (const stop of before) {
+    if (stop.side !== undefined) sides.set(stopKey(stop), stop.side.key);
+    if (failsAt(stop)) failed.add(stopKey(stop));
+  }
+  const parted = scenes.find((scene) =>
+    scene.stops.some((stop) => {
+      const was = stop.side === undefined ? undefined : sides.get(stopKey(stop));
+      return was !== undefined && was !== stop.side?.key;
+    }),
+  );
+  return parted?.index ?? scenes.find((scene) => scene.stops.some((stop) => failsAt(stop) && !failed.has(stopKey(stop))))?.index;
+}
+
 /** The calls a walk steps over that have a frame it could go into, by the key of that frame, each once; a call of its own frame (recursion) is left out, since the walk never enters it. */
 export function callsToEnter(walked: Pick<FlowWalk, 'stops'>, hasFrame: (id: string) => boolean): string[] {
   const keys: string[] = [];
@@ -212,8 +244,8 @@ export const STEP_KIND_WORDS: Record<StepKind, string> = {
   respond: '応答',
 };
 
-/** The speeds a playback offers (1 is the normal pace). */
-export const SPEEDS = [0.5, 1, 2] as const;
+/** The speeds a playback offers (1 is the normal pace; 4 runs through the hundreds of scenes of calls gone into two levels deep). */
+export const SPEEDS = [0.5, 1, 2, 4] as const;
 
 /**
  * How long a scene stays before the playback moves on, in milliseconds, at

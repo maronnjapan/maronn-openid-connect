@@ -730,3 +730,103 @@ describe('followTrace: a root that has its handlers written in it', () => {
     expect(followTrace(pageTrace(), DEVICE_ROOT, PAGE_SOURCES)).toEqual({ rootRan: false, open: [], decisions: {}, needs: [], mismatches: [] });
   });
 });
+
+// A loop that skips some items with a `continue` and makes a call of the map for the others.
+
+const KEYS_PATH = 'apps/hono/src/keys.ts';
+const KEYS_TEXT = [
+  'export function collect(keys) {',
+  '  const out = [];',
+  '  for (const key of keys) {',
+  '    if (!key.use) continue;',
+  '    out.push(describeKey(key));',
+  '  }',
+  '  return out;',
+  '}',
+  'export function describeKey(key) {',
+  '  return key.kid;',
+  '}',
+];
+const keysFn = (name: string) => `hono:keys.ts#${name}`;
+const COLLECT: FlowTree = {
+  id: keysFn('collect'),
+  name: 'collect',
+  signature: 'collect()',
+  file: 'hono:keys.ts',
+  lines: [1, 8],
+  head: [1, 1],
+  nodes: [
+    node('s0', 'action', at(2), 'const out = []'),
+    node('s1', 'loop', [3, 6], 'for (const key of keys)', {
+      branches: [
+        side('body', '繰り返す', [
+          node('s1l0', 'if', at(4), 'if (!key.use)', { form: 'optional', branches: [side('true', '成立', [node('s1l0t0', 'action', at(4), 'continue;')]), side('false', '不成立')] }),
+          node('s1l1', 'action', at(5), 'out.push(describeKey(key))', { pre: [call('s1l1i0', at(5), keysFn('describeKey'))] }),
+        ]),
+        side('skip', '繰り返さない'),
+      ],
+    }),
+    node('s2', 'return', at(7), 'return out'),
+  ],
+};
+const DESCRIBE_KEY: FlowTree = { id: keysFn('describeKey'), name: 'describeKey', signature: 'describeKey()', file: 'hono:keys.ts', lines: [9, 11], head: [9, 9], nodes: [node('s0', 'return', at(10), 'return key.kid')] };
+const KEYS = new Map([COLLECT, DESCRIBE_KEY].map((tree) => [tree.id, tree]));
+const KEYS_DATA: Pick<MapData, 'functions' | 'bodies' | 'sources'> = {
+  functions: {
+    [COLLECT.id]: { ...entry(COLLECT.id, 1, 1, 8, [DESCRIBE_KEY.id]), source: { file: 'hono:keys.ts', start: 1, end: 8 } },
+    [DESCRIBE_KEY.id]: { ...entry(DESCRIBE_KEY.id, 9, 9, 11, []), source: { file: 'hono:keys.ts', start: 9, end: 11 } },
+  },
+  bodies: {},
+  sources: { 'hono:keys.ts': { path: KEYS_PATH, url: '' } },
+};
+const KEYS_CATALOG = new FrameCatalog(KEYS_DATA);
+const KEYS_SOURCES = { treeOf: (id: string) => KEYS.get(id), pathOf: (file: string) => (file === 'hono:keys.ts' ? KEYS_PATH : undefined), linesOf: (path: string) => (path === KEYS_PATH ? KEYS_TEXT : undefined), frameAt: (path: string, line: number) => KEYS_CATALOG.frameAt(path, line)?.id };
+/** The column of a word on a line of keys.ts. */
+function keysColumn(line: number, word: string): number {
+  const column = KEYS_TEXT[line - 1]?.indexOf(word) ?? -1;
+  if (column < 0) throw new Error(`no ${word} on line ${line}`);
+  return column;
+}
+/** The probes of keys.ts by name, as NAMED names those of steps.ts. */
+const KEYS_NAMED: Record<string, TraceProbes['probes'][number]> = {
+  collect: [0, 2, 1, 0, -1],
+  out: [0, 0, 2, keysColumn(2, 'const'), 0],
+  for: [0, 0, 3, keysColumn(3, 'for'), 0],
+  if: [0, 0, 4, keysColumn(4, 'if'), 0],
+  unused: [0, 1, 4, keysColumn(4, 'if'), 0, 0, 2],
+  used: [0, 1, 4, keysColumn(4, 'if'), 0, 1, 2],
+  continue: [0, 0, 4, keysColumn(4, 'continue'), 0],
+  push: [0, 0, 5, keysColumn(5, 'out'), 0],
+  return: [0, 0, 7, keysColumn(7, 'return'), 2],
+  describeKey: [0, 2, 9, 0, -1],
+  kid: [0, 0, 10, keysColumn(10, 'return'), 2],
+};
+const KEYS_TABLE: TraceProbes = { hash: 'keys', files: [KEYS_PATH], types: ['if'], names: [], probes: Object.values(KEYS_NAMED) };
+const KEYS_INDEX = new Map(Object.keys(KEYS_NAMED).map((name, index) => [name, index]));
+
+/** A trace of keys.ts from the names of the probes it ran, in order. */
+function keysTrace(...names: string[]): RequestTrace {
+  return new RequestTrace({ probes: 'keys', events: names.map((name) => KEYS_INDEX.get(name) ?? -1) }, KEYS_TABLE, KEYS_CATALOG);
+}
+
+describe('followTrace: a loop that leaves a pass with a continue', () => {
+  const DESCRIBED = ['if', 'used', 'push', 'describeKey', 'kid'];
+  const SKIPPED = ['if', 'unused', 'continue'];
+  /** The stops of the walk of a trace through collect(), as `<node>` with its side. */
+  const walked = (trace: RequestTrace) => {
+    const followed = followTrace(trace, COLLECT, KEYS_SOURCES);
+    return { stops: (followed.walk?.stops ?? []).map((stop) => `${stop.node.id}${stop.side === undefined ? '' : `:${stop.side.key}`}`), mismatches: followed.mismatches };
+  };
+
+  it('should leave the loop at the continue of a request that skipped every item, past the call it did not make', () => {
+    expect(walked(keysTrace('collect', 'out', 'for', ...SKIPPED, ...SKIPPED, 'return'))).toEqual({ stops: ['s0', 's1:body', 's1l0:true', 's1l0t0', 's2'], mismatches: [] });
+  });
+
+  it('should take the side that goes on when the last pass skipped an item and another made the call, so the walk passes that call', () => {
+    expect(walked(keysTrace('collect', 'out', 'for', ...DESCRIBED, ...SKIPPED, 'return'))).toEqual({ stops: ['s0', 's1:body', 's1l0:false', 's1l1i0', 's1l1', 's2'], mismatches: [] });
+  });
+
+  it('should read the pass that made the call when it is the last one', () => {
+    expect(walked(keysTrace('collect', 'out', 'for', ...SKIPPED, ...DESCRIBED, 'return'))).toEqual({ stops: ['s0', 's1:body', 's1l0:false', 's1l1i0', 's1l1', 's2'], mismatches: [] });
+  });
+});

@@ -22,6 +22,10 @@
  *   root frame.
  * - A `try` the choice decides `catch` with no failure in sight skips its
  *   body: an exception somewhere in it is all the choice says.
+ * - A `continue` or a `break` leaves the loop it is in: the walk runs a
+ *   loop's body once, so both go on after the loop, past the rest of the
+ *   body. A side that leaves the loop is not the one assumed (a guard that
+ *   skips an item is passed, as a guard that returns is).
  *
  * This module is plain data in and out and imports only types, so the page
  * of the map (apps/map) and the test catalog (packages/test-catalog) share
@@ -37,6 +41,11 @@ export const SKIPS = 'skips';
 
 /** The kinds of node that take a side. */
 const DECISIONS: ReadonlySet<string> = new Set(['if', 'switch', 'loop', 'try', 'cond-expr']);
+
+/** Whether a node is a `continue` or a `break`: a statement that leaves the loop it is in (the `break` that ends a clause of a `switch` is no node of a tree). */
+export function leavesLoop(node: TreeNode): boolean {
+  return node.kind === 'action' && /^(?:continue|break)\b/.test(node.code);
+}
 
 /** Whether a list ends the frame whatever its decisions choose. */
 export function ends(nodes: readonly TreeNode[]): boolean {
@@ -146,8 +155,8 @@ export interface WalkOptions {
   limit?: number;
 }
 
-/** How running a list comes out: it goes on, its frame returns, or a failure leaves it. */
-type Flow = 'goes' | 'returns' | 'fails';
+/** How running a list comes out: it goes on, its frame returns, a failure leaves it, or a `continue` or a `break` leaves the loop it is in. */
+type Flow = 'goes' | 'returns' | 'fails' | 'leaves';
 
 /** The decision key of a node of a frame, and the key of the frame a call node opens: the same join. */
 function keyOf(frame: string, node: string): string {
@@ -167,13 +176,15 @@ function forcedSide(node: TreeNode, enabled: ReadonlySet<string> | undefined): s
 /**
  * The side a walk assumes at a decision the choice does not decide: a `try`
  * runs without an exception, a loop runs its body, and any other takes its
- * first side that does not end the frame at once (so a guard is passed), else
- * its first side.
+ * first side that neither ends the frame at once nor leaves the loop it is
+ * in (so a guard is passed, one that skips an item of a loop too), else its
+ * first side that does not end the frame, else its first side.
  */
 export function assumedSide(node: TreeNode, sides: readonly Branch[]): Branch | undefined {
   if (node.kind === 'try') return sides.find((branch) => branch.key === 'try') ?? sides[0];
   if (node.kind === 'loop') return sides.find((branch) => branch.key === 'body') ?? sides[0];
-  return sides.find((branch) => !ends(branch.nodes)) ?? sides[0];
+  const goesOn = sides.filter((branch) => !ends(branch.nodes));
+  return goesOn.find((branch) => !branch.nodes.some(leavesLoop)) ?? goesOn[0] ?? sides[0];
 }
 
 /**
@@ -257,7 +268,7 @@ export function walkFlow(tree: FlowTree, decisions: Decisions, options: WalkOpti
             return 'fails';
           }
           push(frame, node, step);
-          return 'goes';
+          return leavesLoop(node) ? 'leaves' : 'goes';
         }
         return decide(node, frame, step, key);
     }
@@ -279,6 +290,7 @@ export function walkFlow(tree: FlowTree, decisions: Decisions, options: WalkOpti
       return 'fails';
     }
     push(frame, node, step, { event: 'enters' });
+    // (A loop takes what leaves it, so a frame never ends that way.)
     const flow = list(inner.nodes, { key, tree: inner, depth: frame.depth + 1, chain: [...frame.chain, inner.id] }, undefined);
     if (flow === 'fails') {
       resolved[key] = FAILS;
@@ -354,7 +366,8 @@ export function walkFlow(tree: FlowTree, decisions: Decisions, options: WalkOpti
       at += 1;
       flow = list((sides[at] as Branch).nodes, frame, step);
     }
-    return flow;
+    // A `continue` or a `break` in the body leaves this loop: the walk goes on after it.
+    return node.kind === 'loop' && flow === 'leaves' ? 'goes' : flow;
   };
 
   const root: Frame = { key: options.frame ?? '', tree, depth: 0, chain: [tree.id] };

@@ -51,7 +51,9 @@
  * or from code outside the map, which no node made.
  *
  * The decisions of an invocation are the rules' (observe.ts); a decision a
- * loop took both ways reads as the last time it ran; a decision the rules
+ * loop took both ways reads as the last time it ran (unless that side
+ * leaves the loop past calls of the map made in other passes: then as the
+ * side that goes on, sideOfLastPass); a decision the rules
  * cannot tell takes the one side whose calls of the map ran, or, where it
  * ran, the one side that does not start with a call of the map that did
  * not run; a callback's loop takes its body when the invocation entered a
@@ -64,7 +66,7 @@
  */
 import type { Decisions, FlowTree, MapData, Selection, TreeNode } from './model.js';
 import { BOTH, GOES, nextOf, nodeRan, observable, placesOf, RequestRun, seenDecisions, seenSide, throughTries, type Place, type RanInFile, type RunSources } from './observe.js';
-import { FAILS, nodesOf, SKIPS, walkFlow, type FlowWalk } from './walk.js';
+import { ends, FAILS, leavesLoop, nodesOf, SKIPS, walkFlow, type FlowWalk } from './walk.js';
 
 /** The probes of one build of the live OP (packages/live-op api.ts ProbeTable). */
 export interface TraceProbes {
@@ -238,6 +240,27 @@ function featureOff(tree: FlowTree, place: Place, enabled: ReadonlySet<string> |
   if (enabled === undefined) return false;
   for (let at: Place | undefined = place; at !== undefined; at = ownerPlace(tree, at)) if (at.node.feature !== undefined && !enabled.has(at.node.feature)) return true;
   return false;
+}
+
+/**
+ * The side a decision a loop took both ways reads as: the one taken last
+ * (the last pass of the loop is the one the frame goes on from), unless
+ * that side leaves the loop (a `continue`, a `break`) past calls of the map
+ * the invocation made in other passes. A walk runs the body of a loop once
+ * and leaves it there (walk.ts), so it would pass none of those calls: the
+ * one other side that goes on is taken instead, and the walk passes them.
+ */
+function sideOfLastPass(tree: FlowTree, place: Place, last: string, calls: ReadonlyMap<string, Invocation>): string {
+  const { node } = place;
+  const sides = node.branches ?? [];
+  if (sides.find((branch) => branch.key === last)?.nodes.some(leavesLoop) !== true) return last;
+  // The loop that side leaves: the innermost one the decision is in.
+  let loop: TreeNode | undefined;
+  for (let at: Place | undefined = place; at !== undefined && loop === undefined; at = ownerPlace(tree, at)) if (at.owner?.kind === 'loop') loop = at.owner;
+  if (loop === undefined) return last;
+  const past = [...nodesOf((loop.branches ?? []).flatMap((branch) => branch.nodes))].some((inner) => inner.lines[0] > node.lines[1] && callsFunction(inner) && calls.has(inner.id));
+  const goesOn = sides.filter((branch) => branch.key !== last && branch.always !== true && !branch.nodes.some(leavesLoop) && !ends(branch.nodes));
+  return past && goesOn.length === 1 && goesOn[0] !== undefined ? goesOn[0].key : last;
 }
 
 /** What a request ran, read into invocations (see the module comment). */
@@ -672,13 +695,13 @@ export class RequestTrace {
     const keyed = (node: TreeNode) => keyIn(key, node.id);
     const calls = this.callsOf(invocation, tree);
     const nodes = [...nodesOf(tree.nodes)];
-    // A decision the frame took both ways (in a loop) reads as the last time it was taken.
+    // A decision the frame took both ways (in a loop) reads as the last time it was taken (but see sideOfLastPass).
     const lastly = new RequestRun({ ran: this.ranOf(invocation, true) }, sources);
     for (const node of nodes) {
       const place = places.get(node.id);
       if (!READ.has(node.kind) || place === undefined || decisions[keyed(node)] !== undefined) continue;
       const side = seenSide({ tree, place }, lastly);
-      if (side !== undefined && side !== BOTH && side !== GOES) decisions[keyed(node)] = side;
+      if (side !== undefined && side !== BOTH && side !== GOES) decisions[keyed(node)] = sideOfLastPass(tree, place, side, calls);
     }
     // A decision the rules cannot tell (`??=`, a local function's) takes the one side whose calls of the map ran; else, where it ran, the one side that does not start with a call of the map that did not run.
     for (const node of nodes) {

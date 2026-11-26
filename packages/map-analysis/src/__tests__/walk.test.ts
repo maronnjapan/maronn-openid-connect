@@ -150,6 +150,24 @@ describe('walkFlow', () => {
     expect(walkFlow(root, { s0: 'skip', s1: 'default' }).stops.map(said)).toEqual(['s0:skip', 's1:default', 's1ds0']);
   });
 
+  it('should leave a loop at a continue or a break, past the rest of its body, and go on after the loop', () => {
+    const skips: TreeNode = { id: 's0l0', kind: 'if', lines: [3, 3], code: 'if (eq === -1)', form: 'optional', branches: [side('true', '成立', [action('s0l0t0', { code: 'continue;' })]), side('false', '不成立', [])] };
+    const found = guard('s0l1', [action('s0l1t0'), action('s0l1t1', { code: 'break;' }), action('s0l1t2')]);
+    const loop: TreeNode = { id: 's0', kind: 'loop', lines: [2, 6], code: 'for (const part of parts)', branches: [side('body', '繰り返す', [skips, found, action('s0l2')]), side('skip', '繰り返さない', [])] };
+    const root = tree('root', [loop, returned('s1')]);
+
+    expect(walkFlow(root, { s0l0: 'true' }).stops.map(said)).toEqual(['s0:body?', 's0l0:true', 's0l0t0', 's1 returns']);
+    expect(walkFlow(root, { s0l0: 'false', s0l1: 'true' }).stops.map(said)).toEqual(['s0:body?', 's0l0:false', 's0l1:true', 's0l1t0', 's0l1t1', 's1 returns']);
+    expect(walkFlow(root, { s0l0: 'false', s0l1: 'false' }).stops.map(said)).toEqual(['s0:body?', 's0l0:false', 's0l1:false', 's0l2', 's1 returns']);
+  });
+
+  it('should leave only the loop a continue is in: the loop around it runs the rest of its body, and a try runs its finally on the way out', () => {
+    const inner: TreeNode = { id: 's0l0', kind: 'loop', lines: [3, 5], code: 'for (const y of ys)', branches: [side('body', '繰り返す', [attempt('s0l0l0', [action('s0l0l0b0', { code: 'continue;' }), action('s0l0l0b1')], undefined, [action('s0l0l0f0')]), action('s0l0l1')]), side('skip', '繰り返さない', [])] };
+    const outer: TreeNode = { id: 's0', kind: 'loop', lines: [2, 7], code: 'for (const x of xs)', branches: [side('body', '繰り返す', [inner, action('s0l1')]), side('skip', '繰り返さない', [])] };
+
+    expect(walkFlow(tree('root', [outer, returned('s1')]), {}).stops.map(said)).toEqual(['s0:body?', 's0l0:body?', 's0l0l0b0', 's0l0l0f0', 's0l1', 's1 returns']);
+  });
+
   it('should pass a call the choice says is not evaluated, and its arguments, without a stop', () => {
     const root = tree('root', [guard('s0', [returned('s0t0')], { pre: [call('s0i0', 'check', { pre: [call('s0i0i0', 'read')] })] }), returned('s1')]);
     const walked = walkFlow(root, { s0i0: SKIPS, s0: 'false' }, { enter: () => tree('check', [returned('s0')]) });
@@ -204,5 +222,12 @@ describe('assumedSide', () => {
     expect(assumedSide(tried, tried.branches ?? [])?.key).toBe('try');
     const both = fork('s2', [returned('s2t0')], [thrown('s2f0', 'Error')]);
     expect(assumedSide(both, both.branches ?? [])?.key).toBe('true');
+  });
+
+  it('should pass a guard that skips an item of a loop, and take the side that leaves the loop when the other ends the frame', () => {
+    const skips = guard('s0', [action('s0t0', { code: 'continue;' })]);
+    expect(assumedSide(skips, skips.branches ?? [])?.key).toBe('false');
+    const breaks = fork('s1', [action('s1t0', { code: 'break;' })], [returned('s1f0')]);
+    expect(assumedSide(breaks, breaks.branches ?? [])?.key).toBe('true');
   });
 });

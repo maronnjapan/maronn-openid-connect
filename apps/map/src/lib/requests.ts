@@ -1,14 +1,15 @@
 /**
- * The requests of the flow view: the request the OP of the map took the way
- * played with (RootRequests, which the build finds by running requests on
- * that OP), found for a ready-made way, and the words the view shows a
+ * The requests of the flow view: the cases whose request took the way
+ * played (RootRequests, which the build finds by running every case on the
+ * live OP), found for a ready-made way, and the words the view shows a
  * request and an answer with. Nothing here touches the DOM or fetches.
  */
-import type { RequestParam, RootRequests, Selection, WayRequests, WaySample } from '../types';
+import type { RequestParam, RootRequests, Selection, WayRequests } from '../types';
 
 /**
- * Find the request the map's OP took for the exact variant of a code path.
- * Several paths can reach the same node, and only observed samples can be shown.
+ * The cases a ready-made way was seen taken by, found by its exact kind,
+ * target and name: several ways can reach the same node, and a way no
+ * case's request took has none.
  */
 export function wayRequestsOf(requests: RootRequests | undefined, selection: Pick<Selection, 'kind' | 'name' | 'target'> | undefined): WayRequests | undefined {
   if (requests === undefined || selection === undefined) return undefined;
@@ -37,7 +38,7 @@ const REASONS: Readonly<Record<number, string>> = {
 };
 
 /** The status of a response with its reason phrase: its own, else the usual one (`401 Unauthorized`). */
-export function statusLine(example: Pick<WaySample, 'status' | 'statusText'>): string {
+export function statusLine(example: { status: number; statusText?: string | undefined }): string {
   const reason = example.statusText !== undefined && example.statusText !== '' ? example.statusText : REASONS[example.status];
   return reason === undefined ? String(example.status) : `${example.status} ${reason}`;
 }

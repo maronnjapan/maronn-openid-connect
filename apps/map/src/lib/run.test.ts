@@ -1,30 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { walkFlow } from '@maronn-openid-connect/map-analysis/walk';
-import type { Branch, FlowTree, MapData, Selection, TreeNode, WaySample } from '../types';
-import { blankDraft, draftOf, draftOfRequest, draftProblem, endingWay, failingCalls, filesOf, jsonValueOf, oauthErrorOf, observedChoice, openTrees, runSourcesOf, sandboxRequestOf, type RequestDraft } from './run';
+import type { Branch, FlowTree, MapData, TreeNode } from '../types';
+import { blankDraft, draftOfRequest, draftProblem, failingCalls, filesOf, framesToOpen, jsonValueOf, liveRequestOf, oauthErrorOf, requestOfExchange, type RequestDraft } from './run';
 
-const example: Pick<WaySample, 'method' | 'path' | 'params' | 'headers'> = {
+/** A request a client sends to the token endpoint: a refresh with Basic credentials. */
+const REFRESH = {
   method: 'POST',
   path: '/token',
-  params: [
-    { name: 'grant_type', value: 'refresh_token', in: 'form' },
-    { name: 'refresh_token', value: 'refresh-1', in: 'form' },
-  ],
   headers: [
     ['authorization', 'Basic Y2xpZW50LTE6Y2xpZW50LTEtc2VjcmV0LXZhbHVl'],
     ['content-type', 'application/x-www-form-urlencoded'],
-  ],
+  ] as Array<[string, string]>,
+  body: 'grant_type=refresh_token&refresh_token=refresh-1',
 };
 
-describe('draftOf', () => {
-  it('should write on the parameters and headers of a request, with the kind of its body', () => {
-    const json = draftOf({ method: 'POST', path: '/register', params: [{ name: 'redirect_uris', value: '["https://rp.example.com/cb"]', in: 'json' }], headers: [['content-type', 'application/json']] });
-    const query = draftOf({ method: 'GET', path: '/authorize', params: [{ name: 'client_id', value: 'client-1', in: 'query' }], headers: [] });
-
-    expect(draftOf(example)).toEqual({ method: 'POST', path: '/token', body: 'form', params: example.params, headers: example.headers });
-    expect([json.body, query.body]).toEqual(['json', 'none']);
-  });
-
+describe('blankDraft', () => {
   it('should start a request with no parameters as a form for a method that sends a body, and with none for a GET', () => {
     expect([blankDraft('POST', '/token'), blankDraft('GET', '/userinfo')]).toEqual([
       { method: 'POST', path: '/token', body: 'form', params: [], headers: [['content-type', 'application/x-www-form-urlencoded']] },
@@ -45,7 +35,7 @@ describe('draftOfRequest', () => {
 
     expect(draft.body).toBe('form');
     expect(draft.params.map((field) => field.in)).toEqual(['query', 'form', 'form', 'form']);
-    expect(sandboxRequestOf(draft)).toEqual(request);
+    expect(liveRequestOf(draft)).toEqual(request);
   });
 
   it('should keep registry JSON editable and preserve intentional invalid or ambiguous bodies', () => {
@@ -56,20 +46,35 @@ describe('draftOfRequest', () => {
 
     expect(draftOfRequest(registration).body).toBe('json');
     expect(draftOfRequest(invalid).body).toBe('raw');
-    expect([registration, invalid, stringRating, request].map((item) => sandboxRequestOf(draftOfRequest(item)))).toEqual([registration, invalid, stringRating, request]);
+    expect([registration, invalid, stringRating, request].map((item) => liveRequestOf(draftOfRequest(item)))).toEqual([registration, invalid, stringRating, request]);
   });
 });
 
-describe('sandboxRequestOf', () => {
-  it('should put the query on the path and the fields of a form in its body, with the headers written', () => {
-    const draft: RequestDraft = { ...draftOf(example), params: [{ name: 'debug', value: 'a b', in: 'query' }, ...example.params, { name: '', value: 'unnamed', in: 'form' }] };
+describe('requestOfExchange', () => {
+  it('should give the request an exchange recorded as a reader writes it: the path and query of its URL, its cookies kept, the headers of the runtime left out', () => {
+    const exchange = {
+      request: {
+        method: 'POST',
+        url: 'http://127.0.0.1:3610/login?transaction_id=t1',
+        headers: [['host', '127.0.0.1:3610'], ['content-type', 'application/x-www-form-urlencoded'], ['cookie', '__Host-oidc_txn=t1; map_workspace=w1'], ['content-length', '40'], ['connection', 'keep-alive']] as Array<[string, string]>,
+        body: 'transaction_id=t1&username=testuser',
+      },
+    };
+    const opened = { request: { method: 'GET', url: 'http://127.0.0.1:3610/authorize?client_id=client-1', headers: [['accept', 'text/html']] as Array<[string, string]>, body: 'ignored' } };
 
-    expect(sandboxRequestOf(draft)).toEqual({
-      method: 'POST',
-      path: '/token?debug=a+b',
-      headers: example.headers,
-      body: 'grant_type=refresh_token&refresh_token=refresh-1',
-    });
+    expect([requestOfExchange(exchange), requestOfExchange(opened)]).toEqual([
+      { method: 'POST', path: '/login?transaction_id=t1', headers: [['content-type', 'application/x-www-form-urlencoded'], ['cookie', '__Host-oidc_txn=t1; map_workspace=w1']], body: 'transaction_id=t1&username=testuser' },
+      { method: 'GET', path: '/authorize?client_id=client-1', headers: [['accept', 'text/html']] },
+    ]);
+  });
+});
+
+describe('liveRequestOf', () => {
+  it('should put the query on the path and the fields of a form in its body, with the headers written', () => {
+    const written = draftOfRequest(REFRESH);
+    const draft: RequestDraft = { ...written, params: [{ name: 'debug', value: 'a b', in: 'query' }, ...written.params, { name: '', value: 'unnamed', in: 'form' }] };
+
+    expect(liveRequestOf(draft)).toEqual({ ...REFRESH, path: '/token?debug=a+b' });
   });
 
   it('should send the members of a JSON body as the values their text reads as, and add the content type when none is written', () => {
@@ -85,7 +90,7 @@ describe('sandboxRequestOf', () => {
       headers: [['Host', 'op.example.com'], ['content-length', '12'], ['  ', 'blank']],
     };
 
-    expect(sandboxRequestOf(draft)).toEqual({
+    expect(liveRequestOf(draft)).toEqual({
       method: 'POST',
       path: '/register',
       headers: [['content-type', 'application/json']],
@@ -94,7 +99,7 @@ describe('sandboxRequestOf', () => {
   });
 
   it('should send no body with a GET', () => {
-    expect(sandboxRequestOf({ ...blankDraft('GET', '/authorize'), params: [{ name: 'client_id', value: 'client-1', in: 'query' }] })).toEqual({ method: 'GET', path: '/authorize?client_id=client-1', headers: [] });
+    expect(liveRequestOf({ ...blankDraft('GET', '/authorize'), params: [{ name: 'client_id', value: 'client-1', in: 'query' }] })).toEqual({ method: 'GET', path: '/authorize?client_id=client-1', headers: [] });
   });
 });
 
@@ -108,35 +113,15 @@ describe('draftProblem', () => {
   it('should say why a request cannot be sent: a body on a GET, a header name that is not one', () => {
     expect([
       draftProblem({ ...blankDraft('GET', '/authorize'), params: [{ name: 'a', value: 'b', in: 'form' }] }),
-      draftProblem({ ...draftOf(example), headers: [['bad name', 'x']] }),
-      draftProblem(draftOf(example)),
+      draftProblem({ ...draftOfRequest(REFRESH), headers: [['bad name', 'x']] }),
+      draftProblem(draftOfRequest(REFRESH)),
     ]).toEqual(['GET のリクエストにはボディを付けられません。', 'ヘッダーの名前「bad name」に使えない文字があります。', undefined]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The way a run took: an endpoint that parses the request and answers a
+// The way of a request: an endpoint that parses the request and answers a
 // failure in its catch, and the parsing, which throws without a grant_type.
-
-const PIPELINE = [
-  "tokenApp.post('/', async (c) => {",
-  '  try {',
-  '    // [parse-request] parse',
-  '    const params = await parseTokenRequest(c);',
-  '    return respond(c, params);',
-  '  } catch (error) {',
-  '    return respondError(c, error);',
-  '  }',
-  '});',
-];
-
-const PARSE_FILE = [
-  'export async function parseTokenRequest(c) {',
-  '  const body = await c.req.parseBody();',
-  "  if (!body.grant_type) throw new TokenError('invalid_request');",
-  '  return body;',
-  '}',
-];
 
 const PARSE = 'hono:parse.ts#parseTokenRequest';
 
@@ -190,55 +175,18 @@ const DATA: Pick<MapData, 'functions' | 'bodies' | 'sources'> = {
 };
 
 const TREES = new Map([ROOT, PARSE_TREE].map((tree) => [tree.id, tree]));
-const LINES = new Map([
-  ['apps/hono/src/pipeline.ts', PIPELINE],
-  ['apps/hono/src/parse.ts', PARSE_FILE],
-]);
-
-/** What a request without a grant_type ran: the parsing threw, and the catch answered. */
-const FAILED = {
-  'apps/hono/src/pipeline.ts': { s: [[2, 2, 1], [4, 4, 1], [7, 4, 1]], b: [], f: [[1]] },
-  'apps/hono/src/parse.ts': { s: [[2, 2, 1], [3, 2, 1], [3, 24, 1]], b: [[3, 2, 'if', [1, 0]]], f: [[1, 'parseTokenRequest']] },
-} satisfies Parameters<typeof observedChoice>[0];
-
-const SELECTIONS: Selection[] = [
-  { kind: 'exit', name: 'return respond', decisions: { s0: 'try' }, target: 's0b1' },
-  { kind: 'failure', name: 'TokenError(invalid_request)', decisions: { s0b0s0: 'fails' }, frames: ['s0b0s0'], target: 's0b0s0.s1t0', failure: { error: 'TokenError(invalid_request)', from: PARSE, name: 'parseTokenRequest' } },
-];
 
 /** Whether a function has a frame in the fixture. */
 function hasFrame(id: string): boolean {
   return TREES.has(id);
 }
 
-describe('openTrees and filesOf', () => {
-  it('should give the root and the open frames whose trees are loaded, and the source of each file once', () => {
-    const frames = openTrees(ROOT.id, ['s0b0s0', 's0b0s0.s9'], TREES);
-
-    expect(frames.map(({ key, tree }) => [key, tree.id])).toEqual([
-      ['', ROOT.id],
-      ['s0b0s0', PARSE],
-    ]);
-    expect(filesOf(DATA, [...frames, { key: 'again', tree: ROOT }])).toEqual([
+describe('filesOf', () => {
+  it('should give the source of the file of each tree once', () => {
+    expect(filesOf(DATA, [ROOT, PARSE_TREE, ROOT])).toEqual([
       { path: 'apps/hono/src/pipeline.ts', url: 'sources/pipeline.json' },
       { path: 'apps/hono/src/parse.ts', url: 'sources/parse.json' },
     ]);
-  });
-});
-
-describe('observedChoice', () => {
-  it('should read the sides of the root alone, the call that threw included, and leave the try to the walk', () => {
-    const sources = runSourcesOf(DATA, TREES, LINES);
-
-    expect(observedChoice(FAILED, openTrees(ROOT.id, [], TREES), sources)).toEqual({ s0b0s0: 'fails' });
-  });
-
-  it('should read the frames open below by their keys, so the walk goes down to the throw and up to the catch', () => {
-    const decisions = observedChoice(FAILED, openTrees(ROOT.id, ['s0b0s0'], TREES), runSourcesOf(DATA, TREES, LINES));
-    const walked = walkFlow(ROOT, decisions, { enter: (key) => (key === 's0b0s0' ? PARSE_TREE : undefined) });
-
-    expect(decisions).toEqual({ s0b0s0: 'fails', 's0b0s0.s1': 'true' });
-    expect(walked.stops.filter((stop) => stop.event !== undefined).map((stop) => `${stop.frame}:${stop.node.id}:${stop.event}`)).toEqual([':s0b0s0:enters', 's0b0s0:s1t0:throws', ':s0:catches', ':s0h0:returns']);
   });
 });
 
@@ -251,38 +199,16 @@ describe('failingCalls', () => {
   });
 });
 
-describe('endingWay', () => {
-  it('should name the way of the failure a walk threw, else of the return it ended at', () => {
-    const failed = walkFlow(ROOT, { s0b0s0: 'fails', 's0b0s0.s1': 'true' }, { enter: () => PARSE_TREE });
-    const answered = walkFlow(ROOT, { s0: 'try' });
+describe('framesToOpen', () => {
+  it('should open what the reading opened and the failing calls whose trees are not loaded yet, but not those open already or closed by the reader', () => {
     const stepped = walkFlow(ROOT, { s0b0s0: 'fails' });
 
-    expect([endingWay(SELECTIONS, failed)?.kind, endingWay(SELECTIONS, answered)?.kind, endingWay(SELECTIONS, stepped)]).toEqual(['failure', 'exit', undefined]);
-  });
-});
-
-describe('endingWay, of a step that answers itself', () => {
-  it('should name the way into the innermost step the end is in, and not a step whose id only starts the same', () => {
-    const answering: FlowTree = {
-      ...ROOT,
-      nodes: [
-        {
-          id: 's2',
-          kind: 'block',
-          lines: [2, 3],
-          code: '[dispatch]',
-          step: { id: 'dispatch', label: 'dispatch' },
-          branches: [side('body', 'dispatch', [{ id: 's2s0', kind: 'if', lines: [3, 3], code: 'if (early)', form: 'guard', branches: [side('true', '成立', [{ id: 's2s0t0', kind: 'return', lines: [3, 3], code: 'return early' }]), side('false', '不成立')] }])],
-        },
-        { id: 's21', kind: 'return', lines: [4, 4], code: 'return respond(c)' },
-      ],
-    };
-    const steps: Selection[] = [
-      { kind: 'step', name: 'dispatch', decisions: {}, target: 's2' },
-      { kind: 'step', name: 'other', decisions: {}, target: 's21' },
-    ];
-
-    expect([endingWay(steps, walkFlow(answering, { s2s0: 'true' }))?.name, endingWay([steps[0] as Selection], walkFlow(answering, { s2s0: 'false' }))]).toEqual(['dispatch', undefined]);
+    expect([
+      framesToOpen({ open: ['s1'], walk: stepped }, [], hasFrame, new Set()),
+      framesToOpen({ open: ['s1'], walk: stepped }, ['s1'], hasFrame, new Set(['s0b0s0'])),
+      framesToOpen({ open: ['s0b0s0'], walk: walkFlow(ROOT, { s0b0s0: 'fails', 's0b0s0.s1': 'true' }, { enter: () => PARSE_TREE }) }, ['s0b0s0'], hasFrame, new Set()),
+      framesToOpen({ open: [] }, [], hasFrame, new Set()),
+    ]).toEqual([['s1', 's0b0s0'], [], [], []]);
   });
 });
 

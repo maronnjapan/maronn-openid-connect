@@ -32,6 +32,8 @@ export interface TraceState {
   flow?: boolean;
   /** The purpose-based request selected on the endpoint. */
   request?: string;
+  /** The exchange of the live OP the flow view replays (`x3`): a request run, or one recorded that the reader opened. */
+  exchange?: string;
 }
 
 export const EMPTY_TRACE: TraceState = { open: [], choices: [], errors: false, focus: '' };

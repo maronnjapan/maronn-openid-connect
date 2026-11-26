@@ -50,6 +50,21 @@ describe('the trace in a hash', () => {
   });
 });
 
+describe('the exchange in a hash', () => {
+  it('should write the exchange the flow view replays after the case, and read it back', () => {
+    const trace: TraceState = { ...EMPTY_TRACE, flow: true, request: 'token-authorization-code', exchange: 'x12' };
+    expect(traceHash(trace)).toBe(';p;r=token-authorization-code;x=x12');
+    expect(parseTrace(traceHash(trace))).toEqual(trace);
+  });
+
+  it('should open an exchange of another endpoint from a link to its flow, and ignore an empty one', () => {
+    const view: View = { ...defaults, endpoint: 'token', trace: { ...EMPTY_TRACE, flow: true, exchange: 'x7' } };
+    expect(buildHash(view, data)).toBe('hono--token;p;x=x7');
+    expect(parseHash('#hono--token;p;x=x7', data, defaults)).toEqual(view);
+    expect(parseTrace(';p;x=')).toEqual({ ...EMPTY_TRACE, flow: true });
+  });
+});
+
 describe('the view in a hash', () => {
   it('should restore a selected request on reload without a code path', () => {
     const view: View = { ...defaults, endpoint: 'authorize', trace: { ...EMPTY_TRACE, flow: true, request: 'authorize-request-object' } };

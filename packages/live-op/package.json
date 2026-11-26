@@ -20,6 +20,10 @@
     "./node": {
       "types": "./src/node.ts",
       "import": "./dist/node.js"
+    },
+    "./vite": {
+      "types": "./src/vite.ts",
+      "import": "./src/vite.ts"
     }
   },
   "scripts": {

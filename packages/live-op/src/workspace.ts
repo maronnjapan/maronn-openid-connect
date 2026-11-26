@@ -19,6 +19,7 @@
  */
 import { createServerApp } from '../../../apps/hono/src/app.js';
 import { createEmptyDatabase, type MemoryDatabase } from '../../../apps/hono/src/oidc-provider/db/memory/database.js';
+import { rpInitiatedLogoutConfig } from '../../../apps/hono/src/oidc-provider/features/rp-initiated-logout/config.js';
 import {
   MAX_EXCHANGES,
   type ExchangeSource,
@@ -55,15 +56,24 @@ function exclusive<T>(run: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** Run with the global database of apps/hono set to a database, and give the earlier one back after. */
-async function onDatabase<T>(db: MemoryDatabase, run: () => Promise<T>): Promise<T> {
+/**
+ * Run with the global database of apps/hono set to a database, and give the
+ * earlier one back after; with a logout registry, the registry of the
+ * rp-initiated-logout feature set to it too (createServerApp writes it into
+ * the module from the environment, which names the issuer, so workspaces of
+ * two issuers in one isolate would read each other's).
+ */
+async function onDatabase<T>(db: MemoryDatabase, run: () => Promise<T>, postLogoutRedirectUris?: Record<string, string[]>): Promise<T> {
   const global = globalThis as Record<string, unknown>;
   const before = global[DATABASE_KEY];
+  const registryBefore = rpInitiatedLogoutConfig.postLogoutRedirectUris;
   global[DATABASE_KEY] = db;
+  if (postLogoutRedirectUris !== undefined) rpInitiatedLogoutConfig.postLogoutRedirectUris = postLogoutRedirectUris;
   try {
     return await run();
   } finally {
     global[DATABASE_KEY] = before;
+    rpInitiatedLogoutConfig.postLogoutRedirectUris = registryBefore;
   }
 }
 
@@ -204,16 +214,20 @@ export interface Answered {
 
 /** A workspace of the live OP (see the module comment). */
 export class LiveWorkspace {
-  private app!: { fetch: (request: Request) => Response | Promise<Response> };
+  private app!: Awaited<ReturnType<typeof createServerApp>>;
   private db!: MemoryDatabase;
   private features!: FeatureStores;
   private snapshot!: WorkspaceSnapshot;
+  /** The post-logout redirect URIs the environment of this workspace's issuer registers (liveEnvironment). */
+  private readonly logoutRegistry: Record<string, string[]>;
 
   private constructor(
     readonly id: string,
     readonly issuer: string,
     private readonly storage: WorkspaceStorage,
-  ) {}
+  ) {
+    this.logoutRegistry = JSON.parse(liveEnvironment(issuer, { kid: '' })['OIDC_POST_LOGOUT_REDIRECT_URIS_JSON'] ?? '{}') as Record<string, string[]>;
+  }
 
   /** The workspace a host keeps in a storage: made again from what it holds, or a new one of an issuer when it holds none. */
   static async open(id: string, issuer: string, storage: WorkspaceStorage = new MemoryStorage()): Promise<LiveWorkspace> {
@@ -245,6 +259,11 @@ export class LiveWorkspace {
       provenance: {},
     };
     if (kept === undefined) await this.storage.save(this.snapshot);
+  }
+
+  /** The routes the OP's app registers (Hono's `app.routes`), each method and path pattern, in the order it registered them. */
+  routes(): Array<{ method: string; path: string }> {
+    return this.app.routes.map(({ method, path }) => ({ method, path }));
   }
 
   /** The OP's clock now, in Unix milliseconds. */
@@ -323,7 +342,7 @@ export class LiveWorkspace {
       const wrote: StoreChange[] = [...changesBetween(before, plainDatabase(this.db)), ...access.wrote];
       this.snapshot.database = encodeValue(this.db);
       return { at, ...result, trace, store: { read: [...reads, ...access.read], wrote } };
-    });
+    }, this.logoutRegistry);
   }
 
   /** Note which exchange added or changed each record it wrote. */

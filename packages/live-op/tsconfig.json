@@ -20,7 +20,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": false,
     "noImplicitReturns": false,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // recorder.ts reads test-reach's coverage.js, whose types are in its JSDoc.
+    "allowJs": true
   },
   "include": ["src/**/*", "istanbul.ts", "vite.config.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]

@@ -205,6 +205,7 @@ export function LiveStatePanel({ onOpen }: { onOpen: (id: string) => void }) {
       {live.kind === 'failed' ? <p className="note req-problem">{live.message}</p> : null}
       {state !== undefined ? (
         <>
+          {state.notice !== undefined ? <p className="note req-problem">{state.notice}</p> : null}
           <p className="note">
             ワークスペース <code className="mono">{state.workspace}</code>、発行者 <code className="mono">{state.issuer}</code>。リクエストの間で状態を保ち、このブラウザの別のタブで開いた OP の画面も同じワークスペースに届きます。
           </p>

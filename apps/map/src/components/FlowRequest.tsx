@@ -122,7 +122,7 @@ function RunResult({ run, replay, ending, assumed, expected, onFollow, onOpen }:
       )}
       {run.follow && replay !== undefined && replay.mismatches.length > 0 ? (
         <p className="note req-problem" role="alert">
-          ⚠ 再生する道筋に、このリクエストが動かしていない所が {replay.mismatches.length} か所あります（地図の読み方の不具合です）: {replay.mismatches.slice(0, 3).map((mismatch) => mismatch.code).join('、')}
+          ⚠ 再生する道筋と、このリクエストが実際に動かしたコードが {replay.mismatches.length} か所で食い違っています（通っていない所を通るか、動いた呼び出しや側を飛ばしている。地図の読み方の不具合です）: {replay.mismatches.slice(0, 3).map((mismatch) => mismatch.code).join('、')}
         </p>
       ) : null}
       {response !== undefined ? (

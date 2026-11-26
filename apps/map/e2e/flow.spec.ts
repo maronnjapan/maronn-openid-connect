@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { caseSelect, flowNode, formValue, lookInside, mismatchWarning, openFlow, player, previewReplayLine, requestForm, responseLine, sceneShown, shownFrames } from './test-helpers';
+import { caseSelect, flowNode, formValue, lookInside, mismatchWarning, openFlow, partingNote, playbackPosition, player, previewReplayLine, replayLine, requestForm, responseLine, runButton, sceneShown, shownFrames } from './test-helpers';
 
 /**
  * The flow goes where the reader asks: going into a call (中に入る in the
@@ -7,7 +7,9 @@ import { caseSelect, flowNode, formValue, lookInside, mismatchWarning, openFlow,
  * first scene inside it, and a call the request does not make shows its
  * function's chart alone until the reader goes back. A request written on
  * moves the playback too: to where its way departs from the way shown
- * before, here where a request written from blank fails.
+ * before, here where a request written from blank fails; and a request
+ * sent after an edit plays from where it parts from the request before
+ * the edits, though both answer the same status.
  */
 test.describe('the flow goes where the reader asks', () => {
   test('should go into a call from the scene and from a card of the chart, and look into a call the request does not make', async ({ page }) => {
@@ -64,5 +66,37 @@ test.describe('the flow goes where the reader asks', () => {
     await expect(shownFrames(page)).toContainText('requireClientId()');
     await expect(sceneShown(page)).toContainText('失敗する');
     await expect(mismatchWarning(page)).toHaveCount(0);
+  });
+
+  test('should play an edited token sent from where it parts from the prepared one, though both answer 200, and say the body that differs above the chart', async ({ page }) => {
+    await openFlow(page, 'introspection');
+    await caseSelect(page).selectOption({ label: '有効なアクセストークンを確認する' });
+    await expect(formValue(page, 'token')).toHaveValue(/^ey/);
+    await expect(previewReplayLine(page)).toBeVisible();
+
+    await test.step('the token without its leading ey, previewed: the playback moves into the lookup that finds no token', async () => {
+      const token = formValue(page, 'token');
+      await token.click();
+      await token.press('Home');
+      await token.press('Delete');
+      await token.press('Delete');
+      await expect(partingNote(page)).toContainText('次の 2 か所で道筋が分かれます');
+      await expect(sceneShown(page)).toContainText('↳ resolveIntrospectionToken()');
+      await expect(player(page)).toContainText('{"active":false}');
+      await expect(player(page)).toContainText('書き換える前と分かれる所');
+    });
+
+    await test.step('sent from the first scene: the replay of the request sent starts where it parts, not at the steps both take', async () => {
+      await playbackPosition(page).press('Home');
+      await expect(sceneShown(page)).not.toContainText('↳');
+      await runButton(page).click();
+      await expect(replayLine(page)).toBeVisible();
+      await expect(responseLine(page)).toContainText('200 OK');
+      // From the first scene, the steps both take would last more than ten seconds before the lookup.
+      await expect(sceneShown(page)).toContainText('↳ resolveIntrospectionToken()', { timeout: 5000 });
+      await expect(player(page)).toContainText('{"active":false}');
+      await expect(player(page)).toContainText('書き換える前と分かれる所');
+      await expect(mismatchWarning(page)).toHaveCount(0);
+    });
   });
 });

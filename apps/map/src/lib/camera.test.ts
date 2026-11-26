@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardPlace, LEGIBLE_SCALE, openingCamera, revealCamera, STAGE_SCALE, type Camera, type Rect, type Size } from './camera';
+import { cardPlace, LEGIBLE_SCALE, openingCamera, resizedCamera, revealCamera, STAGE_HEIGHT, STAGE_SCALE, stageScale, type Camera, type Rect, type Size } from './camera';
 
 /** The diagram's gesture box in the 1440x900 pane and in the 1280x800 one, with the one-row toolbar. */
 const pane1440: Size = { width: 472, height: 631 };
@@ -57,6 +57,49 @@ describe('openingCamera', () => {
   it('should put an anchor below the view, or cut by its bottom edge, one third of the way down', () => {
     expect(openingCamera(pane1440, oneColumn, box(12, 1000))).toEqual({ x: 64, y: expect.closeTo(631 / 3 - 1000, 9), scale: 1 });
     expect(openingCamera(pane1440, oneColumn, box(12, 600))).toEqual({ x: 64, y: expect.closeTo(631 / 3 - 600, 9), scale: 1 });
+  });
+});
+
+describe('stageScale', () => {
+  /** The chart's area on a 1366x768 laptop's stage (the request panel hidden, the scene beside the chart), and on a 1920x1080 screen's. */
+  const laptop: Size = { width: 766, height: 381 };
+  const desktop: Size = { width: 870, height: 725 };
+
+  it('should let a tall stage open a narrow layout enlarged up to the stage scale', () => {
+    expect(stageScale(desktop)).toBe(STAGE_SCALE);
+    expect(openingCamera(desktop, oneColumn, box(12, 12, 320, 36), stageScale(desktop)).scale).toBe(STAGE_SCALE);
+  });
+
+  it('should open a narrow layout at 100% at most on a short stage, where enlarging it shows fewer of its steps', () => {
+    expect(stageScale(laptop)).toBe(1);
+    expect(openingCamera(laptop, oneColumn, box(12, 12, 320, 36), stageScale(laptop))).toEqual({ x: expect.closeTo((766 - 344) / 2, 9), y: 12, scale: 1 });
+  });
+
+  it('should enlarge only as far as the view keeps the stage height of the layout in sight between the two', () => {
+    const view: Size = { width: 900, height: 600 };
+    expect(stageScale(view)).toBeCloseTo(600 / STAGE_HEIGHT, 9);
+    expect(view.height / stageScale(view)).toBeCloseTo(STAGE_HEIGHT, 9);
+  });
+});
+
+describe('resizedCamera', () => {
+  /** The chart's area beside the scene with the request panel hidden, and below the player with the panel shown, on a 1366x768 laptop. */
+  const wide: Size = { width: 766, height: 381 };
+  const narrow: Size = { width: 726, height: 203 };
+  const camera: Camera = { x: 211, y: 12, scale: 1 };
+
+  it('should keep the middle across in the middle, at the same scale and height, when the view widens or narrows', () => {
+    expect(resizedCamera(narrow, wide, camera)).toEqual({ x: 231, y: 12, scale: 1 });
+    expect(resizedCamera(wide, { width: 946, height: 491 }, camera)).toEqual({ x: 301, y: 12, scale: 1 });
+    expect(resizedCamera(wide, narrow, camera)).toEqual({ x: 191, y: 12, scale: 1 });
+  });
+
+  it('should leave the box shown where it is when the new size still shows it whole', () => {
+    expect(resizedCamera(narrow, wide, camera, box(12, 100))).toEqual({ x: 231, y: 12, scale: 1 });
+  });
+
+  it('should bring the box shown back one third of the way down when the new size cuts it off', () => {
+    expect(resizedCamera(wide, narrow, camera, box(12, 300))).toEqual({ x: 191, y: expect.closeTo(203 / 3 - 300, 9), scale: 1 });
   });
 });
 

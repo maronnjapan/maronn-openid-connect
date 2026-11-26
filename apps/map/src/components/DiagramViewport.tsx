@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
-import { revealCamera, type Camera, type Rect, type Size } from '../lib/camera';
+import { resizedCamera, revealCamera, type Camera, type Rect, type Size } from '../lib/camera';
 
 /** Fit the width of the diagram into the view, never above 100%, with space around it (幅に合わせる: it may go below the scale the diagram opens at). */
 function fitWidth(view: ReactZoomPanPinchRef, width: number): void {
@@ -76,6 +77,20 @@ export interface DiagramViewportProps {
   onMove?: () => void;
   /** The view changed, whatever changed it (a reveal, a box that takes the focus, the reader). */
   onView?: () => void;
+  /**
+   * Where the row of tools goes instead of above the diagram: an element of
+   * a bar the page already has (the flow view's bar above its stage), so the
+   * diagram keeps the height of the row. Null or absent draws the row above
+   * the diagram.
+   */
+  toolsIn?: Element | null | undefined;
+  /**
+   * Keep the diagram steady when its area changes size after it opened (see
+   * resizedCamera): the stage of the flow view, whose request panel comes and
+   * goes and which may fill the screen. Without it a resize leaves the view
+   * where it is.
+   */
+  steady?: boolean | undefined;
 }
 
 /** The keys the library pans, zooms and resets the diagram with. */
@@ -89,32 +104,54 @@ const MOVE_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'ArrowDown', 'ArrowLe
  * after that, so the reader's zoom stays. A new reveal key pans the box it
  * names into view at the same scale, and so does a box that takes the focus.
  * The overlay is drawn over the area at the screen's scale; onMove tells when
- * the reader moves the view, onView when anything does.
+ * the reader moves the view, onView when anything does. The tools go above
+ * the diagram, or into the element `toolsIn` names. A steady diagram keeps
+ * its middle and the box revealed in view when its area is resized.
  */
-export function DiagramViewport({ children, controls, width, height, opening, reveal, overlay, onMove, onView }: DiagramViewportProps) {
+export function DiagramViewport({ children, controls, width, height, opening, reveal, overlay, onMove, onView, toolsIn, steady = false }: DiagramViewportProps) {
   const start = useRef({ x: 0, y: 0 });
   const moved = useRef(false);
   const [scale, setScale] = useState(1);
   const viewRef = useRef<ReactZoomPanPinchRef | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const opened = useRef(false);
-  // The latest opening and reveal box, for the observer and the deferred reveal.
+  // The size of the area when the view last fit it: a resize of a steady diagram moves the view from there.
+  const sized = useRef<Size | undefined>(undefined);
+  // The latest opening, reveal box and steadiness, for the observer and the deferred reveal.
   const openingRef = useRef(opening);
   const revealBox = useRef(reveal?.box);
+  const steadyRef = useRef(steady);
   useLayoutEffect(() => {
     openingRef.current = opening;
     revealBox.current = reveal?.box;
+    steadyRef.current = steady;
   });
   // Reads refs only, so the observer may keep the first render's copy.
   const openOnce = (view: ReactZoomPanPinchRef) => {
-    if (!opened.current && applyOpening(view, openingRef.current)) opened.current = true;
+    if (opened.current || !applyOpening(view, openingRef.current)) return;
+    opened.current = true;
+    sized.current = viewSize(view);
   };
   useEffect(() => {
     const element = box.current;
     if (element === null || typeof ResizeObserver === 'undefined') return;
-    // The first size the area gets opens the diagram; later ones (a resize) leave the reader's view alone.
+    // The first size the area gets opens the diagram; later ones (a resize) leave the reader's view alone, or keep a steady one steady.
     const observer = new ResizeObserver(() => {
-      if (viewRef.current !== null) openOnce(viewRef.current);
+      const view = viewRef.current;
+      if (view === null) return;
+      if (!opened.current) {
+        openOnce(view);
+        return;
+      }
+      const before = sized.current;
+      const after = viewSize(view);
+      // An area with no size (hidden) keeps the size it had for when it shows again.
+      if (after === undefined) return;
+      sized.current = after;
+      if (!steadyRef.current || before === undefined || (before.width === after.width && before.height === after.height)) return;
+      const { positionX, positionY, scale: current } = view.instance.state;
+      const camera = resizedCamera(before, after, { x: positionX, y: positionY, scale: current }, revealBox.current);
+      void view.setTransform(camera.x, camera.y, camera.scale, 0);
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -172,8 +209,8 @@ export function DiagramViewport({ children, controls, width, height, opening, re
         }}
         onWheelStart={() => onMove?.()}
       >
-        {(view) => (
-          <>
+        {(view) => {
+          const tools = (
             <div className="diagram-tools" role="group" aria-label="図の表示操作">
               {controls}
               <div className="diagram-zoom">
@@ -185,41 +222,46 @@ export function DiagramViewport({ children, controls, width, height, opening, re
               <button type="button" aria-label="全体を表示" title="全体を表示" onClick={() => { onMove?.(); void view.fitToView({ maxScale: 1, animationTime: 0 }); }}>全体</button>
               <button type="button" aria-label="表示を戻す（開いたときの倍率と位置）" title="表示を戻す（開いたときの倍率と位置）" onClick={() => { onMove?.(); applyOpening(view, openingRef.current); }}>戻す</button>
             </div>
-            <div className="diagram-stage">
-              <TransformComponent
-                wrapperClass="diagram-gestures"
-                wrapperStyle={{ width: '100%', height: '100%' }}
-                contentStyle={{ width, height }}
-                wrapperProps={{
-                  tabIndex: 0,
-                  role: 'group',
-                  title: 'ドラッグで移動・ピンチで拡大縮小',
-                  'aria-label': 'フロー図（ドラッグで移動・ピンチで拡大縮小。矢印キーで移動、＋と−キーで拡大縮小）',
-                  onClickCapture: (event) => {
-                    // A drag ending over a box must not select it.
-                    // Keyboard-generated clicks remain available after a gesture.
-                    if (moved.current && event.detail !== 0) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }
-                  },
-                  onScroll: () => foldScroll(view),
-                  onFocus: (event) => {
-                    // A box or a region that takes the focus (Tab) comes into view; the area itself (a click) stays as it is.
-                    if (event.target !== event.currentTarget) revealFocused(view, event.target);
-                  },
-                  // Before the library, which takes these keys on the area and stops them there.
-                  onKeyDownCapture: (event) => {
-                    if (MOVE_KEYS.has(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) onMove?.();
-                  },
-                }}
-              >
-                {children}
-              </TransformComponent>
-              <div className="diagram-overlay">{overlay}</div>
-            </div>
-          </>
-        )}
+          );
+          return (
+            <>
+              {toolsIn === null || toolsIn === undefined ? tools : createPortal(tools, toolsIn)}
+              <div className="diagram-stage">
+                <TransformComponent
+                  wrapperClass="diagram-gestures"
+                  wrapperStyle={{ width: '100%', height: '100%' }}
+                  contentStyle={{ width, height }}
+                  wrapperProps={{
+                    tabIndex: 0,
+                    role: 'group',
+                    title: 'ドラッグで移動・ピンチで拡大縮小',
+                    'aria-label': 'フロー図（ドラッグで移動・ピンチで拡大縮小。矢印キーで移動、＋と−キーで拡大縮小）',
+                    onClickCapture: (event) => {
+                      // A drag ending over a box must not select it.
+                      // Keyboard-generated clicks remain available after a gesture.
+                      if (moved.current && event.detail !== 0) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }
+                    },
+                    onScroll: () => foldScroll(view),
+                    onFocus: (event) => {
+                      // A box or a region that takes the focus (Tab) comes into view; the area itself (a click) stays as it is.
+                      if (event.target !== event.currentTarget) revealFocused(view, event.target);
+                    },
+                    // Before the library, which takes these keys on the area and stops them there.
+                    onKeyDownCapture: (event) => {
+                      if (MOVE_KEYS.has(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) onMove?.();
+                    },
+                  }}
+                >
+                  {children}
+                </TransformComponent>
+                <div className="diagram-overlay">{overlay}</div>
+              </div>
+            </>
+          );
+        }}
       </TransformWrapper>
     </div>
   );

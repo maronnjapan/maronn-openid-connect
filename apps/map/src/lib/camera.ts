@@ -1,7 +1,7 @@
 /**
  * Where the diagram's view looks: the scale and position a diagram opens at,
- * the pan that brings a box into view, and where the card of a box goes on
- * the screen. Box titles are drawn at 12.5px, so
+ * the pan that brings a box into view, how a stage's diagram stays put when
+ * its view is resized, and where the card of a box goes on the screen. Box titles are drawn at 12.5px, so
  * a diagram never opens at a scale where they read under 11px; a layout too
  * wide for its view at that scale is panned sideways instead of shrunk. A
  * camera is the transform DiagramViewport hands to react-zoom-pan-pinch.
@@ -37,6 +37,20 @@ export const LEGIBLE_SCALE = 11 / 12.5;
 
 /** The largest scale a diagram opens at when it is the stage of the page (the flow view): a narrow layout fills more of a wide area, its titles still short of a heading. */
 export const STAGE_SCALE = 1.4;
+
+/** The height of a layout a stage keeps in view when it enlarges a narrow one, in layout pixels: some five steps of an endpoint's chart. */
+export const STAGE_HEIGHT = 500;
+
+/**
+ * The largest scale a stage opens at for the size of its view: STAGE_SCALE
+ * where the view is tall enough to show STAGE_HEIGHT of the layout at that
+ * scale, less where it is shorter, and never under 100%. A narrow layout
+ * enlarged to the width of a short view (a laptop's) would show fewer of
+ * its steps: there it opens at 100% at most.
+ */
+export function stageScale(view: Size): number {
+  return Math.min(STAGE_SCALE, Math.max(1, view.height / STAGE_HEIGHT));
+}
 
 /** The room kept between the view's edges and the layout's, in screen pixels. */
 const MARGIN = 12;
@@ -92,6 +106,18 @@ export function revealCamera(view: Size, camera: Camera, box: Rect): Camera | un
     y: down ? camera.y : thirdDown(view, box, camera.scale),
     scale: camera.scale,
   };
+}
+
+/**
+ * The camera that keeps a diagram steady when its view changes size, as a
+ * stage's view does when a panel beside it shows or hides or it fills the
+ * screen: what was at the middle across stays at the middle across, at the
+ * same scale and height, and the box shown (the scene's) comes back into view
+ * as a reveal brings it (revealCamera) when the new size cuts it off.
+ */
+export function resizedCamera(before: Size, after: Size, camera: Camera, shown?: Rect): Camera {
+  const kept = { x: camera.x + (after.width - before.width) / 2, y: camera.y, scale: camera.scale };
+  return (shown === undefined ? undefined : revealCamera(after, kept, shown)) ?? kept;
 }
 
 /** The room kept between a card and the box it describes, and between a card and the view's edges. */

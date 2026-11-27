@@ -823,7 +823,7 @@ export function createDatabase(): SqlDatabase {
 
 | テーブル | 保存するもの |
 |---|---|
-| `clients` | 登録クライアント（`id` が client_id、`name` が `client_name`）。`is_deleted` を立てたクライアントは OP から見えなくなる。クライアントに 1 つしかない登録メタデータ（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）も列に持ち、登録していない値は NULL になる |
+| `clients` | 登録クライアント（`id` が client_id、`name` が `client_name`）。`is_deleted` を立てたクライアントは OP から見えなくなる。クライアントに 1 つしかない登録メタデータ（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）も列に持ち、登録していない値は NULL になる。列の無いメタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム、機能が `RegisteredClient` に足すメタデータ）は `payload` 列に JSON で持ち、無ければ NULL になる |
 | `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post / private_key_jwt。1 つのクライアントにいくつでも登録できる）と、client_secret_basic と client_secret_post のシークレットのハッシュ。private_key_jwt の行はシークレットを持たない |
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を、`private_key_jwt` の用途の鍵でクライアントアサーションを検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
@@ -852,6 +852,16 @@ authorization_details（RFC 9396）のテーブルは、その機能を実装す
 ```sql
 ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 ```
+
+`clients.payload` も、その列が加わる前の CLI で作ったデータベースには無い。
+そのデータベースでは、新しい生成コードでクライアントを登録したり読んだりする前に、次の文で列を足す。
+
+```sql
+ALTER TABLE clients ADD COLUMN payload TEXT;
+```
+
+列を足しただけの行は `payload` が NULL なので、そのクライアントはこれまでどおり列の値だけで読まれる。
+列の無いメタデータを持たせるには、`registerClient()` で登録し直す。
 
 `client_response_types` は列ではなくテーブルなので、そのテーブルが加わる前の CLI で作ったデータベースでも、`schema.sql` を実行し直せば作られる。
 行の無いクライアントは、これまでどおり `response_type=code` だけを使える。
@@ -927,7 +937,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 
 | キー | 保存するもの |
 |---|---|
-| `client:<client_id>` | 登録クライアントと、`--db sql` の `clients` の列と `client_*` テーブルに当たる値（`client_auths`（シークレットの方式と `private_key_jwt`）、`redirect_uris`、`grant_types`、`response_types`、`scopes`、`request_uris`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`。値の無い項目は null か空の配列） |
+| `client:<client_id>` | 登録クライアントと、`--db sql` の `clients` の列と `client_*` テーブルに当たる値（`client_auths`（シークレットの方式と `private_key_jwt`）、`redirect_uris`、`grant_types`、`response_types`、`scopes`、`request_uris`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`、`payload`。値の無い項目は null か空の配列で、`payload` は無ければ書かない） |
 | `client_jwks:<client_id>:<purpose>` | クライアントの 1 つの用途の公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
@@ -949,6 +959,10 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 `access_token:<hash>` のレコードは、`--db sql` の `access_tokens.acr` と同じ `acr` を持つ。
 `acr` が加わる前の CLI で書いたレコードはこの属性を持たないが、移行は要らない。
 そのレコードは acr の無いトークンとして読まれ、アクセストークンの期限が来ると消える。
+
+`client:<client_id>` の `payload` も、`--db sql` の `clients.payload` と同じ値を持つ。
+`payload` が加わる前の CLI で書いたレコードはこの属性を持たないが、移行は要らない。
+そのクライアントは、`registerClient()` で登録し直すまで、これまでどおり項目の値だけで読まれる。
 
 `--db kv` は、`--db sql` の UPDATE や JOIN の代わりにキーを分けて動きをそろえている。
 
@@ -998,7 +1012,9 @@ await registerUser(db, {
 Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録する。
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行う（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js は、`instrumentation.ts` の `register()` で登録する（[クライアントとユーザーの登録（instrumentation.ts）](#クライアントとユーザーの登録instrumentationts)を参照）。
-`--db sql` と `--db kv` では、テーブルやレコードに無い登録メタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
+`--db sql` と `--db kv` では、テーブルの列やレコードの項目に無い登録メタデータ（`defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、ciba の `backchannelTokenDeliveryMode` のように機能が `RegisteredClient` に足すメタデータ）を `payload`（`--db sql` は `clients.payload` 列）に JSON で保存し、クライアントを読むときにそのまま返す。
+JSON で表せない値（関数など）は残らない。
+`clientSecret` と公開鍵（`keys`）は `payload` に入れない。
 クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに読む（`--db sql` は `client_jwks` から。[クライアントの公開鍵](#クライアントの公開鍵)を参照）。
 
 ユーザーは、`db/users.ts` の `registerUser()` で `db/` に入れる。

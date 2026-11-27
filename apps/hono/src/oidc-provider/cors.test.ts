@@ -122,6 +122,44 @@ describe('createCorsMiddleware', () => {
       });
     });
 
+    // Fetch Standard §3.2.3: the response headers a browser lets the client read.
+    it('should name the headers the client may read in Access-Control-Expose-Headers', async () => {
+      const app = new Hono();
+      app.use(
+        '/userinfo',
+        createCorsMiddleware({
+          origins: '*',
+          allowMethods: ['GET', 'OPTIONS'],
+          allowHeaders: ['Authorization', 'X-Example'],
+          exposeHeaders: ['WWW-Authenticate', 'X-Example-Nonce'],
+          maxAge: 600,
+        }),
+      );
+      app.get('/userinfo', (c) => c.json({}, 401));
+
+      const response = await app.request('/userinfo', { headers: { Origin: RP_ORIGIN } });
+
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,X-Example');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,X-Example-Nonce');
+    });
+
+    // Only the CORS-safelisted response headers are readable without it, as before the option existed.
+    it('should send no Access-Control-Expose-Headers when exposeHeaders is left out or empty', async () => {
+      const { app } = corsApp('*');
+      const empty = new Hono();
+      empty.use(
+        '/token',
+        createCorsMiddleware({ origins: '*', allowMethods: ['POST'], allowHeaders: ['Content-Type'], exposeHeaders: [], maxAge: 600 }),
+      );
+      empty.post('/token', (c) => c.json({}));
+
+      const leftOut = await app.request('/token', { method: 'POST', headers: { Origin: RP_ORIGIN } });
+      const none = await empty.request('/token', { method: 'POST', headers: { Origin: RP_ORIGIN } });
+
+      expect(leftOut.headers.has('Access-Control-Expose-Headers')).toBe(false);
+      expect(none.headers.has('Access-Control-Expose-Headers')).toBe(false);
+    });
+
     it('should leave the paths it is not mounted on without CORS headers', async () => {
       const { app } = corsApp('*');
 

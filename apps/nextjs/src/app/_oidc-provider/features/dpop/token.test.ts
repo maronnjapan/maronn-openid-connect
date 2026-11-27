@@ -2,7 +2,7 @@ import { createOpaqueAccessTokenIssuer, type AuthorizationCodeData, type Jwk } f
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TEST_ISSUER } from '../../../../test-support/context';
 import { createSqliteDatabase } from '../../../../test-support/databases';
-import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop';
+import { dpopKey, dpopProof, signDpopProof, type DpopKey } from '../../../../test-support/dpop';
 import { decodeJwt, signRs256Jwt } from '../../../../test-support/jwt';
 import { rs256Key } from '../../../../test-support/keys';
 import { POST as register } from '../../../(dynamic-client-registration)/register/route';
@@ -304,6 +304,25 @@ describe('requireTokenDpopNonce', () => {
     const response = await exchangeCode({ Authorization: basicAuthorization(clientId, 'wrong-secret'), DPoP: await tokenProof(await dpopKey()) });
 
     expect([response.status, ((await response.json()) as TokenBody).error]).toEqual([400, 'use_dpop_nonce']);
+  });
+
+  // RFC 9449 §4.3: the proof is decoded before client authentication to read its nonce, so a JOSE header that
+  // is not of a DPoP proof is rejected then too, with the nonce to use next.
+  it('should reject a proof whose typ is not dpop+jwt before the client is authenticated, with the nonce to use', async () => {
+    const { clientId, exchangeCode } = await provider();
+    const proof = await signDpopProof(
+      await dpopKey(),
+      { jti: unique('dpop-nonce-typ-jwt'), htm: 'POST', htu: TOKEN_ENDPOINT, iat: NOW, nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW },
+      { typ: 'JWT' },
+    );
+
+    const response = await exchangeCode({ Authorization: basicAuthorization(clientId, 'wrong-secret'), DPoP: proof });
+
+    expect([response.status, await response.json()]).toEqual([
+      400,
+      { error: 'invalid_dpop_proof', error_description: 'The DPoP proof typ header must be dpop+jwt' },
+    ]);
+    expect(response.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
   });
 
   // RFC 9449 §8: a nonce older than dpopNonceLifetimeSeconds (120 by default) is no longer a recent one.

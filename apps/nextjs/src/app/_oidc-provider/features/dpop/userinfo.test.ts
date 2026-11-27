@@ -611,6 +611,29 @@ describe('readDpopUserInfoRequest with dpopNonceRequiredAtResourceServer', () =>
     expect([response.status, await response.json(), response.headers.get('DPoP-Nonce')]).toEqual([200, CLAIMS, RESOURCE_SERVER_NONCE_AT_NOW]);
   });
 
+  // RFC 9449 §8.2 / §9: the signed UserInfo response (OIDC Core 1.0 §5.3.2) carries the nonce to use next too.
+  it('should give the nonce it issues now with a signed UserInfo response', async () => {
+    const clientId = unique('dpop-userinfo-signed-client');
+    await registerClient(createDatabase(), {
+      clientId,
+      redirectUris: [REDIRECT_URI],
+      grantTypes: ['authorization_code'],
+      tokenEndpointAuthMethods: ['none'],
+      userinfoSignedResponseAlg: 'RS256',
+    });
+    const key = await dpopKey();
+    const request = await dpopGet(key, await storeToken(key.jkt, { clientId }), { nonce: RESOURCE_SERVER_NONCE_A_MINUTE_AGO });
+    fixRandomBytes();
+
+    const response = await GET(request);
+
+    expect([response.status, response.headers.get('Content-Type'), response.headers.get('DPoP-Nonce')]).toEqual([
+      200,
+      'application/jwt',
+      RESOURCE_SERVER_NONCE_AT_NOW,
+    ]);
+  });
+
   it('should reject a nonce older than dpopNonceLifetimeSeconds and give a new one', async () => {
     const key = await dpopKey();
     const accessToken = await storeToken(key.jkt);
@@ -653,6 +676,7 @@ describe('readDpopUserInfoRequest with dpopNonceRequiredAtResourceServer', () =>
     const atUserInfo = await GET(await dpopGet(key, accessToken, { nonce: tokenEndpointNonce }));
     const atTokenEndpoint = await tokenRequest({ nonce: userInfoNonce });
 
+    expect([tokenEndpointNonce, userInfoNonce]).toEqual([expect.stringMatching(NONCE_FORM), expect.stringMatching(NONCE_FORM)]);
     expect([atUserInfo.status, await atUserInfo.json()]).toEqual([401, { error: 'use_dpop_nonce', error_description: STALE_NONCE }]);
     expect([atTokenEndpoint.status, await atTokenEndpoint.json()]).toEqual([
       400,

@@ -42,13 +42,19 @@ describe('createProviderConfig', () => {
   // The dpop extension accepts DPoP proofs of every asymmetric alg its checks
   // verify (RFC 9449 §5.1), within 60 seconds of their iat plus 60 seconds
   // of clock skew (RFC 9449 §11.1), and a nonce of the OP for 120 seconds
-  // after it was issued (RFC 9449 §8).
+  // after it was issued (RFC 9449 §8); neither the authorization server
+  // nor the protected resource requires one until it is configured to
+  // (RFC 9449 §8 / §9: the environment variables
+  // OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER and
+  // OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER, which the tests leave unset).
   it('should hold the defaults of the dpop extension', () => {
     expect(createProviderConfig()).toMatchObject({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
       dpopNonceLifetimeSeconds: 120,
+      dpopNonceRequiredAtAuthorizationServer: false,
+      dpopNonceRequiredAtResourceServer: false,
     });
   });
 

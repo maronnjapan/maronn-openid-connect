@@ -39,11 +39,21 @@ const NONCE_FORM = /^[A-Za-z0-9_-]{27}\.[A-Za-z0-9_-]{43}$/;
 const NONCE_REQUIRED = 'Resource server requires nonce in DPoP proof';
 const STALE_NONCE = 'The DPoP proof nonce is not a nonce the resource server recently provided';
 
+/** The inputs of setUp(). */
+interface SetUpInput {
+  key?: DpopKey;
+  token?: Partial<AccessTokenInfo>;
+  config?: Partial<ProviderConfig>;
+  secret?: string;
+  userinfoSignedResponseAlg?: 'RS256';
+}
+
 /**
  * The app with alice, the public client client-1, and token-1 issued to the client for alice, bound to key when given,
- * with the settings of config and the secret of the DPoP nonces when given.
+ * with the settings of config and the secret of the DPoP nonces when given. The client registered
+ * userinfoSignedResponseAlg when given.
  */
-async function setUp(input: { key?: DpopKey; token?: Partial<AccessTokenInfo>; config?: Partial<ProviderConfig>; secret?: string } = {}) {
+async function setUp(input: SetUpInput = {}) {
   const db = createEmptyDatabase();
   await registerUser(db, { sub: 'alice', name: 'Alice Example', email: 'alice@example.com', email_verified: true });
   await registerClient(db, {
@@ -51,6 +61,7 @@ async function setUp(input: { key?: DpopKey; token?: Partial<AccessTokenInfo>; c
     redirectUris: ['https://rp.example.com/callback'],
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethods: ['none'],
+    ...(input.userinfoSignedResponseAlg === undefined ? {} : { userinfoSignedResponseAlg: input.userinfoSignedResponseAlg }),
   });
   const binding = input.key === undefined ? {} : { cnf: { jkt: input.key.jkt }, tokenType: 'DPoP' };
   const record: AccessTokenInfo = {
@@ -434,7 +445,7 @@ describe('readDpopUserInfoRequest with dpopNonceRequiredAtResourceServer', () =>
   }
 
   /** The app of setUp() where the protected resource requires its nonces, made with NONCE_SECRET. */
-  function nonceSetUp(input: { key?: DpopKey; token?: Partial<AccessTokenInfo>; config?: Partial<ProviderConfig>; secret?: string } = {}) {
+  function nonceSetUp(input: SetUpInput = {}) {
     return setUp({ secret: NONCE_SECRET, ...input, config: { dpopNonceRequiredAtResourceServer: true, ...input.config } });
   }
 
@@ -481,6 +492,22 @@ describe('readDpopUserInfoRequest with dpopNonceRequiredAtResourceServer', () =>
     expect([response.status, await response.json(), response.headers.get('DPoP-Nonce')]).toEqual([200, CLAIMS, RESOURCE_SERVER_NONCE_AT_NOW]);
   });
 
+  // RFC 9449 §8.2 / §9: the signed UserInfo response (OIDC Core 1.0 §5.3.2) carries the nonce to use next too.
+  it('should give the nonce it issues now with a signed UserInfo response', async () => {
+    const key = await dpopKey();
+    const { app } = await nonceSetUp({ key, userinfoSignedResponseAlg: 'RS256' });
+    const request = await dpopGet(key, { nonce: RESOURCE_SERVER_NONCE_A_MINUTE_AGO });
+    fixRandomBytes();
+
+    const response = await app.request(request);
+
+    expect([response.status, response.headers.get('Content-Type'), response.headers.get('DPoP-Nonce')]).toEqual([
+      200,
+      'application/jwt',
+      RESOURCE_SERVER_NONCE_AT_NOW,
+    ]);
+  });
+
   it('should reject a nonce older than dpopNonceLifetimeSeconds and give a new one', async () => {
     const key = await dpopKey();
     const { app } = await nonceSetUp({ key });
@@ -519,6 +546,7 @@ describe('readDpopUserInfoRequest with dpopNonceRequiredAtResourceServer', () =>
     const atUserInfo = await app.request(await dpopGet(key, { nonce: tokenEndpointNonce }));
     const atTokenEndpoint = await tokenRequest({ nonce: userInfoNonce });
 
+    expect([tokenEndpointNonce, userInfoNonce]).toEqual([expect.stringMatching(NONCE_FORM), expect.stringMatching(NONCE_FORM)]);
     expect([atUserInfo.status, await atUserInfo.json()]).toEqual([401, { error: 'use_dpop_nonce', error_description: STALE_NONCE }]);
     expect([atTokenEndpoint.status, await atTokenEndpoint.json()]).toEqual([
       400,

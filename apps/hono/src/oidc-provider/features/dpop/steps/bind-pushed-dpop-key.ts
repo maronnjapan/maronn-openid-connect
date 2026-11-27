@@ -37,7 +37,7 @@ export interface PushedDpopBinding {
  * プッシュされた `dpop_jkt` と DPoP proof の両方があれば、同じ鍵でなければ拒否する（RFC 9449 §10.1 の MUST）。
  * `DPoP` ヘッダーがなければ何も返さず、プッシュされたパラメータ（`dpop_jkt` があればそれも）をそのまま使わせる。
  * プッシュされた `dpop_jkt` の形は、`DPoP` ヘッダーの有無にかかわらず、DPoP proof の前に確かめる（認可エンドポイントと同じ検証。RFC 9126 §2.1）。
- * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof の署名とクレームは検査せず、その `jti` も覚えない（認可サーバーが nonce を求めるときも、認証の前のブロックは `nonce` だけを確かめる）。
+ * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof の署名とクレームは検査せず、その `jti` も覚えない（認可サーバーが nonce を求めるときは、認証の前のブロックが、署名を確かめずに DPoP proof の形と JOSE ヘッダーと `nonce` だけを確かめる）。
  *
  * 拒否するときは、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON のレスポンス（`no-cache, no-store`）を `dpopRejection` に入れて返す（`parEndpointRejectionOf()`）。
  * `error` は、DPoP proof を受け付けないときと `dpop_jkt` が DPoP proof の鍵と違うときは `invalid_dpop_proof`、`dpop_jkt` が JWK Thumbprint の形でないときは `invalid_request`、DPoP proof の `nonce` を受け付けないときは `use_dpop_nonce` である。

@@ -21,13 +21,14 @@ export const meta = step({
  * 設定が認可サーバーに DPoP の nonce を求めるとき、`DPoP` ヘッダーのある PAR のリクエストへのレスポンスに次の nonce を付け、DPoP proof の nonce を確かめる。
  *
  * 設定の `dpopNonceRequiredAtAuthorizationServer` が false なら何もしない（nonce を渡さず、DPoP proof の `nonce` も確かめない）。
- * true なら、`DPoP` ヘッダーのあるリクエストへのどのレスポンス（201 もエラーも）にも認可サーバーの新しい nonce を `DPoP-Nonce` ヘッダーで付け、DPoP proof に `nonce` が無いか、認可サーバーが最近発行した nonce でなければ拒否する（`requireDpopNonce()`。RFC 9449 §8 / §8.2 / §11.3）。
+ * true なら、`DPoP` ヘッダーが一つの値のリクエストには、このブロックから後のどのレスポンス（201 もエラーも）にも認可サーバーの新しい nonce を `DPoP-Nonce` ヘッダーで付け、DPoP proof に `nonce` が無いか、認可サーバーが最近発行した nonce でなければ拒否する（`requireDpopNonce()`。RFC 9449 §8 / §8.2 / §11.3）。
+ * `nonce` を読むために DPoP proof を署名を確かめずに分解するので、`DPoP` ヘッダーが一つの DPoP proof の形でない（JWS のコンパクト形式でない、JOSE ヘッダーの `typ` が `dpop+jwt` でない、`alg` か `jwk` が無い、`crit` がある）リクエストも、ここで拒否する。
  * 認可サーバーの nonce なので、トークンエンドポイントで渡された nonce もここで使え、ここで渡された nonce もトークンエンドポイントで使える。
  * クライアントの認証の前に実行するので、nonce で拒否したリクエストのクライアントアサーション（`private_key_jwt`）の `jti` は消費しない。
  * DPoP proof の署名とほかのクレームは、クライアントの認証の後のブロック（`bindPushedDpopKey()`）が、`nonce` と一緒に確かめる。
  *
  * 拒否するときは、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON のレスポンス（`no-cache, no-store`）を `dpopNonceRejection` に入れて返す（`parEndpointRejectionOf()`）。
- * `error` は、nonce を受け付けないときは `use_dpop_nonce`、`DPoP` ヘッダーが複数あるときと一つの JWT でないときは `invalid_dpop_proof` である。
+ * `error` は、nonce を受け付けないときは `use_dpop_nonce`、`DPoP` ヘッダーが一つの DPoP proof の形でないときは `invalid_dpop_proof` である。
  * DPoP の機能が PAR の機能なしでも生成されるので、PAR の機能のエラーの型は使わない（そのときもこのファイルは生成されるが、PAR エンドポイントがないので、どこからも呼ばれない）。
  *
  * @spec RFC 9449 §8

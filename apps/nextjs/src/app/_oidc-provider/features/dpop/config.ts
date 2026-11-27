@@ -56,10 +56,12 @@ declare module '../../config' {
     /**
      * EXTENSION (dpop): whether the authorization server of this OP (the
      * token endpoint and the PAR endpoint) requires a nonce it provided in
-     * the DPoP proofs (RFC 9449 §8). true: every response to a request with
-     * a DPoP header carries a new nonce in the DPoP-Nonce header, and a proof
-     * without a nonce, or with one the authorization server did not provide
-     * within dpopNonceLifetimeSeconds, is rejected with use_dpop_nonce (400).
+     * the DPoP proofs (RFC 9449 §8). true: once the endpoint has parsed a
+     * request with one DPoP header, every response to it carries a new nonce
+     * in the DPoP-Nonce header (an answer given before that, such as the 400
+     * for a malformed request body, carries none), and a proof without a
+     * nonce, or with one the authorization server did not provide within
+     * dpopNonceLifetimeSeconds, is rejected with use_dpop_nonce (400).
      * false: no DPoP-Nonce header is sent, and the nonce claim of a proof is
      * not checked. Its default is dpopConfigDefaults (false); the dpop feature
      * (feature.ts) sets it to true when the environment variable

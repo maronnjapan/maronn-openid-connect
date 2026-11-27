@@ -32,7 +32,7 @@ GET /authorize?client_id=web-app&request_uri=urn:ietf:params:oauth:request_uri:<
 | RFC 9126 §3 | **非対応**（PAR ボディへの `request` パラメータ、JAR との併用） |
 | RFC 9126 §6 | **非対応**（クライアント単位の `require_pushed_authorization_requests`） |
 | RFC 9449 §10.1 | 拡張機能 `dpop` と一緒に有効にしたとき、`DPoP` ヘッダーの DPoP proof の鍵を、プッシュした認可リクエストの `dpop_jkt` として扱い、認可コードをその鍵に束縛する（ボディの `dpop_jkt` もあれば、同じ鍵であること） |
-| RFC 9449 §8 | 拡張機能 `dpop` と一緒に有効にし、`dpopNonceRequiredAtAuthorizationServer` を `true` にしたとき、`DPoP` ヘッダーのあるリクエストへのどのレスポンスにも次の nonce を `DPoP-Nonce` ヘッダーで付け、認可サーバーが最近発行した nonce の無い DPoP proof を `use_dpop_nonce` で拒否する（トークンエンドポイントと同じ認可サーバーの nonce） |
+| RFC 9449 §8 | 拡張機能 `dpop` と一緒に有効にし、`dpopNonceRequiredAtAuthorizationServer` を `true` にしたとき、`DPoP` ヘッダーのあるリクエストへのレスポンスに次の nonce を `DPoP-Nonce` ヘッダーで付け、認可サーバーが最近発行した nonce の無い DPoP proof を `use_dpop_nonce` で拒否する（トークンエンドポイントと同じ認可サーバーの nonce） |
 | OIDC Core 1.0 §6.2 | PAR の範囲外（URL 形式の `request_uri` は、安定機能 `request-object` が取得する。`request-object` を外した OP では `request_uri_not_supported` で拒否） |
 
 ## ユースケース

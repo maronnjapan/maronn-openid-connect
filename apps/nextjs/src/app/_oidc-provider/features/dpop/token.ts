@@ -41,11 +41,12 @@ export interface DpopTokenRequest {
  * 設定が認可サーバーに DPoP の nonce を求めるとき、`DPoP` ヘッダーのあるトークンリクエストへのレスポンスに次の nonce を付け、DPoP proof の nonce を確かめる。
  *
  * 設定の `dpopNonceRequiredAtAuthorizationServer` が false なら何もせず `undefined` を返す（nonce を渡さず、DPoP proof の `nonce` も確かめない）。
- * true なら、`DPoP` ヘッダーのあるリクエストへのどのレスポンス（トークンレスポンスもエラーレスポンスも）にも認可サーバーの新しい nonce を `DPoP-Nonce` ヘッダーで付け、DPoP proof に `nonce` が無いか、認可サーバーが最近発行した nonce でなければ拒否する（`requireDpopNonce()`。RFC 9449 §8 / §8.2 / §11.3）。
+ * true なら、`DPoP` ヘッダーが一つの値のリクエストには、このブロックから後のどのレスポンス（トークンレスポンスもエラーレスポンスも）にも認可サーバーの新しい nonce を `DPoP-Nonce` ヘッダーで付け、DPoP proof に `nonce` が無いか、認可サーバーが最近発行した nonce でなければ拒否する（`requireDpopNonce()`。RFC 9449 §8 / §8.2 / §11.3）。
+ * `nonce` を読むために DPoP proof を署名を確かめずに分解するので、`DPoP` ヘッダーが一つの DPoP proof の形でない（JWS のコンパクト形式でない、JOSE ヘッダーの `typ` が `dpop+jwt` でない、`alg` か `jwk` が無い、`crit` がある）リクエストも、ここで拒否する。
  * クライアントの認証の前に実行するので、nonce で拒否したリクエストのクライアントアサーション（`private_key_jwt`）の `jti` は消費しない。
  * クライアントは、同じクライアントアサーションと、渡された nonce を入れた DPoP proof でやり直せる。
  * DPoP proof の署名とほかのクレームは、クライアントの認証の後の DPoP proof の検査（`verifyDpopTokenRequest()`）が、`nonce` と一緒に確かめる。
- * 拒否するときは、キャッシュさせない 400 のレスポンスを返す。`error` は、nonce を受け付けないときは `use_dpop_nonce`、`DPoP` ヘッダーが複数あるときと一つの JWT でないときは `invalid_dpop_proof` である。
+ * 拒否するときは、キャッシュさせない 400 のレスポンスを返す。`error` は、nonce を受け付けないときは `use_dpop_nonce`、`DPoP` ヘッダーが一つの DPoP proof の形でないときは `invalid_dpop_proof` である。
  *
  * @spec RFC 9449 §8
  * @spec RFC 9449 §8.2
@@ -77,7 +78,7 @@ export async function requireTokenDpopNonce(request: Request): Promise<Response 
  * コンフィデンシャルクライアントのリフレッシュトークンは、クライアント認証で送り手が限られているので束縛しない。
  *
  * どのグラントの前にも実行するので、機能が答えるグラント（client_credentials など）のトークンも同じ鍵に束縛する。
- * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof の署名とクレームは検査せず、その `jti` も覚えない（認可サーバーが nonce を求めるときも、認証の前のブロックは `nonce` だけを確かめる）。
+ * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof の署名とクレームは検査せず、その `jti` も覚えない（認可サーバーが nonce を求めるときは、認証の前のブロックが、署名を確かめずに DPoP proof の形と JOSE ヘッダーと `nonce` だけを確かめる）。
  * 拒否するときは、キャッシュさせない 400 の `invalid_dpop_proof`（nonce を受け付けないときは `use_dpop_nonce`）のレスポンスを `dpopRejection` に入れて返す。
  *
  * @spec RFC 9449 §4.3

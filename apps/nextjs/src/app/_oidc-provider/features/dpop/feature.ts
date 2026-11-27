@@ -32,9 +32,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * [require-dpop-nonce] block of token/route.ts and the
  * [require-pushed-dpop-nonce] block of (par)/par/route.ts, before client
  * authentication (./token.ts and ./par.ts, which call ./server-nonce.ts),
- * give every response to a request with a DPoP header a new nonce of the
- * authorization server (DPoP-Nonce) and reject a proof without a nonce it
- * recently provided (use_dpop_nonce).
+ * give every response from then on to a request with a DPoP header a new
+ * nonce of the authorization server (DPoP-Nonce) and reject a proof without a
+ * nonce it recently provided (use_dpop_nonce).
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. proof.ts also checks the nonce of a proof (nonce.ts, with

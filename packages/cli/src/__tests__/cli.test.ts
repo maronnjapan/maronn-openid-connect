@@ -579,7 +579,7 @@ describe('run', () => {
     // secret every instance shares.
     it('should tell how to make the token and PAR endpoints require DPoP nonces, and where the secret of the nonces comes from, when dpop is enabled', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
-        'With dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token and PAR endpoints give every DPoP request a nonce in DPoP-Nonce and reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.',
+        'With dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.',
       );
     });
 
@@ -665,7 +665,7 @@ describe('run', () => {
     // RFC 9449 §8: the nonces of the authorization server, and the secret every instance shares.
     it('should say that dpopNonceRequiredAtAuthorizationServer makes the token and PAR endpoints require DPoP nonces, made with a secret every instance shares', () => {
       expect(helpText().replace(/\s+/g, ' ')).toContain(
-        'With dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token and PAR endpoints give every DPoP request a nonce in DPoP-Nonce and reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.',
+        'With dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.',
       );
     });
 

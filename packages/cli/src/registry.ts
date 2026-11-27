@@ -338,7 +338,7 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   /register registers it too, false when omitted): then it is
  *   invalid_dpop_proof.
  *   With dpopNonceRequiredAtAuthorizationServer (§8), the token and PAR
- *   endpoints give every response to a request with a DPoP header a nonce
+ *   endpoints give their responses to a request with a DPoP header a nonce
  *   (DPoP-Nonce) and, before client authentication, reject a proof without a
  *   nonce they recently gave (use_dpop_nonce); the nonces are made with the
  *   secret dpopNonceSecret (Hono family) or OIDC_DPOP_NONCE_SECRET (Next.js).

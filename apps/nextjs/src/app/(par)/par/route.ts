@@ -23,10 +23,12 @@
  * dpop_jkt, so the code issued for the request_uri is bound to that key
  * (RFC 9449 §10.1). Without the block the pushed parameters are validated and
  * stored as they came. With dpopNonceRequiredAtAuthorizationServer, the
- * (feature: dpop) block before client authentication gives every response to
- * a request with a DPoP header a new nonce of the authorization server
- * (DPoP-Nonce, which withCors puts on the answer) and rejects a proof without
- * a nonce it recently provided (400 use_dpop_nonce).
+ * (feature: dpop) block before client authentication gives every response
+ * from then on to a request with a DPoP header a new nonce of the
+ * authorization server (DPoP-Nonce, which withCors puts on the answer) and
+ * rejects a proof without a nonce it recently provided (400 use_dpop_nonce),
+ * or a DPoP header that is not one well-formed DPoP proof (400
+ * invalid_dpop_proof).
  *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * left to the deployment layer (reverse proxy / platform). This endpoint is
@@ -83,7 +85,7 @@ export function OPTIONS(request: Request): Response {
  * クライアントを認証し、プッシュされたパラメータを `/authorize` と同じ規則で検証して保存する。
  * 201 のボディには、`/authorize` に渡す `request_uri` とその有効期間（`expires_in`）を入れ、キャッシュを禁止して返す。
  * DPoP の機能があり、リクエストに `DPoP` ヘッダーがあれば、その鍵を `dpop_jkt` として保存するリクエストに入れる（RFC 9449 §10.1）。
- * DPoP の機能があり、設定が認可サーバーに DPoP の nonce を求めるときは、`DPoP` ヘッダーのあるリクエストへのどのレスポンスにも次の nonce（`DPoP-Nonce`）を付ける（RFC 9449 §8）。
+ * DPoP の機能があり、設定が認可サーバーに DPoP の nonce を求めるときは、`DPoP` ヘッダーのあるリクエストには、リクエストを解析した後のどのレスポンスにも次の nonce（`DPoP-Nonce`）を付ける（RFC 9449 §8）。
  *
  * 失敗したときは、キャッシュを禁止した OAuth のエラーの JSON で次のように応答する。
  * - ボディがフォームの形式でないとき、パラメータが繰り返されたとき、`request_uri` か `request` が含まれるときは、400 の `invalid_request`

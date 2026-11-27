@@ -190,7 +190,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     ttlSeconds: config.authorizationCodeTtl,
   });
   // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
-  // トークンエンドポイントは、同じ鍵の DPoP proof が付いた交換だけを受け付ける。
+  // DPoP の機能が、トークンエンドポイントでこの `cnf` と DPoP proof の鍵を照らし合わせられるようにするためである。
   await stores.authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
 
   // [record-consent] 同意とグラントを記録する — OIDC Core 1.0 §3.1.2.4

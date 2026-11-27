@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { registerDpopClientMetadata } from '../../../dpop/steps/validate-dpop-client-metadata.js';
 import { parseRegistrationRequest } from './steps/parse-request.js';
 import { respondRegistrationError } from './steps/respond-error.js';
 import { respondRegistration } from './steps/respond.js';
@@ -28,6 +29,12 @@ import { resolveRegistrationMetadata } from './steps/verify-software-statement.j
  * Each block below calls one step (one box of
  * `maronn-oidc graph --detail steps --endpoint register`).
  *
+ * With the dpop extension, the (feature: dpop) block after the metadata is
+ * validated registers dpop_bound_access_tokens (RFC 9449 §5.2): a boolean,
+ * false when omitted, stored with the client and returned in the 201
+ * response; any other value is refused with 400 invalid_client_metadata.
+ * Without the block the client is stored and returned as validated.
+ *
  * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
  * deployment layer (reverse proxy / platform); this endpoint only enforces the
  * inventory and body-size caps of config.ts. Open registration grants no trust:
@@ -50,11 +57,15 @@ registerApp.post('/', async (c) => {
     // [validate-metadata] メタデータを検証してクライアントを組み立てる — RFC 7591 §2 / §2.1
     const client = validateRegistrationMetadata(c, metadata);
 
+    // [validate-dpop-client-metadata] (feature: dpop) dpop_bound_access_tokens を検証して登録する — RFC 9449 §5.2 / RFC 7591 §2
+    const { dpopClient, dpopRejection } = registerDpopClientMetadata(c, metadata, client);
+    if (dpopRejection) return dpopRejection;
+
     // [store-client] 登録数の上限を確かめてクライアントを保存する — RFC 7591 §5
-    await storeRegisteredClient(c, client);
+    await storeRegisteredClient(c, dpopClient ?? client);
 
     // [respond] 201 と登録レスポンスで応答する — RFC 7591 §3.2.1
-    return respondRegistration(c, client);
+    return respondRegistration(c, dpopClient ?? client);
   } catch (error) {
     return respondRegistrationError(c, error);
   }

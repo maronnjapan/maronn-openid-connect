@@ -24,6 +24,12 @@
  * the client and answer. [verify-initial-access-token] answers its own 401s;
  * a block after it that throws ends in the [respond-error] block.
  *
+ * With the dpop extension, the (feature: dpop) block after the metadata is
+ * validated registers dpop_bound_access_tokens (RFC 9449 §5.2): a boolean,
+ * false when omitted, stored with the client and returned in the 201
+ * response; any other value is refused with 400 invalid_client_metadata.
+ * Without the block the client is stored and returned as validated.
+ *
  * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
  * deployment layer (reverse proxy / platform); this endpoint only enforces the
  * inventory and body-size caps of that config.ts. Open registration grants no
@@ -56,6 +62,7 @@ import {
 import { clientCors, corsPreflight, signingKeysUnavailable, withCors } from '../../_oidc-provider/http';
 import { config as providerConfig, loadSigningKeys } from '../../_oidc-provider/provider';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../_oidc-provider/scopes';
+import { registerDpopClientMetadata } from '../../_oidc-provider/features/dpop/register';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -83,11 +90,12 @@ export function OPTIONS(request: Request): Response {
  *
  * 201 のボディには `client_id` と登録したすべてのメタデータを入れ、`client_secret` で認証する方式を登録したクライアントには発行した `client_secret` も入れて、キャッシュを禁止して返す。
  * ストアに保存するクライアントは、シークレットをハッシュでだけ持つ。
+ * DPoP の機能があれば、`dpop_bound_access_tokens`（真偽値。省略すると `false`）も検証して登録し、レスポンスで返す（RFC 9449 §5.2）。
  *
  * 失敗したときは次のように応答する。
  * - `verifyInitialAccessToken` を設定していて `Bearer` トークンがないときは、エラーコードのない 401
  * - 設定の関数がトークンを拒否したときは、`invalid_token` の 401
- * - ボディが `application/json` でないか大きすぎるとき、メタデータが検証を通らないとき、ソフトウェアステートメントを拒否したときは 400（`invalid_client_metadata`、`invalid_redirect_uri`、`invalid_software_statement`、`unapproved_software_statement`）
+ * - ボディが `application/json` でないか大きすぎるとき、メタデータが検証を通らないとき（DPoP の機能があれば、`dpop_bound_access_tokens` が真偽値でないときも）、ソフトウェアステートメントを拒否したときは 400（`invalid_client_metadata`、`invalid_redirect_uri`、`invalid_software_statement`、`unapproved_software_statement`）
  * - 登録数が `maxRegisteredClients` に達しているときは、429 の `too_many_registrations`
  * - 署名鍵を読み込めないときは 503
  * - それ以外の失敗は、500 の `server_error`
@@ -192,6 +200,10 @@ async function registerClient(request: Request): Promise<Response> {
     });
     const client = buildRegisteredClient(validated);
 
+    // [validate-dpop-client-metadata] (feature: dpop) dpop_bound_access_tokens を検証して登録する — RFC 9449 §5.2 / RFC 7591 §2
+    const { dpopClient, dpopRejection } = registerDpopClientMetadata(metadata, client);
+    if (dpopRejection) return dpopRejection;
+
     // [store-client] 登録数の上限を確かめてクライアントを保存する — RFC 7591 §5
     // 登録数がすでに `maxRegisteredClients` に達していれば、固定のボディの 429 で応答する（RFC 7591 §5）。
     // メタデータには誤りがないので、`invalid_client_metadata` にはしない。
@@ -209,7 +221,7 @@ async function registerClient(request: Request): Promise<Response> {
     // 保存するレコード（`toClientRegistration()`）は、静的に登録したクライアント（_oidc-provider/db の `registerClient()`）と同じく `client_secret` をハッシュでだけ持ち、`jwks` の鍵を設定の用途ごとに持つ。
     // 下の 201 のレスポンスはメモリ上のクライアントから組み立てるので、平文のシークレットをストアに置く必要はない。
     const clientSecretHash = client.clientSecret === undefined ? undefined : await hashClientSecret(client.clientSecret);
-    await dynamicClientStore.save(toClientRegistration(client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
+    await dynamicClientStore.save(toClientRegistration(dpopClient ?? client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
     // 保存したあとに登録数を数え直し、上限を超えていればこの登録を削除して 429 で応答する。
     // 同時に届いたリクエストは、上の `await` の間に処理が入れ替わり、そろって最初の確認を通ることがあるためである。
     // これで上限を超えた登録が残ることはない（同時に削除し合って、上限より少ないまま終わることはある）。
@@ -226,7 +238,7 @@ async function registerClient(request: Request): Promise<Response> {
     // [respond] 201 と登録レスポンスで応答する — RFC 7591 §3.2.1
     // 発行した値と、登録したすべてのメタデータ（既定値を適用したもの）を 201 で返す（RFC 7591 §3.2.1）。
     // `client_secret_expires_at` の 0 は、シークレットに有効期限がないことを表す。
-    return registrationJson(buildClientRegistrationResponse(client), 201);
+    return registrationJson(buildClientRegistrationResponse(dpopClient ?? client), 201);
   } catch (error) {
     // [respond-error] 登録エラーで応答する — RFC 7591 §3.2.2
     // 登録のエラーには、400 で `error` と `error_description` の JSON を返す（RFC 7591 §3.2.2）。

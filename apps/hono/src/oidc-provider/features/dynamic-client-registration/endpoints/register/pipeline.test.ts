@@ -42,6 +42,7 @@ function register(app: Awaited<ReturnType<typeof providerApp>>, metadata: unknow
 
 describe('registerApp', () => {
   // RFC 7591 §3.1 / §3.2.1: the registration answer, then the issued client_id works on /authorize right away.
+  // The app generates every feature, so dpop registers dpop_bound_access_tokens with its default (RFC 9449 §5.2).
   it('should register a client through POST /register that /authorize accepts at once', async () => {
     const app = await providerApp();
 
@@ -78,6 +79,7 @@ describe('registerApp', () => {
       application_type: 'web',
       client_name: 'Example RP',
       id_token_signed_response_alg: 'RS256',
+      dpop_bound_access_tokens: false,
     });
     expect(authorize.status).toBe(302);
     expect(authorize.headers.get('Location')).toBe(`${TEST_ISSUER}/login?transaction_id=${authorize.headers.getSetCookie()[0]?.split(';')[0]?.split('=')[1]}`);

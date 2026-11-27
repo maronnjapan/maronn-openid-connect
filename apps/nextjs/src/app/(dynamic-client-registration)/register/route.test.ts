@@ -49,6 +49,7 @@ function register(metadata: unknown, headers: Record<string, string> = {}): Prom
 describe('POST /register', () => {
   // RFC 7591 §3.1 / §3.2.1: the registration answer, with the RFC 7591 §2 and
   // OIDC Dynamic Client Registration 1.0 §2 defaults applied and returned (§3.2).
+  // The app generates every feature, so dpop registers dpop_bound_access_tokens with its default (RFC 9449 §5.2).
   it('should register a client and answer 201 with the issued values and the registered metadata', async () => {
     const response = await register({ redirect_uris: REDIRECT_URIS, client_name: 'Example RP', scope: 'openid profile' });
 
@@ -67,6 +68,7 @@ describe('POST /register', () => {
       client_name: 'Example RP',
       scope: 'openid profile',
       id_token_signed_response_alg: 'RS256',
+      dpop_bound_access_tokens: false,
     });
   });
 

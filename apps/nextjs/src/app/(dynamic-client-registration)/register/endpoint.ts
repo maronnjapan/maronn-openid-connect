@@ -4,6 +4,7 @@ import { defineEndpoint } from '../../_oidc-provider/endpoint';
  * クライアントが JSON で送ったメタデータを検証してクライアントを登録し、201 で `client_id` と登録したすべてのメタデータを返す。
  * `client_secret` で認証する方式を登録したクライアントには、発行した `client_secret` も返す。
  * 設定で求めたときは、メタデータを検証する前に、初期アクセストークンとソフトウェアステートメントを設定の関数で検証する。
+ * DPoP の機能があれば、`dpop_bound_access_tokens`（真偽値。省略すると `false`）も検証して登録し、レスポンスで返す。
  *
  * 初期アクセストークンがないか拒否されたときは 401、ボディやメタデータの誤りとソフトウェアステートメントの拒否には 400、登録数が上限に達したときは 429 で応答する。
  * 署名鍵を読み込めないときは、503 で応答する。
@@ -20,8 +21,9 @@ export const endpoint = defineEndpoint({
     { id: 'parse-request', consumes: [], produces: ['keys', 'registration'] },
     { id: 'verify-software-statement', consumes: ['registration'], produces: ['metadata'] },
     { id: 'validate-metadata', consumes: ['metadata', 'keys'], produces: ['client'] },
-    { id: 'store-client', consumes: ['client'], produces: [] },
-    { id: 'respond', consumes: ['client'], produces: [] },
+    { id: 'validate-dpop-client-metadata', feature: 'dpop', consumes: ['metadata', 'client'], produces: ['dpopClient', 'dpopRejection'] },
+    { id: 'store-client', consumes: ['client', 'dpopClient'], produces: [] },
+    { id: 'respond', consumes: ['client', 'dpopClient'], produces: [] },
     { id: 'respond-error', consumes: [], produces: [] },
   ],
 });

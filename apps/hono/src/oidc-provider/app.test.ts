@@ -81,14 +81,17 @@ describe('createApp', () => {
     });
 
     // Access-Control-Expose-Headers takes effect on the actual response, where the
-    // dpop extension lets a browser read the challenge of the failure (RFC 9449 §7.1).
+    // dpop extension lets a browser read the challenges of the failure, DPoP beside
+    // Bearer (RFC 9449 §7.1 / §7.2).
     it('should let a browser read WWW-Authenticate on the 401 of a cross-origin /userinfo request', async () => {
       const app = await providerApp(createEmptyDatabase());
 
       const response = await app.request(requestTo('/userinfo', { headers: { Origin: RP_ORIGIN } }));
 
       expect(response.status).toBe(401);
-      expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo"');
+      expect(response.headers.get('WWW-Authenticate')).toBe(
+        'Bearer realm="UserInfo", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"',
+      );
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
       expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
     });

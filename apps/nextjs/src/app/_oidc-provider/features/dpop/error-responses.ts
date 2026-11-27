@@ -1,6 +1,7 @@
 /**
  * EXTENSION (dpop): the responses of the token and UserInfo endpoints to the
- * failures of the DPoP checks (DpopError of errors.ts).
+ * failures of the DPoP checks (DpopError of errors.ts), and the UserInfo error
+ * of a request that sends its access token with both Bearer and DPoP.
  *
  * Kept apart from errors.ts because it imports http.ts: errors.ts is loaded
  * with the feature list (config.ts imports jwk.ts, which throws DpopError), and
@@ -29,7 +30,7 @@ export function tokenEndpointRejectionOf(error: unknown): Response | undefined {
 /**
  * 保護されたリソース（UserInfo エンドポイント）での DPoP の検査の失敗を、UserInfo エンドポイントのエラーにして返す。
  *
- * `invalid_dpop_proof`（DPoP proof の不備）と `invalid_token`（提示の仕方に合った鍵に束縛されていないアクセストークン）は 401 で、`invalid_request`（`Authorization: DPoP` の形の誤り、二つの方法で送ったトークン）は 400 で応答する（RFC 9449 §7.1、RFC 6750 §3.1）。
+ * `invalid_dpop_proof`（DPoP proof の不備）と `invalid_token`（提示の仕方に合った鍵に束縛されていないアクセストークン）は 401 で、`invalid_request`（`Authorization: DPoP` の形の誤り）は 400 で応答する（RFC 9449 §7.1、RFC 6750 §3.1）。
  * エラーの情報は、レスポンスの JSON と、リクエストがトークンを提示したスキームのチャレンジ（`WWW-Authenticate`）に入れる（RFC 9449 §7.2）。
  * `invalid_grant` はトークンエンドポイントだけが返すコード（RFC 6749 §5.2）なので、UserInfo エンドポイントのエラーにしない。
  * それと DPoP の失敗でないエラーは、そのまま返す。
@@ -46,5 +47,24 @@ export function userInfoEndpointErrorOf(error: unknown): unknown {
       body: { error: error.error, error_description: error.errorDescription },
     },
     { error: error.error, errorDescription: error.errorDescription },
+  );
+}
+
+/** Bearer と DPoP の両方でアクセストークンを送ったリクエストへのエラーの説明（Bearer の二つの方法を使ったリクエストへの JSON と同じ文）。 */
+const MULTIPLE_METHODS_DESCRIPTION = 'Multiple access token methods are not allowed';
+
+/**
+ * Bearer と DPoP の両方の認証スキームでアクセストークンを送った UserInfo のリクエストへの、400 の `invalid_request` のエラーを返す。
+ *
+ * 両方とは、`Authorization` に二つのスキームを並べた（二つのフィールドを送った）リクエストと、`Authorization: DPoP` とフォームのボディの `access_token`（Bearer の方法、RFC 6750 §2.2）の両方でトークンを送ったリクエストである。
+ * どちらのスキームで認証しようとしたのか決まらないので、受け付けるどのスキームのチャレンジにも、エラーの情報を入れる（`everyScheme`、RFC 9449 §7.2 Figure 19）。
+ *
+ * @spec RFC 9449 §7.2
+ * @spec RFC 6750 §2
+ */
+export function ambiguousUserInfoRequestError(): UserInfoEndpointError {
+  return new UserInfoEndpointError(
+    { status: 400, body: { error: 'invalid_request', error_description: MULTIPLE_METHODS_DESCRIPTION } },
+    { error: 'invalid_request', errorDescription: MULTIPLE_METHODS_DESCRIPTION, everyScheme: true },
   );
 }

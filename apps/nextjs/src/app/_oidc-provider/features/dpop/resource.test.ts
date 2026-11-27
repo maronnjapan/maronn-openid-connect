@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DpopError } from './errors';
 import {
   dpopChallengeOf,
+  namesBearerAndDpopSchemes,
   readDpopAuthorization,
   validateDpopAccessTokenBinding,
   validateDpopCredentials,
@@ -42,6 +43,33 @@ describe('readDpopAuthorization', () => {
       expect(readDpopAuthorization(value)).toBeUndefined();
     },
   );
+});
+
+describe('namesBearerAndDpopSchemes', () => {
+  // RFC 9449 Figure 19 / RFC 9110 §5.3: two Authorization fields arrive as one value joined with ", ".
+  it.each([
+    `Bearer ${FIGURE_13_ACCESS_TOKEN}, DPoP ${FIGURE_13_ACCESS_TOKEN}`,
+    'DPoP token-1, Bearer token-1',
+    'dpop token-1,bearer token-1',
+    'Bearer, DPoP token-1',
+  ])('should tell that %j names both the Bearer and the DPoP scheme', (value) => {
+    expect(namesBearerAndDpopSchemes(value)).toBe(true);
+  });
+
+  it.each([
+    null,
+    undefined,
+    '',
+    'Bearer token-1',
+    'DPoP token-1',
+    'DPoP token-1, DPoP token-2',
+    'Bearer token-1, Bearer token-2',
+    'Basic dXNlcjpwYXNz, DPoP token-1',
+    'DPoP token-1, Bearer=token-1',
+    'DPoPBearer token-1',
+  ])('should tell that %j does not name both the Bearer and the DPoP scheme', (value) => {
+    expect(namesBearerAndDpopSchemes(value)).toBe(false);
+  });
 });
 
 describe('validateDpopCredentials', () => {

@@ -12,6 +12,10 @@ import { GET, POST } from './route';
 // test stores an access token of its own.
 
 const USERINFO_ENDPOINT = `${TEST_ISSUER}/userinfo`;
+// The template enables every feature, so the (feature: dpop) block offers the DPoP scheme too: every
+// challenge below ends with the DPoP challenge of the default algs, without an error (RFC 9449 §7.2).
+// Generated without dpop, the block is gone and the Bearer challenge is the only one.
+const DPOP_CHALLENGE = 'DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
 const SUBJECT = 'userinfo-route-alice';
 const CLIENT_ID = 'userinfo-route-client';
 
@@ -212,8 +216,8 @@ describe('userinfo', () => {
     });
   });
 
-  // RFC 6750 §3.1: a request without credentials gets a challenge with the realm alone.
-  it('should answer a request without a token with 401 and the realm-only challenge', async () => {
+  // RFC 6750 §3.1 / RFC 9449 §7.2 Figure 17: a request without credentials gets challenges without an error.
+  it('should answer a request without a token with 401 and challenges without an error', async () => {
     const response = await GET(requestTo('/userinfo'));
 
     expect(await answerOf(response)).toEqual({
@@ -221,7 +225,7 @@ describe('userinfo', () => {
       contentType: 'application/json',
       cacheControl: 'no-store',
       pragma: 'no-cache',
-      challenge: 'Bearer realm="UserInfo"',
+      challenge: `Bearer realm="UserInfo", ${DPOP_CHALLENGE}`,
       body: { error: 'invalid_token', error_description: 'Access token is required' },
     });
   });
@@ -230,7 +234,7 @@ describe('userinfo', () => {
     const response = await GET(requestTo('/userinfo', { headers: { Authorization: 'Basic dXNlcjpwYXNz' } }));
 
     expect(response.status).toBe(401);
-    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo"');
+    expect(response.headers.get('WWW-Authenticate')).toBe(`Bearer realm="UserInfo", ${DPOP_CHALLENGE}`);
   });
 
   // RFC 6750 §2: a client MUST NOT use more than one method in a request.
@@ -244,7 +248,7 @@ describe('userinfo', () => {
       contentType: 'application/json',
       cacheControl: 'no-store',
       pragma: 'no-cache',
-      challenge: 'Bearer realm="UserInfo", error="invalid_request"',
+      challenge: `Bearer realm="UserInfo", error="invalid_request", ${DPOP_CHALLENGE}`,
       body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
     });
   });
@@ -293,7 +297,7 @@ describe('userinfo', () => {
       contentType: 'application/json',
       cacheControl: 'no-store',
       pragma: 'no-cache',
-      challenge: `Bearer realm="UserInfo", error="invalid_token", error_description="${description}"`,
+      challenge: `Bearer realm="UserInfo", error="invalid_token", error_description="${description}", ${DPOP_CHALLENGE}`,
       body: { error: 'invalid_token', error_description: description },
     });
   });
@@ -307,7 +311,7 @@ describe('userinfo', () => {
       contentType: 'application/json',
       cacheControl: 'no-store',
       pragma: 'no-cache',
-      challenge: 'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid"',
+      challenge: `Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid", ${DPOP_CHALLENGE}`,
       body: { error: 'invalid_token', error_description: 'Access token is invalid' },
     });
   });
@@ -323,7 +327,7 @@ describe('userinfo', () => {
       contentType: 'application/json',
       cacheControl: 'no-store',
       pragma: 'no-cache',
-      challenge: 'Bearer realm="UserInfo", error="insufficient_scope", error_description="The openid scope is required"',
+      challenge: `Bearer realm="UserInfo", error="insufficient_scope", error_description="The openid scope is required", ${DPOP_CHALLENGE}`,
       body: { error: 'insufficient_scope', error_description: 'The openid scope is required' },
     });
   });

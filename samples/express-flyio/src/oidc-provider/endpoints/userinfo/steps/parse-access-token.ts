@@ -24,7 +24,7 @@ export const meta = step({
  * URL のクエリパラメータ（RFC 6750 §2.3）は OAuth 2.1 が禁止しているので、意図して対応していない。
  *
  * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、どのチャレンジもエラーを伝えない、RFC 6750 §3.1）。
- * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request` で、どのチャレンジもそのエラーを伝える、RFC 9449 §7.2）。
+ * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request` で、`Bearer` のチャレンジがそのエラーを伝える、RFC 9449 §7.2）。
  * @throws {UserInfoEndpointError} ヘッダーやボディを読めないとき（チャレンジの付かない 400 の `invalid_request`）。
  */
 export async function parseUserInfoRequest(c: any): Promise<string> {
@@ -53,13 +53,13 @@ export async function parseUserInfoRequest(c: any): Promise<string> {
   const methodCount = (headerToken ? 1 : 0) + (bodyToken ? 1 : 0);
   if (methodCount > 1) {
     // クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
-    // どの方法で認証しようとしたのか決められないので、どのスキームのチャレンジにもエラーを入れる（RFC 9449 §7.2）。
+    // ヘッダーもフォームのボディも Bearer の方法（RFC 6750 §2.1 / §2.2）で、認証しようとしたスキームは決まるので、`Bearer` のチャレンジだけにエラーを入れる（RFC 9449 §7.2）。
     throw new UserInfoEndpointError(
       {
         status: 400,
         body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
       },
-      { error: 'invalid_request', everyScheme: true },
+      { error: 'invalid_request' },
     );
   }
   const accessToken = headerToken || bodyToken;

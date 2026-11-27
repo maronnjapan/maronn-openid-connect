@@ -23,7 +23,7 @@ export const meta = step({
  * アクセストークンの情報を取得し、検証して返す。
  *
  * トークンが登録されていること、期限切れでないこと、`openid` スコープを含むこと、オーディエンスにこの UserInfo エンドポイントを含むことを確かめる。
- * どの確認も core の独立した関数で、失敗すると `UserInfoError` を投げ、`respondUserInfoError()` が RFC 6750 の `Bearer` のチャレンジで応答する。
+ * どの確認も core の独立した関数で、失敗すると `UserInfoError` を投げ、`respondUserInfoError()` が、トークンを提示したスキームのチャレンジにエラーを入れて応答する（RFC 6750 §3）。
  *
  * @throws {UserInfoError} `invalid_token`: トークンが登録されていない、期限切れ、オーディエンスにこのエンドポイントを含まないとき（401）。
  * @throws {UserInfoError} `insufficient_scope`: トークンが `openid` スコープを含まないとき（403）。

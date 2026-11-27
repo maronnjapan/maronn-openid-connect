@@ -7,6 +7,7 @@
  * クライアントは、アクセストークンを `Authorization: DPoP <token>` で送り、`ath` を入れた DPoP proof を `DPoP` ヘッダーで添える。
  * 保護されたリソースは、DPoP proof を検査し、アクセストークンがその鍵に束縛されていることを確かめる（RFC 9449 §7.1）。
  * DPoP の鍵に束縛したアクセストークンは、Bearer として提示されても受け付けない（RFC 9449 §7.2）。
+ * 失敗の応答には、Bearer のチャレンジと並べて DPoP のチャレンジを返し、Bearer と DPoP の両方でトークンを送ったリクエストは拒否する（RFC 9449 §7.2）。
  */
 import type { UserInfoChallenge } from '../../../userinfo/response';
 import { DpopError } from './errors';
@@ -32,6 +33,21 @@ export function readDpopAuthorization(authorizationHeader: string | null | undef
   const match = /^DPoP(?: +(.*))?$/i.exec(authorizationHeader ?? '');
   if (match === null) return undefined;
   return match[1] ?? '';
+}
+
+/**
+ * `Authorization` ヘッダーの値が、Bearer と DPoP の両方の認証スキームを名指しているかを返す。
+ *
+ * `Authorization` のフィールドを二つ送ったリクエスト（RFC 9449 Figure 19）は、Fetch の `Headers` では、二つの値をコンマと空白でつないだ一つの値になる（RFC 9110 §5.3）。
+ * 値をコンマで区切り、要素ごとに先頭の語を認証スキームとして大文字と小文字を区別せずに読んで、Bearer と DPoP の両方があれば true を返す。
+ * 同じスキームを二つ並べた値や、ほかのスキームとの組み合わせには false を返す。
+ *
+ * @spec RFC 9449 §7.2
+ * @spec RFC 9110 §5.3
+ */
+export function namesBearerAndDpopSchemes(authorizationHeader: string | null | undefined): boolean {
+  const schemes = (authorizationHeader ?? '').split(',').map((element) => element.trim().split(/\s+/, 1)[0]?.toLowerCase());
+  return schemes.includes('bearer') && schemes.includes('dpop');
 }
 
 /**

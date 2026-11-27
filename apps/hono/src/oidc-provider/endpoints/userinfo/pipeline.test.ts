@@ -7,6 +7,11 @@ import { createEmptyDatabase } from '../../db/memory/database.js';
 import { createProviderStores } from '../../db/memory/stores.js';
 import { registerUser } from '../../db/memory/users.js';
 
+// The template enables every feature, so the (feature: dpop) block offers the DPoP scheme too: every
+// challenge below ends with the DPoP challenge of the default algs, without an error (RFC 9449 §7.2).
+// Generated without dpop, the block is gone and the Bearer challenge is the only one.
+const DPOP_CHALLENGE = 'DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
+
 function tokenInfo(overrides: Partial<AccessTokenInfo> = {}): AccessTokenInfo {
   return {
     sub: 'alice',
@@ -71,14 +76,14 @@ describe('userinfoApp', () => {
     });
   });
 
-  // RFC 6750 §3.1
-  it('should answer a request without a token with 401 and the realm-only challenge', async () => {
+  // RFC 6750 §3.1 / RFC 9449 §7.2 Figure 17: no challenge carries an error.
+  it('should answer a request without a token with 401 and challenges without an error', async () => {
     const app = await setUp();
 
     const response = await app.request(requestTo('/userinfo'));
 
     expect(response.status).toBe(401);
-    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo"');
+    expect(response.headers.get('WWW-Authenticate')).toBe(`Bearer realm="UserInfo", ${DPOP_CHALLENGE}`);
   });
 
   // OIDC Core 1.0 §5.3.3
@@ -89,7 +94,7 @@ describe('userinfoApp', () => {
 
     expect(response.status).toBe(403);
     expect(response.headers.get('WWW-Authenticate')).toBe(
-      'Bearer realm="UserInfo", error="insufficient_scope", error_description="The openid scope is required"',
+      `Bearer realm="UserInfo", error="insufficient_scope", error_description="The openid scope is required", ${DPOP_CHALLENGE}`,
     );
     expect(await response.json()).toEqual({
       error: 'insufficient_scope',
@@ -104,7 +109,7 @@ describe('userinfoApp', () => {
 
     expect(response.status).toBe(401);
     expect(response.headers.get('WWW-Authenticate')).toBe(
-      'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid"',
+      `Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid", ${DPOP_CHALLENGE}`,
     );
     expect(await response.json()).toEqual({ error: 'invalid_token', error_description: 'Access token is invalid' });
   });
@@ -117,7 +122,7 @@ describe('userinfoApp', () => {
 
     expect(response.status).toBe(401);
     expect(response.headers.get('WWW-Authenticate')).toBe(
-      'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid"',
+      `Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid", ${DPOP_CHALLENGE}`,
     );
   });
 
@@ -130,20 +135,20 @@ describe('userinfoApp', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo", error="invalid_request"');
+    expect(response.headers.get('WWW-Authenticate')).toBe(`Bearer realm="UserInfo", error="invalid_request", ${DPOP_CHALLENGE}`);
     expect(await response.json()).toEqual({
       error: 'invalid_request',
       error_description: 'Multiple access token methods are not allowed',
     });
   });
 
-  it('should answer another authentication scheme as no token, with the realm-only challenge', async () => {
+  it('should answer another authentication scheme as no token, with challenges without an error', async () => {
     const app = await setUp();
 
     const response = await app.request(requestTo('/userinfo', { headers: { Authorization: 'Basic dXNlcjpwYXNz' } }));
 
     expect(response.status).toBe(401);
-    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo"');
+    expect(response.headers.get('WWW-Authenticate')).toBe(`Bearer realm="UserInfo", ${DPOP_CHALLENGE}`);
     expect(await response.json()).toEqual({ error: 'invalid_token', error_description: 'Access token is required' });
   });
 });

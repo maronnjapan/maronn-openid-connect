@@ -1,8 +1,8 @@
 import { UserInfoError, UserInfoErrorCode } from '@maronn-openid-connect/core';
 import { describe, expect, it } from 'vitest';
 
-import { UserInfoEndpointError } from '../../../userinfo/response';
-import { tokenEndpointRejectionOf, userInfoEndpointErrorOf } from './error-responses';
+import { BEARER_CHALLENGE, UserInfoEndpointError, userInfoChallengeHeader } from '../../../userinfo/response';
+import { ambiguousUserInfoRequestError, tokenEndpointRejectionOf, userInfoEndpointErrorOf } from './error-responses';
 import { DpopError } from './errors';
 
 describe('tokenEndpointRejectionOf', () => {
@@ -86,5 +86,20 @@ describe('userInfoEndpointErrorOf', () => {
     ['an Error of a misconfiguration', new Error('The iat window of the DPoP proof checks must be non-negative finite numbers')],
   ])('should return %s as it is', (_name, error) => {
     expect(userInfoEndpointErrorOf(error)).toBe(error);
+  });
+});
+
+describe('ambiguousUserInfoRequestError', () => {
+  // RFC 9449 §7.2 Figure 19: a token sent with both Bearer and DPoP is a 400 invalid_request, whose
+  // error every challenge carries.
+  it('should be a 400 invalid_request whose error goes in the challenge of every scheme', () => {
+    const error = ambiguousUserInfoRequestError();
+    const challenges = { offered: [BEARER_CHALLENGE, { scheme: 'DPoP', parameters: ['algs="ES256"'] }], scheme: 'Bearer' };
+
+    expect([error.response, userInfoChallengeHeader(challenges, error.challenge ?? 'without-error')]).toEqual([
+      { status: 400, body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' } },
+      'Bearer realm="UserInfo", error="invalid_request", error_description="Multiple access token methods are not allowed", ' +
+        'DPoP algs="ES256", error="invalid_request", error_description="Multiple access token methods are not allowed"',
+    ]);
   });
 });

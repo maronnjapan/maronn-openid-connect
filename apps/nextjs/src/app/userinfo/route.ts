@@ -13,9 +13,10 @@
  * of the schemes the endpoint accepts.
  *
  * With the dpop extension, the (feature: dpop) block before the Bearer token
- * reads a token presented with the DPoP scheme and checks its DPoP proof, and
- * the one after the token is resolved checks that the key the token is bound
- * to matches how it was presented (RFC 9449 §7.1 / §7.2).
+ * adds the DPoP challenge beside the Bearer one, rejects a token sent with
+ * both schemes, and reads a token presented with the DPoP scheme and checks
+ * its DPoP proof; the one after the token is resolved checks that the key the
+ * token is bound to matches how it was presented (RFC 9449 §7.1 / §7.2).
  */
 import {
   resolveUserInfoAccessToken,
@@ -116,7 +117,7 @@ async function userinfo(request: Request): Promise<Response> {
   if (!keys) return signingKeysUnavailable();
 
   try {
-    // [read-dpop-access-token] (feature: dpop) DPoP スキームのアクセストークンを読み、DPoP proof を検証する — RFC 9449 §7.1 / §4.3
+    // [read-dpop-access-token] (feature: dpop) DPoP のチャレンジを並べ、DPoP スキームのアクセストークンを読んで DPoP proof を検証する — RFC 9449 §7.1 / §7.2 / §4.3
     const { dpopAccessToken, dpopJkt } = await readDpopUserInfoRequest(request, challenges);
 
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2

@@ -34,7 +34,7 @@ const DPOP_ERROR_CODES = [
   'invalid_token',
   /**
    * 保護されたリソースへのリクエストの形が正しくない（RFC 6750 §3.1）。
-   * `Authorization: DPoP` の値がアクセストークンを一つの token68 で持たない（RFC 9449 §7.1）、またはアクセストークンを二つの方法で送った（RFC 6750 §2）。
+   * `Authorization: DPoP` の値がアクセストークンを一つの token68 で持たない（RFC 9449 §7.1）。
    * RFC 6749 §5.2 のコードでもあり、トークンエンドポイントも保護されたリソースも 400 で応答する。
    */
   'invalid_request',

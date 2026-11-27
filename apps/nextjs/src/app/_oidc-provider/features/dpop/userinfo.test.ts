@@ -19,6 +19,14 @@ const USERINFO_ENDPOINT = `${TEST_ISSUER}/userinfo`;
 const TOKEN_ENDPOINT = `${TEST_ISSUER}/token`;
 /** The challenges of a request that presented its token with the DPoP scheme, before the error: Bearer, then DPoP with the default algs. */
 const DPOP_CHALLENGES = 'Bearer realm="UserInfo", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
+/** The challenges of a request that sent its token with both Bearer and DPoP: both carry the error (RFC 9449 Figure 19). */
+const MULTIPLE_METHODS_CHALLENGES =
+  'Bearer realm="UserInfo", error="invalid_request", error_description="Multiple access token methods are not allowed", ' +
+  'DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA", error="invalid_request", error_description="Multiple access token methods are not allowed"';
+/** The challenges of a bound token presented as a Bearer token: the error in the Bearer challenge, the DPoP challenge without it (RFC 9449 Figure 18). */
+const BEARER_DOWNGRADE_CHALLENGES =
+  'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme", ' +
+  'DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
 const SUBJECT = 'dpop-userinfo-alice';
 const CLIENT_ID = 'dpop-userinfo-client';
 const CLIENT_SECRET = 'dpop-userinfo-client-secret';
@@ -88,16 +96,79 @@ async function answerOf(response: Response): Promise<{ status: number; challenge
 }
 
 describe('readDpopUserInfoRequest', () => {
-  // RFC 6750 §2.1: a Bearer request is left to the Bearer block, and adds no challenge.
-  it('should leave a request that does not use the DPoP scheme and its challenges as they are', async () => {
+  // RFC 6750 §2.1 / RFC 9449 §7.2: a Bearer request is left to the Bearer block, whose failures also offer the DPoP scheme.
+  it('should add the DPoP challenge to a request that does not use the DPoP scheme, and leave its token to the Bearer block', async () => {
     const challenges: UserInfoChallenges = { offered: [BEARER_CHALLENGE], scheme: 'Bearer' };
 
     const read = await readDpopUserInfoRequest(requestTo('/userinfo', { headers: { Authorization: 'Bearer token-1' } }), challenges);
 
     expect([read, challenges]).toEqual([
       { dpopAccessToken: undefined, dpopJkt: undefined },
-      { offered: [{ scheme: 'Bearer', parameters: ['realm="UserInfo"'] }], scheme: 'Bearer' },
+      {
+        offered: [
+          { scheme: 'Bearer', parameters: ['realm="UserInfo"'] },
+          { scheme: 'DPoP', parameters: ['algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"'] },
+        ],
+        scheme: 'Bearer',
+      },
     ]);
+  });
+
+  // RFC 9449 §7.2 Figure 17: no authentication information, so no challenge carries an error.
+  it('should answer a request without a token with the Bearer and the DPoP challenge, neither with an error', async () => {
+    const response = await GET(requestTo('/userinfo'));
+
+    expect(await answerOf(response)).toEqual({
+      status: 401,
+      challenge: 'Bearer realm="UserInfo", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"',
+      body: { error: 'invalid_token', error_description: 'Access token is required' },
+    });
+  });
+
+  // RFC 9449 §7.2 Figure 18: the token was presented with the Bearer scheme, so the Bearer challenge carries the error.
+  it('should answer an unknown Bearer token with the error in the Bearer challenge and the DPoP challenge without it', async () => {
+    const response = await GET(requestTo('/userinfo', { headers: { Authorization: `Bearer ${unique('dpop-userinfo-unknown')}` } }));
+
+    expect([response.status, response.headers.get('WWW-Authenticate')]).toEqual([
+      401,
+      'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid", ' +
+        'DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"',
+    ]);
+  });
+
+  // RFC 6750 §2: the header and the form body are both Bearer methods, so the scheme is not ambiguous.
+  it('should answer a Bearer token sent in the header and in the form body with the error in the Bearer challenge alone', async () => {
+    const accessToken = await storeToken();
+
+    const response = await POST(formPost({ access_token: accessToken }, { Authorization: `Bearer ${accessToken}` }));
+
+    expect([response.status, response.headers.get('WWW-Authenticate')]).toEqual([
+      400,
+      'Bearer realm="UserInfo", error="invalid_request", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"',
+    ]);
+  });
+
+  // RFC 9449 §7.2 Figure 19: two Authorization fields arrive as one value joined with ", ". The proof is a
+  // good one for the token, so only the two schemes reject the request.
+  it.each([
+    ['Bearer', 'DPoP'],
+    ['DPoP', 'Bearer'],
+  ])('should reject a token sent in a %s and a %s Authorization field with 400 and the error in both challenges', async (first, second) => {
+    const key = await dpopKey();
+    const accessToken = await storeToken(key.jkt);
+    const proof = await dpopProof(key, { htm: 'GET', htu: USERINFO_ENDPOINT, accessToken });
+    const headers = new Headers({ DPoP: proof });
+    headers.append('Authorization', `${first} ${accessToken}`);
+    headers.append('Authorization', `${second} ${accessToken}`);
+
+    const response = await GET(requestTo('/userinfo', { headers }));
+
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await answerOf(response)).toEqual({
+      status: 400,
+      challenge: MULTIPLE_METHODS_CHALLENGES,
+      body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+    });
   });
 
   // RFC 9449 §7.1: Authorization: DPoP <token> with a proof carrying ath.
@@ -202,9 +273,9 @@ describe('readDpopUserInfoRequest', () => {
     ]);
   });
 
-  // RFC 6750 §2: one method per request. The token was presented with the DPoP scheme (Authorization: DPoP),
-  // so the DPoP challenge carries the error.
-  it('should reject a DPoP token sent with another token in the form body, with the error in the DPoP challenge', async () => {
+  // RFC 6750 §2.2 / RFC 9449 §7.2 Figure 19: a token of the form body is a Bearer token, so the request sent
+  // its token with both schemes, and both challenges carry the error.
+  it('should reject a DPoP token sent with another token in the form body, with the error in both challenges', async () => {
     const key = await dpopKey();
     const accessToken = await storeToken(key.jkt);
     const proof = await dpopProof(key, { htm: 'POST', htu: USERINFO_ENDPOINT, accessToken });
@@ -213,10 +284,27 @@ describe('readDpopUserInfoRequest', () => {
 
     expect(await answerOf(response)).toEqual({
       status: 400,
-      challenge: `${DPOP_CHALLENGES}, error="invalid_request", error_description="Multiple access token methods are not allowed"`,
+      challenge: MULTIPLE_METHODS_CHALLENGES,
       body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
     });
   });
+
+  // RFC 9449 §7.2 Figure 19: the form body is a Bearer method whatever the DPoP credentials are, as a
+  // Bearer field without a token beside a DPoP field is.
+  it.each(['DPoP', 'DPoP token-1 token-1'])(
+    'should reject "%s" sent with a token in the form body with 400 and the error in both challenges',
+    async (authorization) => {
+      const accessToken = await storeToken();
+
+      const response = await POST(formPost({ access_token: accessToken }, { Authorization: authorization }));
+
+      expect(await answerOf(response)).toEqual({
+        status: 400,
+        challenge: MULTIPLE_METHODS_CHALLENGES,
+        body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+      });
+    },
+  );
 
   it('should take an empty access_token of the form body for no second token', async () => {
     const key = await dpopKey();
@@ -244,7 +332,7 @@ describe('readDpopUserInfoRequest', () => {
 
     expect(await answerOf(response)).toEqual({
       status: 400,
-      challenge: `${DPOP_CHALLENGES}, error="invalid_request", error_description="Multiple access token methods are not allowed"`,
+      challenge: MULTIPLE_METHODS_CHALLENGES,
       body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
     });
   });
@@ -259,12 +347,12 @@ describe('readDpopUserInfoRequest', () => {
     });
   });
 
-  // RFC 9449 Figure 12: the credentials are one token68. The proof is a good one for the whole
-  // value, so only the token68 check rejects the request.
+  // RFC 9449 Figure 12: the credentials are one token68. Two DPoP fields name one scheme, and the proof
+  // is a good one for the whole value, so only the token68 check rejects the request.
   it('should reject credentials that are not one token68 with 400 invalid_request', async () => {
     const key = await dpopKey();
     const accessToken = await storeToken(key.jkt);
-    const credentials = `${accessToken}, Bearer ${accessToken}`;
+    const credentials = `${accessToken}, DPoP ${accessToken}`;
     const proof = await dpopProof(key, { htm: 'GET', htu: USERINFO_ENDPOINT, accessToken: credentials });
 
     const response = await GET(requestTo('/userinfo', { headers: { Authorization: `DPoP ${credentials}`, DPoP: proof } }));
@@ -325,7 +413,7 @@ describe('readDpopUserInfoRequest', () => {
 
 describe('verifyDpopUserInfoAccess', () => {
   // RFC 9449 §7.2: a DPoP-bound token MUST be rejected as a Bearer token. Bearer was the scheme
-  // used, so its challenge carries the error (RFC 9449 Figure 18).
+  // used, so its challenge carries the error, and the DPoP challenge follows without it (RFC 9449 Figure 18).
   it('should reject a DPoP-bound token presented in the Bearer header, with the error in the Bearer challenge', async () => {
     const accessToken = await storeToken((await dpopKey()).jkt);
 
@@ -334,7 +422,7 @@ describe('verifyDpopUserInfoAccess', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(await answerOf(response)).toEqual({
       status: 401,
-      challenge: 'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme"',
+      challenge: BEARER_DOWNGRADE_CHALLENGES,
       body: { error: 'invalid_token', error_description: 'A DPoP-bound access token must be presented with the DPoP scheme' },
     });
   });
@@ -347,7 +435,7 @@ describe('verifyDpopUserInfoAccess', () => {
 
     expect(await answerOf(response)).toEqual({
       status: 401,
-      challenge: 'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme"',
+      challenge: BEARER_DOWNGRADE_CHALLENGES,
       body: { error: 'invalid_token', error_description: 'A DPoP-bound access token must be presented with the DPoP scheme' },
     });
   });
@@ -431,7 +519,7 @@ describe('an access token bound at the token endpoint', () => {
     expect([tokenType, dpopResponse.status, await dpopResponse.json()]).toEqual(['DPoP', 200, CLAIMS]);
     expect([bearerResponse.status, bearerResponse.headers.get('WWW-Authenticate')]).toEqual([
       401,
-      'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme"',
+      BEARER_DOWNGRADE_CHALLENGES,
     ]);
   });
 });

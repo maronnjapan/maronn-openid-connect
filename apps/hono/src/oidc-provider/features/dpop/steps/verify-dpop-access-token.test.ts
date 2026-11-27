@@ -22,6 +22,10 @@ const USERINFO_ENDPOINT = `${TEST_ISSUER}/userinfo`;
 const TOKEN_ENDPOINT = `${TEST_ISSUER}/token`;
 /** The challenges of a request that presented its token with the DPoP scheme, before the error: Bearer, then DPoP with the default algs. */
 const DPOP_CHALLENGES = 'Bearer realm="UserInfo", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
+/** The challenges of a bound token presented as a Bearer token: the error in the Bearer challenge, the DPoP challenge without it (RFC 9449 Figure 18). */
+const BEARER_DOWNGRADE_CHALLENGES =
+  'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme", ' +
+  'DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
 // RFC 7636 §4.1 / §4.2: a 46-character verifier and its S256 challenge.
 const CODE_VERIFIER = 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz';
 const CODE_CHALLENGE = 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU';
@@ -56,7 +60,7 @@ async function dpopGet(key: DpopKey): Promise<Request> {
 
 describe('verifyDpopUserInfoAccess', () => {
   // RFC 9449 §7.2: a DPoP-bound token MUST be rejected as a Bearer token. Bearer was the scheme
-  // used, so its challenge carries the error (RFC 9449 Figure 18).
+  // used, so its challenge carries the error, and the DPoP challenge follows without it (RFC 9449 Figure 18).
   it('should reject a DPoP-bound token presented in the Bearer header, with the error in the Bearer challenge', async () => {
     const key = await dpopKey();
     const app = await setUp(key.jkt);
@@ -65,9 +69,7 @@ describe('verifyDpopUserInfoAccess', () => {
 
     expect(response.status).toBe(401);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
-    expect(response.headers.get('WWW-Authenticate')).toBe(
-      'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme"',
-    );
+    expect(response.headers.get('WWW-Authenticate')).toBe(BEARER_DOWNGRADE_CHALLENGES);
     expect(await response.json()).toEqual({
       error: 'invalid_token',
       error_description: 'A DPoP-bound access token must be presented with the DPoP scheme',
@@ -83,7 +85,7 @@ describe('verifyDpopUserInfoAccess', () => {
 
     expect([response.status, response.headers.get('WWW-Authenticate'), await response.json()]).toEqual([
       401,
-      'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme"',
+      BEARER_DOWNGRADE_CHALLENGES,
       { error: 'invalid_token', error_description: 'A DPoP-bound access token must be presented with the DPoP scheme' },
     ]);
   });
@@ -171,7 +173,7 @@ describe('an access token bound at the token endpoint', () => {
     ]);
     expect([bearerResponse.status, bearerResponse.headers.get('WWW-Authenticate')]).toEqual([
       401,
-      'Bearer realm="UserInfo", error="invalid_token", error_description="A DPoP-bound access token must be presented with the DPoP scheme"',
+      BEARER_DOWNGRADE_CHALLENGES,
     ]);
   });
 });

@@ -25,7 +25,7 @@ export interface TokenBinding {
   readonly refreshTokenCnf?: Readonly<Record<string, string>>;
 }
 
-/** What a binding adds to a stored token or grant record (a transaction, an authorization code). */
+/** What a binding adds to a stored token record. */
 export interface TokenBindingRecord {
   cnf?: Readonly<Record<string, string>>;
   tokenType?: string;
@@ -111,7 +111,7 @@ export function confirmationOf(record: unknown): Readonly<Record<string, string>
  *
  * @spec RFC 9449 §10
  */
-export function confirmationRecordOf(record: unknown): TokenBindingRecord {
+export function confirmationRecordOf(record: unknown): { cnf?: Readonly<Record<string, string>> } {
   const cnf = confirmationOf(record);
   return cnf === undefined ? {} : { cnf };
 }

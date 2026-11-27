@@ -24,6 +24,7 @@ PAR のリクエストの `DPoP` ヘッダーの DPoP proof を検査し、そ�
 - Hono のステップは、拒否のレスポンスをコンテキスト（`c.json()`）で作る。CORS のミドルウェアが先に付けたヘッダーを残すためで、`Response` を直接作ると消える。Next.js の関数は `Response` を作り、ルートの `POST` が CORS のヘッダーを付ける
 - 拒否に使うのは、DPoP proof の不備と鍵の不一致の `invalid_dpop_proof` と、`dpop_jkt` の形の誤りの `invalid_request` だけである。`invalid_grant`（トークンエンドポイントのコード）と `invalid_token`（保護されたリソースのコード）は、PAR エンドポイントの検査が投げることはないが、投げられても PAR のエラーにせず、500 の `server_error` にする。PR #205 は `DpopError` をすべて 400 にしていた。段 17 でトークンエンドポイントに `invalid_token` を通さないようにしたのと同じ考えである
 - `DPOP_ERROR_CODES` の `invalid_dpop_proof` と `invalid_request` の説明に、PAR エンドポイントが 400 で返すことを足した（`errors.ts`。コードの一覧は変えていない）
+- 生成器は機能のディレクトリをまとめて出力するので、このファイル（Hono のステップと Next.js の `par.ts`）は、`par` を有効にしない OP にも入る。PAR エンドポイントがないので、どこからも呼ばれない。ほかの機能のエンドポイントだけが使うファイルを生成器が外す仕組みは無く、この段では足さないので、そのことを関数の説明（Next.js はファイルの先頭も）に書いた
 - テストは、上の PAR エンドポイントを通したものに加え、`htu` が別のエンドポイントの DPoP proof、`DPoP` ヘッダーが二つのリクエスト、使い終えた DPoP proof、設定の誤り（`dpopProofMaxAgeSeconds` が数でない）の 500、`invalid_grant` と `invalid_token` の 500、拒否のレスポンスに CORS のヘッダーが残ること、関数を直接呼んだときの戻り値を確かめる
 
 ## resolvePushedDpopJkt <!-- hono:oidc-provider/features/dpop/binding.ts#resolvePushedDpopJkt nextjs:app/_oidc-provider/features/dpop/binding.ts#resolvePushedDpopJkt -->

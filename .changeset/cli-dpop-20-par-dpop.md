@@ -9,7 +9,7 @@
 - ボディの `dpop_jkt` と `DPoP` ヘッダーの両方を送ったリクエストは、同じ鍵なら受け付け、違えば 400 の `invalid_dpop_proof`（`dpop_jkt does not match the key of the DPoP proof`）で拒否する（RFC 9449 §10.1 の MUST）。
 - PAR エンドポイントは、プッシュした `dpop_jkt` の形も認可エンドポイントと同じに確かめ、JWK Thumbprint の形でない値を 400 の `invalid_request`（`dpop_jkt must be a base64url SHA-256 JWK Thumbprint`）で拒否する（RFC 9126 §2.1）。これまでは 201 で受け付け、認可エンドポイントで `invalid_request` になっていた。空の値は省略と同じに扱い、`DPoP` ヘッダーがあればその鍵で置き換える。
 - `DPoP` ヘッダーの無いリクエストは、これまでどおり、ボディの `dpop_jkt`（あれば）ごとそのまま保存する。
-- 生成コードには、Hono（Express、Fastify を含む）の PAR エンドポイントのパイプライン（`features/par/endpoints/par/pipeline.ts`）に `[bind-pushed-dpop-key]` のステップ（`features/dpop/steps/bind-pushed-dpop-key.ts` の `bindPushedDpopKey(c, pushedParams)`）が、Next.js の `(par)/par/route.ts` に同じ名前のブロック（`_oidc-provider/features/dpop/par.ts` の `bindPushedDpopKey(request, pushedParams)`）が加わる。鍵の照らし合わせは `features/dpop/binding.ts` の `resolvePushedDpopJkt(dpopJkt, proofJkt)` が行う。
+- 生成コードには、Hono（Express、Fastify を含む）の PAR エンドポイントのパイプライン（`features/par/endpoints/par/pipeline.ts`）に `[bind-pushed-dpop-key]` のステップ（`features/dpop/steps/bind-pushed-dpop-key.ts` の `bindPushedDpopKey(c, pushedParams)`）が、Next.js の `(par)/par/route.ts` に同じ名前のブロック（`_oidc-provider/features/dpop/par.ts` の `bindPushedDpopKey(request, pushedParams)`）が加わる。鍵の照らし合わせは `features/dpop/binding.ts` の `resolvePushedDpopJkt(dpopJkt, proofJkt)` が行う。`dpop` を有効にして `par` を有効にしない生成物にも、`bindPushedDpopKey` の二つのファイルは入るが、PAR エンドポイントがないので、どこからも呼ばれない。
 
 これで、RFC 9449 §10.1 の二つの方法（ボディの `dpop_jkt` と `DPoP` ヘッダー）の両方を受け付け、鍵が違うリクエストを拒否する。クライアントのメタデータ `dpop_bound_access_tokens`（§5.2）と、サーバーが発行する nonce（§8 / §9）は後のリリースで加える。
 

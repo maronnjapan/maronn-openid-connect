@@ -9,8 +9,11 @@
  *   2. typecheck がコメントアウトされたまま運用されている
  *   3. build が CI のどのジョブでも走らず、ビルド破綻が publish 直前まで露見しない
  *
+ * また、pull_request を main 向けに絞っていたため、前の PR のブランチを base にして積み重ねた PR には
+ * テストも地図のプレビューも走らなかった。
+ *
  * ゲートは「一度直せば終わり」ではなく、外されたら気づける必要がある。
- * ここでは ci.yml と packages/*・apps/* の package.json とルートの package.json を突き合わせ、
+ * ここでは ci.yml と map-preview.yml と packages/*・apps/* の package.json とルートの package.json を突き合わせ、
  * ゲートが機能する形で残っていることをテストとして固定する。
  *
  * この検査は、過去に main へビルド不能なコードが入った回帰を防ぐ。
@@ -179,20 +182,68 @@ function parseScalar(value) {
   return value;
 }
 
+/**
+ * ワークフローのトリガの設定を返す。トリガが無ければ undefined、設定を持たないトリガ
+ * （`pull_request:` だけの行、`on: [push, pull_request]`、`on: pull_request`）は空文字列を返す。
+ */
+function triggerOf(workflow, event) {
+  const on = workflow?.on;
+  if (Array.isArray(on)) return on.includes(event) ? '' : undefined;
+  if (typeof on === 'string') return on === event ? '' : undefined;
+  return on?.[event];
+}
+
 function triggerBranches(workflow, event) {
-  const branches = workflow?.on?.[event]?.branches;
+  const branches = triggerOf(workflow, event)?.branches;
   if (Array.isArray(branches)) return branches;
   return typeof branches === 'string' ? [branches] : [];
 }
 
-export function assertWorkflowVerifiesMainPush(workflow) {
-  if (!triggerBranches(workflow, 'pull_request').includes(MAIN_BRANCH)) {
+/** すべてのブランチに合う branches のパターン。 */
+const EVERY_BRANCH = '**';
+
+/**
+ * pull_request のトリガが base ブランチを絞る設定を `branches（main）` の形で返す。
+ * branches も branches-ignore も無いとき、branches が `**` を含み除外（`!`）を持たないときは
+ * すべての base を取るので undefined を返す。
+ */
+function baseBranchFilter(trigger) {
+  if (trigger === null || typeof trigger !== 'object') return undefined;
+  for (const key of ['branches', 'branches-ignore']) {
+    if (trigger[key] === undefined) continue;
+    const patterns = (Array.isArray(trigger[key]) ? trigger[key] : [trigger[key]]).map(String);
+    const every = key === 'branches' && patterns.includes(EVERY_BRANCH) && !patterns.some((pattern) => pattern.startsWith('!'));
+    if (!every) return `${key}（${patterns.join(', ')}）`;
+  }
+  return undefined;
+}
+
+/**
+ * CI ワークフローが、base ブランチを絞らない pull_request で起動することを要求する。
+ * PR は前の PR のブランチを base にして積み重ねることがあり、base を main に絞ると、
+ * その PR にはテストも地図（プレビューとコメント）も走らない。
+ */
+export function assertWorkflowVerifiesEveryPullRequest(workflow) {
+  const trigger = triggerOf(workflow, 'pull_request');
+  if (trigger === undefined) {
     throw new Error(
-      'CI ワークフローが main 向けの pull request で起動しません。' +
-        'on.pull_request.branches に main を追加してください。',
+      'CI ワークフローが pull request で起動しません。on に pull_request を追加してください。' +
+        'PR の変更がマージ前に検査されず、地図のプレビューも作られません。',
     );
   }
 
+  const filter = baseBranchFilter(trigger);
+  if (filter !== undefined) {
+    throw new Error(
+      `CI ワークフローの pull_request が base ブランチを絞っています（on.pull_request.${filter}）。` +
+        'PR は前の PR のブランチを base にして積み重ねることがあり、絞った外の base の PR にはテストも地図も走りません。' +
+        `on.pull_request から branches と branches-ignore を外してください（branches を \`${EVERY_BRANCH}\` だけにしても構いません）。`,
+    );
+  }
+}
+
+/** CI ワークフローが main への push で起動することを要求する。 */
+export function assertWorkflowVerifiesMainPush(workflow) {
   if (!triggerBranches(workflow, 'push').includes(MAIN_BRANCH)) {
     throw new Error(
       'CI ワークフローが main への push で起動しません。on.push.branches に main を追加してください。' +
@@ -291,6 +342,31 @@ export function assertMapSharesPreviewGroup(workflow, previewWorkflow) {
   );
 }
 
+/**
+ * 地図を作るジョブがあるとき、PR を閉じたときにプレビューを消す map-preview.yml が、base ブランチを絞らない
+ * pull_request で起動することを要求する。CI はどの base の PR にもプレビューを作るので、削除を main 向けに
+ * 絞ると、絞った外の base の PR（積み重ねた PR）を閉じても、そのプレビューの Worker が消えずに残る。
+ */
+export function assertPreviewCleanupCoversEveryPullRequest(workflow, previewWorkflow) {
+  if (findJobRunning(workflow, MAP_COMMAND) === undefined || previewWorkflow === undefined) return;
+  const trigger = triggerOf(previewWorkflow, 'pull_request');
+  if (trigger === undefined) {
+    throw new Error(
+      'map-preview.yml が pull request で起動しません。CI の地図のジョブが作った PR のプレビューが、PR を閉じても消えずに残ります。' +
+        'on.pull_request（types: [closed]）を追加してください。',
+    );
+  }
+
+  const filter = baseBranchFilter(trigger);
+  if (filter !== undefined) {
+    throw new Error(
+      `map-preview.yml の pull_request が base ブランチを絞っています（on.pull_request.${filter}）。` +
+        'CI の地図のジョブはどの base の PR にもプレビューを作るので、絞った外の base の PR を閉じても、そのプレビューが消えずに残ります。' +
+        'on.pull_request から branches と branches-ignore を外してください。',
+    );
+  }
+}
+
 export function assertEveryPackageIsTypechecked(packageJsons) {
   const missing = packageJsons
     .filter((packageJson) => packageJson?.scripts?.typecheck === undefined)
@@ -368,10 +444,12 @@ function verifyCiGate() {
   const previewPath = join(repositoryRoot, '.github/workflows/map-preview.yml');
   const previewWorkflow = existsSync(previewPath) ? parseWorkflow(readFileSync(previewPath, 'utf8')) : undefined;
 
+  assertWorkflowVerifiesEveryPullRequest(workflow);
   assertWorkflowVerifiesMainPush(workflow);
   assertStaticVerificationGate(workflow);
   assertMapFollowsTests(workflow);
   assertMapSharesPreviewGroup(workflow, previewWorkflow);
+  assertPreviewCleanupCoversEveryPullRequest(workflow, previewWorkflow);
   assertEveryPackageIsTypechecked(packageJsons);
   assertLintGateIsBacked(workflow, packageJsons, rootPackageJson);
   assertRootScriptsCoverApps(
@@ -380,7 +458,7 @@ function verifyCiGate() {
   );
 
   console.log(
-    'CI gate verified: main push trigger, build / typecheck / test order, the map after the tests and with the preview cleanup, typecheck coverage (packages and apps)',
+    'CI gate verified: pull requests of every base branch, main push trigger, build / typecheck / test order, the map after the tests and with the preview cleanup of every pull request, typecheck coverage (packages and apps)',
   );
 }
 

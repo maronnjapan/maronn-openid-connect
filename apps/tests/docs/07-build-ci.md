@@ -306,7 +306,8 @@ flowchart LR
 
 | 変数 | 意味 | 無いとき |
 |---|---|---|
-| `MAP_BASE` | 変更前の git のリビジョン。<br>CI の PR では `origin/<base_ref>`。<br>前後の空白を除き、空なら無いとみなす | PR のビルドにならず、テストの差分も作らない |
+| `MAP_BASE` | 変更前の git のリビジョン。<br>CI の PR では、そのランの base の SHA（`github.event.pull_request.base.sha`）。<br>前後の空白を除き、空なら無いとみなす | PR のビルドにならず、テストの差分も作らない |
+| `MAP_HISTORY_BASE` | 変更の履歴を読む main の git のリビジョン。<br>CI の PR では `origin/main`。<br>前後の空白を除き、空なら無いとみなす | 履歴を `MAP_BASE` から、それも無ければリモートの main から読む |
 | `MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` | PR の番号、タイトル、URL。<br>`MAP_PR` が正の整数のときだけ使う | PR の情報を載せない |
 | `MAP_TEST_REPORTS` | ② が書いた報告のディレクトリ。<br>前後の空白を除き、空でなければ `resolve` で絶対パスにする。<br>相対パスは現在のディレクトリ（pnpm 経由なら `apps/map`）から解かれるので、絶対パスで渡す | カードはコードから読んだものだけになる。<br>ディレクトリが無いときも同じで、ログは `no run` になる |
 | `GITHUB_STEP_SUMMARY` | GitHub Actions のランの要約のファイル | 要約を書かない |
@@ -586,7 +587,15 @@ flowchart LR
   A --> CHECK --> RUN --> KEEP
 ```
 
-ジョブは `pull_request`（main 向け）と main への `push` で走る。
+ジョブは `pull_request`（base ブランチを問わない）と main への `push` で走る。
+base を絞らないのは、前の PR のブランチを base にして積み重ねた PR にも、テストと地図を走らせるためである。
+PR のランが立つのは、`pull_request` の既定の types（opened、synchronize、reopened）だけである。
+下の PR がマージされて base が付け替わったとき（GitHub が自動で付け替えるときを含む）や、base のブランチが進んだときは立たず、前の base と比べた結果が残る。
+失敗したランの再実行も、前のイベントの base のまま走る。
+新しい base と比べ直すには、PR のブランチに push する（新しい base へ rebase するなど）か、PR を閉じて開き直す。
+types に `edited` を足さないのは、タイトルや本文の編集でもランが立ち、走っているランを `cancel-in-progress` で打ち切るからである。
+ジョブを `if` で飛ばしても、飛ばしたジョブは成功と報告され、必須の検査でもマージを止めない。
+
 準備は `actions/checkout@v7`、`corepack enable`、`actions/setup-node@v7`（Node.js 22、pnpm のキャッシュ）、`pnpm install --frozen-lockfile` である。
 ブラウザは `pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium` で入れる。
 プロセス内の実行先はブラウザを使わないので、その前に走らせる。
@@ -778,11 +787,22 @@ flowchart TB
 
 | 変数 | 値 | 道具で足したか |
 |---|---|---|
-| `MAP_BASE` | PR では `origin/<github.base_ref>`、push では空 | 移した |
+| `MAP_BASE` | PR では `github.event.pull_request.base.sha`、push では空 | 移した。<br>値を `origin/<github.base_ref>` から変えた |
+| `MAP_HISTORY_BASE` | PR では `origin/main`、push では空 | 足した |
 | `MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` | PR の番号、タイトル、`html_url` | 移した |
 | `MAP_TEST_REPORTS` | `${{ github.workspace }}/work/test-reports` | 足した |
 
 `MAP_TEST_REPORTS` を絶対パスにするのは、データの段が `apps/map` で走り、相対パスをそこから解くからである（[⑦-2](#-2-データの段)）。
+`MAP_BASE` を base のブランチの名前（`origin/<github.base_ref>`）にしないのは、積み重ねた PR の base のブランチが、ランの後で動くからである。
+下の PR をマージするとそのブランチが消え、積み重ねを rebase すると force-push で書き換わる。
+ランの途中か再実行でそうなると、消えたブランチでは `git merge-base` が落ちて地図のビルドが止まり、書き換わったブランチでは分岐点が書き換えた所より前に戻って、下の PR の変更までこの PR の変更に並ぶ。
+base の SHA は、そのランがビルドするマージコミットの最初の親なので、clone にいつもある。
+main 向けの PR では、分岐点は前と同じ（マージコミットの最初の親）である。
+地図の「このPRの変更」は、比べた相手をブランチの名前ではなく、コミットの先頭 7 文字で出す（`… からの差分`）。
+
+`MAP_HISTORY_BASE` を渡すのは、積み重ねた PR の `MAP_BASE` が下の PR のブランチのコミットで、そこから履歴を読むと、まだ main に入っていないそのコミットが変更の履歴に並ぶからである。
+main 向けの PR では、前に `MAP_BASE`（`origin/main`）から読んでいた履歴と同じになる。
+`fetch-depth: 0` の checkout はすべてのブランチを `origin/<名前>` に取ってくるので、`origin/main` もある。
 
 | ステップ | 使うもの | 走る条件 | 道具で足したか |
 |---|---|---|---|
@@ -886,7 +906,7 @@ sequenceDiagram
 
 | `map-preview.yml` | 値 |
 |---|---|
-| 起動 | `pull_request` の `closed`（main 向け） |
+| 起動 | `pull_request` の `closed`（base ブランチを問わない）。<br>`map` ジョブがどの base の PR にもプレビューを作るので、絞るとその外の PR のプレビューが残る |
 | `permissions`（ワークフローの最上位） | `contents: read`、`pull-requests: write` |
 | `concurrency`（ワークフローの最上位） | `map` ジョブと同じ group の文字列、`cancel-in-progress: false`。<br>[⑦-9](#-9-ci-の構成の検査) の検査はこの位置を読む |
 | `env`（ワークフローの最上位） | `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` |
@@ -1132,6 +1152,7 @@ YAML は、自前の小さな読み取り（`parseWorkflow`）で読む。
 | 書き方 | 読み方 |
 |---|---|
 | 入れ子のマッピング、ブロックのシーケンス | 字下げで読む |
+| 値も子も無いキー（`pull_request:` だけの行） | 空文字列 `''`。<br>キーはあるので、そのトリガはあるとみなす |
 | フローのシーケンス（`[main]`） | `,` で分ける |
 | 引用符 | 両端が同じ引用符のときだけ外す |
 | コメント | `#` で始まる行だけを飛ばす。<br>行末の `# …` は値に残る |
@@ -1143,18 +1164,21 @@ YAML は、自前の小さな読み取り（`parseWorkflow`）で読む。
 
 | 検査 | 規則 | 道具で足したか |
 |---|---|---|
-| `assertWorkflowVerifiesMainPush` | `on.pull_request.branches` と `on.push.branches` に `main` がある | 前から |
+| `assertWorkflowVerifiesEveryPullRequest` | `on.pull_request` があり、`branches` も `branches-ignore` も持たない。<br>`branches` が `'**'` を含み、`!` で始まるものを持たなければよい。<br>`on` がシーケンス（`on: [push, pull_request]`）なら `pull_request` を含むとき、文字列（`on: pull_request`）なら `pull_request` のとき、絞らないトリガがあるとみなす | 足した |
+| `assertWorkflowVerifiesMainPush` | `on.push.branches` に `main` がある | 前から。<br>`on.pull_request.branches` に `main` があることは確かめなくなった |
 | `assertStaticVerificationGate` | `pnpm run test:ci` を走らせるジョブに、`pnpm run build` → `pnpm run typecheck` → `pnpm run test:ci` の順のステップがある | 前から |
 | `assertMapFollowsTests` | `pnpm run build:map` を走らせるジョブが、`pnpm run test:ci` を走らせるジョブを `needs` に持つ。<br>同じジョブならよく、どちらかが無ければ確かめない | 足した |
 | `assertMapSharesPreviewGroup` | 地図のジョブの、ジョブの `concurrency.group` が空でなく、`map-preview.yml` の最上位の `concurrency.group` と同じ文字列である。<br>両方の `cancel-in-progress` が `false` である。<br>地図のジョブか `map-preview.yml` が無ければ確かめない | 足した |
+| `assertPreviewCleanupCoversEveryPullRequest` | `map-preview.yml` に `on.pull_request` があり、`branches` と `branches-ignore` を `assertWorkflowVerifiesEveryPullRequest` と同じ規則で確かめる。<br>地図のジョブか `map-preview.yml` が無ければ確かめない | 足した |
 | `assertEveryPackageIsTypechecked` | `packages/*` と `apps/*` のどの `package.json` にも `typecheck` がある | 前から。<br>新しい `test-catalog`、`test-reach`、`apps/tests` にも要る |
 | `assertLintGateIsBacked` | `pnpm run lint` を走らせるなら、どこかのパッケージに `lint` があるか、ルートの `lint` が `node` で検査を走らせる | 前から |
 | `assertRootScriptsCoverApps` | ルートの `typecheck` が `--filter "./apps/*" typecheck` を、`test:ci` が `--filter "./apps/*" test` を含む | 前から。<br>`apps/tests` のテストもこれで走る |
 
+- base を絞らないのは、前の PR のブランチを base にして積み重ねた PR にもテストと地図を走らせ、その PR を閉じたときにプレビューを消すためである
 - 地図を後に置くのは、地図がテストのジョブの出力を読むからで、並べて走らせると結果の無いページができる
 - group を同じにするのは [⑦-7-b](#-7-b-閉じた-pr-のプレビュー) の理由による
 - 検査は表の順に走り、最初に落ちた検査の理由だけを標準エラーに出して、終了コード 1 で終わる
-- すべて通ると `CI gate verified: main push trigger, build / typecheck / test order, the map after the tests and with the preview cleanup, typecheck coverage (packages and apps)` を出す
+- すべて通ると `CI gate verified: pull requests of every base branch, main push trigger, build / typecheck / test order, the map after the tests and with the preview cleanup of every pull request, typecheck coverage (packages and apps)` を出す
 - 規則のテストは `verify-ci-gate.test.mjs` にあり、`pnpm run test:supply-chain` で走る
 
 `assertMapSharesPreviewGroup` の比べ方は次のとおりである。
@@ -1164,16 +1188,21 @@ YAML は、自前の小さな読み取り（`parseWorkflow`）で読む。
 - `cancel-in-progress` を書かないときは、`'false'` とみなす
 - `map-preview.yml` の `concurrency` をジョブの中に置くと、最上位に無いので group は「なし」として落ちる
 
-道具で足した二つの検査は、落ちると次の文を出す。
+道具で足した四つの検査は、落ちると次の文を出す。
+`<絞り方>` は、絞っている最初のキー（`branches`、`branches-ignore` の順に見る）とそのパターンを `, ` でつないだもの（`branches（main）`、`branches-ignore（ccr-*）`）である。
 
 | 検査 | 文 |
 |---|---|
+| `assertWorkflowVerifiesEveryPullRequest`（トリガが無い） | `CI ワークフローが pull request で起動しません。on に pull_request を追加してください。PR の変更がマージ前に検査されず、地図のプレビューも作られません。` |
+| `assertWorkflowVerifiesEveryPullRequest`（base を絞る） | ``CI ワークフローの pull_request が base ブランチを絞っています（on.pull_request.<絞り方>）。PR は前の PR のブランチを base にして積み重ねることがあり、絞った外の base の PR にはテストも地図も走りません。on.pull_request から branches と branches-ignore を外してください（branches を `**` だけにしても構いません）。`` |
 | `assertMapFollowsTests` | ``CI の <地図のジョブ> ジョブは `pnpm run build:map` を実行しますが、`pnpm run test:ci` を実行する <テストのジョブ> ジョブを needs に持っていません。地図はテストの結果と到達をテストのジョブの出力から読むため、そのジョブの後に走らせてください。`` |
 | `assertMapSharesPreviewGroup` | `CI の <地図のジョブ> ジョブの concurrency の group（<group か なし>）が、map-preview.yml の group（<group か なし>）と一致していないか、cancel-in-progress が false ではありません。プレビューの作成と削除を同じ group で順に走らせないと、閉じた PR のプレビューが削除の後に作り直されて残ります。` |
+| `assertPreviewCleanupCoversEveryPullRequest`（トリガが無い） | `map-preview.yml が pull request で起動しません。CI の地図のジョブが作った PR のプレビューが、PR を閉じても消えずに残ります。on.pull_request（types: [closed]）を追加してください。` |
+| `assertPreviewCleanupCoversEveryPullRequest`（base を絞る） | `map-preview.yml の pull_request が base ブランチを絞っています（on.pull_request.<絞り方>）。CI の地図のジョブはどの base の PR にもプレビューを作るので、絞った外の base の PR を閉じても、そのプレビューが消えずに残ります。on.pull_request から branches と branches-ignore を外してください。` |
 
 実装：
 
-- `.github/scripts/verify-ci-gate.mjs`：`parseWorkflow`、`assertMapFollowsTests`、`assertMapSharesPreviewGroup`、`verifyCiGate`
+- `.github/scripts/verify-ci-gate.mjs`：`parseWorkflow`、`assertWorkflowVerifiesEveryPullRequest`、`assertMapFollowsTests`、`assertMapSharesPreviewGroup`、`assertPreviewCleanupCoversEveryPullRequest`、`verifyCiGate`
 - `.github/scripts/verify-ci-gate.test.mjs`
 
 ## ⑦-10 貢献者の規則

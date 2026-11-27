@@ -21,10 +21,12 @@ import { validatePushedRequest } from './steps/validate-request.js';
  * `maronn-oidc graph --detail steps --endpoint par`).
  *
  * With the dpop extension, the (feature: dpop) block after client
- * authentication checks the DPoP proof of a request that has a DPoP header
- * and pushes the request with its key as dpop_jkt, so the code issued for the
- * request_uri is bound to that key (RFC 9449 §10.1). Without the block the
- * pushed parameters are validated and stored as they came.
+ * authentication rejects a pushed dpop_jkt that is not a JWK Thumbprint (400
+ * invalid_request, with or without a DPoP header), checks the DPoP proof of a
+ * request that has a DPoP header and pushes the request with its key as
+ * dpop_jkt, so the code issued for the request_uri is bound to that key
+ * (RFC 9449 §10.1). Without the block the pushed parameters are validated and
+ * stored as they came.
  *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * deliberately left to the deployment layer (reverse proxy / platform), not

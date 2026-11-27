@@ -144,7 +144,7 @@ src/app/
 │   ├── config.ts / store.ts / resolvers.ts / scopes.ts / cookies.ts  # 他のフレームワークと共通の設定型・ストアの契約・resolver・スコープポリシー・Cookie
 │   ├── development.ts        # 試用のための開発用ユーザー（testuser / otheruser）と registerDevelopmentUsers()
 │   ├── shared.ts             # Next.js のモジュールの層をまたいで値を 1 つにする shared()
-│   ├── endpoint.ts           # authorize、token、introspect、Discovery の route.ts の隣の endpoint.ts が使う、ステップの並びの記述
+│   ├── endpoint.ts           # authorize、token、userinfo、introspect、Discovery の route.ts の隣の endpoint.ts が使う、ステップの並びの記述
 │   ├── feature.ts / features.ts  # 機能が OP に足すもの（フック）の定義と、有効な機能の一覧
 │   ├── features/             # 機能の設定やストアなど、ルート以外のコード（features/<feature-id>/）
 │   └── db/                   # クライアント、ユーザー、認可コード、トークンなどの保存先。--db 無しはプロセスのメモリ、--db 付きはテーブル定義（sql）かキーの一覧（kv）とストア（instance.ts だけは利用者が書く）

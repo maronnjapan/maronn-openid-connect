@@ -422,7 +422,7 @@ src/app/
 ├── authorize/endpoint.ts           # route.ts のブロックの一覧（ステップ ID、機能、読む値と作る値）
 ├── authorize/response-mode.ts      # 認可レスポンスの返し方（JARM が response mode を足す）
 ├── token/route.ts / endpoint.ts    # POST /token
-├── userinfo/route.ts               # GET|POST /userinfo
+├── userinfo/route.ts / endpoint.ts # GET|POST /userinfo（応答の型は userinfo/response.ts）
 ├── .well-known/openid-configuration/route.ts / endpoint.ts
 ├── .well-known/jwks.json/route.ts
 ├── login/page.tsx                  # ログイン画面（React Server Component）

@@ -68,10 +68,10 @@ declare module '../../app.js' {
      * EXTENSION (dpop): the secret the DPoP nonces of this OP are signed with
      * (HMAC-SHA256, nonce.ts), at least 32 bytes of UTF-8. Give every
      * instance of the provider the same secret, so that each accepts the
-     * nonces of the others. Left out, each process makes a random key of its
-     * own, which another instance (another Workers isolate, Node.js process
-     * or serverless function) and the process after a restart do not have:
-     * only a single long-lived instance accepts its nonces then.
+     * nonces of the others. Left out, each instance makes a random key of its
+     * own (each isolate on Workers; each Node.js process of Hono, Express or
+     * Fastify), which the other instances and the instance after a restart do
+     * not have: only a single long-lived instance accepts its nonces then.
      */
     dpopNonceSecret?: string;
   }

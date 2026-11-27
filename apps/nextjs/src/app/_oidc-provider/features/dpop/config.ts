@@ -8,10 +8,10 @@
  * nonce.ts) is the environment variable OIDC_DPOP_NONCE_SECRET, at least 32
  * bytes of UTF-8, read by the proof checks (proof.ts). Give every instance of
  * the provider the same secret, so that each accepts the nonces of the
- * others. Left out, each process makes a random key of its own, which
- * another instance (another serverless function or Node.js process) and the
- * process after a restart do not have: only a single long-lived instance
- * accepts its nonces then.
+ * others. Left out, each instance makes a random key of its own (each
+ * Node.js process of next start, each instance of a serverless function),
+ * which the other instances and the instance after a restart do not have:
+ * only a single long-lived instance accepts its nonces then.
  */
 import type { ProviderConfig } from '../../config';
 import { isSupportedDpopSigningAlg, SUPPORTED_DPOP_SIGNING_ALGS, type DpopSigningAlg } from './jwk';

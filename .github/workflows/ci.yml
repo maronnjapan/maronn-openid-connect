@@ -1,16 +1,34 @@
 # CI ワークフロー
 #
-# pull_request だけでなく main への push でも起動する。
+# pull_request は base ブランチを問わず起動する。
+# PR は前の PR のブランチを base にして積み重ねることがあり（stacked PR）、main 向けに絞ると
+# その PR にはテストも地図（map ジョブのプレビューとコメント）も走らない。
+# どの PR も自分の base と比べる（changeset-coverage も map ジョブも、そのランの base の SHA
+# github.event.pull_request.base.sha と比べる）ので、積み重ねた PR の検査と地図は、その PR の差分だけを見る。
+# base のブランチの今の先（origin/<base_ref>）と比べないのは、積み重ねた base は後で動くからである。
+# 下の PR をマージするとそのブランチが消え、積み重ねを rebase すると force-push で書き換わる。
+# ランの途中や再実行でそうなると、消えた base では地図のビルドが落ち、書き換わった base では下の PR の変更まで
+# この PR の変更に並ぶ。base の SHA はこのランがビルドするマージコミットの最初の親なので、clone にいつもある。
+#
+# PR のランが立つのは、pull_request の既定の types（opened / synchronize / reopened）だけである。
+# 下の PR がマージされて base が付け替わったとき（GitHub が自動で付け替えるときを含む）や、base のブランチが
+# 進んだときはランが立たず、前の base と比べた検査、地図とコメントが残る。失敗したランの再実行も前の base のまま走る。
+# 新しい base と比べ直すには、PR のブランチに push する（新しい base へ rebase するなど）か、PR を閉じて開き直す。
+# types に edited を足さないのは、タイトルや本文の編集でもランが立ち、走っているランを cancel-in-progress で
+# 打ち切るからである。ジョブを if で飛ばしても、飛ばしたジョブは成功と報告され、必須の検査でもマージを止めない。
+#
+# main への push でも起動する。
 # PR を経由しない直接 push（親 1 つの通常コミット）が無検査のまま
 # release.yml の version / publish 段階へ流れ込む経路を塞ぐため。
+# push は main だけで起動するので、地図の本番へのデプロイ（map ジョブ）は main からだけ出る。
 #
-# ゲートの構成そのもの（push トリガ / build・typecheck の実行順 / typecheck の網羅）は
-# `pnpm run test:ci-gate`（.github/scripts/verify-ci-gate.mjs）で検証している。
+# ゲートの構成そのもの（base を絞らない pull_request トリガ / main への push トリガ / build・typecheck の実行順 /
+# typecheck の網羅）は `pnpm run test:ci-gate`（.github/scripts/verify-ci-gate.mjs）で検証している。
 name: CI
 
 on:
+  # branches で絞らない（上のとおり、積み重ねた PR にも CI を走らせる）。types も既定のまま（上のとおり）。
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -51,6 +69,7 @@ jobs:
           node-version: '22'
 
       # 依存インストールは不要（Node 標準 API だけで動く）
+      # base はその PR の base の SHA なので、積み重ねた PR では前の PR のブランチからの差分だけを見る。
       - name: Verify changeset coverage
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -216,12 +235,14 @@ jobs:
   # Worker はページ（静的アセット）と同じオリジンで地図の OP（packages/live-op、apps/map/worker）も動かし、
   # OP の状態を読者ごとのワークスペースの Durable Object に持つ（apps/map/wrangler.jsonc）。
   #
-  # - PR: その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ wrangler deploy する
-  #   （作る・更新する）。Worker Preview を使わないのは、Preview の Durable Object のバインディングが本番の名前空間に
-  #   届き、PR の地図が main のコードの OP を動かすことになるため。
-  #   PR の地図は base ブランチと比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
-  #   変更メモ（apps/map/changes/*.md）の意図を並べる。テストの差分（足した、変えた、消したテスト、
-  #   関連するテストが変わっていない実装の変更）は PR のコメントのテストの節とテストのページに出る。URL と変更の表は PR にコメントする
+  # - PR（base ブランチは問わない）: その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ
+  #   wrangler deploy する（作る・更新する）。Worker Preview を使わないのは、Preview の Durable Object のバインディングが
+  #   本番の名前空間に届き、PR の地図が main のコードの OP を動かすことになるため。
+  #   PR の地図は base（そのランの base の SHA）と比べてその PR が変えた関数とエンドポイントの処理本体に札を付け、
+  #   変更メモ（apps/map/changes/*.md）の意図を並べる。前の PR のブランチに積んだ PR では base がそのブランチの
+  #   コミットなので、札はその PR の変更だけに付く。変更の履歴（main に入った変更）は、base によらず main から読む（MAP_HISTORY_BASE）。
+  #   テストの差分（足した、変えた、消したテスト、関連するテストが変わっていない実装の変更）は
+  #   PR のコメントのテストの節とテストのページに出る。URL と変更の表は PR にコメントする
   #   （push ごとに同じコメントを書き換える）。エンドポイントに届く変更に説明の節が無いとき、
   #   または関連するテストを足しも変えもせず理由（テストを変えない理由:）も無いとき、地図のビルド
   #   （pnpm run build:map の最後の検査）が落ちてこのジョブが失敗する。そのときもページのデプロイと
@@ -230,7 +251,7 @@ jobs:
   #   削除とこのジョブは同じ concurrency の group（map-preview-<番号>）で順に走り、このジョブは PR が
   #   閉じていればプレビューを作らずコメントもしない。test ジョブの間に閉じた PR のプレビューが、
   #   削除の後に作り直されて残らないようにするため。
-  # - main への push: wrangler deploy で本番を更新する。
+  # - main への push: wrangler deploy で本番を更新する。push は main だけで起動するので、本番は main からだけ出る。
   #
   # どの場合も artifact（oidc-provider-map、テストのページの tests/ を含む）にビルド結果を残す。fork からの PR はシークレットが
   # 無いのでデプロイもコメントもせず、artifact だけ残る。
@@ -250,8 +271,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # PR の地図は、このランがビルドするマージコミットと base ブランチの分岐点（git merge-base）を
-          # 比べて変わった関数とテストを見つけるので、履歴が要る。
+          # PR の地図は、このランがビルドするマージコミットと base の SHA の分岐点（git merge-base）を
+          # 比べて変わった関数とテストを見つけるので、履歴が要る。fetch-depth: 0 はすべてのブランチも
+          # origin/<名前> に取ってくるので、base が main でない PR でも、履歴を読む origin/main がそろう。
           fetch-depth: 0
 
       - name: Enable Corepack
@@ -287,14 +309,20 @@ jobs:
       # エンドポイントの処理を TypeScript のコンパイラで木に読み、テストをテストカタログに読んで、
       # 地図のデータとページを作り、テストのページ（apps/tests、データは apps/tests/public/data）をビルドして
       # 地図の dist/tests/ に入れ（apps/map/scripts/copy-tests-viewer.mjs）、出力を検査する（apps/map/scripts/check-map.mjs）。
-      # PR では MAP_BASE に base ブランチを渡し、変更前の木とテストカタログとの差分と変更メモを地図に載せる。
+      # PR では MAP_BASE に base の SHA（このランのマージコミットの最初の親。上の「CI ワークフロー」の理由で
+      # origin/<base_ref> ではない）を渡し、変更前の木とテストカタログとの差分と変更メモを地図に載せる。
+      # MAP_HISTORY_BASE には main を渡し、変更の履歴を base によらず main から読む。base が前の PR のブランチのとき、
+      # base から読むと、まだ main に入っていないその下の PR のコミットが「main に入った変更」に並ぶため。
+      # main 向けの PR では、前に MAP_BASE（origin/main）から読んでいた履歴と同じになる。push では空で、リモートの main から読む。
+      # default_branch ではなく main と書くのは、履歴が release と本番のデプロイの走る main（on.push.branches）のものだから。
       # 変わった関数とテストの一覧は dist/data/changes.md にも書かれる。説明の無い変更か、関連するテストの
       # 変わっていない変更があると、地図とテストのページを作ったうえでこのステップが落ちる（後のステップはページが
       # あれば続け、ジョブは失敗のまま）。
       - name: Build the map
         id: build
         env:
-          MAP_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          MAP_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          MAP_HISTORY_BASE: ${{ github.event_name == 'pull_request' && 'origin/main' || '' }}
           MAP_PR: ${{ github.event.pull_request.number }}
           MAP_PR_TITLE: ${{ github.event.pull_request.title }}
           MAP_PR_URL: ${{ github.event.pull_request.html_url }}
@@ -360,6 +388,7 @@ jobs:
         if: ${{ !cancelled() && hashFiles('apps/map/dist/index.html') != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.pull.outputs.open == 'true' && env.CLOUDFLARE_API_TOKEN != '' }}
         run: node .github/scripts/map-preview.mjs create --pr "${{ github.event.pull_request.number }}" --sha "${{ github.event.pull_request.head.sha }}"
 
+      # push は main だけで起動する（on.push.branches）ので、PR でないランは main のランである。
       - name: Deploy main to production
         id: production
         if: github.event_name != 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''

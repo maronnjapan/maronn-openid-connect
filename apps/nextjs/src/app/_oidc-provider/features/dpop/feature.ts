@@ -16,9 +16,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * ([verify-dpop-access-token]). The authorization endpoint reads the
  * dpop_jkt of a request (the [validate-dpop-jkt] block of authorize/route.ts,
  * which calls ./authorize.ts) and binds the code issued for it to that key.
- * The checks it calls are the modules of this
- * directory (proof.ts, with jwk.ts and htu.ts, binding.ts and resource.ts), to
- * be changed here when the policy changes. The feature adds the defaults of the DPoP
+ * The checks it calls are the modules of this directory (proof.ts, with
+ * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
+ * policy changes. The feature adds the defaults of the DPoP
  * settings (dpopConfigDefaults of ./config.ts) to the defaults of
  * ProviderConfig, advertises the algs of the checks in discovery and lets
  * browsers send the DPoP header.

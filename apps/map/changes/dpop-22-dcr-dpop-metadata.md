@@ -3,7 +3,7 @@
 DPoP（RFC 9449）を生成 OP に入れる段の 22 個目で、`dpop` と `dynamic-client-registration` を一緒に有効にしたときに、`POST /register` がクライアントメタデータ `dpop_bound_access_tokens`（RFC 9449 §5.2）を検証して登録し、201 のレスポンスで返すようにする。
 段 21 で、トークンエンドポイントは動的に登録したクライアントの登録したメタデータ（`registrationMetadata`）からこの値を読むようになったが、動的クライアント登録はこの名前を理解しないメタデータとして黙って捨てていた（`customClientMetadata` に検証関数を足した場合だけ残った）。この段で、動的に登録したクライアントも `true` を登録すれば、DPoP proof の無いトークンリクエストを拒否されるようになる。
 Next.js のクライアント登録のルートハンドラはブロックに分けていなかったので、DPoP のブロックを置くために、まず Hono のパイプラインと同じステップのブロックに分け、隣に `endpoint.ts` を置いた。この分割では答えを変えていない。
-`dpop` を有効にした OP では、`dpop_bound_access_tokens` を送らない登録の 201 にも `"dpop_bound_access_tokens": false` が加わる（省略したときの既定値を、ほかの既定値と同じく登録して返すため）。真偽値でない値を送る登録は、前は（`customClientMetadata` に検証関数が無ければ）値を捨てて 201 で答えていたが、400 の `invalid_client_metadata` になる。それ以外の登録への答えは前と同じで、地図の実 OP のケースもすべて前と同じに答えた。`dpop` を有効にしない生成物ではブロックが消え、登録への答えは前と同じである。
+`dpop` を有効にした OP では、`dpop_bound_access_tokens` を送らない登録の 201 にも `"dpop_bound_access_tokens": false` が加わる（省略したときの既定値を、ほかの既定値と同じく登録して返すため）。真偽値でない値を送る登録は、前は（`customClientMetadata` に検証関数が無ければ）値を捨てて 201 で答えていたが、400 の `invalid_client_metadata` になる。それ以外の登録への答えは前と同じである。地図の実 OP（すべての機能を生成したアプリで、`dpop` も有効）のケースはすべて期待したステータスとエラーで答えたが、`dpop_bound_access_tokens` を送らない登録の 3 ケース（公開クライアント、コンフィデンシャルクライアント、リクエストオブジェクトを使うクライアントの登録）は、201 のボディに `"dpop_bound_access_tokens": false` が加わった。`dpop` を有効にしない生成物ではブロックが消え、登録への答えは前と同じである。
 
 ## register <!-- endpoint:register -->
 
@@ -22,7 +22,7 @@ Next.js のクライアント登録のルートハンドラはブロックに分
 - 答えは変えていない。`Content-Type` と `Content-Length` の確認と署名鍵の読み込みは `try` の外から `[parse-request]` ブロックの中（`try` の中）に移したが、どれも例外を投げないので、同じ答えになる。初期アクセストークンの確認は `try` の外に残したので、設定の関数が例外を投げたときの扱いも前と同じである
 - 署名鍵の読み込みは、メディアタイプと宣言された長さの確認の後、ボディを読む前という元の順序のまま `[parse-request]` ブロックに置いた。Next.js のほかのルートのように最初の `[load-signing-keys]` ブロックに分けると、署名鍵を読み込めないときに、初期アクセストークンやメディアタイプの誤りへの 401 / 400 が 503 に変わるためである。そのため、`endpoint.ts` では `[parse-request]` が `keys` も作る
 - `dpop` を有効にしない生成物（サンプルの nextjs-vercel）では、ブロックの目印とコメント、`endpoint.ts` が加わり、`[validate-dpop-client-metadata]` ブロックは `const dpopClient = undefined;` に置き換わる
-- テストは、ブロックに分ける前のルートでも通ることを確かめたものを足した。宣言された長さが上限を超えるリクエストをボディを読まずに拒否すること、JSON のオブジェクトでないボディの 400、署名鍵を読み込めないときにメディアタイプの誤りは 400 のままで、正しいリクエストは 503 になること、ストアの失敗の 500、保存した後に上限を超えたと分かった登録を消して 429 で答えること、である。DPoP のブロックのテストは Hono と同じものを `features/dpop/register.test.ts` に置いた
+- テストは、ブロックに分ける前のルートでも通ることを確かめたものを足した。宣言された長さが上限を超えるリクエストをボディを読まずに拒否すること、JSON のオブジェクトでないボディの 400、署名鍵を読み込めないときにメディアタイプの誤りと宣言された長さの超過は 400 のままで、正しいリクエストはボディを読まずに 503 になること、ストアの失敗の 500、保存した後に上限を超えたと分かった登録を消して 429 で答えること、である。DPoP のブロックのテストは Hono と同じものを `features/dpop/register.test.ts` に置いた
 
 ## registerDpopClientMetadata <!-- hono:oidc-provider/features/dpop/steps/validate-dpop-client-metadata.ts#registerDpopClientMetadata nextjs:app/_oidc-provider/features/dpop/register.ts#registerDpopClientMetadata -->
 
@@ -34,4 +34,4 @@ Next.js のクライアント登録のルートハンドラはブロックに分
 - 登録した値は `client.metadata` に入り、保存するレコードの `registrationMetadata` に写る（動的クライアント登録の `toClientRegistration()`）。`RegisteredClient.dpopBoundAccessTokens` には入れない。動的クライアント登録のコードは機能の名前を使えず、トークンエンドポイントはどちらも読むためである。`client` と `metadata` は書き換えず、新しいクライアントを返す
 - 生成器は機能のディレクトリをまとめて出力するので、このファイルは `dynamic-client-registration` を有効にしない OP にも入る。登録エンドポイントがないので、どこからも呼ばれない（段 20 の PAR のファイルと同じで、関数の説明と Next.js のファイルの先頭にそう書いた）
 - Hono のステップは、拒否のレスポンスをコンテキスト（`c.json()`）で作り、CORS のミドルウェアが先に付けたヘッダーを残す。Next.js の関数は `Response` を作り、ルートの `POST` が CORS のヘッダーを付ける
-- テストは、上のエンドポイントを通したものに加え、`customClientMetadata` の検証関数が返した値（すべてを `true` にする関数、文字列にする関数）を検証すること、関数を直接呼んだときに渡したクライアントとメタデータを書き換えないことを確かめる
+- テストは、上のエンドポイントを通したものに加え、`customClientMetadata` の検証関数が返した値（すべてを `true` にする関数、文字列にする関数）を検証すること、その関数が `undefined` を返したときはリクエストの値を検証すること（`(value) => value` の関数で省略した登録に `false` が入り、何も返さない関数で `true` を送った登録に `true` が入る）、関数を直接呼んだときに渡したクライアントとメタデータを書き換えないことを確かめる

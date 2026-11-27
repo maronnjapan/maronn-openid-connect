@@ -12,10 +12,10 @@ RFC 9449 §6.2 は、DPoP で束縛したアクセストークンをイントロ
 本体は DPoP の機能を読み込めないので、段 7 の `token-binding.ts` と同じく、束縛を「レコードの `cnf` と `tokenType`」としてだけ扱う。
 
 - `confirmationOf()` は、`cnf` が JSON のオブジェクトのときだけ返す。SQL と KV のレコードの `cnf` は `payload` の JSON から読んだ値で、独自のコードが書いたレコードもあるので、型を信じずに形を確かめる
-- レコードに `tokenType` が無くても、`cnf` が `jkt` を持てば `token_type` を `DPoP` にした。`jkt` は RFC 9449 §6.1 が定める DPoP の確認のメソッドで、§6.2 は DPoP で束縛したトークンの `token_type` を返すなら `DPoP` でなければならないとしているためである。PR #205 はこのとき core の `Bearer` をそのまま返していた
-- `jkt` 以外の確認（mTLS の `x5t#S256` など）で `tokenType` の無いレコードは、`cnf` だけを加えて `token_type` は変えない。RFC 8705 の束縛したトークンは `Bearer` のままだからである
+- `cnf` が `jkt` を持てば、レコードの `tokenType` によらず `token_type` を `DPoP` にした。`jkt` は RFC 9449 §6.1 が定める DPoP の確認のメソッドで、§6.2 は DPoP で束縛したトークンの `token_type` を返すなら `DPoP` でなければならないとしているためである。PR #205 は、レコードに `tokenType` が無ければ core の `Bearer` を、あればその値を返していたので、独自のコードが書いたレコードでは `Bearer` になりえた
+- `jkt` 以外の確認（mTLS の `x5t#S256` など）では、レコードの `tokenType` が文字列ならそれを返し、無ければ `cnf` だけを加えて `token_type` は変えない。RFC 8705 の束縛したトークンは `Bearer` のままだからである
 - `cnf` はレスポンスの最後のメンバーとして加え、ほかのメンバーとその順番は core の組み立てたままにした
-- core の `IntrospectionResponse` は `token_type` に `Bearer` と `refresh_token` しか認めず、`cnf` も持たないので、core は変えずに、返す値の型だけを広げた。core の公開 API を変えると、experimental と google-login のリリースまで要るためである
+- core の `IntrospectionResponse` は `token_type` に `Bearer` と `refresh_token` しか認めず、`cnf` も持たないので、core は変えずに、結果を core の型にキャストして返す。呼び出し側の型には `cnf` も `DPoP` も現れないが、core の公開 API を変えると、experimental と google-login のリリースまで要るためである。このことは JSDoc にも書いた
 - `jwt-introspection-response` 機能の署名付きの応答（RFC 9701）は同じレスポンスに署名するので、`token_introspection` にも `cnf` が入る。Hono と Next.js のテストで確かめた
 
 ## describeIntrospectedToken <!-- hono:oidc-provider/features/introspection/endpoints/introspection/steps/build-response.ts#describeIntrospectedToken -->

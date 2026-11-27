@@ -6,20 +6,12 @@ import { dpop } from './feature.js';
 const ISSUER = 'https://op.example.com';
 
 describe('dpop', () => {
-  // RFC 9449 §5.1: the algorithms of DPoP proofs the OP accepts.
-  it('should advertise dpop_signing_alg_values_supported from the settings', () => {
-    const metadata = discoveryOf([dpop], {}, ISSUER, createProviderConfig({ issuer: ISSUER, dpopSigningAlgValuesSupported: ['ES256', 'PS256'] }));
+  // RFC 9449 §5.1: dpop_signing_alg_values_supported signals support for DPoP,
+  // which no endpoint has while none checks a DPoP proof.
+  it('should add no member to the discovery document', () => {
+    const metadata = discoveryOf([dpop], {}, ISSUER, createProviderConfig({ issuer: ISSUER }));
 
-    expect(metadata).toEqual({ dpop_signing_alg_values_supported: ['ES256', 'PS256'] });
-  });
-
-  // RFC 9449 §5.1 / §11.6: an alg the proof checks cannot verify is not advertised.
-  it('should leave out of dpop_signing_alg_values_supported the configured algs the proof checks do not verify', () => {
-    const config = createProviderConfig({ issuer: ISSUER, dpopSigningAlgValuesSupported: ['none', 'ES256', 'HS256', 'ES256K', 'EdDSA'] });
-
-    const metadata = discoveryOf([dpop], {}, ISSUER, config);
-
-    expect(metadata).toEqual({ dpop_signing_alg_values_supported: ['ES256', 'EdDSA'] });
+    expect(metadata).toEqual({});
   });
 
   it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew', () => {

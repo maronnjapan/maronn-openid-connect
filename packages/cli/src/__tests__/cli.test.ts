@@ -520,10 +520,11 @@ describe('run', () => {
       );
     });
 
-    // No endpoint calls the proof checks: the client must not expect a DPoP-bound token.
-    it('should tell that every token is still a Bearer token when dpop is enabled', () => {
+    // No endpoint calls the proof checks: the client must not expect a DPoP-bound token,
+    // and discovery does not signal support for DPoP (RFC 9449 §5.1).
+    it('should tell that every token is still a Bearer token and discovery does not advertise DPoP when dpop is enabled', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
-        'no endpoint checks a DPoP proof: every token is still a Bearer token.',
+        'No endpoint checks a DPoP proof yet, so discovery does not advertise dpop_signing_alg_values_supported and every token is still a Bearer token.',
       );
     });
 
@@ -601,7 +602,9 @@ describe('run', () => {
     });
 
     it('should say that no endpoint checks a DPoP proof yet', () => {
-      expect(helpText().replace(/\s+/g, ' ')).toContain('No endpoint checks a DPoP proof yet: every token is still a Bearer token.');
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'No endpoint checks a DPoP proof yet: every token is still a Bearer token, and discovery does not advertise dpop_signing_alg_values_supported.',
+      );
     });
 
     it('should list dpop among the extension features', () => {

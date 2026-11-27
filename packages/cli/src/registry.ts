@@ -69,7 +69,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'rp-initiated-logout', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'RP 起点のログアウト（RP-Initiated Logout 1.0、end_session_endpoint）' },
   { id: 'dynamic-client-registration', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: '動的クライアント登録（RFC 7591）' },
   { id: 'google-login', tier: 'extension', requires: [], packages: ['@maronn-openid-connect/google-login', 'google-auth-library'], frameworks: ALL_FRAMEWORKS, runtimes: ['node'], summary: 'ログイン方法に「Google でログイン」を加える（Node.js 22 以上）' },
-  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）の proof の検査と dpop_signing_alg_values_supported（トークンは Bearer のまま）' },
+  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）の proof の検査（まだどのエンドポイントも呼ばず、トークンは Bearer のまま）' },
 ];
 
 /** The entry of a feature id, or undefined for a name the CLI does not know. */
@@ -198,9 +198,8 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  * - dpop: OAuth 2.0 Demonstrating Proof of Possession (RFC 9449). All of its
  *   code is generated into features/dpop/ (Web Crypto only, so edge runtimes
  *   too) and imports no package beside core: the checks of a DPoP proof
- *   (proof.ts), which no endpoint calls, the alg setting that discovery
- *   advertises as dpop_signing_alg_values_supported, and the DPoP header in
- *   the CORS of the endpoints clients call directly (token, UserInfo, ...).
+ *   (proof.ts), which no endpoint calls, their settings, and the DPoP header
+ *   in the CORS of the endpoints clients call directly (token, UserInfo, ...).
  */
 export const EXTENSION_FEATURES = ['google-login', 'dpop'] as const;
 
@@ -315,12 +314,12 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  * - dpop: extension, disabled by default. When true, features/dpop/ is
  *   generated with the checks of a DPoP proof (RFC 9449 §4.3) and the DPoP
  *   settings of ProviderConfig (dpopSigningAlgValuesSupported,
- *   dpopProofMaxAgeSeconds, dpopProofLeewaySeconds); discovery advertises
- *   dpop_signing_alg_values_supported (§5.1), and the CORS of the endpoints
- *   clients call directly (token, UserInfo, ...) allows the DPoP header and
- *   exposes WWW-Authenticate. No endpoint checks a DPoP proof: every token is
- *   a Bearer token, and every endpoint answers as without the feature apart
- *   from that discovery member and those CORS headers.
+ *   dpopProofMaxAgeSeconds, dpopProofLeewaySeconds), and the CORS of the
+ *   endpoints clients call directly (token, UserInfo, ...) allows the DPoP
+ *   header and exposes WWW-Authenticate. No endpoint checks a DPoP proof:
+ *   every token is a Bearer token, discovery does not advertise
+ *   dpop_signing_alg_values_supported (§5.1), and every endpoint answers as
+ *   without the feature apart from those CORS headers.
  */
 export interface OidcFeatureConfig {
   pkce: boolean;

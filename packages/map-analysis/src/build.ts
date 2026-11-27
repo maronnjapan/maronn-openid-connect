@@ -25,7 +25,7 @@ import type { BodyEntry, Failure, FlowEndpoint, FrameFile, FunctionEntry, MapCha
 import { escapingFailures } from './failures.js';
 import { featureOfPath, sourceFeatureRanges } from './features.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
-import { heldRevision, mainRevision, readHistoryWithDiffs, type PullRequestInfo } from './history.js';
+import { historyRevision, readHistoryWithDiffs, type PullRequestInfo } from './history.js';
 import { readRepository, type Repository } from './repository.js';
 import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
@@ -82,13 +82,15 @@ export interface BuildOptions {
   /** The built CLI (packages/cli/dist). */
   cliDist?: string;
   /**
-   * The history of main (history.ts): the revision it is read from (as it
-   * is; else the newest commit of the base whose code HEAD has, in the map of a
-   * pull request: heldRevision; else that of the main of a remote: mainRevision;
-   * else HEAD), the pull requests on GitHub
-   * (MAP_PULLS) and owner/name there. `false` reads none.
+   * The history of main (history.ts): the revision it is read from as it is
+   * (`revision`), or the main it is read from (`base`, MAP_HISTORY_BASE:
+   * origin/main) in the map of a pull request stacked on another one's
+   * branch, a base of the changes whose commits have not reached main; where
+   * neither is given, the base of the changes, else the main of a remote
+   * (historyRevision); the pull requests on GitHub (MAP_PULLS) and
+   * owner/name there. `false` reads none.
    */
-  history?: { revision?: string; pulls?: readonly PullRequestInfo[]; github?: string } | false;
+  history?: { revision?: string; base?: string; pulls?: readonly PullRequestInfo[]; github?: string } | false;
   /**
    * More work on the analysis before map.json and changes.md are written
    * (the tests of packages/test-catalog): it may write files of its own (the
@@ -327,12 +329,11 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   removeStale(join(options.out, 'functions'), written.functions);
   removeStale(join(options.out, 'sources'), written.sources);
 
-  // The changes that reached main: in the map of a pull request, those of its base. A directory that is no git repository has none, and the build goes on.
+  // The changes that reached main: in the map of a pull request, those of the history's base, else of its base. A directory that is no git repository has none, and the build goes on.
   let history: string | undefined;
   if (options.history !== false) {
     try {
-      const exact = options.history?.revision;
-      const { revision, from } = exact !== undefined ? { revision: exact, from: exact } : options.base !== undefined ? heldRevision(options.repository, options.base) : mainRevision(options.repository);
+      const { revision, from } = historyRevision(options.repository, options.history ?? {}, options.base);
       const { history: read, details } = readHistoryWithDiffs({
         repository: options.repository,
         roots,

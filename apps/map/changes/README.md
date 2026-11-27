@@ -50,6 +50,8 @@ MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft
 ```
 
 `MAP_BASE`（省略すると `origin/main`）からの差分で、コードを変えた関数のうち、まだ節の無いものごとに節を書く。
+前の PR のブランチを base にして積み重ねた PR では、`MAP_BASE` にその base（`origin/<下の PR のブランチ>`）を渡す。
+CI の地図もその base と比べるので、節が要るのはその PR が変えた関数だけである。
 書き込む先は、そのブランチがすでに足している変更メモか、なければ `apps/map/changes/<ブランチ名>.md` である。
 引数でファイルを指定することもできる（`pnpm --filter @maronn-openid-connect/map changes:draft apps/map/changes/x.md`。リポジトリのルートからのパス）。
 

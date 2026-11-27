@@ -1,8 +1,9 @@
-import { TokenError, TokenErrorCode } from '@maronn-openid-connect/core';
+import { TokenError, TokenErrorCode, UserInfoError, UserInfoErrorCode } from '@maronn-openid-connect/core';
 import { describe, expect, it } from 'vitest';
 
 import { TokenEndpointError } from '../../endpoints/token/response.js';
-import { tokenEndpointErrorOf } from './error-responses.js';
+import { UserInfoEndpointError } from '../../endpoints/userinfo/response.js';
+import { tokenEndpointErrorOf, userInfoEndpointErrorOf } from './error-responses.js';
 import { DpopError } from './errors.js';
 
 describe('tokenEndpointErrorOf', () => {
@@ -33,5 +34,32 @@ describe('tokenEndpointErrorOf', () => {
     ['an Error of a misconfiguration', new Error('The iat window of the DPoP proof checks must be non-negative finite numbers')],
   ])('should return %s as it is', (_name, error) => {
     expect(tokenEndpointErrorOf(error)).toBe(error);
+  });
+});
+
+describe('userInfoEndpointErrorOf', () => {
+  // RFC 9449 §7.1 / RFC 6750 §3.1: a rejected proof or token is a 401, a malformed request a 400; the
+  // error goes in the JSON and in the challenge of the scheme the request used.
+  it.each([
+    ['invalid_dpop_proof', 'The DPoP proof has already been used', 401],
+    ['invalid_token', 'The access token is bound to a different DPoP key', 401],
+    ['invalid_request', 'The DPoP authorization header has no access token', 400],
+  ] as const)('should turn the %s of a DPoP check into an error of the UserInfo endpoint', (code, description, status) => {
+    const error = userInfoEndpointErrorOf(new DpopError(code, description));
+
+    expect(error).toBeInstanceOf(UserInfoEndpointError);
+    expect([(error as UserInfoEndpointError).response, (error as UserInfoEndpointError).challenge]).toEqual([
+      { status, body: { error: code, error_description: description } },
+      { error: code, errorDescription: description },
+    ]);
+  });
+
+  // RFC 6749 §5.2: invalid_grant is an error of the token endpoint, never of a protected resource.
+  it.each([
+    ['the invalid_grant of a bound grant', new DpopError('invalid_grant', 'The grant is bound to a DPoP key, but no DPoP proof was sent')],
+    ['a UserInfoError', new UserInfoError(UserInfoErrorCode.InvalidToken, 'Access token is invalid')],
+    ['an Error of a misconfiguration', new Error('The iat window of the DPoP proof checks must be non-negative finite numbers')],
+  ])('should return %s as it is', (_name, error) => {
+    expect(userInfoEndpointErrorOf(error)).toBe(error);
   });
 });

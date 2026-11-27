@@ -230,6 +230,38 @@ describe('buildOpFlow', () => {
     });
   });
 
+  describe('userinfo endpoint steps', () => {
+    it('should list the Bearer pipeline by default', () => {
+      const flow = buildOpFlow({ features: DEFAULT_FEATURES });
+      const userinfo = flow.endpoints.find((e) => e.id === 'userinfo');
+      expect(userinfo?.steps.map((s) => s.id)).toEqual([
+        'parse-access-token',
+        'resolve-access-token',
+        'resolve-claims',
+        'build-response',
+        'respond',
+        'respond-error',
+      ]);
+    });
+
+    // RFC 9449 §7.1 / §7.2: the DPoP scheme is read before the Bearer one, and the key the token is
+    // bound to is checked against how it was presented once the token is resolved.
+    it('should read the DPoP scheme first and check the bound key after resolving the token when dpop is enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
+      const userinfo = flow.endpoints.find((e) => e.id === 'userinfo');
+      expect(userinfo?.steps.map((s) => s.id)).toEqual([
+        'read-dpop-access-token',
+        'parse-access-token',
+        'resolve-access-token',
+        'verify-dpop-access-token',
+        'resolve-claims',
+        'build-response',
+        'respond',
+        'respond-error',
+      ]);
+    });
+  });
+
   describe('authorize endpoint steps', () => {
     it('should list the validation pipeline, the transaction and the three ways out', () => {
       const flow = buildOpFlow({ features: DEFAULT_FEATURES });

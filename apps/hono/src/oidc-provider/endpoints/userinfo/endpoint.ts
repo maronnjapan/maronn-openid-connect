@@ -24,8 +24,10 @@ export const endpoint = defineEndpoint({
   // can read them whichever step failed.
   initial: ['challenges'],
   steps: [
+    'read-dpop-access-token',
     'parse-access-token',
     'resolve-access-token',
+    'verify-dpop-access-token',
     'resolve-claims',
     'build-response',
     'respond',

@@ -567,10 +567,10 @@ describe('run', () => {
     });
 
     // RFC 9449 §5: the token endpoint binds the access token of a request with a DPoP proof, and the
-    // refresh token of a public client; the UserInfo endpoint does not take part yet.
-    it('should tell how a client gets DPoP-bound tokens and that UserInfo does not check DPoP yet when dpop is enabled', () => {
+    // refresh token of a public client; §7.1 / §7.2: UserInfo takes a bound access token with the DPoP scheme only.
+    it('should tell how a client gets DPoP-bound tokens and how UserInfo takes them when dpop is enabled', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
-        'A client opts in by sending a DPoP proof in the DPoP header of its token requests: the access token is then bound to its key (token_type DPoP), and so is the refresh token of a public client, which then needs a proof of the same key each time it is used; without one the tokens stay Bearer. The UserInfo endpoint does not check DPoP yet: it takes a bound access token as a Bearer token.',
+        'A client opts in by sending a DPoP proof in the DPoP header of its token requests: the access token is then bound to its key (token_type DPoP), and so is the refresh token of a public client, which then needs a proof of the same key each time it is used; without one the tokens stay Bearer. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
       );
     });
 
@@ -647,9 +647,9 @@ describe('run', () => {
       );
     });
 
-    it('should say that the token endpoint binds the access token and a public client\'s refresh token to the key of the DPoP proof, and that UserInfo does not check DPoP yet', () => {
+    it('should say that the token endpoint binds the access token and a public client\'s refresh token to the key of the DPoP proof, and that UserInfo takes a bound token with the DPoP scheme only', () => {
       expect(helpText().replace(/\s+/g, ' ')).toContain(
-        'The token endpoint checks the DPoP proof of a request and binds the access token to its key (token_type DPoP), and the refresh token of a public client too, which then needs a proof of the same key each time it is used; without a proof the tokens stay Bearer. The UserInfo endpoint does not check DPoP yet: it takes a bound access token as a Bearer token.',
+        'The token endpoint checks the DPoP proof of a request and binds the access token to its key (token_type DPoP), and the refresh token of a public client too, which then needs a proof of the same key each time it is used; without a proof the tokens stay Bearer. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
       );
     });
 

@@ -9,9 +9,13 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * to the key of the proof (cnf.jkt, token_type DPoP); the
  * [validate-dpop-grant-binding] block after it lets a code or refresh token
  * bound to a key be used only with a proof of that key. A request without a
- * DPoP header gets Bearer tokens. The checks it calls are the modules of this
- * directory (proof.ts, with jwk.ts and htu.ts, and binding.ts), to be changed
- * here when the policy changes. The feature adds the defaults of the DPoP
+ * DPoP header gets Bearer tokens. The UserInfo endpoint takes a token
+ * presented with the DPoP scheme and its proof (the [read-dpop-access-token]
+ * block of userinfo/route.ts, which calls ./userinfo.ts) and lets a bound
+ * token be used only with a proof of its key, never as a Bearer token
+ * ([verify-dpop-access-token]). The checks it calls are the modules of this
+ * directory (proof.ts, with jwk.ts and htu.ts, binding.ts and resource.ts), to
+ * be changed here when the policy changes. The feature adds the defaults of the DPoP
  * settings (dpopConfigDefaults of ./config.ts) to the defaults of
  * ProviderConfig, advertises the algs of the checks in discovery and lets
  * browsers send the DPoP header.
@@ -21,7 +25,8 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * provider.ts nor http.ts. The same holds for the modules config.ts imports
  * (jwk.ts, base64url.ts and errors.ts). proof.ts reads provider.ts and
  * error-responses.ts imports http.ts, so no file the feature list loads
- * imports them or token.ts, which imports both: token/route.ts does.
+ * imports them, token.ts or userinfo.ts, which import both: token/route.ts
+ * and userinfo/route.ts do.
  */
 export const dpop = defineFeature({
   id: 'dpop',

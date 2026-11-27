@@ -10,9 +10,13 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * token_type DPoP); the [validate-dpop-grant-binding] block after it
  * (steps/validate-dpop-grant-binding.ts) lets a code or refresh token bound
  * to a key be used only with a proof of that key. A request without a DPoP
- * header gets Bearer tokens. The checks it calls are the modules of this
- * directory (proof.ts, with jwk.ts and htu.ts, and binding.ts), to be changed
- * here when the policy changes. The feature adds the defaults of the DPoP
+ * header gets Bearer tokens. The UserInfo endpoint takes a token presented
+ * with the DPoP scheme and its proof (the [read-dpop-access-token] block of
+ * endpoints/userinfo/pipeline.ts) and lets a bound token be used only with a
+ * proof of its key, never as a Bearer token ([verify-dpop-access-token]).
+ * The checks it calls are the modules of this directory (proof.ts, with
+ * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
+ * policy changes. The feature adds the defaults of the DPoP
  * settings (dpopConfigDefaults of ./config.ts) to the defaults of
  * ProviderConfig, advertises the algs of the checks in discovery and lets
  * browsers send the DPoP header.

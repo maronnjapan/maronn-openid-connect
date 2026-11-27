@@ -13,8 +13,9 @@ declare module '../../config' {
      * (RFC 9449 §4.3), the values of dpop_signing_alg_values_supported (§5.1).
      * Asymmetric algorithms only (§11.6). An alg the checks of jwk.ts do not
      * verify (SUPPORTED_DPOP_SIGNING_ALGS) is left out by dpopSigningAlgsOf(),
-     * even when listed here. By default every alg of
-     * SUPPORTED_DPOP_SIGNING_ALGS; set ['ES256'] to accept ES256 only.
+     * even when listed here. Its default, every alg of
+     * SUPPORTED_DPOP_SIGNING_ALGS, is dpopConfigDefaults; set ['ES256'] to
+     * accept ES256 only.
      */
     dpopSigningAlgValuesSupported: readonly string[];
   }
@@ -31,6 +32,7 @@ export const dpopConfigDefaults = {
  *
  * 設定の `dpopSigningAlgValuesSupported` のうち、`jwk.ts` が署名を検証できる alg（`SUPPORTED_DPOP_SIGNING_ALGS`）だけを返す。
  * 検証できない alg（`none`、`HS256` のような MAC、この実装にない `ES256K` など）は、設定に挙げても返さない。
+ * 設定に二度挙げた alg は、最初の位置に一度だけ返す。
  * 返す値は、DPoP proof の `alg` の検査と、`dpop_signing_alg_values_supported` に使う値である。
  *
  * @spec RFC 9449 §4.3
@@ -38,5 +40,5 @@ export const dpopConfigDefaults = {
  * @spec RFC 9449 §11.6
  */
 export function dpopSigningAlgsOf(config: Pick<ProviderConfig, 'dpopSigningAlgValuesSupported'>): readonly DpopSigningAlg[] {
-  return config.dpopSigningAlgValuesSupported.filter(isSupportedDpopSigningAlg);
+  return [...new Set(config.dpopSigningAlgValuesSupported)].filter(isSupportedDpopSigningAlg);
 }

@@ -29,6 +29,7 @@ describe('isDpopError', () => {
     ['an Error of another name', Object.assign(new Error('x'), { error: 'invalid_dpop_proof', errorDescription: 'x' })],
     ['a value without errorDescription', { name: 'DpopError', error: 'invalid_dpop_proof' }],
     ['a value whose error is not a string', { name: 'DpopError', error: 400, errorDescription: 'x' }],
+    ['a value whose error is not a DPoP error code', { name: 'DpopError', error: 'server_error', errorDescription: 'x' }],
     ['null', null],
     ['a string', 'DpopError'],
   ])('should not take %s for a DpopError', (_name, value) => {

@@ -40,6 +40,11 @@ describe('dpopSigningAlgsOf', () => {
     ]);
   });
 
+  // RFC 9449 §5.1: dpop_signing_alg_values_supported lists each alg once.
+  it('should return an alg configured twice once, at its first position', () => {
+    expect(dpopSigningAlgsOf({ dpopSigningAlgValuesSupported: ['ES256', 'EdDSA', 'ES256', 'EdDSA'] })).toEqual(['ES256', 'EdDSA']);
+  });
+
   it('should return no alg when every configured alg is one this implementation does not verify', () => {
     expect(dpopSigningAlgsOf({ dpopSigningAlgValuesSupported: ['HS256'] })).toEqual([]);
   });

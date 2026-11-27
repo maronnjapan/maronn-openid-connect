@@ -53,7 +53,7 @@ const MIN_RSA_MODULUS_BITS = 2048;
 interface AlgorithmProfile {
   kty: DpopPublicJwk['kty'];
   crv?: string;
-  /** EC の `x` と `y`、OKP の `x` のバイト長（RFC 7518 §6.2.1.2 / §6.2.1.3、RFC 8037 §2） */
+  /** EC の `x` と `y`、OKP の `x` のバイト長（RFC 7518 §6.2.1.2 / §6.2.1.3、RFC 8037 §2 / RFC 8032 §5.1.5） */
   coordinateLength?: number;
   /** `crypto.subtle.importKey()` のアルゴリズム（RSASSA-PKCS1-v1_5 と RSA-PSS は `hash`、ECDSA は `namedCurve` を持つ） */
   importParams: { name: string; hash?: string; namedCurve?: string };
@@ -132,7 +132,7 @@ export function isSupportedDpopSigningAlg(alg: string): alg is DpopSigningAlg {
  * - `kty`（と EC・OKP の `crv`）が `alg` に合わない
  * - 公開鍵のメンバー（RSA は `n` と `e`、EC は `x` と `y`、OKP は `x`）が正規の base64url の文字列でない（RFC 4648 §3.5）
  * - EC の `x` と `y` が曲線の座標の長さ（P-256 は 32 バイト、P-384 は 48 バイト、P-521 は 66 バイト）でない（RFC 7518 §6.2.1.2 / §6.2.1.3）
- * - Ed25519 の `x` が 32 バイトでない（RFC 8037 §2）
+ * - Ed25519 の `x` が 32 バイトでない（RFC 8037 §2 / RFC 8032 §5.1.5）
  * - RSA の `n` か `e` が 0 のバイトで始まる（最小のバイト数で表す、RFC 7518 §2 の Base64urlUInt）
  * - RSA の鍵が 2048 ビットより短い（RFC 7518 §3.3 / §3.5）
  *
@@ -181,6 +181,7 @@ export function validateDpopProofJwk(jwk: unknown, alg: string): DpopPublicJwk {
  * @spec RFC 7518 §6.2.1.2
  * @spec RFC 7518 §6.3.1
  * @spec RFC 8037 §2
+ * @spec RFC 8032 §5.1.5
  */
 function hasPublicKeyLength(bytes: Uint8Array, profile: AlgorithmProfile): boolean {
   if (profile.coordinateLength !== undefined) return bytes.length === profile.coordinateLength;

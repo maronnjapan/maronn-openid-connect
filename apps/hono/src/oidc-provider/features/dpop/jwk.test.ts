@@ -108,7 +108,7 @@ describe('validateDpopProofJwk', () => {
     ['an array', [], 'ES256', 'The DPoP proof jwk header is not a JSON object'],
     ['an RSA key for an ECDSA alg', RFC7638_KEY, 'ES256', 'The DPoP proof jwk header does not match the alg'],
     ['an EC key of another curve', { ...RFC9449_KEY, crv: 'P-384' }, 'ES256', 'The DPoP proof jwk header does not match the alg'],
-    ['an Ed448 key', { kty: 'OKP', crv: 'Ed448', x: RFC8037_KEY.x }, 'EdDSA', 'The DPoP proof jwk header does not match the alg'],
+    ['an OKP key of the Ed448 curve', { kty: 'OKP', crv: 'Ed448', x: RFC8037_KEY.x }, 'EdDSA', 'The DPoP proof jwk header does not match the alg'],
     ['a key for an alg this implementation does not verify', RFC9449_KEY, 'ES256K', 'The DPoP proof jwk header does not match the alg'],
     ['an EC key without y', { kty: 'EC', crv: 'P-256', x: RFC9449_KEY.x }, 'ES256', 'The DPoP proof jwk header is not a valid public key'],
     ['an EC key whose x is empty', { ...RFC9449_KEY, x: '' }, 'ES256', 'The DPoP proof jwk header is not a valid public key'],
@@ -151,6 +151,17 @@ describe('validateDpopProofJwk', () => {
     const { n, e } = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as { n: string; e: string };
 
     expect(errorOf(() => validateDpopProofJwk({ kty: 'RSA', n, e }, 'RS256'))?.errorDescription).toBe(
+      'RSA keys shorter than 2048 bits are not accepted',
+    );
+  });
+
+  // The modulus is counted in bits, not bytes: 256 bytes whose first byte is
+  // 0x7f are a modulus of 2047 bits.
+  it('should reject an RSA key of 256 bytes whose modulus is 2047 bits', () => {
+    const n =
+      'f_x7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw';
+
+    expect(errorOf(() => validateDpopProofJwk({ kty: 'RSA', n, e: 'AQAB' }, 'RS256'))?.errorDescription).toBe(
       'RSA keys shorter than 2048 bits are not accepted',
     );
   });

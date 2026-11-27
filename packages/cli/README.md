@@ -598,7 +598,7 @@ pnpm add hono @maronn-openid-connect/core
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js では `_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()` が、本リポジトリの Express と Fastify の samples では `src/app.ts` が、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
 
-`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには、これまでどおり Bearer トークンを発行する。
+`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには、これまでどおり Bearer トークンを発行する（`dpop_bound_access_tokens` を登録したクライアントを除く）。
 設定で変えられない方針（受け付ける alg と鍵の形、`htu` の比べ方、束縛の規則、nonce の形、エラーの応答など）は、`features/dpop/`（Next.js は `_oidc-provider/features/dpop/`）のファイルを直して変える。
 
 | ファイル | 内容 |

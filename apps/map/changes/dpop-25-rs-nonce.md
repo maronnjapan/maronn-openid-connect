@@ -2,7 +2,7 @@
 
 DPoP（RFC 9449）を生成 OP に入れる段の 25 個目で、段 23 で作った nonce を、保護されたリソース（UserInfo エンドポイント）が求めるようにする（RFC 9449 §9）。
 `ProviderConfig` に `dpopNonceRequiredAtResourceServer`（既定は `false`。Next.js は環境変数 `OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1` で `true`）を足した。
-`true` のとき、UserInfo エンドポイントは、`Authorization: DPoP` でアクセストークンを提示したリクエストには、そのスキームを読んだ後のどのレスポンス（成功もエラーも）にも、保護されたリソースが今発行した nonce を `DPoP-Nonce` ヘッダーで一つ付け、保護されたリソースが `dpopNonceLifetimeSeconds` 秒の間に発行した nonce の無い DPoP proof を 401 の `use_dpop_nonce` で拒否する（エラーは `DPoP` のチャレンジが伝える）。
+`true` のとき、UserInfo エンドポイントは、`Authorization: DPoP` でアクセストークンを提示したリクエストには、そのスキームを読んだ後のどのレスポンス（成功もエラーも。nonce の秘密が 32 バイトより短いときの 500 は除く）にも、保護されたリソースが今発行した nonce を `DPoP-Nonce` ヘッダーで一つ付け、保護されたリソースが `dpopNonceLifetimeSeconds` 秒の間に発行した nonce の無い DPoP proof を 401 の `use_dpop_nonce` で拒否する（エラーは `DPoP` のチャレンジが伝える）。
 nonce の MAC にはサーバーの役割が入るので、トークンエンドポイントと PAR エンドポイント（認可サーバー）の nonce は UserInfo エンドポイントで受け付けず、UserInfo エンドポイントの nonce も認可サーバーで受け付けない（RFC 9449 §9）。
 Bearer で提示したリクエストとトークンの無いリクエストには、設定によらず nonce を渡さず、求めもしない。
 `false` のとき（既定）は、`DPoP-Nonce` を返さず、DPoP proof の `nonce` クレームも見ないので、UserInfo の応答はこれまでと同じである（地図の生きた OP のケースも、すべて期待どおりの状態とエラーで答える）。

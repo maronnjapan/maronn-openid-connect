@@ -36,7 +36,11 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * steps/require-pushed-dpop-nonce.ts, which call server-nonce.ts), give every
  * response from then on to a request with a DPoP header a new nonce of the
  * authorization server (DPoP-Nonce) and reject a proof without a nonce it
- * recently provided (use_dpop_nonce).
+ * recently provided (use_dpop_nonce). With dpopNonceRequiredAtResourceServer,
+ * the [read-dpop-access-token] block of the UserInfo endpoint does the same
+ * with the nonces of the protected resource for a request presented with the
+ * DPoP scheme (server-nonce.ts gives the nonce, and its proof check requires
+ * one).
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. proof.ts also checks the nonce of a proof (nonce.ts) for an

@@ -34,7 +34,12 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * authentication (./token.ts and ./par.ts, which call ./server-nonce.ts),
  * give every response from then on to a request with a DPoP header a new
  * nonce of the authorization server (DPoP-Nonce) and reject a proof without a
- * nonce it recently provided (use_dpop_nonce).
+ * nonce it recently provided (use_dpop_nonce). With
+ * dpopNonceRequiredAtResourceServer (the environment variable
+ * OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1), the
+ * [read-dpop-access-token] block of userinfo/route.ts does the same with the
+ * nonces of the protected resource for a request presented with the DPoP
+ * scheme (./userinfo.ts, which calls ./server-nonce.ts).
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. proof.ts also checks the nonce of a proof (nonce.ts, with
@@ -50,9 +55,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * provider.ts nor http.ts. The same holds for the modules config.ts imports
  * (jwk.ts, base64url.ts and errors.ts). proof.ts reads provider.ts,
  * error-responses.ts imports http.ts and server-nonce.ts imports both, so no
- * file the feature list loads imports them, token.ts or par.ts, which import
- * all three, or userinfo.ts, which imports proof.ts and error-responses.ts:
- * token/route.ts, userinfo/route.ts and (par)/par/route.ts do. nonce.ts
+ * file the feature list loads imports them, or token.ts, par.ts and
+ * userinfo.ts, which import all three: token/route.ts, userinfo/route.ts and
+ * (par)/par/route.ts do. nonce.ts
  * imports base64url.ts and shared.ts only; only proof.ts and server-nonce.ts
  * import it.
  * register.ts imports nothing; only
@@ -66,6 +71,10 @@ export const dpop = defineFeature({
     // token and PAR endpoints require a nonce of the authorization server in
     // every DPoP proof.
     dpopNonceRequiredAtAuthorizationServer: process.env.OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER === '1',
+    // RFC 9449 §9: OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1 makes the
+    // UserInfo endpoint require a nonce of the protected resource in every
+    // DPoP proof.
+    dpopNonceRequiredAtResourceServer: process.env.OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER === '1',
   },
   // RFC 9449 §5.1: the algs the checks accept for DPoP proofs, which signals
   // support for DPoP. Left out when none of the configured algs is verifiable,

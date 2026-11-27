@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, providerContext, requestTo } from '../../../test-support/context.js';
 import { dpopKey, dpopProof } from '../../../test-support/dpop.js';
 import type { DpopNonceServer } from './nonce.js';
-import { authorizationServerNonceOf, requireDpopNonce } from './server-nonce.js';
+import { authorizationServerNonceOf, provideDpopNonce, requireDpopNonce, resourceServerNonceOf } from './server-nonce.js';
 
 /** 2026-01-01T00:00:00Z in Unix seconds. */
 const NOW = 1_767_225_600;
@@ -56,6 +56,15 @@ async function contextWith(headers: Record<string, string>, config: Record<strin
   return c;
 }
 
+/** The context of a GET of the UserInfo endpoint with a token in the DPoP scheme, with the secret of the DPoP nonces. */
+async function userInfoContextWith(secret = NONCE_SECRET) {
+  const { c } = await providerContext({
+    request: requestTo('/userinfo', { headers: { Authorization: 'DPoP token-1' } }),
+    options: { dpopNonceSecret: secret },
+  });
+  return c;
+}
+
 /** The DPoP-Nonce header of the response the context answers with. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function dpopNonceOf(c: any): string | null {
@@ -71,6 +80,54 @@ describe('authorizationServerNonceOf', () => {
   // RFC 9449 §11.3: a server that provides no nonce requires none.
   it('should name no server when the settings require no nonce', () => {
     expect(authorizationServerNonceOf({ dpopNonceRequiredAtAuthorizationServer: false })).toBeUndefined();
+  });
+});
+
+describe('resourceServerNonceOf', () => {
+  // RFC 9449 §9: the protected resource requires its nonce only where the settings say so.
+  it('should name the resource server when the settings require its nonce', () => {
+    expect(resourceServerNonceOf({ dpopNonceRequiredAtResourceServer: true })).toBe('resource-server');
+  });
+
+  // RFC 9449 §11.3: a server that provides no nonce requires none.
+  it('should name no server when the settings require no nonce', () => {
+    expect(resourceServerNonceOf({ dpopNonceRequiredAtResourceServer: false })).toBeUndefined();
+  });
+});
+
+describe('provideDpopNonce', () => {
+  // RFC 9449 §8.2 / §9: the server supplies the nonce to use next in the DPoP-Nonce header of the response.
+  it.each([
+    ['resource-server', RESOURCE_SERVER_NONCE_AT_NOW],
+    ['authorization-server', AUTHORIZATION_SERVER_NONCE_AT_NOW],
+  ] as const)('should give the response the nonce the %s issues now', async (server: DpopNonceServer, nonceNow) => {
+    const c = await userInfoContextWith();
+    fixRandomBytes();
+
+    await provideDpopNonce(c, server);
+
+    expect(dpopNonceOf(c)).toBe(nonceNow);
+  });
+
+  // RFC 9449 §8: there MUST NOT be more than one DPoP-Nonce header.
+  it('should leave one DPoP-Nonce header, the last nonce it gave, when it gives a nonce twice', async () => {
+    const c = await userInfoContextWith();
+    fixRandomBytes();
+    vi.setSystemTime((NOW - 60) * 1000);
+    await provideDpopNonce(c, 'resource-server');
+    vi.setSystemTime(NOW * 1000);
+
+    await provideDpopNonce(c, 'resource-server');
+
+    expect(dpopNonceOf(c)).toBe(RESOURCE_SERVER_NONCE_AT_NOW);
+  });
+
+  // RFC 2104 §3: a secret shorter than the output of the hash is a misconfiguration.
+  it('should throw an Error for a secret of the options shorter than 32 bytes, and give no nonce', async () => {
+    const c = await userInfoContextWith('a'.repeat(31));
+
+    await expect(provideDpopNonce(c, 'resource-server')).rejects.toThrow('The secret of the DPoP nonces must be at least 32 bytes long');
+    expect(dpopNonceOf(c)).toBeNull();
   });
 });
 

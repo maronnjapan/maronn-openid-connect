@@ -56,12 +56,14 @@ export function parEndpointRejectionOf(c: any, error: unknown): Response | undef
  * 保護されたリソース（UserInfo エンドポイント）での DPoP の検査の失敗を、UserInfo エンドポイントのエラーにして返す。
  *
  * `invalid_dpop_proof`（DPoP proof の不備）と `invalid_token`（提示の仕方に合った鍵に束縛されていないアクセストークン）は 401 で、`invalid_request`（`Authorization: DPoP` の形の誤り）は 400 で応答する（RFC 9449 §7.1、RFC 6750 §3.1）。
+ * `use_dpop_nonce`（DPoP proof に、保護されたリソースが最近発行した nonce が無い）も 401 で応答する（RFC 9449 §9）。
  * エラーの情報は、レスポンスの JSON と、リクエストがトークンを提示したスキームのチャレンジ（`WWW-Authenticate`）に入れる（RFC 9449 §7.2）。
  * `invalid_grant` はトークンエンドポイントだけが返すコード（RFC 6749 §5.2）なので、UserInfo エンドポイントのエラーにしない。
  * それと DPoP の失敗でないエラーは、そのまま返す。
  *
  * @spec RFC 9449 §7.1
  * @spec RFC 9449 §7.2
+ * @spec RFC 9449 §9
  * @spec RFC 6750 §3.1
  */
 export function userInfoEndpointErrorOf(error: unknown): unknown {

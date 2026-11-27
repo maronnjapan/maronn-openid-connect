@@ -25,7 +25,11 @@ import { respondUserInfo } from './steps/respond.js';
  * adds the DPoP challenge beside the Bearer one, rejects a token sent with
  * both schemes, and reads a token presented with the DPoP scheme and checks
  * its DPoP proof; the one after the token is resolved checks that the key the
- * token is bound to matches how it was presented (RFC 9449 §7.1 / §7.2).
+ * token is bound to matches how it was presented (RFC 9449 §7.1 / §7.2). With
+ * dpopNonceRequiredAtResourceServer, the first block gives every response
+ * from then on to a request presented with the DPoP scheme a new nonce of the
+ * protected resource (DPoP-Nonce) and rejects a proof without a nonce it
+ * recently provided (use_dpop_nonce, RFC 9449 §9).
  */
 export const userinfoApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -36,7 +40,7 @@ async function handler(c: any): Promise<Response> {
   // どのステップが失敗しても `catch` で読めるよう、`try` の前で宣言する。
   const challenges: UserInfoChallenges = { offered: [BEARER_CHALLENGE], scheme: BEARER_CHALLENGE.scheme };
   try {
-    // [read-dpop-access-token] (feature: dpop) DPoP のチャレンジを並べ、DPoP スキームのアクセストークンを読んで DPoP proof を検証する — RFC 9449 §7.1 / §7.2 / §4.3
+    // [read-dpop-access-token] (feature: dpop) DPoP のチャレンジを並べ、DPoP スキームのアクセストークンを読んで DPoP proof を検証する — RFC 9449 §7.1 / §7.2 / §4.3 / §9
     const { dpopAccessToken, dpopJkt } = await readDpopUserInfoRequest(c, challenges);
 
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2

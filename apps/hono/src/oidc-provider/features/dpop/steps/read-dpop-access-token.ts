@@ -11,6 +11,7 @@ import {
   readDpopAuthorization,
   validateDpopCredentials,
 } from '../resource.js';
+import { provideDpopNonce, resourceServerNonceOf } from '../server-nonce.js';
 
 export const meta = step({
   id: 'read-dpop-access-token',
@@ -18,7 +19,7 @@ export const meta = step({
   feature: 'dpop',
   kind: 'parse',
   label: 'DPoP のチャレンジを並べ、DPoP スキームのアクセストークンを読んで DPoP proof を検証する',
-  spec: 'RFC 9449 §7.1 / §7.2 / §4.3',
+  spec: 'RFC 9449 §7.1 / §7.2 / §4.3 / §9',
   function: 'readDpopUserInfoRequest',
   consumes: ['challenges'],
   produces: ['dpopAccessToken', 'dpopJkt'],
@@ -42,18 +43,23 @@ export const meta = step({
  * - `Authorization` の値がアクセストークンを一つの token68 で持つ（RFC 9449 §7.1）
  * - `DPoP` ヘッダーがちょうど一つある（RFC 9449 §7.1 / §4.3）
  * - DPoP proof が正しい（`htm` はリクエストのメソッド、`htu` は issuer の `/userinfo`、`ath` はアクセストークンのハッシュ。RFC 9449 §4.3）
+ * - 設定が保護されたリソースに nonce を求める（`dpopNonceRequiredAtResourceServer`）なら、DPoP proof の `nonce` が、保護されたリソースが `dpopNonceLifetimeSeconds` 秒の間に発行した nonce である（RFC 9449 §9。認可サーバーの nonce は受け付けない）
  *
+ * 設定が保護されたリソースに nonce を求めるときは、これらを確かめる前に、保護されたリソースが今発行した nonce を `DPoP-Nonce` ヘッダーでレスポンスに付ける（`provideDpopNonce()`）。
+ * そのため、DPoP スキームのリクエストへの、ここから後のどのレスポンス（成功も、このステップと後のステップの失敗も）にも、次の DPoP proof に入れる nonce が付く（RFC 9449 §8.2 / §9）。
  * トークンがその鍵に束縛されていることは、トークンを取得した後のステップ（`verifyDpopUserInfoAccess()`）が確かめる。
  *
  * @spec RFC 9449 §7.1
  * @spec RFC 9449 §7.2
  * @spec RFC 9449 §4.3
+ * @spec RFC 9449 §9
  * @spec RFC 6750 §2
  * @throws {UserInfoEndpointError} 401 の `invalid_dpop_proof`: DPoP proof がないか、受け付けないとき
+ * @throws {UserInfoEndpointError} 401 の `use_dpop_nonce`（DPoP のチャレンジにエラーの情報を入れる）: 設定が nonce を求め、DPoP proof の `nonce` が無いか、保護されたリソースが最近発行した nonce でないとき
  * @throws {UserInfoEndpointError} 400 の `invalid_request`: `Authorization: DPoP` にトークンがないか token68 でないとき
  * @throws {UserInfoEndpointError} 400 の `invalid_request`（どのチャレンジにもエラーの情報を入れる）: Bearer と DPoP の両方でトークンを送ったとき
  * @throws {UserInfoEndpointError} ボディを読めないとき（チャレンジの付かない 400 の `invalid_request`）
- * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき（設定の誤り。500 の `server_error` で応答する）
+ * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき、設定が nonce を求め、秘密が 32 バイトより短いか `dpopNonceLifetimeSeconds` が 0 以上の有限の数でないとき（設定の誤り。500 の `server_error` で応答する）
  */
 export async function readDpopUserInfoRequest(
   c: any,
@@ -71,6 +77,9 @@ export async function readDpopUserInfoRequest(
 
   // DPoP スキームで提示したリクエストの失敗は、DPoP のチャレンジがエラーの情報を伝える（RFC 9449 §7.2）。
   challenges.scheme = DPOP_AUTHENTICATION_SCHEME;
+  // 設定が保護されたリソースに nonce を求めるなら、このリクエストへのこれから後のどのレスポンスにも、次の DPoP proof に入れる nonce を付ける（RFC 9449 §9 / §8.2）。
+  const nonceServer = resourceServerNonceOf(c.get('config'));
+  if (nonceServer !== undefined) await provideDpopNonce(c, nonceServer);
   try {
     if (await formBodyHasAccessToken(c)) {
       // フォームのボディのトークンは Bearer の方法（RFC 6750 §2.2）なので、DPoP の credentials の形によらず、二つのスキームでトークンを送ったことになる。
@@ -82,7 +91,7 @@ export async function readDpopUserInfoRequest(
     if (proof === undefined) {
       throw new DpopError('invalid_dpop_proof', 'A DPoP proof is required with the DPoP authorization scheme');
     }
-    const dpopJkt = await verifyDpopRequestProof(c, proof, { method: c.req.method, path: '/userinfo', accessToken });
+    const dpopJkt = await verifyDpopRequestProof(c, proof, { method: c.req.method, path: '/userinfo', accessToken, nonceServer });
     return { dpopAccessToken: accessToken, dpopJkt };
   } catch (error) {
     throw userInfoEndpointErrorOf(error);

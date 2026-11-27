@@ -63,9 +63,13 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     '(Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token. With\n' +
     'dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1\n' +
     'for Next.js), the token and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and\n' +
-    'reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same\n' +
-    'secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc();\n' +
-    'OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.\n',
+    'reject a proof without a nonce they recently gave (use_dpop_nonce). With\n' +
+    'dpopNonceRequiredAtResourceServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1 for\n' +
+    'Next.js), the UserInfo endpoint gives requests with the DPoP scheme a nonce of its own in\n' +
+    'DPoP-Nonce and rejects a proof without a nonce it recently gave (401 use_dpop_nonce). Give\n' +
+    'every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() /\n' +
+    'applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own\n' +
+    'nonces.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -204,11 +208,15 @@ Extension features (disabled by default): ${extensionFeatures}
   dpopNonceRequiredAtAuthorizationServer: true
   (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token
   and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and reject a
-  proof without a nonce they recently gave (use_dpop_nonce). Give every
-  instance the same secret of at least 32 bytes (the dpopNonceSecret option of
-  createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one,
-  an instance accepts only its own nonces. Web Crypto only, so it runs on edge
-  runtimes too.
+  proof without a nonce they recently gave (use_dpop_nonce). With
+  dpopNonceRequiredAtResourceServer: true
+  (OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1 for Next.js), the UserInfo
+  endpoint gives requests with the DPoP scheme a nonce of its own in
+  DPoP-Nonce and rejects a proof without a nonce it recently gave (401
+  use_dpop_nonce). Give every instance the same secret of at least 32 bytes
+  (the dpopNonceSecret option of createApp() / applyOidc();
+  OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only
+  its own nonces. Web Crypto only, so it runs on edge runtimes too.
   Enable with:
   --enable dpop
 

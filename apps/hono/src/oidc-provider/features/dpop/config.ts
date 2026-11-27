@@ -45,6 +45,17 @@ declare module '../../config.js' {
      * nonce. Its default is dpopConfigDefaults (120).
      */
     dpopNonceLifetimeSeconds: number;
+    /**
+     * EXTENSION (dpop): whether the authorization server of this OP (the
+     * token endpoint and the PAR endpoint) requires a nonce it provided in
+     * the DPoP proofs (RFC 9449 §8). true: every response to a request with
+     * a DPoP header carries a new nonce in the DPoP-Nonce header, and a proof
+     * without a nonce, or with one the authorization server did not provide
+     * within dpopNonceLifetimeSeconds, is rejected with use_dpop_nonce (400).
+     * false: no DPoP-Nonce header is sent, and the nonce claim of a proof is
+     * not checked. Its default is dpopConfigDefaults (false).
+     */
+    dpopNonceRequiredAtAuthorizationServer: boolean;
   }
 
   interface RegisteredClient {
@@ -86,6 +97,8 @@ export const dpopConfigDefaults = {
   dpopProofLeewaySeconds: 60,
   // RFC 9449 §8: a nonce of this OP is accepted for 120 seconds after it was issued.
   dpopNonceLifetimeSeconds: 120,
+  // RFC 9449 §8: the authorization server provides no nonce and requires none.
+  dpopNonceRequiredAtAuthorizationServer: false,
 } satisfies Partial<ProviderConfig>;
 
 /**

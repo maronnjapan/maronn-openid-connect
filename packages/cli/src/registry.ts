@@ -69,7 +69,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'rp-initiated-logout', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'RP 起点のログアウト（RP-Initiated Logout 1.0、end_session_endpoint）' },
   { id: 'dynamic-client-registration', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: '動的クライアント登録（RFC 7591）' },
   { id: 'google-login', tier: 'extension', requires: [], packages: ['@maronn-openid-connect/google-login', 'google-auth-library'], frameworks: ALL_FRAMEWORKS, runtimes: ['node'], summary: 'ログイン方法に「Google でログイン」を加える（Node.js 22 以上）' },
-  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）: トークンエンドポイントが DPoP proof を検査し、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛する。UserInfo は束縛したアクセストークンを DPoP スキームと同じ鍵の proof でだけ受け付ける。認可リクエストの dpop_jkt と、PAR のリクエストの DPoP proof の鍵は、認可コードをその鍵に束縛する。dpop_bound_access_tokens を登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（動的クライアント登録の POST /register でも登録できる）' },
+  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）: トークンエンドポイントが DPoP proof を検査し、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛する。UserInfo は束縛したアクセストークンを DPoP スキームと同じ鍵の proof でだけ受け付ける。認可リクエストの dpop_jkt と、PAR のリクエストの DPoP proof の鍵は、認可コードをその鍵に束縛する。dpop_bound_access_tokens を登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（動的クライアント登録の POST /register でも登録できる）。dpopNonceRequiredAtAuthorizationServer を設定すると、トークンと PAR のエンドポイントは DPoP proof に認可サーバーの nonce を求める' },
 ];
 
 /** The entry of a feature id, or undefined for a name the CLI does not know. */
@@ -208,8 +208,10 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   of the dpop_jkt authorization request parameter, which binds the
  *   authorization code to a key, the check of the DPoP proof of a pushed
  *   authorization request (with par), whose key binds the code the same way,
- *   and the DPoP header in the CORS of the endpoints clients call directly
- *   (token, UserInfo, ...).
+ *   the nonces the token and PAR endpoints require when
+ *   dpopNonceRequiredAtAuthorizationServer is set (server-nonce.ts), and the
+ *   DPoP header and the DPoP-Nonce response header in the CORS of the
+ *   endpoints clients call directly (token, UserInfo, ...).
  */
 export const EXTENSION_FEATURES = ['google-login', 'dpop'] as const;
 
@@ -324,7 +326,8 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  * - dpop: extension, disabled by default. When true, features/dpop/ is
  *   generated with the checks of a DPoP proof (RFC 9449 §4.3) and the DPoP
  *   settings of ProviderConfig (dpopSigningAlgValuesSupported,
- *   dpopProofMaxAgeSeconds, dpopProofLeewaySeconds). The token endpoint
+ *   dpopProofMaxAgeSeconds, dpopProofLeewaySeconds, dpopNonceLifetimeSeconds,
+ *   dpopNonceRequiredAtAuthorizationServer). The token endpoint
  *   checks the DPoP proof of a request that sends one and binds the access
  *   token of every grant to its key (cnf.jkt, token_type DPoP, §5 / §6), and
  *   the refresh token of a public client too (§5); a code or refresh token
@@ -334,12 +337,18 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   (dpop_bound_access_tokens, §5.2; with dynamic-client-registration, POST
  *   /register registers it too, false when omitted): then it is
  *   invalid_dpop_proof.
+ *   With dpopNonceRequiredAtAuthorizationServer (§8), the token and PAR
+ *   endpoints give every response to a request with a DPoP header a nonce
+ *   (DPoP-Nonce) and, before client authentication, reject a proof without a
+ *   nonce they recently gave (use_dpop_nonce); the nonces are made with the
+ *   secret dpopNonceSecret (Hono family) or OIDC_DPOP_NONCE_SECRET (Next.js).
  *   Discovery advertises dpop_signing_alg_values_supported (§5.1),
  *   and the CORS of the endpoints clients call directly (token, UserInfo,
- *   ...) allows the DPoP header and exposes WWW-Authenticate. The UserInfo
- *   endpoint takes a token presented with the DPoP scheme (Authorization:
- *   DPoP and a proof with ath, §7.1) only when it is bound to the key of the
- *   proof, and rejects a bound token presented as a Bearer token (§7.2).
+ *   ...) allows the DPoP header and exposes WWW-Authenticate and DPoP-Nonce.
+ *   The UserInfo endpoint takes a token presented with the DPoP scheme
+ *   (Authorization: DPoP and a proof with ath, §7.1) only when it is bound to
+ *   the key of the proof, and rejects a bound token presented as a Bearer
+ *   token (§7.2).
  *   The authorization endpoint binds the code of a request with dpop_jkt
  *   (§10: the JWK Thumbprint of the key, from the query, the Request
  *   Object or the pushed request) to that key, so the code is exchanged only

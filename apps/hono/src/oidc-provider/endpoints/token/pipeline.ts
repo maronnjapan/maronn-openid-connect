@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { redeemCibaRequest } from '../../features/ciba/steps/dispatch-ciba.js';
 import { issueClientCredentialsToken } from '../../features/client-credentials/steps/dispatch-client-credentials.js';
 import { redeemDeviceCode } from '../../features/device-authorization-grant/steps/dispatch-device-code.js';
+import { requireTokenDpopNonce } from '../../features/dpop/steps/require-dpop-nonce.js';
 import { validateDpopGrantBinding } from '../../features/dpop/steps/validate-dpop-grant-binding.js';
 import { verifyDpopTokenRequest } from '../../features/dpop/steps/verify-dpop-proof.js';
 import { issueIdJag } from '../../features/id-jag/steps/dispatch-id-jag-issuance.js';
@@ -44,7 +45,11 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  * are bound to (tokenBinding, token-binding.ts) and reject a code or refresh
  * token bound to a key unless the proof is of that key; every grant below
  * then binds the access token it issues, and the refresh token of a public
- * client, to it. Without a binding the tokens are Bearer tokens.
+ * client, to it. Without a binding the tokens are Bearer tokens. With
+ * dpopNonceRequiredAtAuthorizationServer, the (feature: dpop) block before
+ * client authentication gives every response to a request with a DPoP header
+ * a new nonce of the authorization server (DPoP-Nonce) and rejects a proof
+ * without a nonce it recently provided (use_dpop_nonce).
  */
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -52,6 +57,9 @@ tokenApp.post('/', async (c) => {
   try {
     // [parse-request] トークンリクエストを解析する — RFC 6749 §4.1.3 / §3.2
     const { params, authorization } = await parseTokenRequest(c);
+
+    // [require-dpop-nonce] (feature: dpop) DPoP proof に認可サーバーの nonce を求め、次の nonce を渡す — RFC 9449 §8 / §8.2 / §11.3
+    await requireTokenDpopNonce(c);
 
     // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);

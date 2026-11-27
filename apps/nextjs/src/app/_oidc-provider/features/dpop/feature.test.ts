@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { requestTo } from '../../../../test-support/context';
 import { GET as discovery } from '../../../.well-known/openid-configuration/route';
 import { createProviderConfig } from '../../config';
@@ -29,18 +29,37 @@ describe('dpop', () => {
     expect(discoveryOf([dpop], {}, ISSUER, config)).toEqual({});
   });
 
-  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, and a nonce lifetime of 120 seconds', () => {
+  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, a nonce lifetime of 120 seconds and no nonce required at the authorization server', () => {
     expect(configOf([dpop])).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
       dpopNonceLifetimeSeconds: 120,
+      dpopNonceRequiredAtAuthorizationServer: false,
     });
   });
 
-  // RFC 9449 §4.1 / §7.1: a browser sends the DPoP header and reads the challenges of a failure.
-  it('should let browsers send the DPoP header and read WWW-Authenticate', () => {
-    expect(corsHeadersOf([dpop])).toEqual({ allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate'] });
+  // RFC 9449 §8: OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 makes the token and PAR endpoints require a nonce.
+  it.each([
+    ['1', true],
+    ['true', false],
+  ])('should require a nonce at the authorization server when OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER is %s: %s', async (value, required) => {
+    vi.stubEnv('OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER', value);
+    vi.resetModules();
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
+
+    const { dpop: loaded } = await import('./feature');
+
+    expect(loaded.config?.dpopNonceRequiredAtAuthorizationServer).toBe(required);
+  });
+
+  // RFC 9449 §4.1 / §7.1 / §8: a browser sends the DPoP header, reads the challenges of a
+  // failure and the nonce the server provides.
+  it('should let browsers send the DPoP header and read WWW-Authenticate and DPoP-Nonce', () => {
+    expect(corsHeadersOf([dpop])).toEqual({ allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate', 'DPoP-Nonce'] });
   });
 
   // RFC 9449 §5.1 / OIDC Discovery 1.0 §3: the discovery document of this provider, where the feature is enabled.

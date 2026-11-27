@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TEST_ISSUER } from '../../../../test-support/context.js';
+import { TEST_ISSUER, providerContext } from '../../../../test-support/context.js';
 import { createMapKvDatabase, createSqliteDatabase } from '../../../../test-support/databases.js';
 import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop.js';
 import { rs256Key, staticKeyProvider } from '../../../../test-support/keys.js';
@@ -35,6 +35,7 @@ import { redeemDeviceCode } from '../../device-authorization-grant/steps/dispatc
 import { issueIdJag } from '../../id-jag/steps/dispatch-id-jag-issuance.js';
 import { redeemIdJag } from '../../id-jag/steps/dispatch-id-jag-redemption.js';
 import { exchangeToken } from '../../token-exchange/steps/dispatch-token-exchange.js';
+import { verifyDpopTokenRequest } from './verify-dpop-proof.js';
 
 // The steps of the grants a feature answers, as spies that run the step: the
 // tests check what the token pipeline hands them.
@@ -594,6 +595,26 @@ describe('verifyDpopTokenRequest', () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'server_error' });
+  });
+
+  // RFC 9449 §8 / §11.3: where the authorization server requires its nonce, the proof check after client
+  // authentication checks the nonce again with the signature.
+  it.each([
+    [true, { status: 400, body: { error: 'use_dpop_nonce', error_description: 'Authorization server requires nonce in DPoP proof' } }],
+    [false, undefined],
+  ])('should check the nonce of the proof when dpopNonceRequiredAtAuthorizationServer is %s', async (required, response) => {
+    const proof = await tokenProof(await dpopKey());
+    const { c } = await providerContext({
+      request: new Request(TOKEN_ENDPOINT, { method: 'POST', headers: { DPoP: proof } }),
+      options: { config: { dpopNonceRequiredAtAuthorizationServer: required } },
+    });
+
+    const outcome = await verifyDpopTokenRequest(c, { clientId: CLIENT_ID, tokenEndpointAuthMethods: ['client_secret_basic'] }).then(
+      () => undefined,
+      (error: { response: unknown }) => error.response,
+    );
+
+    expect(outcome).toEqual(response);
   });
 });
 

@@ -59,6 +59,7 @@ describe('createProviderConfig', () => {
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
       dpopNonceLifetimeSeconds: 120,
+      dpopNonceRequiredAtAuthorizationServer: false,
     });
   });
 

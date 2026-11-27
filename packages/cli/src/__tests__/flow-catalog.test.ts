@@ -183,8 +183,9 @@ describe('buildOpFlow', () => {
     it('should place the grant dispatches of the features between client authentication and grant_type validation', () => {
       const flow = buildOpFlow({ features: ALL_FEATURES });
       const token = flow.endpoints.find((e) => e.id === 'token');
-      expect(token?.steps.slice(0, 11).map((s) => s.id)).toEqual([
+      expect(token?.steps.slice(0, 12).map((s) => s.id)).toEqual([
         'parse-request',
+        'require-dpop-nonce',
         'authenticate-client',
         'verify-dpop-proof',
         'validate-dpop-grant-binding',
@@ -198,15 +199,18 @@ describe('buildOpFlow', () => {
       ]);
     });
 
-    // RFC 9449 §5: the DPoP proof decides the key every grant binds its access
-    // token to, so it is checked before the first grant is answered; a code or
-    // refresh token bound to a key (RFC 9449 §5 / §10) is checked next, before
-    // a grant validation uses it up.
-    it('should check the DPoP proof and the key of a bound grant right after client authentication when dpop is enabled', () => {
+    // RFC 9449 §8: the nonce of the authorization server is required before
+    // client authentication, so a request rejected for its nonce uses up no
+    // client assertion. RFC 9449 §5: the DPoP proof decides the key every grant
+    // binds its access token to, so it is checked before the first grant is
+    // answered; a code or refresh token bound to a key (RFC 9449 §5 / §10) is
+    // checked next, before a grant validation uses it up.
+    it('should require the DPoP nonce before client authentication, and check the DPoP proof and the key of a bound grant right after it, when dpop is enabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
       const token = flow.endpoints.find((e) => e.id === 'token');
-      expect(token?.steps.slice(0, 5).map((s) => s.id)).toEqual([
+      expect(token?.steps.slice(0, 6).map((s) => s.id)).toEqual([
         'parse-request',
+        'require-dpop-nonce',
         'authenticate-client',
         'verify-dpop-proof',
         'validate-dpop-grant-binding',
@@ -318,13 +322,15 @@ describe('buildOpFlow', () => {
       ]);
     });
 
+    // RFC 9449 §8: the nonce of the authorization server is required before client authentication.
     // RFC 9449 §10.1: the key of the DPoP header of a pushed request becomes its dpop_jkt, checked once the
     // client is authenticated and before the pushed request is validated and stored.
-    it('should bind the pushed request to the DPoP key after client authentication when par and dpop are enabled', () => {
+    it('should require the DPoP nonce before client authentication and bind the pushed request to the DPoP key after it when par and dpop are enabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, par: true, dpop: true } });
       const par = flow.endpoints.find((e) => e.id === 'par');
       expect(par?.steps.map((s) => s.id)).toEqual([
         'parse-request',
+        'require-pushed-dpop-nonce',
         'authenticate-client',
         'bind-pushed-dpop-key',
         'validate-request',

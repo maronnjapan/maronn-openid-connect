@@ -73,10 +73,11 @@ describe('createApp', () => {
       expect(response.status).toBe(204);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
       expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST,GET,OPTIONS');
-      // The dpop extension lets a browser send its DPoP proof (RFC 9449 §4.1) and read
-      // the challenges of a failure (RFC 9449 §7.1), through the cors hook of features/feature.ts.
+      // The dpop extension lets a browser send its DPoP proof (RFC 9449 §4.1), read the
+      // challenges of a failure (RFC 9449 §7.1) and the nonce the server provides
+      // (RFC 9449 §8), through the cors hook of features/feature.ts.
       expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type,DPoP');
-      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,DPoP-Nonce');
       expect(response.headers.get('Access-Control-Max-Age')).toBe('600');
     });
 
@@ -93,7 +94,7 @@ describe('createApp', () => {
         'Bearer realm="UserInfo", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"',
       );
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,DPoP-Nonce');
     });
 
     it('should allow only the configured corsOrigins on /userinfo', async () => {

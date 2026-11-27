@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clientCors, corsPreflight, readBearerToken, withCors, type CorsPolicy } from './http';
+import { clientCors, corsPreflight, readBearerToken, setResponseHeader, withCors, type CorsPolicy } from './http';
 
 describe('readBearerToken', () => {
   // RFC 6750 §2.1
@@ -64,16 +64,43 @@ describe('withCors', () => {
     expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
     expect(await response.text()).toBe('{}');
   });
+
+  // A block sets a header for whatever answer the request gets, as c.header() does in the Hono template.
+  it('should put the headers set for the request on its answer, the last value of a name, and none on the answer of another request', () => {
+    const policy: CorsPolicy = { origins: '*', allowMethods: ['POST'], allowHeaders: ['Content-Type'], maxAge: 600 };
+    const request = new Request('https://op.example.com/token', { method: 'POST' });
+    const other = new Request('https://op.example.com/token', { method: 'POST' });
+    setResponseHeader(request, 'X-Example-Nonce', 'first');
+    setResponseHeader(request, 'X-Example-Nonce', 'second');
+    setResponseHeader(request, 'X-Example-Other', 'other');
+
+    const answers = [withCors(request, policy, new Response(null, { status: 400 })), withCors(other, policy, new Response(null, { status: 200 }))];
+
+    expect(answers.map((answer) => [answer.status, answer.headers.get('X-Example-Nonce'), answer.headers.get('X-Example-Other')])).toEqual([
+      [400, 'second', 'other'],
+      [200, null, null],
+    ]);
+  });
+
+  it('should leave the answer of a request without headers set as it was', () => {
+    const policy: CorsPolicy = { origins: '*', allowMethods: ['POST'], allowHeaders: ['Content-Type'], maxAge: 600 };
+    const answer = new Response('{}', { status: 200, headers: { 'Cache-Control': 'no-store', 'Content-Type': 'application/json' } });
+
+    const response = withCors(new Request('https://op.example.com/token', { method: 'POST' }), policy, answer);
+
+    expect([...response.headers.keys()].filter((name) => !name.startsWith('access-control-') && name !== 'vary')).toEqual(['cache-control', 'content-type']);
+  });
 });
 
 describe('clientCors', () => {
-  // The dpop extension lets a browser send its DPoP proof (RFC 9449 §4.1) and read
-  // the challenges of a failure (RFC 9449 §7.1), through the cors hook of feature.ts.
+  // The dpop extension lets a browser send its DPoP proof (RFC 9449 §4.1), read the
+  // challenges of a failure (RFC 9449 §7.1) and the nonce the server provides
+  // (RFC 9449 §8), through the cors hook of feature.ts.
   it('should add the headers of the enabled features to the endpoints clients call directly', () => {
     const response = withCors(new Request('https://op.example.com/token', { method: 'POST' }), clientCors, new Response(null, { status: 401 }));
 
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST,GET,OPTIONS');
     expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type,DPoP');
-    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,DPoP-Nonce');
   });
 });

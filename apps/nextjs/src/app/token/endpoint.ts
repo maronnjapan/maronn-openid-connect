@@ -6,6 +6,7 @@ import { defineEndpoint } from '../_oidc-provider/endpoint';
  * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛し、`token_type` を `DPoP` にする。
  * 鍵に束縛した認可コードかリフレッシュトークンは、同じ鍵の DPoP proof を送ったリクエストだけが使える。
  * DPoP の機能があれば、`dpop_bound_access_tokens` を登録したクライアントは、DPoP proof を送ったリクエストでだけトークンを得られる。
+ * DPoP の機能があり、設定が認可サーバーに DPoP の nonce を求めるときは、`DPoP` ヘッダーのあるリクエストへのどのレスポンスにも次の nonce（`DPoP-Nonce`）を付け、認可サーバーが最近発行した nonce の無い DPoP proof を 400 の `use_dpop_nonce` で拒否する。
  * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
  * 署名鍵を読み込めないときは、503 で応答する。
  *
@@ -18,6 +19,7 @@ export const endpoint = defineEndpoint({
   steps: [
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
     { id: 'parse-request', consumes: [], produces: ['params'] },
+    { id: 'require-dpop-nonce', feature: 'dpop', consumes: [], produces: [] },
     { id: 'authenticate-client', consumes: ['params'], produces: ['tokenClient', 'authenticatedClientId'] },
     { id: 'verify-dpop-proof', feature: 'dpop', consumes: ['tokenClient'], produces: ['dpopJkt', 'tokenBinding'] },
     { id: 'validate-dpop-grant-binding', feature: 'dpop', consumes: ['params', 'authenticatedClientId', 'dpopJkt'], produces: [] },

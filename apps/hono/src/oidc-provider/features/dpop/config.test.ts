@@ -4,9 +4,12 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
 
 describe('dpopConfigDefaults', () => {
   // RFC 9449 §5.1: by default every alg the checks of jwk.ts verify.
-  it('should accept every alg this implementation verifies by default', () => {
+  // RFC 9449 §11.1: a proof is accepted for a short time around its iat.
+  it('should accept every alg this implementation verifies and a proof up to 60 seconds old, with 60 seconds of clock skew, by default', () => {
     expect(dpopConfigDefaults).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
+      dpopProofMaxAgeSeconds: 60,
+      dpopProofLeewaySeconds: 60,
     });
   });
 });

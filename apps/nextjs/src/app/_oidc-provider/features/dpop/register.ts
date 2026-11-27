@@ -23,7 +23,7 @@ export interface DpopClientRegistration<Client> {
  * 保存したクライアントは `registrationMetadata` にこの値を持つので、トークンエンドポイントの `dpopBoundAccessTokensOf()` が読む。
  *
  * 前のブロック（メタデータの検証）が `dpop_bound_access_tokens` を登録していれば、リクエストの値の代わりにその値を検証する。
- * 動的クライアント登録の設定の `customClientMetadata` にこの名前の検証関数を置いたときで、その関数が既定値を決めたり、値を求めたりできる。
+ * そうなるのは、動的クライアント登録の設定の `customClientMetadata` にこの名前の検証関数を置き、その関数が `undefined` でない値を返したときだけで、その関数で既定値を決めたり、値を必須にしたりできる。
  * `client` も `metadata` も書き換えない。
  *
  * 真偽値でない値（文字列の `"true"`、`null` など）は登録せず、動的クライアント登録のエラーと同じ形（RFC 7591 §3.2.2）の 400 の `invalid_client_metadata`（キャッシュを禁止した JSON）を `dpopRejection` に入れて返す。

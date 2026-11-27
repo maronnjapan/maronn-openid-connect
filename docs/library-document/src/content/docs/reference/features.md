@@ -18,7 +18,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `/login/google` | Sign in with Google の `login_uri`（拡張機能 `google-login` 有効時のみ生成） | Google Identity Services |
 | `/.well-known/openid-configuration` | Provider Metadata | OpenID Connect Discovery 1.0 |
 | `/.well-known/jwks.json` | JWKS（公開鍵） | RFC 7517 |
-| `/introspect` | Token Introspection（トグルで無効化可。拡張機能 `dpop` 有効時は、鍵に束縛したアクセストークンの `cnf` と `token_type` も返す） | RFC 7662 / RFC 9449 §6.2 |
+| `/introspect` | Token Introspection（トグルで無効化可。拡張機能 `dpop` 有効時は、鍵に束縛したアクセストークンには `cnf` を加え、`token_type` を `DPoP` にする） | RFC 7662 / RFC 9449 §6.2 |
 | `/revoke` | Token Revocation（トグルで無効化可） | RFC 7009 |
 
 ## Authorization Endpoint
@@ -70,7 +70,7 @@ OpenID Connect のリクエストだけを受け付ける OP に戻すには、`
 - クライアント認証: `client_secret_basic` / `client_secret_post` / `private_key_jwt`（OIDC Core 1.0 §9） / `none`（public client）。1 つのクライアントに `client_secret_basic` と `client_secret_post` の両方を登録可能。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
 - private_key_jwt: クライアントアサーション（RFC 7523 §3）の alg は RS256 / RS384 / RS512 / ES256 / ES384 / ES512（`none` と HS 系は拒否）。`iss` と `sub` が client_id、`aud` にエンドポイントの URL か issuer、`exp` と `jti` が必須で、同じ `jti` の再送は期限まで拒否する。鍵はクライアントが `private_key_jwt` の用途に登録した公開鍵か `jwks_uri` の鍵。検証の失敗はすべて `invalid_client`、アサーションとシークレットの併用は `invalid_request`。イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントも同じ検証を行う（詳細は [CLI Guide の private_key_jwt](../../guides/cli/#private_key_jwt)）
 - 認可コード: ワンタイム使用、TTL 既定 300 秒、redirect_uri 一致検証、PKCE `code_verifier` の S256 検証
-- DPoP（拡張機能 `dpop` 有効時のみ。RFC 9449 §5）: `DPoP` ヘッダーの DPoP proof を検査し、どのグラントでもアクセストークンをその鍵に束縛する（`token_type` は `DPoP`、JWT のアクセストークンと保存するレコードに `cnf.jkt`）。パブリッククライアントにはリフレッシュトークンも同じ鍵に束縛する。DPoP proof の不備と、`dpop_bound_access_tokens` を登録したクライアントの DPoP proof の無いリクエストは `invalid_dpop_proof`、鍵に束縛した認可コードとリフレッシュトークンを DPoP proof 無しか別の鍵で使ったリクエストは `invalid_grant`、`dpopNonceRequiredAtAuthorizationServer: true` のときに認可サーバーの nonce の無い DPoP proof は `use_dpop_nonce`（どれも 400）。`DPoP` ヘッダーの無いリクエストには、これまでどおり Bearer トークンを発行する。詳細は [DPoP（拡張）](../../guides/dpop/#トークンエンドポイント)
+- DPoP（拡張機能 `dpop` 有効時のみ。RFC 9449 §5）: `DPoP` ヘッダーの DPoP proof を検査し、どのグラントでもアクセストークンをその鍵に束縛する（`token_type` は `DPoP`、JWT のアクセストークンと保存するレコードに `cnf.jkt`）。パブリッククライアントにはリフレッシュトークンも同じ鍵に束縛する。DPoP proof の不備と、`dpop_bound_access_tokens` を登録したクライアントの DPoP proof の無いリクエストは `invalid_dpop_proof`、鍵に束縛した認可コードとリフレッシュトークンを DPoP proof 無しか別の鍵で使ったリクエストは `invalid_grant`、`dpopNonceRequiredAtAuthorizationServer: true` のときに認可サーバーの nonce の無い DPoP proof は `use_dpop_nonce`（どれも 400）。それ以外の `DPoP` ヘッダーの無いリクエストには、これまでどおり Bearer トークンを発行する。詳細は [DPoP（拡張）](../../guides/dpop/#トークンエンドポイント)
 
 ### Client Credentials Grant
 
@@ -92,7 +92,7 @@ OpenID Connect のリクエストだけを受け付ける OP に戻すには、`
 | `jwt`（既定） | RFC 9068 準拠の自己完結型 JWT。ステートレス検証可能 |
 | `opaque` | CSPRNG ベースの不透明文字列。ストア参照 / Introspection で検証し、即時失効に強い |
 
-クレーム: `iss` / `sub` / `aud` / `exp` / `iat` / `nbf` / `jti` / `scope` / `client_id`（RFC 9068 §2.2）。スコープが一つもないトークン（スコープを登録していないクライアントの `client_credentials` グラント）には `scope` を含めない。`acr_values` を要求された（または `AcrResolver` が acr を返した）場合は、ID Token と同じ `acr`（RFC 9068 §2.2.1）も含む。
+クレーム: `iss` / `sub` / `aud` / `exp` / `iat` / `nbf` / `jti` / `scope` / `client_id`（RFC 9068 §2.2）。スコープが一つもないトークン（スコープを登録していないクライアントの `client_credentials` グラント）には `scope` を含めない。`acr_values` を要求された（または `AcrResolver` が acr を返した）場合は、ID Token と同じ `acr`（RFC 9068 §2.2.1）も含む。拡張機能 `dpop` で鍵に束縛したトークンは、`cnf`（鍵の JWK Thumbprint の `jkt`。RFC 9449 §6.1）も含む。
 
 `jti` は発行ごとに 128bit の CSPRNG 値を生成する。RS256（RSASSA-PKCS1-v1_5）は決定的な署名方式のため、
 `jti` のような発行ごとの可変要素が無いと、同じクレームのトークンを同じ秒に 2 回発行したときに

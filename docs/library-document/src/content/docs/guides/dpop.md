@@ -23,7 +23,7 @@ DPoP では、クライアントが自分の鍵の組を持ち、リクエスト
 | §5 トークンリクエスト | DPoP proof を送ったトークンリクエストのアクセストークンを、どのグラントでも鍵に束縛する。パブリッククライアントのリフレッシュトークンも束縛する |
 | §5.1 認可サーバーのメタデータ | Discovery の `dpop_signing_alg_values_supported` |
 | §5.2 クライアントのメタデータ | `dpop_bound_access_tokens`（`RegisteredClient.dpopBoundAccessTokens`。`--enable dynamic-client-registration` のときは `POST /register` でも登録できる） |
-| §6 鍵の確認（`cnf`） | JWT のアクセストークンと保存するレコードの `cnf.jkt`。イントロスペクションも `cnf` と `token_type` を返す（§6.2） |
+| §6 鍵の確認（`cnf`） | JWT のアクセストークンと保存するレコードの `cnf.jkt`。イントロスペクションも `cnf` を返し、`token_type` を `DPoP` にする（§6.2） |
 | §7 保護されたリソース | UserInfo エンドポイントの `DPoP` スキーム。Bearer と並べたチャレンジと、Bearer として提示した束縛済みトークンの拒否（§7.2） |
 | §8 認可サーバーの nonce | `dpopNonceRequiredAtAuthorizationServer: true` のとき、トークンエンドポイントと PAR エンドポイントが求める（既定は求めない） |
 | §9 リソースサーバーの nonce | `dpopNonceRequiredAtResourceServer: true` のとき、UserInfo エンドポイントが求める（既定は求めない） |

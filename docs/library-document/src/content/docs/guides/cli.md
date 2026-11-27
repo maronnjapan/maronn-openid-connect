@@ -482,7 +482,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
 
-`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには、これまでどおり Bearer トークンを発行します。エンドポイントごとの動き、設定（nonce の秘密を含む）、クライアントのメタデータ、生成されるファイルと方針の変え方、既存の生成物に足すときの移行、制限は [DPoP（拡張）](../dpop/) を参照してください。
+`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには、これまでどおり Bearer トークンを発行します（`dpop_bound_access_tokens` を登録したクライアントを除く）。エンドポイントごとの動き、設定（nonce の秘密を含む）、クライアントのメタデータ、生成されるファイルと方針の変え方、既存の生成物に足すときの移行、制限は [DPoP（拡張）](../dpop/) を参照してください。
 
 ## Custom Scopes
 

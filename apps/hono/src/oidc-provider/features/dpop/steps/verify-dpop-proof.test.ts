@@ -14,7 +14,7 @@ import {
   storedAuthorizationCode,
   storedRefreshToken,
 } from '../../../../test-support/token.js';
-import { createApp } from '../../../app.js';
+import { createApp, type OidcProviderOptions } from '../../../app.js';
 import type { ClientRegistration } from '../../../config.js';
 import {
   createClientKeyResolver as createKvClientKeyResolver,
@@ -101,18 +101,16 @@ interface TokenBody {
   error_description?: string;
 }
 
-/** The client resolvers of a database. */
-interface ClientResolvers {
-  clientResolver: ReturnType<typeof createClientResolver>;
-  clientKeyResolver: ReturnType<typeof createClientKeyResolver>;
-}
-
 /**
  * The provider on an in-memory database, with the confidential client-1
- * registered and code-1 stored for it. resolvers replace the client resolvers
- * of the in-memory database, to read the clients of another database.
+ * registered and code-1 stored for it. options replace those of createApp():
+ * the client resolvers of another database, or the settings of a feature.
  */
-async function provider(client: Partial<ClientRegistration> = {}, config: Record<string, unknown> = {}, resolvers: Partial<ClientResolvers> = {}) {
+async function provider(
+  client: Partial<ClientRegistration> = {},
+  config: Record<string, unknown> = {},
+  options: Partial<Omit<OidcProviderOptions, 'config'>> = {},
+) {
   const db = createEmptyDatabase();
   const stores = createProviderStores(db);
   await registerClient(db, confidentialClient({ grantTypes: ['authorization_code', 'refresh_token', 'client_credentials'], ...client }));
@@ -125,7 +123,7 @@ async function provider(client: Partial<ClientRegistration> = {}, config: Record
     storage: stores,
     clientResolver: createClientResolver(db),
     clientKeyResolver: createClientKeyResolver(db),
-    ...resolvers,
+    ...options,
     config: { issuer: TEST_ISSUER, ...config },
   });
   const post = (fields: Record<string, string>, headers: Record<string, string> = {}) =>
@@ -424,6 +422,37 @@ describe('verifyDpopTokenRequest', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual(BOUND_CLIENT_ERROR);
       expect((await stores.authCodeStore.get('code-1'))?.used).toBe(false);
+    });
+
+    // Dynamic client registration keeps dpop_bound_access_tokens only through a customClientMetadata validator
+    // (here one that keeps the value as sent): POST /register then stores it in registrationMetadata, which the
+    // token endpoint reads.
+    it('should require a proof of a client registered through POST /register with dpop_bound_access_tokens true', async () => {
+      const { app, stores, post } = await provider({}, {}, {
+        dynamicClientRegistration: { customClientMetadata: { dpop_bound_access_tokens: (value) => value } },
+      });
+      const registration = await app.request(`${TEST_ISSUER}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ redirect_uris: [REDIRECT_URI], dpop_bound_access_tokens: true }),
+      });
+      const registered = (await registration.json()) as { client_id: string; client_secret: string; dpop_bound_access_tokens?: unknown };
+      await stores.authCodeStore.set(
+        'code-dcr',
+        storedAuthorizationCode({ code: 'code-dcr', clientId: registered.client_id, codeChallenge: CODE_CHALLENGE, codeChallengeMethod: 'S256' }),
+      );
+      const fields = { grant_type: 'authorization_code', code: 'code-dcr', redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER };
+      const authorization = basicAuthorization(registered.client_id, registered.client_secret);
+
+      const withoutProof = await post(fields, { Authorization: authorization });
+      const withProof = await post(fields, { Authorization: authorization, DPoP: await tokenProof(await dpopKey()) });
+
+      expect(registration.status).toBe(201);
+      expect(registered.dpop_bound_access_tokens).toBe(true);
+      expect(withoutProof.status).toBe(400);
+      expect(await withoutProof.json()).toEqual(BOUND_CLIENT_ERROR);
+      expect(withProof.status).toBe(200);
+      expect(((await withProof.json()) as TokenBody).token_type).toBe('DPoP');
     });
 
     // The key-value database keeps the member, which has no field, in the payload of the client record (db/kv/clients.ts).

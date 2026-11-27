@@ -4,6 +4,7 @@ import { TEST_ISSUER } from '../../../../test-support/context';
 import { createSqliteDatabase } from '../../../../test-support/databases';
 import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop';
 import { decodeJwt } from '../../../../test-support/jwt';
+import { POST as register } from '../../../(dynamic-client-registration)/register/route';
 import { POST as introspect } from '../../../(introspection)/introspect/route';
 import { POST as token } from '../../../token/route';
 import type { ClientRegistration } from '../../config';
@@ -13,6 +14,7 @@ import { accessTokenIssuer, clientResolver, config, stores } from '../../provide
 import { dispatchCiba } from '../ciba/grant';
 import { dispatchClientCredentials } from '../client-credentials/grant';
 import { dispatchDeviceCode } from '../device-authorization-grant/grant';
+import { dynamicClientRegistrationConfig } from '../dynamic-client-registration/config';
 import { dispatchIdJagIssuance, dispatchIdJagRedemption } from '../id-jag/grant';
 import { dispatchTokenExchange } from '../token-exchange/grant';
 import { validateDpopGrantBinding, verifyDpopTokenRequest } from './token';
@@ -469,6 +471,65 @@ describe('verifyDpopTokenRequest', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual(BOUND_CLIENT_ERROR);
       expect((await stores.authCodeStore.get(code))?.used).toBe(false);
+    });
+
+    // Dynamic client registration keeps dpop_bound_access_tokens only through a customClientMetadata validator
+    // (here one that keeps the value as sent): POST /register then stores it in registrationMetadata, which the
+    // token route reads.
+    it('should require a proof of a client registered through POST /register with dpop_bound_access_tokens true', async () => {
+      const { customClientMetadata } = dynamicClientRegistrationConfig;
+      onTestFinished(() => {
+        Object.assign(dynamicClientRegistrationConfig, { customClientMetadata });
+      });
+      Object.assign(dynamicClientRegistrationConfig, {
+        customClientMetadata: { ...customClientMetadata, dpop_bound_access_tokens: (value: unknown) => value },
+      });
+      const registration = await register(
+        new Request(`${TEST_ISSUER}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: [REDIRECT_URI], dpop_bound_access_tokens: true }),
+        }),
+      );
+      const registered = (await registration.json()) as { client_id: string; client_secret: string; dpop_bound_access_tokens?: unknown };
+      const code = unique('dpop-code');
+      const storedCode: AuthorizationCodeData = {
+        code,
+        grantId: unique('grant'),
+        clientId: registered.client_id,
+        redirectUri: REDIRECT_URI,
+        redirectUriExplicit: true,
+        scope: ['openid'],
+        subject: 'dpop-user',
+        used: false,
+        expiresAt: NOW + 300,
+        authTime: NOW - 600,
+        codeChallenge: CODE_CHALLENGE,
+        codeChallengeMethod: 'S256',
+      };
+      await stores.authCodeStore.set(code, storedCode);
+      const post = (headers: Record<string, string> = {}) =>
+        token(
+          new Request(TOKEN_ENDPOINT, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Authorization: basicAuthorization(registered.client_id, registered.client_secret),
+              ...headers,
+            },
+            body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER }).toString(),
+          }),
+        );
+
+      const withoutProof = await post();
+      const withProof = await post({ DPoP: await tokenProof(await dpopKey()) });
+
+      expect(registration.status).toBe(201);
+      expect(registered.dpop_bound_access_tokens).toBe(true);
+      expect(withoutProof.status).toBe(400);
+      expect(await withoutProof.json()).toEqual(BOUND_CLIENT_ERROR);
+      expect(withProof.status).toBe(200);
+      expect(((await withProof.json()) as TokenBody).token_type).toBe('DPoP');
     });
 
     // The key-value database keeps the member, which has no field, in the payload of the client record

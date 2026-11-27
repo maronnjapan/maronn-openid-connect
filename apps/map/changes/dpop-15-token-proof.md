@@ -18,7 +18,7 @@ DPoP proof を検査するブロックを、クライアントの認証の後、
 - Next.js は、段 7 で手を付けずにおいたルートの中のアクセストークンの発行（ペイロード、保存するレコード、`token_type`）を、`token-binding.ts` の `accessTokenClaimsOf()`、`accessTokenRecordOf()`、`tokenTypeOf()` で `tokenBinding` に従わせた。Hono は段 7 でステップに入れてある。`tokenBinding` が無ければ三つとも何も加えず `Bearer` を返すので、ペイロードとレコードのメンバーとその順番、レスポンスは前と同じである
 - Next.js のブロックは、DPoP proof を受け付けないとき、ルートが返すだけのレスポンス（`dpopRejection`）を受け取る。ルートの `catch` は core の `TokenError` だけを見分けるので、機能のエラーの型をルートに持ち込まないためである
 - リフレッシュトークンの発行にも `tokenBinding` を渡すが、この段の束縛は `refreshTokenCnf` を持たないので、リフレッシュトークンは束縛しない
-- テストは、RFC 9449 の Figure 5（認可コード）と Figure 7（リフレッシュトークン）のリクエストをそのまま送り、アクセストークンの `cnf.jkt` と保存したレコードが Figure 9 の値になることを確かめる。ほかに、機能が答えるグラントのどの dispatch にも束縛が渡ること（ID-JAG の発行には渡らないこと）、`DPoP` ヘッダーの無いリクエストが前と同じ Bearer のトークンを受け取ること、発行したトークンをイントロスペクションが `cnf` と `DPoP` で報告することを確かめる。`DPoP` ヘッダーを持たない地図の実 OP のケースは、すべて前と同じに答えた
+- テストは、RFC 9449 の Figure 5（認可コード）と Figure 7（リフレッシュトークン）のリクエストをそのまま送り、アクセストークンの `cnf.jkt` と保存したレコードが Figure 9 の値になることを確かめる。ほかに、機能が答えるグラントのどの dispatch にも束縛が渡ること（ID-JAG の発行には渡らないこと）、`DPoP` ヘッダーの無いリクエストが前と同じ Bearer のトークンを受け取ること、DPoP proof を拒否したリクエストの認可コードとリフレッシュトークンが使われずに残ること、認証に失敗したリクエストに付いた正しい DPoP proof の `jti` を覚えず、同じ proof を正しい認証で送り直せること、発行したトークンをイントロスペクションが `cnf` と `DPoP` で報告することを確かめる。`DPoP` ヘッダーを持たない地図の実 OP のケースは、すべて前と同じに答えた
 
 ## verifyDpopTokenRequest <!-- hono:oidc-provider/features/dpop/steps/verify-dpop-proof.ts#verifyDpopTokenRequest nextjs:app/_oidc-provider/features/dpop/token.ts#verifyDpopTokenRequest -->
 

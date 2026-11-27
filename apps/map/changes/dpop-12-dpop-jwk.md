@@ -4,7 +4,7 @@ DPoP（RFC 9449）を生成 OP に入れる段の 12 個目で、DPoP の機能�
 `jwk.ts` は proof の `jwk` ヘッダーの公開鍵を確かめ、その鍵で JWS の署名を検証し、JWK Thumbprint を計算する。`base64url.ts` はその符号化と復号、`errors.ts` は検査の失敗（`DpopError`）、`config.ts` は受け付ける署名のアルゴリズムの設定である。
 proof そのものの検査（`htm`、`htu`、`iat`、`jti`、`ath`）は次の段で足し、エンドポイントから呼ぶのはさらに後の段である。
 この段ではまだどこからも読み込まないうえ、CLI の機能の一覧に `dpop` が無いので、どの生成にも入らない。生成するコードも、Hono と Next.js の OP の応答も変わらない。
-PR #205 のモジュールをもとにし、そこで見つかった二つの不備（同じ鍵を複数の符号で受け付けること、検証できない alg を設定から受け付ける alg に入れること）を直した。
+PR #205 のモジュールをもとにし、そこで見つかった二つの不備（同じ鍵を複数の符号で受け付けること、検証できない alg を設定からそのまま広告する alg に入れること）を直した。
 Hono と Next.js のファイルは、読み込みのパスのほかは同じ中身である。
 
 ## encodeBase64Url, decodeBase64Url <!-- hono:oidc-provider/features/dpop/base64url.ts#encodeBase64Url hono:oidc-provider/features/dpop/base64url.ts#decodeBase64Url nextjs:app/_oidc-provider/features/dpop/base64url.ts#encodeBase64Url nextjs:app/_oidc-provider/features/dpop/base64url.ts#decodeBase64Url -->
@@ -19,8 +19,9 @@ JWK Thumbprint は鍵のメンバーの文字列をそのままハッシュに�
 
 ## isDpopError <!-- hono:oidc-provider/features/dpop/errors.ts#isDpopError nextjs:app/_oidc-provider/features/dpop/errors.ts#isDpopError -->
 
-DPoP の検査の失敗を表す `DpopError` を、`instanceof` だけでなく形（`name` と、文字列の `error` と `errorDescription`）でも見分ける。
+DPoP の検査の失敗を表す `DpopError` を、`instanceof` だけでなく形（`name` が `DpopError` で、`error` が DPoP のエラーコードのどれかで、`errorDescription` が文字列であること）でも見分ける。
 バンドルの都合でこのモジュールが二度読み込まれると、もう一方の `DpopError` は `instanceof` で見分けられないためである。
+`error` は、どの文字列でもよいのではなく、エラーコードの一覧にあるものに限った。見分けた値の `error` は `DpopErrorCode` の型で扱われるので、一覧に無いコード（`server_error` など）を持つ値を通すと、エラーコードごとに応答を決める後の段の処理が、型の上では来ないはずのコードを受け取ってしまうためである。
 `DpopError` の `error` は OAuth のエラーコードで、この段の検査が使うのは `invalid_dpop_proof`（RFC 9449 §5 / §7.1）だけなので、エラーコードの型もそれだけにした。ほかのエラーコードは、それを使う検査を足す段で加える。
 `errorDescription` には検査が決めた固定の文言だけを入れ、クライアントが送った値を含めない。`error_description` に使えない文字（RFC 6749 §5.2）や、`WWW-Authenticate` の値を壊す引用符が入らないようにするためである。
 
@@ -37,7 +38,7 @@ proof の `jwk` ヘッダーが、`alg` に合う公開鍵であることを確�
 秘密鍵か対称鍵のメンバーを含む鍵（RFC 9449 §4.2 / §4.3）、`kty` と `crv` が `alg` に合わない鍵、2048 ビットより短い RSA の鍵（RFC 7518 §3.3 / §3.5）は、`invalid_dpop_proof` で拒否する。
 
 PR #205 から、鍵のメンバーの符号を一つに決める検査を足した。
-メンバーの base64url は正規の符号に限り（`decodeBase64Url()`）、EC の `x` と `y` は曲線の座標の長さちょうど（RFC 7518 §6.2.1.2 / §6.2.1.3）、Ed25519 の `x` は 32 バイト（RFC 8037 §2）、RSA の `n` と `e` は 0 のバイトで始まらない最小のバイト数（RFC 7518 §2 の Base64urlUInt）でなければならない。
+メンバーの base64url は正規の符号に限り（`decodeBase64Url()`）、EC の `x` と `y` は曲線の座標の長さちょうど（RFC 7518 §6.2.1.2 / §6.2.1.3）、Ed25519 の `x` は 32 バイト（RFC 8037 §2 / RFC 8032 §5.1.5）、RSA の `n` と `e` は 0 のバイトで始まらない最小のバイト数（RFC 7518 §2 の Base64urlUInt）でなければならない。
 どれも、同じ公開鍵を別の文字列で表せないようにして、公開鍵の JWK Thumbprint を一つに決めるためである。
 Web Crypto（Node.js で確かめた）は、先頭に 0 のバイトを足した RSA の `n` や EC の座標も、余りのビットが 0 でない符号も、同じ鍵としてインポートするので、メンバーの形はここで確かめるほかない。
 短すぎる座標は Web Crypto がインポートで拒むが、そのときの失敗は署名を検証できないことになり、鍵の形の誤りと区別できない。
@@ -61,6 +62,7 @@ ECDSA の署名は JWS の形（`r || s`）のまま渡すので、曲線に合�
 設定の `dpopSigningAlgValuesSupported` のうち、この実装が検証できる alg だけを、設定の順に返す。
 DPoP proof の `alg` の検査と、メタデータの `dpop_signing_alg_values_supported`（RFC 9449 §5.1）に使う値である。
 PR #205 は設定をそのまま返していたので、設定に `HS256` や `ES256K` を書くと、受け付けない alg をメタデータで広告することになっていた。両者を同じこの関数の値にすることで、広告する alg と受け付ける alg が食い違わないようにした。
+設定に同じ alg を二度書いたときは、最初の位置に一度だけ返す。メタデータや後の段のチャレンジの `algs` に、同じ alg が並ばないようにするためである。
 
 設定の項目は、ほかの機能と同じく `ProviderConfig` の必須の項目として `config.ts` で宣言し、既定値（検証できるすべての alg）を `dpopConfigDefaults` に置いた。
 既定値を OP の設定に重ねるのは、機能を CLI に登録する後の段（`feature.ts` の `config`）にした。この段の OP の設定には、まだこの項目が入らない。

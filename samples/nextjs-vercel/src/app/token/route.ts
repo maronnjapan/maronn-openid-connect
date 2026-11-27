@@ -113,7 +113,7 @@ export function OPTIONS(request: Request): Response {
  * 有効にした機能のグラント（`client_credentials`、ID-JAG、トークン交換、`device_code`、CIBA）には、クライアントの認証の直後にあるそれぞれのブロックが応答する。
  * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛し、`token_type` を `DPoP` にする。
  * 鍵に束縛した認可コードかリフレッシュトークンは、同じ鍵の DPoP proof を送ったリクエストだけが使える。
- * `dpop_bound_access_tokens` を登録したクライアントは、DPoP proof を送ったリクエストでだけトークンを得られる。
+ * DPoP の機能があれば、`dpop_bound_access_tokens` を登録したクライアントは、DPoP proof を送ったリクエストでだけトークンを得られる。
  *
  * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
  * - 400: リクエストが不正なとき、またはグラントを拒否したとき。DPoP の機能があれば、DPoP proof を受け付けないときと、`dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いとき（`invalid_dpop_proof`）と、鍵に束縛した認可コードかリフレッシュトークンにその鍵の DPoP proof が無いとき（`invalid_grant`）。

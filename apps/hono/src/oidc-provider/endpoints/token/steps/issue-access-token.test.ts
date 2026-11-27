@@ -82,6 +82,52 @@ describe('issueAccessToken', () => {
     });
   });
 
+  describe('Token binding', () => {
+    // RFC 9449 §6.1 / RFC 7800 §3.1: a bound access token carries the confirmation of the key.
+    it('should put the cnf of the binding into the payload it signs and returns', async () => {
+      const { c, signingKey } = await providerContext();
+
+      const { accessToken, accessTokenPayload } = await issueAccessToken(c, {
+        signingKey,
+        subject: SUBJECT,
+        validatedRequest: authorizationCodeRequest(),
+        issuedAt: NOW,
+        acr: undefined,
+        binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' },
+      });
+
+      expect(decodeJwt(accessToken).payload).toEqual({
+        iss: TEST_ISSUER,
+        sub: SUBJECT,
+        aud: [USERINFO_ENDPOINT],
+        exp: NOW + 3600,
+        iat: NOW,
+        nbf: NOW,
+        jti: accessTokenPayload.jti,
+        scope: 'openid profile',
+        client_id: CLIENT_ID,
+        cnf: { jkt: 'jkt-1' },
+      });
+      expect(accessTokenPayload).toMatchObject({ cnf: { jkt: 'jkt-1' } });
+      expect(await verifiesWith(accessToken, signingKey)).toBe(true);
+    });
+
+    it('should leave the cnf claim out of a token without a binding', async () => {
+      const { c, signingKey } = await providerContext();
+
+      const { accessToken, accessTokenPayload } = await issueAccessToken(c, {
+        signingKey,
+        subject: SUBJECT,
+        validatedRequest: authorizationCodeRequest(),
+        issuedAt: NOW,
+        acr: undefined,
+      });
+
+      expect(decodeJwt(accessToken).payload).not.toHaveProperty('cnf');
+      expect(accessTokenPayload).not.toHaveProperty('cnf');
+    });
+  });
+
   describe('Audience', () => {
     // RFC 9068 §3: aud is never empty; the UserInfo endpoint is always a member, the resource follows.
     it('should return the UserInfo endpoint followed by the requested resource as the audience', async () => {

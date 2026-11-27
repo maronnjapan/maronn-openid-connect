@@ -181,4 +181,59 @@ describe('issueRefreshToken', () => {
       expect((await stores.refreshTokenStore.get(refreshToken ?? ''))?.scope).toEqual(['openid', 'offline_access']);
     });
   });
+
+  describe('Token binding', () => {
+    // RFC 9449 §5: the refresh token of a public client is bound to the key of the DPoP proof.
+    it('should store the refreshTokenCnf of the binding as the cnf of the refresh token', async () => {
+      const { c, stores } = await providerContext();
+
+      const refreshToken = await issueRefreshToken(c, {
+        decision: offline,
+        subject: SUBJECT,
+        authTime: AUTH_TIME,
+        nonce: undefined,
+        validatedRequest: authorizationCodeRequest({ scope: ['openid', 'offline_access'] }),
+        issuedAt: NOW,
+        audience: AUDIENCE,
+        acr: undefined,
+        amr: undefined,
+        binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP', refreshTokenCnf: { jkt: 'jkt-1' } },
+      });
+
+      expect(await stores.refreshTokenStore.get(refreshToken ?? '')).toEqual({
+        subject: SUBJECT,
+        clientId: CLIENT_ID,
+        scope: ['openid', 'offline_access'],
+        expiresAt: NOW + 7_776_000,
+        originalIssuedAt: NOW,
+        used: false,
+        grantId: 'grant-1',
+        iat: NOW,
+        issuer: TEST_ISSUER,
+        audience: AUDIENCE,
+        authTime: AUTH_TIME,
+        cnf: { jkt: 'jkt-1' },
+      });
+    });
+
+    // RFC 9449 §5: a confidential client's refresh token stays unbound even when its access token is bound.
+    it('should store no cnf when the binding binds only the access token', async () => {
+      const { c, stores } = await providerContext();
+
+      const refreshToken = await issueRefreshToken(c, {
+        decision: offline,
+        subject: SUBJECT,
+        authTime: AUTH_TIME,
+        nonce: undefined,
+        validatedRequest: authorizationCodeRequest({ scope: ['openid', 'offline_access'] }),
+        issuedAt: NOW,
+        audience: AUDIENCE,
+        acr: undefined,
+        amr: undefined,
+        binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' },
+      });
+
+      expect(await stores.refreshTokenStore.get(refreshToken ?? '')).not.toHaveProperty('cnf');
+    });
+  });
 });

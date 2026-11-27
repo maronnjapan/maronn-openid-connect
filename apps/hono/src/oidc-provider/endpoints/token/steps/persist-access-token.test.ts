@@ -79,4 +79,35 @@ describe('persistAccessToken', () => {
       jti: 'jti-2',
     });
   });
+
+  // RFC 9449 §6.2: the record keeps the confirmation and the token_type, which an opaque token does not carry itself.
+  it('should store the cnf and the token_type of the binding with the record of a bound token', async () => {
+    const { c, stores } = await providerContext();
+
+    await persistAccessToken(c, {
+      accessToken: 'at-3',
+      accessTokenPayload: { jti: 'jti-3' },
+      subject: SUBJECT,
+      validatedRequest: refreshTokenRequest({ scope: ['openid'] }),
+      issuedAt: NOW,
+      audience: AUDIENCE,
+      acr: undefined,
+      binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' },
+    });
+
+    expect(await stores.accessTokenStore.get('at-3')).toEqual({
+      sub: SUBJECT,
+      clientId: CLIENT_ID,
+      scope: ['openid'],
+      expiresAt: NOW + 3600,
+      grantId: 'grant-1',
+      iat: NOW,
+      nbf: NOW,
+      audience: AUDIENCE,
+      issuer: TEST_ISSUER,
+      jti: 'jti-3',
+      cnf: { jkt: 'jkt-1' },
+      tokenType: 'DPoP',
+    });
+  });
 });

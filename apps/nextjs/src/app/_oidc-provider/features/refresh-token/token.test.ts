@@ -409,6 +409,46 @@ describe('issueRefreshToken', () => {
 
     expect((await stores.refreshTokenStore.get(token ?? ''))?.scope).toEqual(['openid', 'profile']);
   });
+
+  // RFC 9449 §5: the refresh token of a public client is bound to the key of the DPoP proof.
+  it('should store the refreshTokenCnf of the binding as the cnf of the refresh token', async () => {
+    const token = await issueRefreshToken(
+      issueInput({
+        validatedRequest: codeRequest({ scope: ['openid', 'offline_access'], grantId: 'grant-bound' }),
+        binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP', refreshTokenCnf: { jkt: 'jkt-1' } },
+      }),
+    );
+
+    expect(await stores.refreshTokenStore.get(token ?? '')).toEqual({
+      subject: 'alice',
+      clientId: 'client-1',
+      scope: ['openid', 'offline_access'],
+      expiresAt: NOW + 7_776_000,
+      originalIssuedAt: NOW,
+      used: false,
+      grantId: 'grant-bound',
+      iat: NOW,
+      issuer: 'https://op.example.com',
+      audience: [USERINFO],
+      authTime: NOW - 60,
+      nonce: 'nonce-1',
+      acr: 'urn:acr:pwd',
+      amr: ['pwd'],
+      cnf: { jkt: 'jkt-1' },
+    });
+  });
+
+  // RFC 9449 §5: a confidential client's refresh token stays unbound even when its access token is bound.
+  it('should store no cnf when the binding binds only the access token', async () => {
+    const token = await issueRefreshToken(
+      issueInput({
+        validatedRequest: codeRequest({ scope: ['openid', 'offline_access'], grantId: 'grant-access-bound' }),
+        binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' },
+      }),
+    );
+
+    expect(await stores.refreshTokenStore.get(token ?? '')).not.toHaveProperty('cnf');
+  });
 });
 
 // OAuth 2.1 §4.3.1: the rotated refresh token is revoked once the new one is stored.

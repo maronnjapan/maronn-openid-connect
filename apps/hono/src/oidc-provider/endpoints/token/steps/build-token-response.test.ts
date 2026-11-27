@@ -45,4 +45,25 @@ describe('buildTokenResponse', () => {
       scope: 'profile',
     });
   });
+
+  // RFC 9449 §5: a token bound to a key is answered with the token_type of the binding.
+  it('should answer with the token_type of the binding for a bound access token', async () => {
+    const { c } = await providerContext();
+
+    const response = buildTokenResponse(c, {
+      accessToken: 'at-3',
+      idToken: undefined,
+      refreshToken: 'rt-3',
+      validatedRequest: authorizationCodeRequest({ scope: ['openid'] }),
+      binding: { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' },
+    });
+
+    expect(JSON.parse(JSON.stringify(response.body))).toEqual({
+      access_token: 'at-3',
+      token_type: 'DPoP',
+      expires_in: 3600,
+      scope: 'openid',
+      refresh_token: 'rt-3',
+    });
+  });
 });

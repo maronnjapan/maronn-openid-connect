@@ -5,6 +5,7 @@ import { decodeJwt } from '../../../../test-support/extensions.js';
 import type { ProviderConfig } from '../../../config.js';
 import type { TokenRequestBody } from '../../../endpoints/token/response.js';
 import { findUnsupportedScopes } from '../../../scopes.js';
+import type { TokenBinding } from '../../../token-binding.js';
 import { issueClientCredentialsToken } from './dispatch-client-credentials.js';
 
 // The provider declares no custom scope (CUSTOM_SCOPES in scopes.ts is
@@ -18,6 +19,12 @@ vi.mock('../../../scopes.js', async (importOriginal) => {
 /** 2026-01-01T00:00:00Z: every test runs on this clock. */
 const NOW = Date.UTC(2026, 0, 1) / 1000;
 const API = 'https://api.example.com';
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the access token is bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the step for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 /** A confidential client registered for the grant and for two scopes of a resource server. */
 const client: TokenClientInfo = {
@@ -294,6 +301,67 @@ describe('issueClientCredentialsToken', () => {
         error: 'invalid_target',
         errorDescription: 'Requested audience is not allowed: https://other.example.com',
       });
+    });
+  });
+
+  // RFC 9449 §5 / §6.1 / §6.2: a binding of the dpop extension puts its cnf into the access token and its record,
+  // and answers its token_type in the place of Bearer.
+  describe('Token binding', () => {
+    // The grant issues no refresh token (RFC 6749 §4.4.3), so the refreshTokenCnf of the binding binds nothing.
+    it('should bind the access token to the key of the binding', async () => {
+      const { c, stores } = await context();
+
+      const response = await issueClientCredentialsToken(c, request({ scope: 'reports.read' }), client, BINDING);
+
+      const { access_token: accessToken, ...body } = (await response!.json()) as Record<string, unknown>;
+      expect(response!.status).toBe(200);
+      expect(response!.headers.get('Cache-Control')).toBe('no-store');
+      expect(body).toEqual({ token_type: 'DPoP', expires_in: 3600, scope: 'reports.read' });
+      expect(decodeJwt(accessToken as string).payload).toMatchObject({
+        sub: 'service-1',
+        client_id: 'service-1',
+        cnf: { jkt: JKT },
+      });
+      expect(await stores.accessTokenStore.get(accessToken as string)).toEqual({
+        sub: 'service-1',
+        clientId: 'service-1',
+        scope: ['reports.read'],
+        expiresAt: NOW + 3600,
+        iat: NOW,
+        nbf: NOW,
+        audience: [TEST_ISSUER],
+        issuer: TEST_ISSUER,
+        jti: decodeJwt(accessToken as string).payload['jti'],
+        cnf: { jkt: JKT },
+        tokenType: 'DPoP',
+      });
+    });
+
+    // RFC 9449 §6.2: an opaque token carries no claim, so its record is what the introspection endpoint reports.
+    it('should keep the cnf and the token_type of an opaque token in its record', async () => {
+      const { c, stores } = await context({ accessTokenFormat: 'opaque' });
+
+      const response = await issueClientCredentialsToken(c, request(), client, BINDING);
+
+      const { access_token: accessToken } = (await response!.json()) as { access_token: string };
+      expect(accessToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(await stores.accessTokenStore.get(accessToken)).toMatchObject({
+        sub: 'service-1',
+        cnf: { jkt: JKT },
+        tokenType: 'DPoP',
+      });
+    });
+
+    // The token_type of the binding replaces the Bearer of core's response, so the members keep their order.
+    it('should answer the members of the token response in the order of a Bearer response', async () => {
+      const { c } = await context();
+
+      const bearer = await issueClientCredentialsToken(c, request(), client);
+      const bound = await issueClientCredentialsToken(c, request(), client, BINDING);
+
+      const bearerMembers = Object.keys((await bearer!.json()) as object);
+      expect(bearerMembers).toEqual(['access_token', 'token_type', 'expires_in', 'scope']);
+      expect(Object.keys((await bound!.json()) as object)).toEqual(bearerMembers);
     });
   });
 });

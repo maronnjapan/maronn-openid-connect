@@ -6,6 +6,7 @@ import { decodeJwt } from '../../../../test-support/jwt';
 import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { stores } from '../../provider';
+import type { TokenBinding } from '../../token-binding';
 import { dispatchCiba } from './grant';
 import { cibaAuthenticationRequestStore } from './store';
 
@@ -22,6 +23,12 @@ const cibaClient: TokenClientInfo = {
   grantTypes: [CIBA_GRANT_TYPE],
   tokenEndpointAuthMethods: ['client_secret_basic'],
 };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the tokens are bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the grant for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -71,6 +78,69 @@ describe('dispatchCiba', () => {
       scope: ['openid', 'profile'],
       grantId: 'grant-ciba-approved',
     });
+  });
+
+  // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the access token and its record,
+  // answers its token_type, and binds the refresh token to refreshTokenCnf.
+  it('should bind the access token and the refresh token to the key of the binding', async () => {
+    const record = pendingCibaRecord({
+      status: 'approved',
+      authTime: NOW_SECONDS - 30,
+      approvedScope: ['openid', 'offline_access'],
+      grantId: 'grant-ciba-bound',
+    });
+    await cibaAuthenticationRequestStore.save(record);
+
+    const response = await dispatchCiba(
+      cibaRequest(record.authReqId),
+      cibaClient,
+      providerSigningKeys(await rs256Key()),
+      BINDING,
+    );
+    const parts = await jsonResponseOf(response);
+    const body = parts?.body as Record<string, unknown>;
+
+    expect(parts).toMatchObject({ status: 200, cacheControl: 'no-store', pragma: 'no-cache' });
+    expect(body).toMatchObject({ token_type: 'DPoP', expires_in: 3600, scope: 'openid offline_access' });
+    expect(decodeJwt(body['access_token'] as string).payload).toMatchObject({ sub: 'alice', cnf: { jkt: JKT } });
+    expect(await stores.accessTokenStore.get(body['access_token'] as string)).toMatchObject({
+      sub: 'alice',
+      grantId: 'grant-ciba-bound',
+      cnf: { jkt: JKT },
+      tokenType: 'DPoP',
+    });
+    expect(await stores.refreshTokenStore.get(body['refresh_token'] as string)).toMatchObject({
+      subject: 'alice',
+      grantId: 'grant-ciba-bound',
+      cnf: { jkt: JKT },
+    });
+  });
+
+  // RFC 9449 §5: the refresh token of a confidential client stays unbound (its client authentication constrains it);
+  // the dpop extension says so with a binding without refreshTokenCnf.
+  it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
+    const record = pendingCibaRecord({
+      status: 'approved',
+      authTime: NOW_SECONDS - 30,
+      approvedScope: ['openid', 'offline_access'],
+      grantId: 'grant-ciba-confidential',
+    });
+    await cibaAuthenticationRequestStore.save(record);
+    const { refreshTokenCnf: _refreshTokenCnf, ...accessTokenBinding } = BINDING;
+
+    const response = await dispatchCiba(
+      cibaRequest(record.authReqId),
+      cibaClient,
+      providerSigningKeys(await rs256Key()),
+      accessTokenBinding,
+    );
+    const body = (await response!.json()) as Record<string, string>;
+    const refreshTokenRecord = await stores.refreshTokenStore.get(body['refresh_token'] ?? '');
+
+    expect(body).toMatchObject({ token_type: 'DPoP' });
+    expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
+    expect(refreshTokenRecord).toMatchObject({ subject: 'alice', grantId: 'grant-ciba-confidential' });
+    expect(refreshTokenRecord).not.toHaveProperty('cnf');
   });
 
   // CIBA Core 1.0 §11 / RFC 6749 §5.2: every other state is an OAuth error in the JSON shape, never cached.

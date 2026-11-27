@@ -14,6 +14,12 @@ import {
   processTokenExchangeRequest,
   type ExchangedAccessTokenInfo,
 } from '@maronn-openid-connect/experimental/token-exchange';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../../token-binding.js';
 import { type TokenRequestBody, TokenEndpointError } from '../../../endpoints/token/response.js';
 import { respondToken } from '../../../endpoints/token/steps/respond.js';
 import { tokenExchangeConfig } from '../config.js';
@@ -27,7 +33,8 @@ export const meta = step({
   label: 'トークン交換',
   spec: 'RFC 8693 §2.1',
   function: 'exchangeToken',
-  consumes: ['params', 'tokenClient'],
+  consumes: ['params', 'tokenClient', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: [],
   removable: false,
   before: ['validate-grant-type'],
@@ -43,6 +50,7 @@ export const meta = step({
  *
  * `subject_token` の検証と、発行する内容（サブジェクト、スコープ、オーディエンス、有効期間、`act` クレーム）の導出は `processTokenExchangeRequest()` が行う。
  * 発行したアクセストークンはストアに保存し、200 でトークン交換のレスポンスを返す。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、交換したアクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * 既知の制限として、RFC 8693 §2.1 は `resource` と `audience` の繰り返しを許すが、このエンドポイントは繰り返されたパラメータをすべて拒否するので（RFC 6749 §3.2）、どちらも 1 つの値しか使えない。
  *
@@ -50,12 +58,14 @@ export const meta = step({
  * その API は安定しておらず、リリースの間で互換性のない変更がありうるので、本番のコードで使うときはバージョンを固定する。
  *
  * @spec RFC 8693 §2.1
+ * @spec RFC 9449 §5
  * @throws {TokenEndpointError} 400 の `invalid_request`、`invalid_target`、`invalid_scope`、`unauthorized_client`: トークン交換のリクエストが検証を通らないとき
  */
 export async function exchangeToken(
   c: any,
   params: TokenRequestBody,
   tokenClient: TokenClientInfo,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== TOKEN_EXCHANGE_GRANT_TYPE) return undefined;
 
@@ -105,6 +115,8 @@ export async function exchangeToken(
         // それまでの委任の連なりは、`processTokenExchangeRequest()` が入れ子にしてある。
         // なりすましの交換では、`act` クレームを付けない。
         ...(grant.actor === undefined ? {} : { act: grant.actor }),
+        // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+        ...accessTokenClaimsOf(binding),
       },
       privateKey: exchangeSigningKey.privateKey,
       keyId: exchangeSigningKey.keyId,
@@ -130,6 +142,8 @@ export async function exchangeToken(
       ...(grant.actor === undefined ? {} : { act: grant.actor }),
       // `subject_token` に保存された `claims` パラメータ（OIDC Core 1.0 §5.5）は、意図して引き継がない。
       // 交換したトークンで UserInfo エンドポイントから得られるのは、スコープに基づくクレームだけである。
+      // 鍵に束縛したトークンは、確認の `cnf` と `token_type` も保存する（RFC 9449 §6.2）。
+      ...accessTokenRecordOf(binding),
     };
     await accessTokenStore.set(exchangedToken, exchangeMetadata);
 
@@ -137,11 +151,15 @@ export async function exchangeToken(
     // `access_token`、`issued_token_type`、`token_type` は必須で（RFC 8693 §2.2.1）、ここでは `expires_in` と `scope` も必ず含める。
     return respondToken(c, {
       status: 200,
-      body: buildTokenExchangeResponse({
-        accessToken: exchangedToken,
-        expiresIn: grant.expiresIn,
-        scope: grant.scope,
-      }),
+      body: {
+        ...buildTokenExchangeResponse({
+          accessToken: exchangedToken,
+          expiresIn: grant.expiresIn,
+          scope: grant.scope,
+        }),
+        // 鍵に束縛したトークンの `token_type` は、束縛の `token_type`（DPoP なら `DPoP`）にする（RFC 9449 §5）。
+        token_type: tokenTypeOf(binding),
+      },
     });
   } catch (error) {
     // `TokenExchangeError` を、RFC 6749 §5.2 の形の 400 のエラーにして投げる（RFC 8693 §2.2.2）。

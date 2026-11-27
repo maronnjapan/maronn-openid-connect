@@ -12,13 +12,13 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | パス | 役割 | 準拠仕様 |
 |---|---|---|
 | `/authorize` | 認可エンドポイント | OIDC Core 1.0 §3.1.2 / OAuth 2.1 §4.1 |
-| `/token` | トークンエンドポイント | OIDC Core 1.0 §3.1.3 / OAuth 2.1 §3.2 |
-| `/userinfo` | UserInfo エンドポイント | OIDC Core 1.0 §5.3 |
+| `/token` | トークンエンドポイント（拡張機能 `dpop` 有効時は DPoP proof を検査し、トークンを鍵に束縛する） | OIDC Core 1.0 §3.1.3 / OAuth 2.1 §3.2 / RFC 9449 §5 |
+| `/userinfo` | UserInfo エンドポイント（拡張機能 `dpop` 有効時は `Authorization: DPoP` も受け付ける） | OIDC Core 1.0 §5.3 / RFC 9449 §7 |
 | `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） | — |
 | `/login/google` | Sign in with Google の `login_uri`（拡張機能 `google-login` 有効時のみ生成） | Google Identity Services |
 | `/.well-known/openid-configuration` | Provider Metadata | OpenID Connect Discovery 1.0 |
 | `/.well-known/jwks.json` | JWKS（公開鍵） | RFC 7517 |
-| `/introspect` | Token Introspection（トグルで無効化可） | RFC 7662 |
+| `/introspect` | Token Introspection（トグルで無効化可。拡張機能 `dpop` 有効時は、鍵に束縛したアクセストークンの `cnf` と `token_type` も返す） | RFC 7662 / RFC 9449 §6.2 |
 | `/revoke` | Token Revocation（トグルで無効化可） | RFC 7009 |
 
 ## Authorization Endpoint
@@ -70,6 +70,7 @@ OpenID Connect のリクエストだけを受け付ける OP に戻すには、`
 - クライアント認証: `client_secret_basic` / `client_secret_post` / `private_key_jwt`（OIDC Core 1.0 §9） / `none`（public client）。1 つのクライアントに `client_secret_basic` と `client_secret_post` の両方を登録可能。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
 - private_key_jwt: クライアントアサーション（RFC 7523 §3）の alg は RS256 / RS384 / RS512 / ES256 / ES384 / ES512（`none` と HS 系は拒否）。`iss` と `sub` が client_id、`aud` にエンドポイントの URL か issuer、`exp` と `jti` が必須で、同じ `jti` の再送は期限まで拒否する。鍵はクライアントが `private_key_jwt` の用途に登録した公開鍵か `jwks_uri` の鍵。検証の失敗はすべて `invalid_client`、アサーションとシークレットの併用は `invalid_request`。イントロスペクション、リボケーション、PAR、Device Authorization、CIBA のエンドポイントも同じ検証を行う（詳細は [CLI Guide の private_key_jwt](../../guides/cli/#private_key_jwt)）
 - 認可コード: ワンタイム使用、TTL 既定 300 秒、redirect_uri 一致検証、PKCE `code_verifier` の S256 検証
+- DPoP（拡張機能 `dpop` 有効時のみ。RFC 9449 §5）: `DPoP` ヘッダーの DPoP proof を検査し、どのグラントでもアクセストークンをその鍵に束縛する（`token_type` は `DPoP`、JWT のアクセストークンと保存するレコードに `cnf.jkt`）。パブリッククライアントにはリフレッシュトークンも同じ鍵に束縛する。DPoP proof の不備と、`dpop_bound_access_tokens` を登録したクライアントの DPoP proof の無いリクエストは `invalid_dpop_proof`、鍵に束縛した認可コードとリフレッシュトークンを DPoP proof 無しか別の鍵で使ったリクエストは `invalid_grant`、`dpopNonceRequiredAtAuthorizationServer: true` のときに認可サーバーの nonce の無い DPoP proof は `use_dpop_nonce`（どれも 400）。`DPoP` ヘッダーの無いリクエストには、これまでどおり Bearer トークンを発行する。詳細は [DPoP（拡張）](../../guides/dpop/#トークンエンドポイント)
 
 ### Client Credentials Grant
 
@@ -131,8 +132,8 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 ## UserInfo Endpoint
 
 - Bearer アクセストークンで認証（`invalid_token` / `insufficient_scope` エラー対応）。`openid` スコープのないアクセストークン（OAuth 2.0 のリクエストや `client_credentials` グラントのもの）は `insufficient_scope` で拒否する（OIDC Core 1.0 §5.3.1）
-- `dpop` 有効時は DPoP スキーム（`Authorization: DPoP` と、`ath` を入れた DPoP proof）でも認証する。DPoP の鍵に束縛したアクセストークンは、同じ鍵の DPoP proof と一緒のときだけ受け付け、Bearer として提示されたら `invalid_token` で拒否する（RFC 9449 §7.1 / §7.2）。失敗の応答の `WWW-Authenticate` は、`Bearer realm="UserInfo"` に `DPoP algs="…"` のチャレンジを並べ、エラーはトークンを提示したスキームのチャレンジが伝える（トークンのないリクエストでは、どちらも伝えない）。Bearer と DPoP の両方でトークンを送ったリクエスト（`Authorization` を二つ送った、`Authorization: DPoP` にフォームのボディの `access_token` を添えた）は、両方のチャレンジがエラーを伝える 400 の `invalid_request` で拒否する（RFC 9449 §7.2）。ただし、`Authorization` の二つのフィールドを見分けられるのは、ランタイムが二つの値をつないで渡すとき（Cloudflare Workers の Hono）だけである。二つ目のフィールドを捨てる Node.js の `http` モジュールの上で動く Express、Fastify、Next.js（UserInfo のルートは Node.js ランタイムで動く）は、最初のフィールドのスキームのリクエストとして答える
-- `dpop` 有効時に `dpopNonceRequiredAtResourceServer` を `true`（Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1`）にすると、DPoP スキームのリクエストへの、そのスキームを読んだ後のどのレスポンス（成功もエラーも。nonce の秘密が 32 バイトより短いときの 500 は除く）にも次の nonce を `DPoP-Nonce` ヘッダーで付け、保護されたリソースが `dpopNonceLifetimeSeconds` 秒（既定は 120）の間に発行した nonce の無い DPoP proof を 401 の `use_dpop_nonce` で拒否する（エラーは `DPoP` のチャレンジが伝える。RFC 9449 §9）。トークンエンドポイントと PAR エンドポイントの nonce は受け付けない。Bearer のリクエストには nonce を渡さず、求めもしない
+- `dpop` 有効時は DPoP スキーム（`Authorization: DPoP` と、`ath` を入れた DPoP proof）でも認証する。DPoP の鍵に束縛したアクセストークンは、同じ鍵の DPoP proof と一緒のときだけ受け付け、Bearer として提示されたら `invalid_token` で拒否する（RFC 9449 §7.1 / §7.2）。失敗の応答の `WWW-Authenticate` は、`Bearer realm="UserInfo"` に `DPoP algs="…"` のチャレンジを並べ、エラーはトークンを提示したスキームのチャレンジが伝える（トークンのないリクエストでは、どちらも伝えない）。Bearer と DPoP の両方でトークンを送ったリクエスト（`Authorization` を二つ送った、`Authorization: DPoP` にフォームのボディの `access_token` を添えた）は、両方のチャレンジがエラーを伝える 400 の `invalid_request` で拒否する（RFC 9449 §7.2）。ただし、`Authorization` の二つのフィールドを見分けられるのは、ランタイムが二つの値をつないで渡すとき（Hono。Cloudflare Workers でも、Node.js の `@hono/node-server` でも）だけである。二つ目のフィールドを捨てる Node.js の `http` モジュールの上で動く Express、Fastify、Next.js（UserInfo のルートは Node.js ランタイムで動く）は、最初のフィールドのスキームのリクエストとして答える
+- `dpop` 有効時に `dpopNonceRequiredAtResourceServer` を `true`（Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1`）にすると、DPoP スキームのリクエストへの、そのスキームを読んだ後のどのレスポンス（成功もエラーも。Next.js が署名鍵を読み込めないときの 503 と、nonce の秘密が 32 バイトより短いときの 500 は除く）にも次の nonce を `DPoP-Nonce` ヘッダーで付け、保護されたリソースが `dpopNonceLifetimeSeconds` 秒（既定は 120）の間に発行した nonce の無い DPoP proof を 401 の `use_dpop_nonce` で拒否する（エラーは `DPoP` のチャレンジが伝える。RFC 9449 §9）。トークンエンドポイントと PAR エンドポイントの nonce は受け付けない。Bearer のリクエストには nonce を渡さず、求めもしない
 - scope に応じた標準クレームの返却（OIDC Core 1.0 §5.4）: `profile` / `email` / `address` / `phone`
 - `claims` リクエストパラメータによる個別クレーム要求に対応
 - 署名付き UserInfo レスポンス（JWT）の生成に対応
@@ -184,6 +185,13 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `requestUriTimeoutMs` / `requestUriMaxBytes` / `requestUriMaxLength` | `3000` / `65536` / `512` | `request_uri` の取得のタイムアウト（ミリ秒）、Request Object の上限（バイト）、`request_uri` の長さの上限（文字。request-object 機能） |
 | `allowInsecureClientDisplayUris` | `false` | ログイン・同意画面に http の `logo_uri` などを入れる（開発用） |
 | `requireClientDisplayUriHostMatch` | `false` | `logo_uri` と `policy_uri` を、`redirect_uris` のホストと同じときだけ画面に入れる |
+| `dpopSigningAlgValuesSupported` | `['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA']` | DPoP proof に受け付ける alg（拡張機能 `dpop`。RFC 9449 §5.1）。discovery の `dpop_signing_alg_values_supported` と、UserInfo エンドポイントの DPoP のチャレンジの `algs` に載る。生成コードの `features/dpop/jwk.ts` の `SUPPORTED_DPOP_SIGNING_ALGS` に無い alg は、挙げても受け付けない |
+| `dpopProofMaxAgeSeconds` / `dpopProofLeewaySeconds` | `60` / `60` | DPoP proof を `iat` から何秒まで受け付けるかと、`iat` に許す時計のずれ（秒。拡張機能 `dpop`。RFC 9449 §11.1）。`iat` が「今 − 二つの和」から「今 + `dpopProofLeewaySeconds`」までの DPoP proof を受け付ける |
+| `dpopNonceLifetimeSeconds` | `120` | 発行した DPoP の nonce を何秒まで受け付けるか（拡張機能 `dpop`。RFC 9449 §8 / §9） |
+| `dpopNonceRequiredAtAuthorizationServer` | `false` | `true` にすると、トークンエンドポイントと PAR エンドポイントが DPoP proof に認可サーバーの nonce を求める（拡張機能 `dpop`。RFC 9449 §8。Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1`） |
+| `dpopNonceRequiredAtResourceServer` | `false` | `true` にすると、UserInfo エンドポイントが DPoP proof に保護されたリソースの nonce を求める（拡張機能 `dpop`。RFC 9449 §9。Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1`） |
+
+拡張機能 `dpop` の nonce の秘密は、`ProviderConfig` ではなく、`createApp()` / `applyOidc()` の `dpopNonceSecret`（Next.js は環境変数 `OIDC_DPOP_NONCE_SECRET`）で渡します（[DPoP（拡張）の設定](../../guides/dpop/#設定)）。
 
 ## Feature Toggles
 
@@ -196,7 +204,7 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credenti
 | 機能名 | 内容 | 実装 |
 |---|---|---|
 | `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。`dynamic-client-registration` と一緒に有効にすると、`POST /register` も `dpop_bound_access_tokens`（真偽値。省略すると `false`）を登録して返す。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する。`dpopNonceRequiredAtAuthorizationServer: true`（既定は `false`。Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1`）にすると、トークンエンドポイントと PAR エンドポイントは、DPoP のリクエストへのレスポンスに次の nonce を `DPoP-Nonce` ヘッダーで付け、認可サーバーが `dpopNonceLifetimeSeconds` 秒（既定は 120）の間に発行した nonce の無い DPoP proof を 400 の `use_dpop_nonce` で拒否する（RFC 9449 §8）。`dpopNonceRequiredAtResourceServer: true`（既定は `false`。Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1`）にすると、UserInfo エンドポイントは、DPoP スキームのリクエストへのレスポンスに保護されたリソースの次の nonce を `DPoP-Nonce` ヘッダーで付け、保護されたリソースが最近発行した nonce の無い DPoP proof を 401 の `use_dpop_nonce` で拒否する（RFC 9449 §9。認可サーバーの nonce は受け付けない）。nonce の秘密は `dpopNonceSecret`、Next.js は `OIDC_DPOP_NONCE_SECRET` で渡し、どのインスタンスにも同じ値を渡す。CORS は `WWW-Authenticate` と `DPoP-Nonce` を読ませる | 生成コードの `features/dpop/`（package なし） |
+| `dpop` | DPoP（RFC 9449）。トークンエンドポイントが `DPoP` ヘッダーの DPoP proof を検査し、アクセストークン（パブリッククライアントにはリフレッシュトークンも）をその鍵に束縛する（`token_type` は `DPoP`）。UserInfo エンドポイントは、束縛したトークンを `Authorization: DPoP` と同じ鍵の DPoP proof でだけ受け付ける。認可リクエストの `dpop_jkt` と、`par` を有効にしたときの PAR のリクエストの DPoP proof の鍵は、認可コードを鍵に束縛する。`dpop_bound_access_tokens` を登録したクライアントには、どのトークンリクエストにも DPoP proof を求める。設定で、サーバーが発行する nonce（`DPoP-Nonce`）を DPoP proof に求められる。詳細は [DPoP（拡張）](../../guides/dpop/) | 生成コードの `features/dpop/`（package なし。Web Crypto だけで動き、エッジランタイムでも動く） |
 
 ## Custom Scopes
 

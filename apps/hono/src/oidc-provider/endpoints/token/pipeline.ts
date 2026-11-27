@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { redeemCibaRequest } from '../../features/ciba/steps/dispatch-ciba.js';
 import { issueClientCredentialsToken } from '../../features/client-credentials/steps/dispatch-client-credentials.js';
 import { redeemDeviceCode } from '../../features/device-authorization-grant/steps/dispatch-device-code.js';
+import { validateDpopGrantBinding } from '../../features/dpop/steps/validate-dpop-grant-binding.js';
 import { verifyDpopTokenRequest } from '../../features/dpop/steps/verify-dpop-proof.js';
 import { issueIdJag } from '../../features/id-jag/steps/dispatch-id-jag-issuance.js';
 import { redeemIdJag } from '../../features/id-jag/steps/dispatch-id-jag-redemption.js';
@@ -37,11 +38,12 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  * that feature, and its step is in features/<id>/. A step that throws ends in
  * respondTokenError().
  *
- * With the dpop extension, the (feature: dpop) block after client
- * authentication checks the DPoP proof and decides the key the tokens are
- * bound to (tokenBinding, token-binding.ts); every grant below then binds the
- * access token it issues to it. Without a binding the tokens are Bearer
- * tokens.
+ * With the dpop extension, the (feature: dpop) blocks after client
+ * authentication check the DPoP proof, decide the key the tokens are bound
+ * to (tokenBinding, token-binding.ts) and reject a code or refresh token
+ * bound to a key unless the proof is of that key; every grant below then
+ * binds the access token it issues, and the refresh token of a public
+ * client, to it. Without a binding the tokens are Bearer tokens.
  */
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -54,7 +56,10 @@ tokenApp.post('/', async (c) => {
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
 
     // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5
-    const { tokenBinding } = await verifyDpopTokenRequest(c);
+    const { dpopJkt, tokenBinding } = await verifyDpopTokenRequest(c, tokenClient);
+
+    // [validate-dpop-grant-binding] (feature: dpop) 認可コードとリフレッシュトークンを束縛した鍵を確かめる — RFC 9449 §5 / §10
+    await validateDpopGrantBinding(c, params, authenticatedClientId, dpopJkt);
 
     // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
     const clientCredentialsResponse = await issueClientCredentialsToken(c, params, tokenClient, tokenBinding);

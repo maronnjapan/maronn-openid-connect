@@ -12,7 +12,7 @@ import { isDpopError } from './errors';
 /**
  * トークンエンドポイントでの DPoP の検査の失敗を、キャッシュさせない 400 の OAuth のエラーレスポンスにして返す。
  *
- * `invalid_dpop_proof`（DPoP proof の不備）は、400 で応答する（RFC 9449 §5、RFC 6749 §5.2）。
+ * `invalid_dpop_proof`（DPoP proof の不備）と `invalid_grant`（鍵に束縛した認可コードかリフレッシュトークンに、その鍵の DPoP proof が無い）は、どちらも 400 で応答する（RFC 9449 §5、RFC 6749 §5.2）。
  * DPoP の失敗でないエラーには `undefined` を返し、呼び出し側がそのまま投げ直す。
  *
  * @spec RFC 9449 §5

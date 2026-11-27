@@ -17,6 +17,17 @@ describe('tokenEndpointErrorOf', () => {
     });
   });
 
+  // RFC 9449 §5 / §10: a code or refresh token bound to another key is a 400 invalid_grant.
+  it('should turn the invalid_grant of a grant bound to a DPoP key into a 400 error response of the token endpoint', () => {
+    const error = tokenEndpointErrorOf(new DpopError('invalid_grant', 'The DPoP proof key does not match the key the grant is bound to'));
+
+    expect(error).toBeInstanceOf(TokenEndpointError);
+    expect((error as TokenEndpointError).response).toEqual({
+      status: 400,
+      body: { error: 'invalid_grant', error_description: 'The DPoP proof key does not match the key the grant is bound to' },
+    });
+  });
+
   it.each([
     ['a TokenError', new TokenError(TokenErrorCode.InvalidGrant, 'The code has expired')],
     ['an Error of a misconfiguration', new Error('The iat window of the DPoP proof checks must be non-negative finite numbers')],

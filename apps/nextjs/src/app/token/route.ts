@@ -10,11 +10,12 @@
  * client authentication and before validateGrantTypeSupported, each by the
  * grant.ts of its feature.
  *
- * With the dpop extension, the (feature: dpop) block after client
- * authentication checks the DPoP proof and decides the key the tokens are
- * bound to (tokenBinding, token-binding.ts); every grant then binds the
- * access token it issues to it. Without a binding the tokens are Bearer
- * tokens.
+ * With the dpop extension, the (feature: dpop) blocks after client
+ * authentication check the DPoP proof, decide the key the tokens are bound
+ * to (tokenBinding, token-binding.ts) and reject a code or refresh token
+ * bound to a key unless the proof is of that key; every grant then binds the
+ * access token it issues, and the refresh token of a public client, to it.
+ * Without a binding the tokens are Bearer tokens.
  */
 import {
   validateGrantTypeSupported,
@@ -46,7 +47,7 @@ import { verifyPresentedClientCredential } from '../_oidc-provider/client-auth';
 import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';
 import { dispatchClientCredentials } from '../_oidc-provider/features/client-credentials/grant';
 import { dispatchDeviceCode } from '../_oidc-provider/features/device-authorization-grant/grant';
-import { verifyDpopTokenRequest } from '../_oidc-provider/features/dpop/token';
+import { validateDpopGrantBinding, verifyDpopTokenRequest } from '../_oidc-provider/features/dpop/token';
 import { dispatchIdJagIssuance, dispatchIdJagRedemption } from '../_oidc-provider/features/id-jag/grant';
 import {
   decideRefreshTokenIssuance,
@@ -112,10 +113,11 @@ export function OPTIONS(request: Request): Response {
  * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
  * アクセストークンは UserInfo、イントロスペクション、失効の各エンドポイントのために保存し、認可コードは使用済みにする（再び提示されたら拒否し、そのグラントのトークンを失効させる）。
  * 有効にした機能のグラント（`client_credentials`、ID-JAG、トークン交換、`device_code`、CIBA）には、クライアントの認証の直後にあるそれぞれのブロックが応答する。
- * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンをその鍵に束縛し、`token_type` を `DPoP` にする。
+ * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛し、`token_type` を `DPoP` にする。
+ * 鍵に束縛した認可コードかリフレッシュトークンは、同じ鍵の DPoP proof を送ったリクエストだけが使える。
  *
  * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
- * - 400: リクエストが不正なとき、またはグラントを拒否したとき。DPoP の機能があれば、DPoP proof を受け付けないとき（`invalid_dpop_proof`）。
+ * - 400: リクエストが不正なとき、またはグラントを拒否したとき。DPoP の機能があれば、DPoP proof を受け付けないとき（`invalid_dpop_proof`）と、鍵に束縛した認可コードかリフレッシュトークンにその鍵の DPoP proof が無いとき（`invalid_grant`）。
  * - 401 `invalid_client`（`WWW-Authenticate` ヘッダー付き）: クライアントの認証に失敗したとき。
  * - 500 `server_error`: クライアントの `alg` に合う ID トークンの署名鍵がないとき、またはそのほかの失敗のとき。
  *
@@ -174,8 +176,12 @@ async function token(request: Request): Promise<Response> {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5
-    const { tokenBinding, dpopRejection } = await verifyDpopTokenRequest(request);
+    const { dpopJkt, tokenBinding, dpopRejection } = await verifyDpopTokenRequest(request, tokenClient);
     if (dpopRejection) return dpopRejection;
+
+    // [validate-dpop-grant-binding] (feature: dpop) 認可コードとリフレッシュトークンを束縛した鍵を確かめる — RFC 9449 §5 / §10
+    const dpopGrantRejection = await validateDpopGrantBinding(params, authenticatedClientId, dpopJkt);
+    if (dpopGrantRejection) return dpopGrantRejection;
 
     // [dispatch-client-credentials] (feature: client-credentials) client_credentials グラントに応答する — RFC 6749 §4.4 / OAuth 2.1 §4.2
     const clientCredentialsResponse = await dispatchClientCredentials(params, tokenClient, keys, tokenBinding);

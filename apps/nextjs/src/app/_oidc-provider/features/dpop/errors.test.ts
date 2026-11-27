@@ -25,6 +25,14 @@ describe('isDpopError', () => {
     expect(isDpopError({ name: 'DpopError', error: 'invalid_dpop_proof', errorDescription: 'The DPoP proof is not a JWT' })).toBe(true);
   });
 
+  // RFC 9449 §5 / §10: a code or refresh token bound to another key than the proof is an invalid grant.
+  it('should recognise the invalid_grant of a grant bound to a DPoP key', () => {
+    expect([
+      isDpopError(new DpopError('invalid_grant', 'The grant is bound to a DPoP key, but no DPoP proof was sent')),
+      isDpopError({ name: 'DpopError', error: 'invalid_grant', errorDescription: 'The grant is bound to a DPoP key, but no DPoP proof was sent' }),
+    ]).toEqual([true, true]);
+  });
+
   it.each([
     ['an Error of another name', Object.assign(new Error('x'), { error: 'invalid_dpop_proof', errorDescription: 'x' })],
     ['a value without errorDescription', { name: 'DpopError', error: 'invalid_dpop_proof' }],

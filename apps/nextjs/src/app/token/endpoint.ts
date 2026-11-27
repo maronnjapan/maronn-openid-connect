@@ -3,7 +3,8 @@ import { defineEndpoint } from '../_oidc-provider/endpoint';
 /**
  * クライアントを認証し、提示されたグラント（認可コード、リフレッシュトークン、有効にした機能が扱うグラント）を検証して、トークンレスポンスで応答する。
  * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
- * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンをその鍵に束縛し、`token_type` を `DPoP` にする。
+ * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛し、`token_type` を `DPoP` にする。
+ * 鍵に束縛した認可コードかリフレッシュトークンは、同じ鍵の DPoP proof を送ったリクエストだけが使える。
  * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
  * 署名鍵を読み込めないときは、503 で応答する。
  *
@@ -17,7 +18,8 @@ export const endpoint = defineEndpoint({
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
     { id: 'parse-request', consumes: [], produces: ['params'] },
     { id: 'authenticate-client', consumes: ['params'], produces: ['tokenClient', 'authenticatedClientId'] },
-    { id: 'verify-dpop-proof', feature: 'dpop', consumes: [], produces: ['tokenBinding'] },
+    { id: 'verify-dpop-proof', feature: 'dpop', consumes: ['tokenClient'], produces: ['dpopJkt', 'tokenBinding'] },
+    { id: 'validate-dpop-grant-binding', feature: 'dpop', consumes: ['params', 'authenticatedClientId', 'dpopJkt'], produces: [] },
     { id: 'dispatch-client-credentials', feature: 'client-credentials', consumes: ['params', 'tokenClient', 'keys', 'tokenBinding'], produces: [] },
     { id: 'dispatch-id-jag-issuance', feature: 'id-jag', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
     { id: 'dispatch-id-jag-redemption', feature: 'id-jag', consumes: ['params', 'tokenClient', 'keys', 'tokenBinding'], produces: [] },

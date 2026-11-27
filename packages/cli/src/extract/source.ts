@@ -188,14 +188,102 @@ export function removeOwnerBlocks(
   return lines.join('\n');
 }
 
-/** The identifiers a piece of code uses, without its strings and comments. */
+/**
+ * The identifiers a piece of code uses, without its strings and comments.
+ *
+ * The expressions of a template literal (`${name}`) are code, so the names
+ * they read count; only the text of the template is left out.
+ */
 export function identifiersIn(code: string): Set<string> {
-  const stripped = code
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ')
-    .replace(/'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"/g, ' ')
-    .replace(/`(?:\\.|[^`\\])*`/g, ' ')
-    // A spread is no property access: ...name reads name.
-    .replace(/\.\.\./g, ' ');
+  // A spread is no property access: ...name reads name.
+  const stripped = codeWithoutLiterals(code).replace(/\.\.\./g, ' ');
   return new Set(stripped.match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? []);
+}
+
+/**
+ * The code with its comments, its string literals and the text of its
+ * template literals blanked, read once from the start: the expressions of
+ * `${…}` stay (the strings and templates in them are read by the same
+ * rules), and the // of a URL in a string or a template is no comment. An
+ * opener that nothing closes (a quote on its line, a backtick or a /* before
+ * the end, as in the regex literals /['"]/ and /`/) opens nothing, and the
+ * code after it is read: a name missed would let the generator drop what is
+ * still read. Regex literals are not told apart otherwise.
+ */
+function codeWithoutLiterals(code: string): string {
+  let result = '';
+  // The brace depth at which each open `${` of a template literal started.
+  const substitutions: number[] = [];
+  let depth = 0;
+  let index = 0;
+  while (index < code.length) {
+    const char = code[index] as string;
+    const next = code[index + 1];
+    // Where the comment, the literal or the text of a template that starts here ends; undefined for code.
+    let end: number | undefined;
+    if (char === '/' && next === '*') {
+      const close = code.indexOf('*/', index + 2);
+      end = close === -1 ? undefined : close + 2;
+    } else if (char === '/' && next === '/') {
+      const close = code.indexOf('\n', index);
+      end = close === -1 ? code.length : close;
+    } else if (char === "'" || char === '"') {
+      end = endOfQuoted(code, index, char);
+    } else if (char === '`') {
+      end = endOfTemplateText(code, index + 1, substitutions, depth);
+    } else if (char === '}' && substitutions.length > 0 && substitutions[substitutions.length - 1] === depth) {
+      // The `}` that closes a `${` goes back to the text of its template literal.
+      substitutions.pop();
+      end = endOfTemplateText(code, index + 1, substitutions, depth) ?? index + 1;
+    } else if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+    }
+    if (end === undefined) {
+      result += char;
+      index += 1;
+    } else {
+      result += ' ';
+      index = end;
+    }
+  }
+  return result;
+}
+
+/**
+ * The index after the string literal that opens at start, past escaped
+ * characters; undefined when no quote closes it on its line (a quote in a
+ * regex literal such as /['"]/ opens no string).
+ */
+function endOfQuoted(code: string, start: number, quote: string): number | undefined {
+  let index = start + 1;
+  while (index < code.length && code[index] !== quote && code[index] !== '\n') {
+    index += code[index] === '\\' ? 2 : 1;
+  }
+  return index < code.length && code[index] === quote ? index + 1 : undefined;
+}
+
+/**
+ * The index after the text of a template literal from start: after its
+ * closing backtick, or after a `${`, whose depth goes onto substitutions so
+ * that the matching } returns to the text. Undefined when the code ends
+ * first (a backtick in a regex literal such as /`/ opens no template).
+ */
+function endOfTemplateText(code: string, start: number, substitutions: number[], depth: number): number | undefined {
+  let index = start;
+  while (index < code.length) {
+    const char = code[index];
+    if (char === '\\') {
+      index += 2;
+    } else if (char === '`') {
+      return index + 1;
+    } else if (char === '$' && code[index + 1] === '{') {
+      substitutions.push(depth);
+      return index + 2;
+    } else {
+      index += 1;
+    }
+  }
+  return undefined;
 }

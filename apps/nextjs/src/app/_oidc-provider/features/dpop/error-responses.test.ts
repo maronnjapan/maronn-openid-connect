@@ -38,8 +38,27 @@ describe('tokenEndpointRejectionOf', () => {
     });
   });
 
-  it('should leave any other error to the caller', () => {
-    expect(tokenEndpointRejectionOf(new Error('The iat window of the DPoP proof checks must be non-negative finite numbers'))).toBeUndefined();
+  // RFC 6749 §5.2: invalid_request is also an error code of the token endpoint.
+  it('should answer the invalid_request of a DPoP check with an uncacheable 400 error response', async () => {
+    const response = tokenEndpointRejectionOf(new DpopError('invalid_request', 'Multiple access token methods are not allowed'));
+
+    expect({
+      status: response?.status,
+      cacheControl: response?.headers.get('Cache-Control'),
+      body: await response?.json(),
+    }).toEqual({
+      status: 400,
+      cacheControl: 'no-store',
+      body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+    });
+  });
+
+  // RFC 6750 §3.1: invalid_token is an error of a protected resource, never of the token endpoint.
+  it.each([
+    ['the invalid_token of a protected resource', new DpopError('invalid_token', 'The access token is bound to a different DPoP key')],
+    ['an Error of a misconfiguration', new Error('The iat window of the DPoP proof checks must be non-negative finite numbers')],
+  ])('should leave %s to the caller', (_name, error) => {
+    expect(tokenEndpointRejectionOf(error)).toBeUndefined();
   });
 });
 

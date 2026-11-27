@@ -29,7 +29,20 @@ describe('tokenEndpointErrorOf', () => {
     });
   });
 
+  // RFC 6749 §5.2: invalid_request is also an error code of the token endpoint.
+  it('should turn the invalid_request of a DPoP check into a 400 error response of the token endpoint', () => {
+    const error = tokenEndpointErrorOf(new DpopError('invalid_request', 'Multiple access token methods are not allowed'));
+
+    expect(error).toBeInstanceOf(TokenEndpointError);
+    expect((error as TokenEndpointError).response).toEqual({
+      status: 400,
+      body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+    });
+  });
+
+  // RFC 6750 §3.1: invalid_token is an error of a protected resource, never of the token endpoint.
   it.each([
+    ['the invalid_token of a protected resource', new DpopError('invalid_token', 'The access token is bound to a different DPoP key')],
     ['a TokenError', new TokenError(TokenErrorCode.InvalidGrant, 'The code has expired')],
     ['an Error of a misconfiguration', new Error('The iat window of the DPoP proof checks must be non-negative finite numbers')],
   ])('should return %s as it is', (_name, error) => {

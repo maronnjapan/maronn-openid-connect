@@ -29,7 +29,7 @@ import { loginPage } from './endpoints/login/page.js';
 import { tokenApp } from './endpoints/token/pipeline.js';
 import { userinfoApp } from './endpoints/userinfo/pipeline.js';
 import { features } from './features/enabled.js';
-import { applyContextOf, routesOf, type FeatureRoute } from './features/feature.js';
+import { applyContextOf, corsHeadersOf, routesOf, type FeatureRoute } from './features/feature.js';
 import { createStoreResolvers } from './resolvers.js';
 import type { ProviderStores, ProviderStoresFactory } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -223,6 +223,7 @@ function endpointMethods(routes: readonly FeatureRoute[]): Map<string, readonly 
  *
  * OP のパスへのリクエストには、次の順にミドルウェアを適用する。
  * - CORS: `/token`、`/userinfo`、機能が `cors: 'protected'` で登録したエンドポイントでは `corsOrigins` のオリジンを許可し、ディスカバリーと JWKS ではすべてのオリジンを許可する。
+ *   前者のヘッダーには、有効な機能が `cors` のフックで挙げたリクエストヘッダーとレスポンスヘッダーも加える。
  *   プリフライト（`OPTIONS`）には 204 で応答する。
  * - HTTP メソッドの検査: パスで受け付けない HTTP メソッドには、`Allow` ヘッダーを付けて 405 で応答する。
  *   GET を受け付けるパスでは HEAD も通す。
@@ -241,10 +242,13 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   // ブラウザで動くクライアントが呼ぶエンドポイント向けに、CORS のミドルウェアを作る（OAuth 2.1 §4.2）。
   // 対象はトークンエンドポイント、UserInfo エンドポイント、機能が `cors: 'protected'` で登録したエンドポイントで、許可するオリジンは `corsOrigins` で決まる。
   // プリフライト（`OPTIONS`）にも、このミドルウェアが応答する。
+  // 有効な機能が `cors` のフックで挙げたヘッダーも、許可するヘッダーと読ませるヘッダーに加える。
+  const featureCorsHeaders = corsHeadersOf(features);
   const protectedCors = createCorsMiddleware({
     origins: options.corsOrigins ?? '*',
     allowMethods: ['POST', 'GET', 'OPTIONS'],
-    allowHeaders: ['Authorization', 'Content-Type'],
+    allowHeaders: ['Authorization', 'Content-Type', ...featureCorsHeaders.allowHeaders],
+    exposeHeaders: featureCorsHeaders.exposeHeaders,
     maxAge: 600,
   });
   const publicCors = createCorsMiddleware({

@@ -69,7 +69,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'rp-initiated-logout', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'RP 起点のログアウト（RP-Initiated Logout 1.0、end_session_endpoint）' },
   { id: 'dynamic-client-registration', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: '動的クライアント登録（RFC 7591）' },
   { id: 'google-login', tier: 'extension', requires: [], packages: ['@maronn-openid-connect/google-login', 'google-auth-library'], frameworks: ALL_FRAMEWORKS, runtimes: ['node'], summary: 'ログイン方法に「Google でログイン」を加える（Node.js 22 以上）' },
-  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）: トークンエンドポイントが DPoP proof を検査し、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛する。UserInfo は束縛したアクセストークンを DPoP スキームと同じ鍵の proof でだけ受け付ける。認可リクエストの dpop_jkt と、PAR のリクエストの DPoP proof の鍵は、認可コードをその鍵に束縛する' },
+  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）: トークンエンドポイントが DPoP proof を検査し、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛する。UserInfo は束縛したアクセストークンを DPoP スキームと同じ鍵の proof でだけ受け付ける。認可リクエストの dpop_jkt と、PAR のリクエストの DPoP proof の鍵は、認可コードをその鍵に束縛する。dpop_bound_access_tokens を登録したクライアントには、どのトークンリクエストにも DPoP proof を求める' },
 ];
 
 /** The entry of a feature id, or undefined for a name the CLI does not know. */
@@ -201,11 +201,14 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   (proof.ts), which the token endpoint calls to bind the access tokens it
  *   issues, and the refresh tokens of public clients, to the key of the
  *   proof, and the UserInfo endpoint calls to take a bound access token with
- *   the DPoP scheme only, their settings, the check of the dpop_jkt
- *   authorization request parameter, which binds the authorization code to a
- *   key, the check of the DPoP proof of a pushed authorization request (with
- *   par), whose key binds the code the same way, and the DPoP header in the
- *   CORS of the endpoints clients call directly (token, UserInfo, ...).
+ *   the DPoP scheme only, their settings, the dpop_bound_access_tokens client
+ *   metadata (RegisteredClient.dpopBoundAccessTokens), which makes the token
+ *   endpoint require a proof of every token request of the client, the check
+ *   of the dpop_jkt authorization request parameter, which binds the
+ *   authorization code to a key, the check of the DPoP proof of a pushed
+ *   authorization request (with par), whose key binds the code the same way,
+ *   and the DPoP header in the CORS of the endpoints clients call directly
+ *   (token, UserInfo, ...).
  */
 export const EXTENSION_FEATURES = ['google-login', 'dpop'] as const;
 
@@ -326,7 +329,9 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   the refresh token of a public client too (§5); a code or refresh token
  *   bound to a key is accepted only with a proof of that key (invalid_grant
  *   otherwise). A request without a DPoP header gets Bearer tokens as
- *   before. Discovery advertises dpop_signing_alg_values_supported (§5.1),
+ *   before, unless its client is registered with dpopBoundAccessTokens
+ *   (dpop_bound_access_tokens, §5.2): then it is invalid_dpop_proof.
+ *   Discovery advertises dpop_signing_alg_values_supported (§5.1),
  *   and the CORS of the endpoints clients call directly (token, UserInfo,
  *   ...) allows the DPoP header and exposes WWW-Authenticate. The UserInfo
  *   endpoint takes a token presented with the DPoP scheme (Authorization:

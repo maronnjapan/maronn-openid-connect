@@ -1,7 +1,8 @@
 /**
  * EXTENSION (dpop): the settings of OAuth 2.0 Demonstrating Proof of
  * Possession (RFC 9449), added to ProviderConfig (config.ts), and their
- * defaults (dpopConfigDefaults), to be laid over the defaults of config.ts.
+ * defaults (dpopConfigDefaults), to be laid over the defaults of config.ts;
+ * and the client metadata of DPoP, added to RegisteredClient.
  */
 import type { ProviderConfig } from '../../config.js';
 import { isSupportedDpopSigningAlg, SUPPORTED_DPOP_SIGNING_ALGS, type DpopSigningAlg } from './jwk.js';
@@ -33,6 +34,18 @@ declare module '../../config.js' {
      * dpopConfigDefaults (60).
      */
     dpopProofLeewaySeconds: number;
+  }
+
+  interface RegisteredClient {
+    /**
+     * EXTENSION (dpop): the dpop_bound_access_tokens client metadata
+     * (RFC 9449 §5.2). true says the client always uses DPoP, so the token
+     * endpoint rejects every token request of the client that has no DPoP
+     * header (invalid_dpop_proof). Omitted means false: the client may also
+     * ask for Bearer tokens. The memory database keeps it with the client,
+     * the SQL and key-value databases in the payload of the client.
+     */
+    dpopBoundAccessTokens?: boolean;
   }
 }
 

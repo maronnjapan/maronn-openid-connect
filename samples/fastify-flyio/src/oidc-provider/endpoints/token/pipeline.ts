@@ -34,10 +34,11 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  * respondTokenError().
  *
  * With the dpop extension, the (feature: dpop) blocks after client
- * authentication check the DPoP proof, decide the key the tokens are bound
- * to (tokenBinding, token-binding.ts) and reject a code or refresh token
- * bound to a key unless the proof is of that key; every grant below then
- * binds the access token it issues, and the refresh token of a public
+ * authentication check the DPoP proof, reject a request without one from a
+ * client registered with dpop_bound_access_tokens, decide the key the tokens
+ * are bound to (tokenBinding, token-binding.ts) and reject a code or refresh
+ * token bound to a key unless the proof is of that key; every grant below
+ * then binds the access token it issues, and the refresh token of a public
  * client, to it. Without a binding the tokens are Bearer tokens.
  */
 export const tokenApp = new WebRouter();

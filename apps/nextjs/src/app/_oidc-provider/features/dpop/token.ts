@@ -11,7 +11,14 @@
 import { isPublicTokenClient, type TokenClientInfo, type TokenRequestParams } from '@maronn-openid-connect/core';
 import { stores } from '../../provider';
 import { DPOP_TOKEN_TYPE, type TokenBinding } from '../../token-binding';
-import { buildDpopConfirmation, readDpopJkt, selectDpopRefreshTokenJkt, validateDpopBoundGrant } from './binding';
+import {
+  buildDpopConfirmation,
+  dpopBoundAccessTokensOf,
+  readDpopJkt,
+  requireDpopProofForClient,
+  selectDpopRefreshTokenJkt,
+  validateDpopBoundGrant,
+} from './binding';
 import { tokenEndpointRejectionOf } from './error-responses';
 import { readDpopProofHeader, verifyDpopRequestProof } from './proof';
 
@@ -21,7 +28,10 @@ export interface DpopTokenRequest {
   dpopJkt: string | undefined;
   /** The key the tokens of the response are bound to; undefined issues Bearer tokens. */
   tokenBinding: TokenBinding | undefined;
-  /** The error response to answer with when the DPoP proof was rejected. */
+  /**
+   * The error response to answer with when the DPoP proof was rejected, or was
+   * missing from a request of a client registered with dpop_bound_access_tokens.
+   */
   dpopRejection?: Response;
 }
 
@@ -29,6 +39,7 @@ export interface DpopTokenRequest {
  * トークンリクエストの DPoP proof を検証し、その鍵の JWK Thumbprint と、発行するトークンを束縛する鍵を返す。
  *
  * `DPoP` ヘッダーがなければ、`dpopJkt` と `tokenBinding` が `undefined`（Bearer トークンを発行する）の結果を返す。
+ * ただし、`dpop_bound_access_tokens` を登録したクライアント（`dpopBoundAccessTokensOf()`）の、`DPoP` ヘッダーの無いリクエストは拒否する（RFC 9449 §5.2 の MUST）。
  * `DPoP` ヘッダーがあれば、DPoP proof を検査し（`htm` は POST、`htu` は issuer の `/token`）、その鍵の JWK Thumbprint を `dpopJkt` に、その鍵への束縛を `tokenBinding` に入れて返す。
  * 返す `tokenBinding` は、アクセストークンの `cnf.jkt` をその鍵の JWK Thumbprint にし、`token_type` を `DPoP` にする（RFC 9449 §5 / §6.1）。
  * パブリッククライアントには、リフレッシュトークンも同じ鍵に束縛する `refreshTokenCnf` を持たせる（RFC 9449 §5 の MUST）。
@@ -40,12 +51,16 @@ export interface DpopTokenRequest {
  *
  * @spec RFC 9449 §4.3
  * @spec RFC 9449 §5
+ * @spec RFC 9449 §5.2
  * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき（設定の誤り。500 の `server_error` で応答する）
  */
 export async function verifyDpopTokenRequest(request: Request, tokenClient: TokenClientInfo): Promise<DpopTokenRequest> {
   try {
     // `DPoP` ヘッダーは一つだけでなければならない（RFC 9449 §4.3）。
     const proof = readDpopProofHeader(request.headers.get('DPoP'));
+
+    // `dpop_bound_access_tokens` を登録したクライアントは、常に DPoP を使う（RFC 9449 §5.2）。
+    requireDpopProofForClient(dpopBoundAccessTokensOf(tokenClient), proof);
     if (proof === undefined) return { dpopJkt: undefined, tokenBinding: undefined };
 
     const dpopJkt = await verifyDpopRequestProof(proof, { method: request.method, path: '/token' });

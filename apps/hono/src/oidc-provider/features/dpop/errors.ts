@@ -20,6 +20,7 @@
 const DPOP_ERROR_CODES = [
   /**
    * DPoP proof が無い、形式が正しくない、または検証できない（RFC 9449 §5 / §7.1）。
+   * トークンエンドポイントでは、`dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いときにも使う（RFC 9449 §5.2）。
    * PAR エンドポイントでは、プッシュした `dpop_jkt` が DPoP proof の鍵と違うときにも使う（RFC 9449 §10.1）。
    * トークンエンドポイントと PAR エンドポイントは 400 で、保護されたリソース（UserInfo エンドポイント）は 401 で応答する。
    */

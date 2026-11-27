@@ -569,9 +569,9 @@ describe('run', () => {
     // RFC 9449 §5: the token endpoint binds the access token of a request with a DPoP proof, and the
     // refresh token of a public client; §10 / §10.1: dpop_jkt, or the DPoP proof of a pushed request,
     // binds the code; §7.1 / §7.2: UserInfo takes a bound access token with the DPoP scheme only.
-    it('should tell how a client gets DPoP-bound tokens and codes, also through PAR, and how UserInfo takes them when dpop is enabled', () => {
+    it('should tell how a client gets DPoP-bound tokens and codes, also through PAR, that a client registered with dpop_bound_access_tokens must send a proof, and how UserInfo takes them when dpop is enabled', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
-        'A client opts in by sending a DPoP proof in the DPoP header of its token requests: the access token is then bound to its key (token_type DPoP), and so is the refresh token of a public client, which then needs a proof of the same key each time it is used; without one the tokens stay Bearer. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that key, so the code is exchanged only with a proof of that key; with par, a pushed authorization request with a DPoP proof in its DPoP header binds its code to the key of that proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
+        'A client opts in by sending a DPoP proof in the DPoP header of its token requests: the access token is then bound to its key (token_type DPoP), and so is the refresh token of a public client, which then needs a proof of the same key each time it is used; without one the tokens stay Bearer. A client registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens) must send one with every token request. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that key, so the code is exchanged only with a proof of that key; with par, a pushed authorization request with a DPoP proof in its DPoP header binds its code to the key of that proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
       );
     });
 
@@ -648,9 +648,9 @@ describe('run', () => {
       );
     });
 
-    it('should say that the token endpoint binds the access token and a public client\'s refresh token to the key of the DPoP proof, that dpop_jkt or the DPoP proof of a pushed request binds the code, and that UserInfo takes a bound token with the DPoP scheme only', () => {
+    it('should say that the token endpoint binds the access token and a public client\'s refresh token to the key of the DPoP proof, that a client registered with dpop_bound_access_tokens must send a proof, that dpop_jkt or the DPoP proof of a pushed request binds the code, and that UserInfo takes a bound token with the DPoP scheme only', () => {
       expect(helpText().replace(/\s+/g, ' ')).toContain(
-        'The token endpoint checks the DPoP proof of a request and binds the access token to its key (token_type DPoP), and the refresh token of a public client too, which then needs a proof of the same key each time it is used; without a proof the tokens stay Bearer. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that key, so the code is exchanged only with a proof of that key; with par, a pushed authorization request with a DPoP proof in its DPoP header binds its code to the key of that proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
+        'The token endpoint checks the DPoP proof of a request and binds the access token to its key (token_type DPoP), and the refresh token of a public client too, which then needs a proof of the same key each time it is used; without a proof the tokens stay Bearer. A client registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens) must send a proof with every token request. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that key, so the code is exchanged only with a proof of that key; with par, a pushed authorization request with a DPoP proof in its DPoP header binds its code to the key of that proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
       );
     });
 

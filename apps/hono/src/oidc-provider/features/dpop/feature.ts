@@ -10,10 +10,13 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * token_type DPoP); the [validate-dpop-grant-binding] block after it
  * (steps/validate-dpop-grant-binding.ts) lets a code or refresh token bound
  * to a key be used only with a proof of that key. A request without a DPoP
- * header gets Bearer tokens. The UserInfo endpoint takes a token presented
- * with the DPoP scheme and its proof (the [read-dpop-access-token] block of
- * endpoints/userinfo/pipeline.ts) and lets a bound token be used only with a
- * proof of its key, never as a Bearer token ([verify-dpop-access-token]).
+ * header gets Bearer tokens, unless its client is registered with
+ * dpopBoundAccessTokens (dpop_bound_access_tokens, ./config.ts): the
+ * [verify-dpop-proof] block rejects it then. The UserInfo endpoint takes a
+ * token presented with the DPoP scheme and its proof (the
+ * [read-dpop-access-token] block of endpoints/userinfo/pipeline.ts) and lets
+ * a bound token be used only with a proof of its key, never as a Bearer token
+ * ([verify-dpop-access-token]).
  * The authorization endpoint reads the dpop_jkt of a request (the
  * [validate-dpop-jkt] block of endpoints/authorize/pipeline.ts, whose step is
  * steps/validate-dpop-jkt.ts) and binds the code issued for it to that key.

@@ -18,10 +18,11 @@
  * binds the access token it issues, and the refresh token of a public client,
  * to it. Without a binding the tokens are Bearer tokens. With
  * dpopNonceRequiredAtAuthorizationServer, the (feature: dpop) block before
- * client authentication gives every response to a request with a DPoP header
- * a new nonce of the authorization server (DPoP-Nonce, which withCors puts on
- * the answer) and rejects a proof without a nonce it recently provided
- * (use_dpop_nonce).
+ * client authentication gives every response from then on to a request with
+ * a DPoP header a new nonce of the authorization server (DPoP-Nonce, which
+ * withCors puts on the answer) and rejects a proof without a nonce it
+ * recently provided (use_dpop_nonce), or a DPoP header that is not one
+ * well-formed DPoP proof (invalid_dpop_proof).
  */
 import {
   validateGrantTypeSupported,
@@ -119,7 +120,7 @@ export function OPTIONS(request: Request): Response {
  * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛し、`token_type` を `DPoP` にする。
  * 鍵に束縛した認可コードかリフレッシュトークンは、同じ鍵の DPoP proof を送ったリクエストだけが使える。
  * DPoP の機能があれば、`dpop_bound_access_tokens` を登録したクライアントは、DPoP proof を送ったリクエストでだけトークンを得られる。
- * DPoP の機能があり、設定が認可サーバーに DPoP の nonce を求めるときは、`DPoP` ヘッダーのあるリクエストへのどのレスポンスにも次の nonce（`DPoP-Nonce`）を付ける。
+ * DPoP の機能があり、設定が認可サーバーに DPoP の nonce を求めるときは、`DPoP` ヘッダーのあるリクエストには、リクエストを解析した後のどのレスポンスにも次の nonce（`DPoP-Nonce`）を付ける。
  *
  * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
  * - 400: リクエストが不正なとき、またはグラントを拒否したとき。DPoP の機能があれば、DPoP proof を受け付けないときと、`dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いとき（`invalid_dpop_proof`）と、鍵に束縛した認可コードかリフレッシュトークンにその鍵の DPoP proof が無いとき（`invalid_grant`）と、設定が認可サーバーに nonce を求め、DPoP proof に認可サーバーが最近発行した nonce が無いとき（`use_dpop_nonce`）。

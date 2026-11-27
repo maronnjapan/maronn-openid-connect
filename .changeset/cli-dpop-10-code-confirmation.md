@@ -9,4 +9,4 @@
 - 認可コードを発行するところ（Hono の `issueAuthorizationCodeResponse()` と `issueConsentedAuthorizationCode()`、Next.js の `authorize/route.ts` と `consent/decision/route.ts`、両方の `hybrid-flow` 機能）は、トランザクションの `cnf` を認可コードのレコードに入れる。`hybrid-flow` 機能の `issueHybridTokens()` は、そのための省略できる入力 `codeConfirmation` を受け取る。
 
 今はどのブロックもトランザクションに `cnf` を入れないので、トランザクションと認可コードのレコード、認可レスポンスは変わらない。
-独自のコードでトランザクションに `cnf` を保存している場合は、そのトランザクションから発行する認可コードのレコードにも `cnf` が入る。
+独自のコードでトランザクションに `cnf` を保存している場合は、そのトランザクションから発行する認可コードのレコードにも `cnf` が入る。トークンエンドポイントはまだ認可コードの `cnf` を確かめないので、そうした認可コードも今までどおり DPoP proof なしで交換できる。

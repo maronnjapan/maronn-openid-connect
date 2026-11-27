@@ -23,9 +23,9 @@ export const meta = step({
  * クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
  * URL のクエリパラメータ（RFC 6750 §2.3）は OAuth 2.1 が禁止しているので、意図して対応していない。
  *
- * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、チャレンジは `realm` だけを示す、RFC 6750 §3.1）。
- * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request`）。
- * @throws {UserInfoEndpointError} ヘッダーやボディを読めないとき（400 の `invalid_request`）。
+ * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、どのチャレンジもエラーを伝えない、RFC 6750 §3.1）。
+ * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request` で、`Bearer` のチャレンジがそのエラーを伝える、RFC 9449 §7.2）。
+ * @throws {UserInfoEndpointError} ヘッダーやボディを読めないとき（チャレンジの付かない 400 の `invalid_request`）。
  */
 export async function parseUserInfoRequest(c: any): Promise<string> {
   let headerToken = '';
@@ -53,20 +53,22 @@ export async function parseUserInfoRequest(c: any): Promise<string> {
   const methodCount = (headerToken ? 1 : 0) + (bodyToken ? 1 : 0);
   if (methodCount > 1) {
     // クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
-    throw new UserInfoEndpointError({
-      status: 400,
-      body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
-      headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo", error="invalid_request"' },
-    });
+    // ヘッダーもフォームのボディも Bearer の方法（RFC 6750 §2.1 / §2.2）で、認証しようとしたスキームは決まるので、`Bearer` のチャレンジだけにエラーを入れる（RFC 9449 §7.2）。
+    throw new UserInfoEndpointError(
+      {
+        status: 400,
+        body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+      },
+      { error: 'invalid_request' },
+    );
   }
   const accessToken = headerToken || bodyToken;
   if (!accessToken) {
-    // 認証情報のないリクエストへのチャレンジには `error` と `error_description` を付けず、`realm` だけを示す（RFC 6750 §3.1）。
-    throw new UserInfoEndpointError({
-      status: 401,
-      body: { error: 'invalid_token', error_description: 'Access token is required' },
-      headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo"' },
-    });
+    // 認証情報のないリクエストへのチャレンジには `error` と `error_description` を付けない（RFC 6750 §3.1、RFC 9449 §7.2）。
+    throw new UserInfoEndpointError(
+      { status: 401, body: { error: 'invalid_token', error_description: 'Access token is required' } },
+      'without-error',
+    );
   }
   return accessToken;
 }

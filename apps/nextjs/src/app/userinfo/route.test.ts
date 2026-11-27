@@ -298,6 +298,20 @@ describe('userinfo', () => {
     });
   });
 
+  // RFC 6750 §2.2: a token of the form body is a Bearer token, so the Bearer challenge carries its error.
+  it('should answer an unknown token of the form body with 401 invalid_token and its Bearer challenge', async () => {
+    const response = await POST(formPost({ access_token: 'userinfo-route-unknown-form-token' }));
+
+    expect(await answerOf(response)).toEqual({
+      status: 401,
+      contentType: 'application/json',
+      cacheControl: 'no-store',
+      pragma: 'no-cache',
+      challenge: 'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid"',
+      body: { error: 'invalid_token', error_description: 'Access token is invalid' },
+    });
+  });
+
   // OIDC Core 1.0 §5.3.1: the openid scope is required.
   it('should answer a token without the openid scope with 403 insufficient_scope', async () => {
     const accessToken = await storeToken({ scope: ['email'] });

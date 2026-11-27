@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TEST_ISSUER } from '../../../../test-support/context.js';
+import { TEST_ISSUER, contextOf, requestTo } from '../../../../test-support/context.js';
 import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop.js';
 import { rs256Key, staticKeyProvider } from '../../../../test-support/keys.js';
 import {
@@ -14,6 +14,7 @@ import { createApp } from '../../../app.js';
 import { createClientKeyResolver, createClientResolver, registerClient } from '../../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../../db/memory/database.js';
 import { createProviderStores } from '../../../db/memory/stores.js';
+import { validateDpopGrantBinding } from './validate-dpop-grant-binding.js';
 
 const TOKEN_ENDPOINT = `${TEST_ISSUER}/token`;
 // RFC 7636 §4.1 / §4.2: a 46-character verifier and its S256 challenge.
@@ -73,6 +74,15 @@ describe('validateDpopGrantBinding', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('should leave a bound code or refresh token sent with another grant unchecked', async () => {
+    const key = await dpopKey();
+    const { stores } = await provider(key);
+    const c = contextOf(requestTo('/token'), { authCodeStore: stores.authCodeStore, refreshTokenStore: stores.refreshTokenStore });
+    const params = { grant_type: 'client_credentials', code: 'code-1', refresh_token: 'refresh-1' };
+
+    await expect(validateDpopGrantBinding(c, params, CLIENT_ID, undefined)).resolves.toBeUndefined();
   });
 
   // RFC 9449 §10: a code bound to a key is exchanged only with a proof of that key.
@@ -182,6 +192,18 @@ describe('validateDpopGrantBinding', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Refresh token has already been used' });
       expect(await stores.refreshTokenStore.get(rotated)).toBeUndefined();
+    });
+
+    it('should leave a refresh token of another client to the grant validation', async () => {
+      const key = await dpopKey();
+      const { stores, refresh } = await provider();
+      const otherClientRefreshToken = { ...storedRefreshToken({ clientId: 'client-2', sessionId: undefined }), cnf: { jkt: key.jkt } };
+      await stores.refreshTokenStore.set('refresh-2', otherClientRefreshToken);
+
+      const response = await refresh(undefined, 'refresh-2');
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Refresh token was issued to a different client' });
     });
 
     it('should let an unbound refresh token be used without a proof, and keep the rotated one unbound', async () => {

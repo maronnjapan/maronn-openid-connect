@@ -423,23 +423,9 @@ describe('verifyDpopTokenRequest', () => {
   // The proof is checked before the refresh token is validated and rotated.
   it('should reject a bad proof of a refresh request, and leave the refresh token unused', async () => {
     const key = await dpopKey();
-    const { clientId, post } = await provider();
-    const refreshToken = unique('dpop-refresh-token');
-    await stores.refreshTokenStore.set(refreshToken, {
-      subject: 'dpop-user',
-      clientId,
-      scope: ['openid', 'offline_access'],
-      expiresAt: NOW + 86400,
-      originalIssuedAt: NOW - 3600,
-      used: false,
-      grantId: unique('grant'),
-      iat: NOW - 3600,
-      issuer: TEST_ISSUER,
-      audience: [`${TEST_ISSUER}/userinfo`],
-      authTime: NOW - 3600,
-    });
+    const { refreshToken, refresh } = await provider();
 
-    const response = await post({ grant_type: 'refresh_token', refresh_token: refreshToken }, { DPoP: await tokenProof(key, { htm: 'GET' }) });
+    const response = await refresh({ DPoP: await tokenProof(key, { htm: 'GET' }) });
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
@@ -518,8 +504,12 @@ describe('verifyDpopTokenRequest', () => {
 });
 
 describe('validateDpopGrantBinding', () => {
-  it('should leave a request of another grant unchecked', async () => {
-    expect(await validateDpopGrantBinding({ grant_type: 'client_credentials' }, 'dpop-client', undefined)).toBeUndefined();
+  it('should leave a bound code or refresh token sent with another grant unchecked', async () => {
+    const key = await dpopKey();
+    const { clientId, code, refreshToken } = await provider({ publicClient: true, boundKey: key });
+    const params = { grant_type: 'client_credentials', code, refresh_token: refreshToken };
+
+    expect(await validateDpopGrantBinding(params, clientId, undefined)).toBeUndefined();
   });
 
   // RFC 9449 §10: a code bound to a key is exchanged only with a proof of that key.
@@ -625,6 +615,17 @@ describe('validateDpopGrantBinding', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Refresh token has already been used' });
       expect(await stores.refreshTokenStore.get(rotated)).toBeUndefined();
+    });
+
+    it('should leave a refresh token of another client to the grant validation', async () => {
+      const key = await dpopKey();
+      const other = await provider({ publicClient: true, boundKey: key });
+      const { post } = await provider({ publicClient: true });
+
+      const response = await post({ grant_type: 'refresh_token', refresh_token: other.refreshToken });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Refresh token was issued to a different client' });
     });
 
     it('should let an unbound refresh token be used without a proof, and keep the rotated one unbound', async () => {

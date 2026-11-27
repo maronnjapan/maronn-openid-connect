@@ -188,11 +188,12 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credenti
 
 ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`__Host-oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します。`POST /login`・`POST /consent` は、ブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたことも確かめます（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 
-さらに、ログイン手段を足す**拡張機能**があります。仕様ではなく認証方式の追加なので Experimental とは別カテゴリで、実装は別 package（`@maronn-openid-connect/google-login`）にあり、既定では無効です。
+さらに、任意で足す**拡張機能**があります。API が不安定なことを理由に分けた Experimental とは別カテゴリで、既定では無効です。`google-login` の実装は別 package（`@maronn-openid-connect/google-login`）にあり、`dpop` のコードはすべて生成コードに入ります。
 
 | 機能名 | 内容 | 実装 |
 |---|---|---|
 | `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
+| `dpop` | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、Discovery に `dpop_signing_alg_values_supported` を載せ、CORS で `DPoP` ヘッダーを許す。どのエンドポイントもまだ DPoP proof を検査しないので、トークンはすべて Bearer のまま | 生成コードの `features/dpop/`（package なし） |
 
 ## Custom Scopes
 

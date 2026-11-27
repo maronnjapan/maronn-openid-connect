@@ -1,10 +1,10 @@
-import type { AccessTokenInfo } from '@maronn-openid-connect/core';
+import type { AccessTokenInfo, SigningKeyProvider } from '@maronn-openid-connect/core';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, requestTo } from '../../test-support/context';
 import { accessTokenInfo } from '../../test-support/fixtures';
-import { decodeJwt } from '../../test-support/jwt';
+import { decodeJwt, verifyRs256Jwt } from '../../test-support/jwt';
 import { createDatabase, registerClient, registerUser } from '../_oidc-provider/db';
-import { clientResolver, resolvers, stores } from '../_oidc-provider/provider';
+import { clientResolver, loadSigningKeys, resolvers, stores } from '../_oidc-provider/provider';
 import { GET, POST } from './route';
 
 // provider.ts keeps its clients, users and stores in the key-value store of
@@ -72,6 +72,17 @@ function registerUserinfoSigningAlg(alg: string): void {
     const client = await findClient(id);
     return client === null ? null : { ...client, userinfoSignedResponseAlg: alg };
   });
+}
+
+/** Make the client of the tokens one that is no longer registered. */
+function unregisterClient(): void {
+  vi.spyOn(clientResolver, 'findClient').mockResolvedValue(null);
+}
+
+/** Make the signing key provider that provider.ts keeps on globalThis fail to load the keys. */
+function failToLoadSigningKeys(): void {
+  const registry = globalThis as typeof globalThis & { __oidcSigningKeyProvider: SigningKeyProvider };
+  vi.spyOn(registry.__oidcSigningKeyProvider, 'getSigningKeys').mockRejectedValue(new Error('the key store is down'));
 }
 
 /** Make the access token resolver find an expired record of the client and the End-User, and return its token. */
@@ -160,9 +171,29 @@ describe('userinfo', () => {
     expect(response.headers.get('Content-Type')).toBe('application/jwt');
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(response.headers.get('Pragma')).toBe('no-cache');
-    const { header, payload } = decodeJwt(await response.text());
-    expect(header.alg).toBe('RS256');
-    expect(payload).toMatchObject({ iss: TEST_ISSUER, aud: CLIENT_ID, sub: SUBJECT, email: 'alice@example.com' });
+    const jwt = await response.text();
+    const [signingKey] = (await loadSigningKeys()).userinfo;
+    expect(decodeJwt(jwt)).toMatchObject({
+      header: { alg: 'RS256', typ: 'JWT', kid: signingKey.keyId },
+      payload: { iss: TEST_ISSUER, aud: CLIENT_ID, sub: SUBJECT, email: 'alice@example.com' },
+    });
+    expect(await verifyRs256Jwt(jwt, signingKey.publicJwk)).toBe(true);
+  });
+
+  it('should answer JSON when the client of the token is no longer registered', async () => {
+    unregisterClient();
+    const accessToken = await storeToken();
+
+    const response = await GET(bearerGet(accessToken));
+
+    expect(await answerOf(response)).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      cacheControl: 'no-store',
+      pragma: 'no-cache',
+      challenge: null,
+      body: { sub: SUBJECT, email: 'alice@example.com', email_verified: true },
+    });
   });
 
   it('should answer server_error naming the alg when no UserInfo key has the registered alg', async () => {
@@ -281,6 +312,17 @@ describe('userinfo', () => {
       challenge: 'Bearer realm="UserInfo", error="insufficient_scope", error_description="The openid scope is required"',
       body: { error: 'insufficient_scope', error_description: 'The openid scope is required' },
     });
+  });
+
+  it('should answer 503 server_error and no challenge when the signing keys cannot be loaded', async () => {
+    failToLoadSigningKeys();
+    const accessToken = await storeToken();
+
+    const response = await GET(bearerGet(accessToken));
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('WWW-Authenticate')).toBeNull();
+    expect(await response.json()).toEqual({ error: 'server_error', error_description: 'Failed to load signing key' });
   });
 
   it('should answer any other failure with 500 server_error and no challenge', async () => {

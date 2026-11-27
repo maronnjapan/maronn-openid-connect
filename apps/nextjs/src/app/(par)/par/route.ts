@@ -13,8 +13,8 @@
  * Each block of pushAuthorizationRequest() is one step of the endpoint
  * (endpoint.ts), as the steps of the Hono pipeline: parse the request,
  * authenticate the client, validate the parameters, store them under a new
- * request_uri and answer. A block that throws ends in the [respond-error]
- * block.
+ * request_uri and answer. [parse-request] answers its own 400s; a block after
+ * it that throws ends in the [respond-error] block.
  *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * left to the deployment layer (reverse proxy / platform). This endpoint is

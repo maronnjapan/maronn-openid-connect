@@ -156,6 +156,13 @@ export interface ClientRecord {
   policy_uri: string | null;
   tos_uri: string | null;
   client_uri: string | null;
+  /**
+   * Not in the ER model: the rest of the client, the metadata without a field
+   * (default_max_age, the ID Token and UserInfo signing algs) and the members
+   * a feature adds to the client. Absent when the client has none, as in a
+   * record written before the client kept it.
+   */
+  payload?: Record<string, unknown>;
 }
 
 /**

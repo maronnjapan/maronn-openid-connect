@@ -93,6 +93,23 @@ describe('SCHEMA_SQL', () => {
         },
       ]);
     });
+    // Not in the ER model: the metadata of a client without a column, which a client without any leaves NULL.
+    it('should default the payload of a client to NULL', () => {
+      insertClient('rp-1');
+
+      expect(sqlite.prepare('SELECT payload FROM clients').all()).toEqual([{ payload: null }]);
+    });
+
+    // packages/cli/README.md: a database created before clients.payload adds it with this statement.
+    it('should give a clients table without payload the same columns after ALTER TABLE clients ADD COLUMN payload TEXT', () => {
+      const columnsOf = (database: DatabaseSync): unknown[] => database.prepare('PRAGMA table_info(clients)').all();
+      const created = columnsOf(sqlite);
+      sqlite.exec('ALTER TABLE clients DROP COLUMN payload');
+
+      sqlite.exec('ALTER TABLE clients ADD COLUMN payload TEXT');
+
+      expect(columnsOf(sqlite)).toEqual(created);
+    });
   });
 
   describe('Constraints', () => {

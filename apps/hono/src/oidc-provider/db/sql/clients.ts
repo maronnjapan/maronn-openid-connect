@@ -36,8 +36,12 @@
  *   every private_key_jwt client assertion must be signed with. name,
  *   logo_uri, policy_uri, tos_uri and client_uri are clientName, logoUri,
  *   policyUri, tosUri and clientUri, what the login and consent screens show.
- * - Metadata without a column (default_max_age, the ID Token and UserInfo
- *   signing algs) keeps its default.
+ * - clients.payload: the rest of the RegisteredClient as JSON, the metadata
+ *   without a column (default_max_age, the ID Token and UserInfo signing algs)
+ *   and the members a feature adds to RegisteredClient (the
+ *   backchannelTokenDeliveryMode of ciba, for one). NULL when the client has
+ *   none. registerClient() writes no member with a column there, and a
+ *   column that holds a value wins over a payload member of the same name.
  *
  * The client's public keys (client_jwks) are not part of the RegisteredClient.
  * A process that needs them asks the ClientKeyResolver for the keys of its own
@@ -88,6 +92,7 @@ import type { SqlDatabase } from './database.js';
  * - `client_redirect_uris` の行は `redirectUris` にする。
  * - `client_grant_types`、`client_scopes`、`client_response_types`、`client_request_uris` の行は、あればそれぞれ `grantTypes`、`scope`、`responseTypes`、`requestUris` にし、なければ設定せずに既定の扱いに任せる。
  * - `clients` の `jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` の列は、NULL でなければそれぞれ `jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri` にする。
+ * - `clients.payload` の JSON（列を持たないメタデータ。`defaultMaxAge` や、機能が `RegisteredClient` に足すメンバー）は、NULL でなければ、そのメンバーをそのまま `RegisteredClient` に移す。列から移す値は `payload` より後に移すので、同じ名前のメンバーは、列に値があれば列の値になる。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの方式の `client_auths` の行どうしでシークレットが違うクライアントを読んだとき
  */
@@ -105,10 +110,11 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
         policy_uri: string | null;
         tos_uri: string | null;
         client_uri: string | null;
+        payload: string | null;
       }>({
         sql:
           'SELECT id, name, client_type, jwks_uri, request_object_signing_alg, token_endpoint_auth_signing_alg, ' +
-          'logo_uri, policy_uri, tos_uri, client_uri FROM clients WHERE id = ? AND is_deleted = FALSE',
+          'logo_uri, policy_uri, tos_uri, client_uri, payload FROM clients WHERE id = ? AND is_deleted = FALSE',
         params: [clientId],
       });
       if (!client) return null;
@@ -140,6 +146,8 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       });
 
       const registered: RegisteredClient = {
+        // 列を持たないメタデータを先に移し、同じ名前のメンバーは、後に続く列の値があればそれで上書きする。
+        ...(client.payload === null ? {} : (JSON.parse(client.payload) as Record<string, unknown>)),
         clientId: client.id,
         clientType: client.client_type === 'public' ? 'public' : 'confidential',
         redirectUris: redirectUris.map((row) => row.value),
@@ -258,6 +266,7 @@ function parseJwk(clientId: string, json: string): Jwk {
  *
  * `requestUris` は `client_request_uris` の行になる。
  * `clientName`、`jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`logoUri`、`policyUri`、`tosUri`、`clientUri` は、`clients` のそれぞれ `name`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` の列になり、渡されなければ NULL になる。
+ * 列もテーブルも持たないメタデータ（`defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、機能が `RegisteredClient` に足すメンバー）は、`clients.payload` に JSON で保存し（{@link otherMetadataOf}）、なければ NULL にする。
  * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
  *
  * セットアップ用のスクリプトや起動時の処理から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
@@ -281,17 +290,18 @@ function parseJwk(clientId: string, json: string): Jwk {
 export async function registerClient(db: SqlDatabase, client: ClientRegistration): Promise<void> {
   assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
+  const payload = otherMetadataOf(client);
   await db.run({
     sql:
       'INSERT INTO clients (id, name, client_type, is_deleted, jwks_uri, request_object_signing_alg, ' +
-      'token_endpoint_auth_signing_alg, logo_uri, policy_uri, tos_uri, client_uri) ' +
-      'VALUES (?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?) ' +
+      'token_endpoint_auth_signing_alg, logo_uri, policy_uri, tos_uri, client_uri, payload) ' +
+      'VALUES (?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?, ?) ' +
       'ON CONFLICT (id) DO UPDATE SET name = excluded.name, client_type = excluded.client_type, ' +
       'is_deleted = FALSE, jwks_uri = excluded.jwks_uri, ' +
       'request_object_signing_alg = excluded.request_object_signing_alg, ' +
       'token_endpoint_auth_signing_alg = excluded.token_endpoint_auth_signing_alg, ' +
       'logo_uri = excluded.logo_uri, policy_uri = excluded.policy_uri, tos_uri = excluded.tos_uri, ' +
-      'client_uri = excluded.client_uri',
+      'client_uri = excluded.client_uri, payload = excluded.payload',
     params: [
       client.clientId,
       client.clientName ?? null,
@@ -303,6 +313,7 @@ export async function registerClient(db: SqlDatabase, client: ClientRegistration
       client.policyUri ?? null,
       client.tosUri ?? null,
       client.clientUri ?? null,
+      payload === undefined ? null : JSON.stringify(payload),
     ],
   });
 
@@ -386,6 +397,40 @@ export async function registerClient(db: SqlDatabase, client: ClientRegistration
       params: [client.clientId, ...ids],
     });
   }
+}
+
+/**
+ * クライアントのメタデータのうち、`clients` の列にもクライアントのテーブルの行にもならないものを返す。
+ *
+ * `defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、機能が `RegisteredClient` に足すメンバーのように、列を持たないメンバーを、値が `undefined` のものを除いて返す。
+ * そのようなメンバーがなければ `undefined` を返す。
+ * 列やテーブルの行になるメンバーと、`clientSecret`（保存しない）、`clientSecretHash`（`client_secrets` の行になる）、`keys`（`client_jwks` の行になる）は含めない。
+ */
+function otherMetadataOf(client: ClientRegistration): Record<string, unknown> | undefined {
+  const {
+    clientId,
+    clientName,
+    clientType,
+    clientSecret,
+    clientSecretHash,
+    tokenEndpointAuthMethods,
+    redirectUris,
+    grantTypes,
+    scope,
+    responseTypes,
+    requestUris,
+    jwksUri,
+    requestObjectSigningAlg,
+    tokenEndpointAuthSigningAlg,
+    logoUri,
+    policyUri,
+    tosUri,
+    clientUri,
+    keys: _keys,
+    ...metadata
+  } = client;
+  const entries = Object.entries(metadata).filter(([, value]) => value !== undefined);
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 /**

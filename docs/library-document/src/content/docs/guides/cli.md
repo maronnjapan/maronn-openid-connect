@@ -169,6 +169,8 @@ src/app/
 
 各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export します。ログイン画面と同意画面は React のページなので、見た目は `page.tsx` を書き換えます。判断はログインが Server Action の `login/actions.ts`、同意が Route Handler の `consent/decision/route.ts` にあります。同意だけ Route Handler にしているのは、`form_post` の認可レスポンスが HTML のページで、Server Action はリダイレクトしか返せないためです。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要があります。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成します。
 
+`tsc` で生成物を型検査するときは、`tsconfig.json` の `include` に `.well-known` のディレクトリを名指ししてください（出力先が `./src/app` なら `"src/app/.well-known/**/*.ts"`）。TypeScript の `**` はドットで始まるディレクトリに入らないので、`src/**/*.ts` だけでは Discovery と JWKS の Route Handler が型検査から漏れます。
+
 機能のルートは、その機能の route group（`(par)/par/route.ts`、`(google-login)/login/google/route.ts` など。route group の名前は URL に現れません）の下にあります。機能の設定やストアなど、ルート以外のコードは `_oidc-provider/features/<feature-id>/` にあり（例: `_oidc-provider/features/par/config.ts` の `parConfig`、`_oidc-provider/features/token-exchange/config.ts` の `tokenExchangeConfig`）、`_oidc-provider/features.ts` が有効な機能を並べます。標準の Route Handler の中で動く機能の処理は、`(feature: <feature-id>)` の印が付いたブロックから呼ばれ、無効にした機能はそのブロックごと消えます。
 
 OP がブラウザを止める場面は、Next.js の機能で表します。

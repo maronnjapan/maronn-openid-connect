@@ -4,18 +4,19 @@ DPoP（RFC 9449）を生成 OP に入れる段の 23 個目で、サーバーが
 nonce はサーバーに状態を持たない。発行した時刻（秒）と 12 バイトの乱数に、秘密の鍵での HMAC-SHA256 を付けたもので、MAC には発行したサーバーの役割（認可サーバーか保護されたリソースか）と issuer も入れる。
 nonce を覚えるストアを足さないので、データベースのテーブルもキーも変わらず、同じ秘密を持つインスタンスはどれも互いの nonce を受け付ける。Web Crypto だけで作るので、Workers でも動く。
 DPoP proof の検査（`verifyDpopRequestProof()`）は、呼び出し元が nonce を発行したサーバーの役割（`nonceServer`）を渡したときだけ、`nonce` クレームがその役割の最近の nonce であることを、`jti` を消費する前に確かめ、そうでなければ `use_dpop_nonce` で拒否する。
-nonce を受け付ける期間は `ProviderConfig` の新しい項目 `dpopNonceLifetimeSeconds`（既定は 120 秒）で、秘密は Hono 系では `OidcProviderOptions.dpopNonceSecret`（dpop の機能の `context` がリクエストコンテキストの `dpopNonceSecret` に入れる）、Next.js では環境変数 `OIDC_DPOP_NONCE_SECRET` である。秘密が無ければ、プロセスごとに乱数の鍵を作る。
+nonce を受け付ける期間は `ProviderConfig` の新しい項目 `dpopNonceLifetimeSeconds`（既定は 120 秒）で、秘密は Hono 系では `OidcProviderOptions.dpopNonceSecret`（dpop の機能の `context` がリクエストコンテキストの `dpopNonceSecret` に入れる）、Next.js では環境変数 `OIDC_DPOP_NONCE_SECRET` である。秘密が無ければ、インスタンスごと（Workers の Hono では isolate ごと、Node.js の Hono、Express、Fastify ではプロセスごと、Next.js では `next start` のプロセスかサーバーレスの関数のインスタンスごと）に乱数の鍵を作る。
 この段では、どのエンドポイントも `nonceServer` を渡さず、`DPoP-Nonce` ヘッダーも返さないので、OP の応答は変わらない（地図の生きた OP のケースも、すべて期待どおりの状態とエラーで答える）。
 nonce を求めるかどうかの設定（認可サーバーと保護されたリソースのそれぞれ）は、この段には入れず、応答で nonce を渡すエンドポイントと一緒に足す。nonce を渡す前に求める設定だけがあると、それを有効にした OP は DPoP のリクエストをすべて `use_dpop_nonce` で拒否し、クライアントには nonce を得る手段が無いためである（RFC 9449 §8 は、`use_dpop_nonce` の応答に `DPoP-Nonce` ヘッダーで nonce を付けることを求める）。
-Hono と Next.js のファイルは、秘密の読み方（Hono はリクエストのコンテキスト、Next.js は環境変数）のほかは同じ中身である。
+Hono と Next.js のファイルは、秘密の読み方（Hono はリクエストのコンテキスト、Next.js は環境変数）と、秘密が無いときの鍵の置き場所（Next.js は `globalThis`）のほかは同じ中身である。
 
 ## dpopNonceKeyOf, importDpopNonceKey <!-- hono:oidc-provider/features/dpop/nonce.ts#dpopNonceKeyOf hono:oidc-provider/features/dpop/nonce.ts#importDpopNonceKey nextjs:app/_oidc-provider/features/dpop/nonce.ts#dpopNonceKeyOf nextjs:app/_oidc-provider/features/dpop/nonce.ts#importDpopNonceKey -->
 
 nonce の MAC に使う HMAC-SHA256 の鍵を、設定した秘密から作る。
 OP にはこれまで共通鍵が無く、署名鍵は非対称鍵で取り出せないこともあるので、nonce のために秘密を一つ設定してもらう形にした。
 秘密は UTF-8 で 32 バイト（HMAC-SHA256 の出力の長さ、RFC 2104 §3）以上を求め、短ければ設定の誤りとして `Error` を投げる。短い鍵は MAC を弱め、推測できない nonce（RFC 9449 §8 の MUST）を保てないためである。
-秘密が無いときは、プロセスで初めて呼ばれたときに 32 バイトの乱数から鍵を作って使い続ける。設定なしで一つのインスタンスを動かすときにも nonce を使えるようにするためで、別のインスタンス（Workers の Hono では別の isolate、Node.js の Hono、Express、Fastify では別のプロセス、Next.js では別の `next start` のプロセスかサーバーレスの関数の別のインスタンス）や再起動した後のインスタンスはその nonce を受け付けない。この制限は秘密の設定の JSDoc（Hono 系の `dpopNonceSecret`、Next.js の `config.ts` の先頭）に書いた。
-鍵は秘密ごとに一度だけ作り、作った鍵は取り出せない（`extractable` が `false`）。
+秘密が無いときは、インスタンスで初めて呼ばれたときに 32 バイトの乱数から鍵を作って使い続ける。設定なしで一つのインスタンスを動かすときにも nonce を使えるようにするためで、別のインスタンス（Workers の Hono では別の isolate、Node.js の Hono、Express、Fastify では別のプロセス、Next.js では別の `next start` のプロセスかサーバーレスの関数の別のインスタンス）や再起動した後のインスタンスはその nonce を受け付けない。この制限は秘密の設定の JSDoc（Hono 系の `dpopNonceSecret`、Next.js の `config.ts` の先頭）に書いた。
+Next.js では、秘密が無いときの鍵を `globalThis` に置く（`shared()`）。Next.js はモジュールを層（ルートハンドラ、サーバーアクションとページ）ごとに読み込み、開発サーバーは変更のたびに読み込み直すので、モジュールの変数に置くと同じプロセスの中で鍵が変わり、それまでに発行した nonce を受け付けなくなるためである。署名鍵やメモリ上のデータベースと同じ置き方である。
+秘密から作った鍵は、最後に使った秘密の鍵だけを覚えておき、同じ秘密ではそれを使い回す。作った鍵は取り出せない（`extractable` が `false`）。
 Workers では、乱数や鍵の生成をモジュールの読み込み時に行えないので、最初に呼ばれたときに作る。
 
 ## issueDpopNonce, macInputOf <!-- hono:oidc-provider/features/dpop/nonce.ts#issueDpopNonce hono:oidc-provider/features/dpop/nonce.ts#macInputOf nextjs:app/_oidc-provider/features/dpop/nonce.ts#issueDpopNonce nextjs:app/_oidc-provider/features/dpop/nonce.ts#macInputOf -->
@@ -25,7 +26,7 @@ base64url の文字と `.` はどれも NQCHAR なので、nonce の構文（RFC
 乱数があるので同じ秒の nonce も毎回違い、秘密の鍵の MAC があるので、秘密を知らない者は受け付けられる nonce を作れない（RFC 9449 §8 の、nonce は推測できないこと）。
 MAC の対象（`macInputOf()`）には、`DPoP-Nonce`、サーバーの役割、issuer を NUL で区切って `payload` の前に置く。認可サーバーの nonce と保護されたリソースの nonce は別のもので、発行したサーバーでだけ受け付ける（RFC 9449 §9）ためで、同じ秘密を使う別の OP の nonce も受け付けない。
 nonce をエンドポイントやクライアントの鍵には結び付けない。クライアントは一つの nonce を使い続けることが期待されている（RFC 9449 §8 / §8.2）ので、エンドポイントごとに違う nonce を求めると、クライアントが nonce を取り違えるためである。
-`issueDpopNonce()` は、この段ではテストだけが呼ぶ。応答に nonce を付けるエンドポイントが呼ぶ。
+`issueDpopNonce()` は、応答に nonce を付けるエンドポイントのための関数で、この段ではテストだけが呼ぶ。
 
 ## verifyDpopNonce <!-- hono:oidc-provider/features/dpop/nonce.ts#verifyDpopNonce nextjs:app/_oidc-provider/features/dpop/nonce.ts#verifyDpopNonce -->
 

@@ -20,9 +20,10 @@ import { respondUserInfo } from './steps/respond.js';
  * accepts.
  *
  * With the dpop extension, the (feature: dpop) block before the Bearer token
- * reads a token presented with the DPoP scheme and checks its DPoP proof, and
- * the one after the token is resolved checks that the key the token is bound
- * to matches how it was presented (RFC 9449 §7.1 / §7.2).
+ * adds the DPoP challenge beside the Bearer one, rejects a token sent with
+ * both schemes, and reads a token presented with the DPoP scheme and checks
+ * its DPoP proof; the one after the token is resolved checks that the key the
+ * token is bound to matches how it was presented (RFC 9449 §7.1 / §7.2).
  */
 export const userinfoApp = new Hono<{ Variables: Record<string, any> }>();
 

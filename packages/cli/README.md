@@ -436,6 +436,7 @@ src/app/
 ├── consent/not-found.tsx / consent/error.tsx  # 同意画面の not-found / error（ログイン画面と同じ役割）
 ├── oidc-error/page.tsx             # クライアントへ返してはいけないエラーの表示先
 ├── (introspection)/introspect/route.ts / endpoint.ts  # POST /introspect（introspection 有効時）
+├── (par)/par/route.ts / endpoint.ts  # POST /par（par 有効時）
 ├── (revocation)/revoke/route.ts    # POST /revoke（revocation 有効時）
 └── .maronn-openid-connect.json
 ```
@@ -467,7 +468,7 @@ export default nextConfig;
 
 機能のエンドポイントは、機能 ID を名前にしたルートグループ `(<feature-id>)/` に入る。ルートグループの名前は URL に現れないので、`(introspection)/introspect/route.ts` は `POST /introspect` に、`(google-login)/login/google/route.ts` は `POST /login/google` になる。実験的機能と拡張機能のルートグループは `(par)`、`(device-authorization-grant)`、`(ciba)`、`(rp-initiated-logout)`、`(dynamic-client-registration)`、`(google-login)` で、`generate` は有効な機能のルートグループと `_oidc-provider/features/<id>/` だけを写す。
 
-機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`authorize.responseTypes`（`code` のほかに答える `response_type` の名前）、`loginMethods`、`cors`（`http.ts` の `clientCors` に加えるヘッダー）がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`consent/decision/route.ts`、`token/route.ts`、`userinfo/route.ts`、`(introspection)/introspect/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。Implicit Flow のトークンは、`authorize/route.ts` の `issueAuthorizationResponse()`（`prompt=none` と同意済みの SSO が認可コードを発行する関数）と `consent/decision/route.ts` にある `implicit-flow` のブロックが、認可コードの代わりに返す。Hybrid Flow の認可コードとトークンは、同じ 2 か所にある `hybrid-flow` のブロックが返す。
+機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`authorize.responseTypes`（`code` のほかに答える `response_type` の名前）、`loginMethods`、`cors`（`http.ts` の `clientCors` に加えるヘッダー）がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`consent/decision/route.ts`、`token/route.ts`、`userinfo/route.ts`、`(introspection)/introspect/route.ts`、`(par)/par/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。Implicit Flow のトークンは、`authorize/route.ts` の `issueAuthorizationResponse()`（`prompt=none` と同意済みの SSO が認可コードを発行する関数）と `consent/decision/route.ts` にある `implicit-flow` のブロックが、認可コードの代わりに返す。Hybrid Flow の認可コードとトークンは、同じ 2 か所にある `hybrid-flow` のブロックが返す。
 
 `generate` は、無効な機能のブロックとその import を `route.ts` から取り除き、そのブロックが作っていた値を後のブロックが読むなら、`endpoint.ts` の `produces` から決めた名前で `const <name> = undefined;` を残す。`endpoint.ts` からも、無効な機能のステップの行を消す。生成した後で機能を手で外すときは、`_oidc-provider/features.ts` にあるその機能の import の行と一覧の行、`_oidc-provider/features/<id>/`、ルートグループ `(<id>)/` に加えて、Route Handler にあるその機能のブロックも消す。
 

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadCli, type Cli } from '../cli.js';
-import { heldRevision, isoDate, mainRevision, MAX_FILE_DIFF_LINES, originRepository, readHistory, readHistoryWithDiffs, repositoryOfRemote, splitHunks } from '../history.js';
+import { heldRevision, historyRevision, isoDate, mainRevision, MAX_FILE_DIFF_LINES, originRepository, readHistory, readHistoryWithDiffs, repositoryOfRemote, splitHunks } from '../history.js';
 import type { HistoryData, HistoryDetail } from '../model.js';
 import type { AnalysisRoot } from '../roots.js';
 
@@ -270,6 +270,57 @@ describe('mainRevision', () => {
       git(directory, ['commit', '-q', '--allow-empty', '-m', 'W3'], at(6));
       // git merge-base gives B (the newer of B and W1), which main had already.
       expect([git(directory, ['merge-base', merge, 'HEAD']).trim() === b, mainRevision(directory)]).toEqual([true, { revision: merge, from: 'origin/main' }]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('historyRevision', () => {
+  it('should read the history of main in the map of a pull request stacked on another one, with the changes still since its own base', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'map-history-base-'));
+    try {
+      git(directory, ['init', '-q', '-b', 'main']);
+      git(directory, ['config', 'user.name', 'Maintainer']);
+      git(directory, ['config', 'user.email', 'maintainer@example.com']);
+      git(directory, ['config', 'commit.gpgsign', 'false']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'A']);
+      const a = git(directory, ['rev-parse', 'HEAD']).trim();
+      // The lower pull request (into main) is not merged yet; the upper one is stacked on its branch.
+      git(directory, ['checkout', '-q', '-b', 'lower']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Lower pull request']);
+      const lower = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', a]);
+      git(directory, ['update-ref', 'refs/remotes/origin/lower', lower]);
+      git(directory, ['checkout', '-q', '-b', 'upper']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Upper pull request']);
+      const titles = (revision: string) => readHistory({ repository: directory, roots, codeMaskOf: cli.codeMaskOf, revision }).entries.map((entry) => entry.title);
+      const ofLower = historyRevision(directory, {}, 'origin/lower');
+      const ofMain = historyRevision(directory, { base: 'origin/main' }, 'origin/lower');
+      expect([ofLower, ofMain, titles(ofLower.revision), titles(ofMain.revision)]).toEqual([{ revision: lower, from: 'origin/lower' }, { revision: a, from: 'origin/main' }, ['Lower pull request', 'A'], ['A']]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('should read the same history into main with the base of the history or without it, the revision given as it is, and without a base the main of a remote', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'map-history-base-'));
+    try {
+      git(directory, ['init', '-q', '-b', 'main']);
+      git(directory, ['config', 'user.name', 'Maintainer']);
+      git(directory, ['config', 'user.email', 'maintainer@example.com']);
+      git(directory, ['config', 'commit.gpgsign', 'false']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'A']);
+      const a = git(directory, ['rev-parse', 'HEAD']).trim();
+      git(directory, ['update-ref', 'refs/remotes/origin/main', a]);
+      git(directory, ['checkout', '-q', '-b', 'work']);
+      git(directory, ['commit', '-q', '--allow-empty', '-m', 'Into main']);
+      expect([
+        historyRevision(directory, { base: 'origin/main' }, 'origin/main'),
+        historyRevision(directory, {}, 'origin/main'),
+        historyRevision(directory, { revision: 'HEAD', base: 'origin/main' }, 'origin/main'),
+        historyRevision(directory, {}),
+      ]).toEqual([{ revision: a, from: 'origin/main' }, { revision: a, from: 'origin/main' }, { revision: 'HEAD', from: 'HEAD' }, { revision: a, from: 'origin/main' }]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

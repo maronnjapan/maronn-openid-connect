@@ -8,7 +8,6 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMapKvDatabase, type MapKvDatabase } from '../../../test-support/databases.js';
 import type { ProviderStores } from '../../store.js';
-import { accessTokenRecordOf, confirmationRecordOf, refreshTokenRecordOf } from '../../token-binding.js';
 import { readRecord } from './database.js';
 import {
   keys,
@@ -170,7 +169,8 @@ describe('createProviderStores', () => {
 
     // RFC 9449 §10: the key a request is bound to (dpop_jkt) comes back with the transaction, for the code issued from it.
     it('should return the cnf a binding added to a transaction', async () => {
-      const stored = { ...transaction(), ...confirmationRecordOf({ cnf: { jkt: 'jkt-1' } }) };
+      // The member is written out, not built with confirmationRecordOf(), so the test fails if the store drops it.
+      const stored = { ...transaction(), cnf: { jkt: 'jkt-1' } };
       await stores.transactionStore.put('auth_txn:txn-1', stored, 60);
 
       expect(await stores.transactionStore.get('auth_txn:txn-1')).toEqual(stored);
@@ -275,7 +275,8 @@ describe('createProviderStores', () => {
   describe('authCodeStore', () => {
     // RFC 9449 §10: the key of a bound request comes back with the code, for the check at the token endpoint.
     it('should return the cnf a binding added to a code, before and after it is consumed', async () => {
-      const stored = { ...code(), ...confirmationRecordOf({ cnf: { jkt: 'jkt-1' } }) };
+      // The member is written out, not built with confirmationRecordOf(), so the test fails if the store drops it.
+      const stored = { ...code(), cnf: { jkt: 'jkt-1' } };
       await stores.authCodeStore.set('code-1', stored);
       const beforeConsume = await stores.authCodeStore.get('code-1');
       await stores.authCodeStore.consume('code-1');
@@ -418,7 +419,8 @@ describe('createProviderStores', () => {
 
     // RFC 9449 §6.2: what a binding adds to the record comes back with it, for the introspection of a bound token.
     it('should return the cnf and the token_type a binding added to an access token', async () => {
-      const stored = { ...accessToken({ jti: 'jti-1' }), ...accessTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' }) };
+      // The members are written out, not built with accessTokenRecordOf(), so the test fails if the store drops them.
+      const stored = { ...accessToken({ jti: 'jti-1' }), cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' };
       await stores.accessTokenStore.set('at-1', stored);
 
       expect(await stores.accessTokenStore.get('at-1')).toEqual(stored);
@@ -546,8 +548,8 @@ describe('createProviderStores', () => {
   describe('refreshTokenStore', () => {
     // RFC 9449 §5: the confirmation of a bound refresh token comes back with it, for the check at the next refresh.
     it('should return the cnf a binding added to a refresh token', async () => {
-      const binding = { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP', refreshTokenCnf: { jkt: 'jkt-1' } };
-      const stored = { ...refreshToken(), ...refreshTokenRecordOf(binding) };
+      // The member is written out, not built with refreshTokenRecordOf(), so the test fails if the store drops it.
+      const stored = { ...refreshToken(), cnf: { jkt: 'jkt-1' } };
       await stores.refreshTokenStore.set('rt-1', stored);
 
       expect(await stores.refreshTokenStore.get('rt-1')).toEqual(stored);

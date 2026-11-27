@@ -15,8 +15,10 @@ import { config, stores } from '../../provider';
 import { validateDpopJktParameter } from './authorize';
 
 // provider.ts keeps its clients and stores in the key-value store of db/ (in
-// memory for the tests, vitest.config.ts) for the whole file, so every test
-// uses a transaction, a session and a client of its own.
+// memory for the tests, vitest.config.ts) for the whole file, so the tests
+// share the client beforeAll registers (the RFC 9449 Figure 5 test registers
+// the public client of the RFC) and every test uses a transaction and a
+// session of its own.
 
 /** 2026-01-01T00:00:00Z in Unix seconds: the clock of the tests that do not replay RFC 9449. */
 const NOW = 1767225600;

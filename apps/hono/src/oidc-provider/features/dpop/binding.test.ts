@@ -63,7 +63,7 @@ describe('parseDpopJkt', () => {
     ['a value of the base64 alphabet', 'NzbLsXh8uDCcd+6MNwXF4W/7noWXFZAfHkxZsRGC9Xs'],
     // The last character of 43 carries two bits beyond the 32 bytes; 't' sets one of them where the hash has 's'.
     ['a value whose last character is not the canonical one', 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xt'],
-    ['a value that only looks like one with spaces around', ` ${JKT}`],
+    ['a value with a space before it', ` ${JKT}`],
     ['a number', 42],
     ['null', null],
     ['an object', { jkt: JKT }],

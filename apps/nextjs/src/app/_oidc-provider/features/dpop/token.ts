@@ -1,15 +1,16 @@
 /**
- * EXTENSION (dpop): the blocks of token/route.ts (RFC 9449 §5).
+ * EXTENSION (dpop): the blocks of token/route.ts (RFC 9449 §5 / §8).
  *
- * The token endpoint calls verifyDpopTokenRequest() in its
- * [verify-dpop-proof] block and validateDpopGrantBinding() in its
- * [validate-dpop-grant-binding] block, right after client authentication and
- * before any grant is answered. A failure is answered with a ready-made
- * Response the block returns, so the base token endpoint needs no error type
- * of this feature.
+ * The token endpoint calls requireTokenDpopNonce() in its
+ * [require-dpop-nonce] block, right before client authentication, then
+ * verifyDpopTokenRequest() in its [verify-dpop-proof] block and
+ * validateDpopGrantBinding() in its [validate-dpop-grant-binding] block,
+ * right after client authentication and before any grant is answered. A
+ * failure is answered with a ready-made Response the block returns, so the
+ * base token endpoint needs no error type of this feature.
  */
 import { isPublicTokenClient, type TokenClientInfo, type TokenRequestParams } from '@maronn-openid-connect/core';
-import { stores } from '../../provider';
+import { config, stores } from '../../provider';
 import { DPOP_TOKEN_TYPE, type TokenBinding } from '../../token-binding';
 import {
   buildDpopConfirmation,
@@ -21,6 +22,7 @@ import {
 } from './binding';
 import { tokenEndpointRejectionOf } from './error-responses';
 import { readDpopProofHeader, verifyDpopRequestProof } from './proof';
+import { authorizationServerNonceOf, requireDpopNonce } from './server-nonce';
 
 /** What verifyDpopTokenRequest() decided. */
 export interface DpopTokenRequest {
@@ -36,18 +38,48 @@ export interface DpopTokenRequest {
 }
 
 /**
+ * 設定が認可サーバーに DPoP の nonce を求めるとき、`DPoP` ヘッダーのあるトークンリクエストへのレスポンスに次の nonce を付け、DPoP proof の nonce を確かめる。
+ *
+ * 設定の `dpopNonceRequiredAtAuthorizationServer` が false なら何もせず `undefined` を返す（nonce を渡さず、DPoP proof の `nonce` も確かめない）。
+ * true なら、`DPoP` ヘッダーが一つの値のリクエストには、このブロックから後のどのレスポンス（トークンレスポンスもエラーレスポンスも）にも認可サーバーの新しい nonce を `DPoP-Nonce` ヘッダーで付け、DPoP proof に `nonce` が無いか、認可サーバーが最近発行した nonce でなければ拒否する（`requireDpopNonce()`。RFC 9449 §8 / §8.2 / §11.3）。
+ * `nonce` を読むために DPoP proof を署名を確かめずに分解するので、`DPoP` ヘッダーが一つの DPoP proof の形でない（JWS のコンパクト形式でない、JOSE ヘッダーの `typ` が `dpop+jwt` でない、`alg` か `jwk` が無い、`crit` がある）リクエストも、ここで拒否する。
+ * クライアントの認証の前に実行するので、nonce で拒否したリクエストのクライアントアサーション（`private_key_jwt`）の `jti` は消費しない。
+ * クライアントは、同じクライアントアサーションと、渡された nonce を入れた DPoP proof でやり直せる。
+ * DPoP proof の署名とほかのクレームは、クライアントの認証の後の DPoP proof の検査（`verifyDpopTokenRequest()`）が、`nonce` と一緒に確かめる。
+ * 拒否するときは、キャッシュさせない 400 のレスポンスを返す。`error` は、nonce を受け付けないときは `use_dpop_nonce`、`DPoP` ヘッダーが一つの DPoP proof の形でないときは `invalid_dpop_proof` である。
+ *
+ * @spec RFC 9449 §8
+ * @spec RFC 9449 §8.2
+ * @spec RFC 9449 §11.3
+ * @throws {Error} 秘密が 32 バイトより短いとき、設定の `dpopNonceLifetimeSeconds` が 0 以上の有限の数でないとき（設定の誤り。500 の `server_error` で応答する）
+ */
+export async function requireTokenDpopNonce(request: Request): Promise<Response | undefined> {
+  const server = authorizationServerNonceOf(config);
+  if (server === undefined) return undefined;
+  try {
+    await requireDpopNonce(request, server);
+    return undefined;
+  } catch (error) {
+    const rejection = tokenEndpointRejectionOf(error);
+    if (rejection === undefined) throw error;
+    return rejection;
+  }
+}
+
+/**
  * トークンリクエストの DPoP proof を検証し、その鍵の JWK Thumbprint と、発行するトークンを束縛する鍵を返す。
  *
  * `DPoP` ヘッダーがなければ、`dpopJkt` と `tokenBinding` が `undefined`（Bearer トークンを発行する）の結果を返す。
  * ただし、`dpop_bound_access_tokens` を登録したクライアント（`dpopBoundAccessTokensOf()`）の、`DPoP` ヘッダーの無いリクエストは拒否する（RFC 9449 §5.2 の MUST）。
  * `DPoP` ヘッダーがあれば、DPoP proof を検査し（`htm` は POST、`htu` は issuer の `/token`）、その鍵の JWK Thumbprint を `dpopJkt` に、その鍵への束縛を `tokenBinding` に入れて返す。
+ * 設定の `dpopNonceRequiredAtAuthorizationServer` が true なら、DPoP proof の `nonce` が認可サーバーの最近発行した nonce であることも、署名と一緒に確かめる（RFC 9449 §8 / §11.3）。
  * 返す `tokenBinding` は、アクセストークンの `cnf.jkt` をその鍵の JWK Thumbprint にし、`token_type` を `DPoP` にする（RFC 9449 §5 / §6.1）。
  * パブリッククライアントには、リフレッシュトークンも同じ鍵に束縛する `refreshTokenCnf` を持たせる（RFC 9449 §5 の MUST）。
  * コンフィデンシャルクライアントのリフレッシュトークンは、クライアント認証で送り手が限られているので束縛しない。
  *
  * どのグラントの前にも実行するので、機能が答えるグラント（client_credentials など）のトークンも同じ鍵に束縛する。
- * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof は検査せず、その `jti` も覚えない。
- * 拒否するときは、キャッシュさせない 400 の `invalid_dpop_proof` のレスポンスを `dpopRejection` に入れて返す。
+ * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof の署名とクレームは検査せず、その `jti` も覚えない（認可サーバーが nonce を求めるときは、認証の前のブロックが、署名を確かめずに DPoP proof の形と JOSE ヘッダーと `nonce` だけを確かめる）。
+ * 拒否するときは、キャッシュさせない 400 の `invalid_dpop_proof`（nonce を受け付けないときは `use_dpop_nonce`）のレスポンスを `dpopRejection` に入れて返す。
  *
  * @spec RFC 9449 §4.3
  * @spec RFC 9449 §5
@@ -63,7 +95,11 @@ export async function verifyDpopTokenRequest(request: Request, tokenClient: Toke
     requireDpopProofForClient(dpopBoundAccessTokensOf(tokenClient), proof);
     if (proof === undefined) return { dpopJkt: undefined, tokenBinding: undefined };
 
-    const dpopJkt = await verifyDpopRequestProof(proof, { method: request.method, path: '/token' });
+    const dpopJkt = await verifyDpopRequestProof(proof, {
+      method: request.method,
+      path: '/token',
+      nonceServer: authorizationServerNonceOf(config),
+    });
 
     // パブリッククライアントのリフレッシュトークンは、DPoP proof の鍵に束縛する（RFC 9449 §5）。
     const refreshTokenJkt = selectDpopRefreshTokenJkt(isPublicTokenClient(tokenClient), dpopJkt);

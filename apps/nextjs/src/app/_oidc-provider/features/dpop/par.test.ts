@@ -1,8 +1,10 @@
+import type { Jwk } from '@maronn-openid-connect/core';
 import { NextRequest } from 'next/server';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, requestTo } from '../../../../test-support/context';
-import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop';
-import { decodeJwt } from '../../../../test-support/jwt';
+import { dpopKey, dpopProof, signDpopProof, type DpopKey } from '../../../../test-support/dpop';
+import { decodeJwt, signRs256Jwt } from '../../../../test-support/jwt';
+import { rs256Key } from '../../../../test-support/keys';
 import { POST as push } from '../../../(par)/par/route';
 import { GET as authorize } from '../../../authorize/route';
 import { POST as token } from '../../../token/route';
@@ -30,6 +32,7 @@ vi.mock('./proof', async (importOriginal) => {
 
 const CLIENT_ID = 'dpop-par-client';
 const CLIENT_SECRET = 'dpop-par-secret';
+const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 const REDIRECT_URI = 'https://rp.example.com/callback';
 const PAR_ENDPOINT = `${TEST_ISSUER}/par`;
 /** RFC 7636 Appendix B: an example code_verifier and its S256 code_challenge. */
@@ -57,6 +60,25 @@ const OTHER_JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
 const INVALID_DPOP_JKT = 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint';
 
 const SAVED_MAX_AGE = config.dpopProofMaxAgeSeconds;
+const SAVED_NONCE_REQUIRED = config.dpopNonceRequiredAtAuthorizationServer;
+
+/** 2026-01-01T00:00:00Z in Unix seconds: the clock of the tests of the DPoP nonces. */
+const NOW = 1_767_225_600;
+/** The secret of the DPoP nonces of the tests (41 bytes). */
+const NONCE_SECRET = 'dpop-nonce-secret-for-the-unit-tests-0001';
+/**
+ * The nonce the authorization server of https://op.example.com (TEST_ISSUER)
+ * issues at NOW with NONCE_SECRET and the random bytes 0x00 to 0x0b, computed
+ * apart from the code under test with the HMAC of node:crypto (see
+ * nonce.test.ts).
+ */
+const AUTHORIZATION_SERVER_NONCE_AT_NOW = 'AAAAAGlVuQAAAQIDBAUGBwgJCgs.qlRn_qjLCd4ScDSkutyR475dsXalwZpCxni6jPVshAI';
+/** The nonce the resource server of TEST_ISSUER issues at NOW, with the same secret and random bytes. */
+const RESOURCE_SERVER_NONCE_AT_NOW = 'AAAAAGlVuQAAAQIDBAUGBwgJCgs.qMJbK4hF-YMMuV93-YOisKgT890kG1mcLWrlBS0Hgvc';
+/** The form of a nonce of this OP (RFC 9449 §8.1): the base64url of 20 bytes, a dot and the base64url of an HMAC-SHA256. */
+const NONCE_FORM = /^[A-Za-z0-9_-]{27}\.[A-Za-z0-9_-]{43}$/;
+const NONCE_REQUIRED = 'Authorization server requires nonce in DPoP proof';
+const STALE_NONCE = 'The DPoP proof nonce is not a nonce the authorization server recently provided';
 
 beforeAll(async () => {
   await registerClient(createDatabase(), {
@@ -69,6 +91,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   config.dpopProofMaxAgeSeconds = SAVED_MAX_AGE;
+  config.dpopNonceRequiredAtAuthorizationServer = SAVED_NONCE_REQUIRED;
   vi.restoreAllMocks();
 });
 
@@ -87,6 +110,11 @@ async function clientKey(): Promise<DpopKey> {
 /** A DPoP proof of key for the PAR endpoint. */
 function parProof(key: DpopKey): Promise<string> {
   return dpopProof(key, { htm: 'POST', htu: PAR_ENDPOINT });
+}
+
+/** A DPoP proof for the PAR endpoint, signed by key (a new one unless given), with the claims of overrides (a nonce, or none). */
+async function nonceProof(overrides: Record<string, unknown> = {}, key?: DpopKey): Promise<string> {
+  return dpopProof(key ?? (await dpopKey()), { htm: 'POST', htu: PAR_ENDPOINT }, overrides);
 }
 
 /** The Authorization header of client_secret_basic for the client, with secret. */
@@ -304,7 +332,7 @@ describe('bindPushedDpopKey', () => {
     expect(response.status).toBe(400);
     expect([response.headers.get('Access-Control-Allow-Origin'), response.headers.get('Access-Control-Expose-Headers')]).toEqual([
       TEST_ISSUER,
-      'WWW-Authenticate',
+      'WWW-Authenticate,DPoP-Nonce',
     ]);
   });
 
@@ -334,5 +362,167 @@ describe('bindPushedDpopKey', () => {
       await bindPushedDpopKey(new Request(PAR_ENDPOINT, { method: 'POST', headers: { DPoP: proof } }), pushedParams),
       await bindPushedDpopKey(new Request(PAR_ENDPOINT, { method: 'POST' }), pushedParams),
     ]).toEqual([{ dpopBoundParams: { client_id: CLIENT_ID, response_type: 'code', dpop_jkt: CLIENT_JKT } }, {}]);
+  });
+
+  // RFC 9449 §8 / §11.3: where the authorization server requires its nonce, the proof check after client
+  // authentication checks the nonce again with the signature, and answers use_dpop_nonce as PAR answers its errors.
+  it('should answer use_dpop_nonce to a proof without a nonce when dpopNonceRequiredAtAuthorizationServer is true', async () => {
+    config.dpopNonceRequiredAtAuthorizationServer = true;
+    const proof = await parProof(await clientKey());
+
+    const { dpopRejection } = await bindPushedDpopKey(new Request(PAR_ENDPOINT, { method: 'POST', headers: { DPoP: proof } }), { client_id: CLIENT_ID });
+
+    expect(await answerOf(dpopRejection as Response)).toEqual([
+      400,
+      { error: 'use_dpop_nonce', error_description: 'Authorization server requires nonce in DPoP proof' },
+    ]);
+  });
+});
+
+describe('requirePushedDpopNonce', () => {
+  beforeEach(() => {
+    config.dpopNonceRequiredAtAuthorizationServer = true;
+    vi.stubEnv('OIDC_DPOP_NONCE_SECRET', NONCE_SECRET);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW * 1000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  // RFC 9449 §8 Figure 20: 400 use_dpop_nonce with the nonce to use in DPoP-Nonce, as PAR answers its errors
+  // (RFC 9126 §2.3), with the CORS headers that let a browser read the nonce.
+  it('should answer a DPoP proof without a nonce with use_dpop_nonce and a nonce to use, and store nothing', async () => {
+    const save = vi.spyOn(parStore, 'save');
+
+    const response = await push(pushedRequest({}, { DPoP: await nonceProof(), Origin: TEST_ISSUER }));
+
+    expect(await answerOf(response)).toEqual([400, { error: 'use_dpop_nonce', error_description: NONCE_REQUIRED }]);
+    expect(response.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
+    expect([response.headers.get('Cache-Control'), response.headers.get('Pragma')]).toEqual(['no-cache, no-store', 'no-cache']);
+    expect([response.headers.get('Access-Control-Allow-Origin'), response.headers.get('Access-Control-Expose-Headers')]).toEqual([
+      TEST_ISSUER,
+      'WWW-Authenticate,DPoP-Nonce',
+    ]);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  // RFC 9449 §8 / §8.2: the retry with the nonce is pushed, and the 201 carries the nonce to use next.
+  it('should push the retry with the nonce it gave, bound to the key of the proof, with the next nonce', async () => {
+    const key = await dpopKey();
+    const nonce = (await push(pushedRequest({}, { DPoP: await nonceProof({}, key) }))).headers.get('DPoP-Nonce') ?? '';
+
+    const retry = await push(pushedRequest({}, { DPoP: await nonceProof({ nonce }, key) }));
+
+    expect(retry.status).toBe(201);
+    expect(retry.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
+    expect(retry.headers.get('DPoP-Nonce')).not.toBe(nonce);
+    expect((await storedParamsOf(retry))?.dpop_jkt).toBe(key.jkt);
+  });
+
+  // The nonce is checked before client authentication: a request that would fail it is answered use_dpop_nonce first.
+  it('should check the nonce before the client is authenticated', async () => {
+    const response = await push(pushedRequest({}, { DPoP: await nonceProof() }, 'wrong-secret'));
+
+    expect(await answerOf(response)).toEqual([400, { error: 'use_dpop_nonce', error_description: NONCE_REQUIRED }]);
+  });
+
+  // The nonce is checked before client authentication, so the retry can send the same client assertion.
+  it('should not use up the client assertion of a request rejected for its nonce', async () => {
+    const pkjwtClientId = `dpop-par-pkjwt-client-${crypto.randomUUID()}`;
+    const clientKey = await rs256Key('dpop-par-nonce-pkjwt-key');
+    await registerClient(createDatabase(), {
+      clientId: pkjwtClientId,
+      redirectUris: [REDIRECT_URI],
+      tokenEndpointAuthMethods: ['private_key_jwt'],
+      keys: { private_key_jwt: { keys: [{ ...(clientKey.publicJwk as Jwk), kid: clientKey.keyId }] } },
+    });
+    const assertion = await signRs256Jwt(
+      { iss: pkjwtClientId, sub: pkjwtClientId, aud: PAR_ENDPOINT, iat: NOW, exp: NOW + 60, jti: `dpop-par-nonce-assertion-${crypto.randomUUID()}` },
+      clientKey,
+    );
+    const fields = { client_id: pkjwtClientId, client_assertion_type: JWT_BEARER, client_assertion: assertion };
+    const key = await dpopKey();
+    const first = await push(pushedRequest(fields, { Authorization: '', DPoP: await nonceProof({}, key) }));
+
+    const retry = await push(pushedRequest(fields, { Authorization: '', DPoP: await nonceProof({ nonce: first.headers.get('DPoP-Nonce') }, key) }));
+
+    expect([first.status, retry.status]).toEqual([400, 201]);
+  });
+
+  // RFC 9449 §4.3: the proof is decoded before client authentication to read its nonce, so a JOSE header that
+  // is not of a DPoP proof is rejected then too, with the nonce to use next.
+  it('should reject a proof whose typ is not dpop+jwt before the client is authenticated, with the nonce to use', async () => {
+    const proof = await signDpopProof(
+      await dpopKey(),
+      { jti: `dpop-par-nonce-typ-jwt-${crypto.randomUUID()}`, htm: 'POST', htu: PAR_ENDPOINT, iat: NOW, nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW },
+      { typ: 'JWT' },
+    );
+
+    const response = await push(pushedRequest({}, { DPoP: proof }, 'wrong-secret'));
+
+    expect(await answerOf(response)).toEqual([
+      400,
+      { error: 'invalid_dpop_proof', error_description: 'The DPoP proof typ header must be dpop+jwt' },
+    ]);
+    expect(response.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
+  });
+
+  // The PAR endpoint and the token endpoint are the same authorization server: a nonce of either is good at both.
+  it('should accept a nonce the authorization server issued with the secret of OIDC_DPOP_NONCE_SECRET', async () => {
+    const response = await push(pushedRequest({}, { DPoP: await nonceProof({ nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW }) }));
+
+    expect(response.status).toBe(201);
+  });
+
+  // RFC 9449 §9: a nonce of the resource server is not accepted by the authorization server.
+  it('should reject a nonce of the resource server', async () => {
+    const response = await push(pushedRequest({}, { DPoP: await nonceProof({ nonce: RESOURCE_SERVER_NONCE_AT_NOW }) }));
+
+    expect(await answerOf(response)).toEqual([400, { error: 'use_dpop_nonce', error_description: STALE_NONCE }]);
+  });
+
+  // RFC 9449 §8: every response to a DPoP request carries the nonce to use next, the other errors too.
+  it.each([
+    ['a proof for another endpoint', `${TEST_ISSUER}/token`, CLIENT_SECRET, 400, 'invalid_dpop_proof'],
+    ['a request that fails client authentication', PAR_ENDPOINT, 'wrong-secret', 401, 'invalid_client'],
+  ])('should give the nonce to use next with the error of %s', async (_name, htu, secret, status, error) => {
+    const proof = await dpopProof(await dpopKey(), { htm: 'POST', htu }, { nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW });
+
+    const response = await push(pushedRequest({}, { DPoP: proof }, secret));
+
+    expect([response.status, ((await response.json()) as { error: string }).error]).toEqual([status, error]);
+    expect(response.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
+  });
+
+  // RFC 9449 §11.3: a server that provides no nonce requires none.
+  it.each([
+    ['without a nonce', {}],
+    ['with a nonce the server never issued', { nonce: 'a-nonce-of-another-server' }],
+  ])('should neither give nor require a nonce when dpopNonceRequiredAtAuthorizationServer is false: a proof %s', async (_name, claims) => {
+    config.dpopNonceRequiredAtAuthorizationServer = false;
+
+    const response = await push(pushedRequest({}, { DPoP: await nonceProof(claims) }));
+
+    expect(response.status).toBe(201);
+    expect(response.headers.has('DPoP-Nonce')).toBe(false);
+  });
+
+  it('should give no nonce to a request without a DPoP header', async () => {
+    const response = await push(pushedRequest());
+
+    expect(response.status).toBe(201);
+    expect(response.headers.has('DPoP-Nonce')).toBe(false);
+  });
+
+  // RFC 2104 §3: a secret shorter than 32 bytes is a misconfiguration, not a bad request.
+  it('should answer server_error when the secret of the DPoP nonces is shorter than 32 bytes', async () => {
+    vi.stubEnv('OIDC_DPOP_NONCE_SECRET', 'a'.repeat(31));
+
+    const response = await push(pushedRequest({}, { DPoP: await nonceProof() }));
+
+    expect(await answerOf(response)).toEqual([500, { error: 'server_error' }]);
   });
 });

@@ -29,6 +29,14 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * block of features/dynamic-client-registration/endpoints/register/pipeline.ts,
  * whose step is steps/validate-dpop-client-metadata.ts), which the
  * [verify-dpop-proof] block reads from the registered metadata.
+ * With dpopNonceRequiredAtAuthorizationServer (./config.ts), the
+ * [require-dpop-nonce] block of the token endpoint and the
+ * [require-pushed-dpop-nonce] block of the PAR endpoint, before client
+ * authentication (steps/require-dpop-nonce.ts and
+ * steps/require-pushed-dpop-nonce.ts, which call server-nonce.ts), give every
+ * response from then on to a request with a DPoP header a new nonce of the
+ * authorization server (DPoP-Nonce) and reject a proof without a nonce it
+ * recently provided (use_dpop_nonce).
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. proof.ts also checks the nonce of a proof (nonce.ts) for an
@@ -36,7 +44,7 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * the defaults of the DPoP settings (dpopConfigDefaults of ./config.ts) to
  * the defaults of ProviderConfig, puts the secret of the DPoP nonces into the
  * request context, advertises the algs of the checks in discovery and lets
- * browsers send the DPoP header.
+ * browsers send the DPoP header and read the DPoP-Nonce header.
  */
 export const dpop = defineFeature({
   id: 'dpop',
@@ -52,6 +60,7 @@ export const dpop = defineFeature({
   // ./config.ts), read by the nonce check of proof.ts.
   context: ({ options }) => ({ dpopNonceSecret: options.dpopNonceSecret }),
   // A browser-based client sends its proof in the DPoP header (RFC 9449 §4.1),
-  // and reads the challenges of a failure in WWW-Authenticate (RFC 9449 §7.1).
-  cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate'] },
+  // reads the challenges of a failure in WWW-Authenticate (RFC 9449 §7.1) and
+  // the nonce to put in its next proof in DPoP-Nonce (RFC 9449 §8).
+  cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate', 'DPoP-Nonce'] },
 });

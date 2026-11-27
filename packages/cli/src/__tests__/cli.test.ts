@@ -575,6 +575,14 @@ describe('run', () => {
       );
     });
 
+    // RFC 9449 §8: the authorization server requires its nonces where the settings say so, made with a
+    // secret every instance shares.
+    it('should tell how to make the token and PAR endpoints require DPoP nonces, and where the secret of the nonces comes from, when dpop is enabled', () => {
+      expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
+        'With dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.',
+      );
+    });
+
     // The Google guidance belongs to google-login alone, not to every extension.
     it('should not print the Sign in with Google guidance when only dpop is enabled', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop'])).not.toContain('config.googleLogin.clientId');
@@ -651,6 +659,13 @@ describe('run', () => {
     it('should say that the token endpoint binds the access token and a public client\'s refresh token to the key of the DPoP proof, that a client registered with dpop_bound_access_tokens, also through POST /register, must send a proof, that dpop_jkt or the DPoP proof of a pushed request binds the code, and that UserInfo takes a bound token with the DPoP scheme only', () => {
       expect(helpText().replace(/\s+/g, ' ')).toContain(
         'The token endpoint checks the DPoP proof of a request and binds the access token to its key (token_type DPoP), and the refresh token of a public client too, which then needs a proof of the same key each time it is used; without a proof the tokens stay Bearer. A client registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens, which POST /register of dynamic-client-registration also registers, false when omitted) must send a proof with every token request. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that key, so the code is exchanged only with a proof of that key; with par, a pushed authorization request with a DPoP proof in its DPoP header binds its code to the key of that proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.',
+      );
+    });
+
+    // RFC 9449 §8: the nonces of the authorization server, and the secret every instance shares.
+    it('should say that dpopNonceRequiredAtAuthorizationServer makes the token and PAR endpoints require DPoP nonces, made with a secret every instance shares', () => {
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'With dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.',
       );
     });
 

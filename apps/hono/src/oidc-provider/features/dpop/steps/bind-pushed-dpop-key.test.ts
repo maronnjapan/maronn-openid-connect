@@ -296,7 +296,7 @@ describe('bindPushedDpopKey', () => {
     expect(response.status).toBe(400);
     expect([response.headers.get('Access-Control-Allow-Origin'), response.headers.get('Access-Control-Expose-Headers')]).toEqual([
       '*',
-      'WWW-Authenticate',
+      'WWW-Authenticate,DPoP-Nonce',
     ]);
   });
 
@@ -328,6 +328,23 @@ describe('bindPushedDpopKey', () => {
     expect([await bindPushedDpopKey(withProof.c, pushedParams), await bindPushedDpopKey(withoutProof.c, pushedParams)]).toEqual([
       { dpopBoundParams: { client_id: CLIENT_ID, response_type: 'code', dpop_jkt: CLIENT_JKT } },
       {},
+    ]);
+  });
+
+  // RFC 9449 §8 / §11.3: where the authorization server requires its nonce, the proof check after client
+  // authentication checks the nonce again with the signature, and answers use_dpop_nonce as PAR answers its errors.
+  it('should answer use_dpop_nonce to a proof without a nonce when dpopNonceRequiredAtAuthorizationServer is true', async () => {
+    const proof = await parProof(await clientKey());
+    const { c } = await providerContext({
+      request: new Request(PAR_ENDPOINT, { method: 'POST', headers: { DPoP: proof } }),
+      options: { config: { dpopNonceRequiredAtAuthorizationServer: true } },
+    });
+
+    const { dpopRejection } = await bindPushedDpopKey(c, { client_id: CLIENT_ID });
+
+    expect(await answerOf(dpopRejection as Response)).toEqual([
+      400,
+      { error: 'use_dpop_nonce', error_description: 'Authorization server requires nonce in DPoP proof' },
     ]);
   });
 });

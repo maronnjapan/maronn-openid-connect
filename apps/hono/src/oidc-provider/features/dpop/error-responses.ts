@@ -1,7 +1,7 @@
 /**
- * EXTENSION (dpop): the responses of the token and UserInfo endpoints to the
- * failures of the DPoP checks (DpopError of errors.ts), and the UserInfo error
- * of a request that sends its access token with both Bearer and DPoP.
+ * EXTENSION (dpop): the responses of the token, PAR and UserInfo endpoints to
+ * the failures of the DPoP checks (DpopError of errors.ts), and the UserInfo
+ * error of a request that sends its access token with both Bearer and DPoP.
  *
  * Kept apart from errors.ts, as in the Next.js template: the checks import
  * errors.ts alone, and only the steps need the endpoint responses.
@@ -14,11 +14,13 @@ import { isDpopError } from './errors.js';
  * トークンエンドポイントでの DPoP の検査の失敗を、400 の OAuth のエラーレスポンスにして返す。
  *
  * `invalid_dpop_proof`（DPoP proof の不備）と `invalid_grant`（鍵に束縛した認可コードかリフレッシュトークンに、その鍵の DPoP proof が無い）は、どちらも 400 で応答する（RFC 9449 §5、RFC 6749 §5.2）。
+ * `use_dpop_nonce`（DPoP proof に、認可サーバーが最近発行した nonce が無い）も 400 で応答する（RFC 9449 §8）。
  * RFC 6749 §5.2 のコードでもある `invalid_request` も 400 で応答する。
  * `invalid_token` は保護されたリソースだけが返すコード（RFC 6750 §3.1）なので、トークンエンドポイントのエラーにしない。
  * それと DPoP の失敗でないエラーは、そのまま返す。
  *
  * @spec RFC 9449 §5
+ * @spec RFC 9449 §8
  * @spec RFC 6749 §5.2
  */
 export function tokenEndpointErrorOf(error: unknown): unknown {
@@ -27,6 +29,27 @@ export function tokenEndpointErrorOf(error: unknown): unknown {
     status: 400,
     body: { error: error.error, error_description: error.errorDescription },
   });
+}
+
+/** PAR エンドポイントが 400 で応答する DPoP の検査のエラーコード。 */
+const PAR_DPOP_ERROR_CODES: readonly string[] = ['invalid_dpop_proof', 'invalid_request', 'use_dpop_nonce'];
+
+/**
+ * PAR エンドポイントでの DPoP の検査の失敗を、キャッシュさせない 400 の JSON のエラーレスポンスにして返す。
+ *
+ * `invalid_dpop_proof`（DPoP proof の不備と、プッシュした `dpop_jkt` が DPoP proof の鍵と違うこと）、`invalid_request`（`dpop_jkt` が JWK Thumbprint の形でない）、`use_dpop_nonce`（DPoP proof に、認可サーバーが最近発行した nonce が無い）を、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON（`no-cache, no-store`）にする。
+ * それ以外のコード（トークンエンドポイントだけの `invalid_grant`、保護されたリソースだけの `invalid_token`）と、DPoP の失敗でないエラーには `undefined` を返し、呼び出し側がそのまま投げ直す（PAR エンドポイントは 500 の `server_error` で応答する）。
+ * レスポンスはコンテキストで組み立てるので、CORS のミドルウェアが付けたヘッダーと、先に付けた `DPoP-Nonce` ヘッダーも残る。
+ *
+ * @spec RFC 9449 §8
+ * @spec RFC 9449 §10.1
+ * @spec RFC 9126 §2.3
+ */
+export function parEndpointRejectionOf(c: any, error: unknown): Response | undefined {
+  if (!isDpopError(error) || !PAR_DPOP_ERROR_CODES.includes(error.error)) return undefined;
+  c.header('Cache-Control', 'no-cache, no-store');
+  c.header('Pragma', 'no-cache');
+  return c.json({ error: error.error, error_description: error.errorDescription }, 400);
 }
 
 /**

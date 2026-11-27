@@ -1,7 +1,7 @@
 /**
- * EXTENSION (dpop): the responses of the token and UserInfo endpoints to the
- * failures of the DPoP checks (DpopError of errors.ts), and the UserInfo error
- * of a request that sends its access token with both Bearer and DPoP.
+ * EXTENSION (dpop): the responses of the token, PAR and UserInfo endpoints to
+ * the failures of the DPoP checks (DpopError of errors.ts), and the UserInfo
+ * error of a request that sends its access token with both Bearer and DPoP.
  *
  * Kept apart from errors.ts because it imports http.ts: errors.ts is loaded
  * with the feature list (config.ts imports jwk.ts, which throws DpopError), and
@@ -15,16 +15,39 @@ import { isDpopError } from './errors';
  * トークンエンドポイントでの DPoP の検査の失敗を、キャッシュさせない 400 の OAuth のエラーレスポンスにして返す。
  *
  * `invalid_dpop_proof`（DPoP proof の不備）と `invalid_grant`（鍵に束縛した認可コードかリフレッシュトークンに、その鍵の DPoP proof が無い）は、どちらも 400 で応答する（RFC 9449 §5、RFC 6749 §5.2）。
+ * `use_dpop_nonce`（DPoP proof に、認可サーバーが最近発行した nonce が無い）も 400 で応答する（RFC 9449 §8）。
  * RFC 6749 §5.2 のコードでもある `invalid_request` も 400 で応答する。
  * `invalid_token` は保護されたリソースだけが返すコード（RFC 6750 §3.1）なので、トークンエンドポイントのレスポンスにしない。
  * それと DPoP の失敗でないエラーには `undefined` を返し、呼び出し側がそのまま投げ直す。
  *
  * @spec RFC 9449 §5
+ * @spec RFC 9449 §8
  * @spec RFC 6749 §5.2
  */
 export function tokenEndpointRejectionOf(error: unknown): Response | undefined {
   if (!isDpopError(error) || error.error === 'invalid_token') return undefined;
   return oauthError(error.error, error.errorDescription, 400);
+}
+
+/** PAR エンドポイントが 400 で応答する DPoP の検査のエラーコード。 */
+const PAR_DPOP_ERROR_CODES: readonly string[] = ['invalid_dpop_proof', 'invalid_request', 'use_dpop_nonce'];
+
+/**
+ * PAR エンドポイントでの DPoP の検査の失敗を、キャッシュさせない 400 の JSON のエラーレスポンスにして返す。
+ *
+ * `invalid_dpop_proof`（DPoP proof の不備と、プッシュした `dpop_jkt` が DPoP proof の鍵と違うこと）、`invalid_request`（`dpop_jkt` が JWK Thumbprint の形でない）、`use_dpop_nonce`（DPoP proof に、認可サーバーが最近発行した nonce が無い）を、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON（`no-cache, no-store`）にする。
+ * それ以外のコード（トークンエンドポイントだけの `invalid_grant`、保護されたリソースだけの `invalid_token`）と、DPoP の失敗でないエラーには `undefined` を返し、呼び出し側がそのまま投げ直す（PAR エンドポイントは 500 の `server_error` で応答する）。
+ *
+ * @spec RFC 9449 §8
+ * @spec RFC 9449 §10.1
+ * @spec RFC 9126 §2.3
+ */
+export function parEndpointRejectionOf(error: unknown): Response | undefined {
+  if (!isDpopError(error) || !PAR_DPOP_ERROR_CODES.includes(error.error)) return undefined;
+  return Response.json(
+    { error: error.error, error_description: error.errorDescription },
+    { status: 400, headers: { 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' } },
+  );
 }
 
 /**

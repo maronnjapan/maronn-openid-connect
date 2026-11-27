@@ -209,6 +209,8 @@ Next.js は Route Handler とページ・Server Action（と `instrumentation.ts
 | `OIDC_ISSUER` | issuer。OP 自身の URL はすべてこれを基準に組み立てる |
 | `OIDC_SIGNING_KEY_ID` | 起動時に生成する署名鍵の `kid` |
 | `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
+| `OIDC_DPOP_NONCE_SECRET` | DPoP の nonce を作る秘密（32 バイト以上。`dpop` 有効時）。どのインスタンスにも同じ値を渡す。未指定ならインスタンスごとの乱数の鍵で、そのインスタンスの nonce だけを受け付ける |
+| `OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER` | `1` でトークンエンドポイントと PAR エンドポイントが DPoP proof に nonce を求める（`dpop` 有効時。`dpopNonceRequiredAtAuthorizationServer`） |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | `--db kv` で生成した `_oidc-provider/db/instance.ts` が使う Upstash Redis。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`）。Vercel では指定が必要 |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時。`_oidc-provider/features/google-login/config.ts` が読む） |
 
@@ -475,7 +477,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。`dynamic-client-registration` と一緒に有効にすると、`POST /register` も `dpop_bound_access_tokens`（真偽値。省略すると `false`）を登録して返す。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
+| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。`dynamic-client-registration` と一緒に有効にすると、`POST /register` も `dpop_bound_access_tokens`（真偽値。省略すると `false`）を登録して返す。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する。`dpopNonceRequiredAtAuthorizationServer: true`（Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1`）にすると、トークンエンドポイントと PAR エンドポイントは、DPoP のリクエストへのレスポンスに次の nonce を `DPoP-Nonce` ヘッダーで付け、認可サーバーが最近発行した nonce の無い DPoP proof を `use_dpop_nonce` で拒否する（nonce の秘密は `dpopNonceSecret`、Next.js は `OIDC_DPOP_NONCE_SECRET`。どのインスタンスにも同じ値を渡す）。CORS は `WWW-Authenticate` と `DPoP-Nonce` を読ませる | なし（生成コードの `features/dpop/`） |
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
 

@@ -47,6 +47,7 @@ const DPOP_ERROR_CODES = [
    * DPoP proof に `nonce` が無い、またはその `nonce` が、サーバーが最近発行した nonce でない（RFC 9449 §8 / §9 / §11.3）。
    * DPoP proof の検査に nonce を発行したサーバーの役割（`DpopProofTarget.nonceServer`）を渡して nonce を求めたエンドポイントだけが返す。
    * RFC 9449 では、認可サーバーは 400 のエラーレスポンスで（§8）、保護されたリソースは 401 と `WWW-Authenticate: DPoP` のチャレンジで（§9）応答する。
+   * トークンエンドポイントと PAR エンドポイントは、設定の `dpopNonceRequiredAtAuthorizationServer` が true のときに、400 と、次の nonce の `DPoP-Nonce` ヘッダーで応答する。
    */
   'use_dpop_nonce',
 ] as const;

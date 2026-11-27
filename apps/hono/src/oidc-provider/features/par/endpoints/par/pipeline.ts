@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { bindPushedDpopKey } from '../../../dpop/steps/bind-pushed-dpop-key.js';
+import { requirePushedDpopNonce } from '../../../dpop/steps/require-pushed-dpop-nonce.js';
 import { authenticatePushingClient } from './steps/authenticate-client.js';
 import { parsePushedAuthorizationRequest } from './steps/parse-request.js';
 import { respondParError } from './steps/respond-error.js';
@@ -26,7 +27,12 @@ import { validatePushedRequest } from './steps/validate-request.js';
  * request that has a DPoP header and pushes the request with its key as
  * dpop_jkt, so the code issued for the request_uri is bound to that key
  * (RFC 9449 §10.1). Without the block the pushed parameters are validated and
- * stored as they came.
+ * stored as they came. With dpopNonceRequiredAtAuthorizationServer, the
+ * (feature: dpop) block before client authentication gives every response
+ * from then on to a request with a DPoP header a new nonce of the
+ * authorization server (DPoP-Nonce) and rejects a proof without a nonce it
+ * recently provided (400 use_dpop_nonce), or a DPoP header that is not one
+ * well-formed DPoP proof (400 invalid_dpop_proof).
  *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * deliberately left to the deployment layer (reverse proxy / platform), not
@@ -39,6 +45,10 @@ parApp.post('/', async (c) => {
   try {
     // [parse-request] プッシュされた認可リクエストを解析する — RFC 9126 §2.1 / RFC 6749 §3.1
     const { params, authorization } = await parsePushedAuthorizationRequest(c);
+
+    // [require-pushed-dpop-nonce] (feature: dpop) プッシュする DPoP proof に認可サーバーの nonce を求め、次の nonce を渡す — RFC 9449 §8 / §8.2 / §11.3
+    const { dpopNonceRejection } = await requirePushedDpopNonce(c);
+    if (dpopNonceRejection) return dpopNonceRejection;
 
     // [authenticate-client] プッシュしたクライアントを認証する — RFC 9126 §2.1
     const { clientId, pushedParams } = await authenticatePushingClient(c, params, authorization);

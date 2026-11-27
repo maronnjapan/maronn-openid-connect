@@ -4,6 +4,7 @@ import { step } from '../../../endpoints/step.js';
 import { buildDpopConfirmation, dpopBoundAccessTokensOf, requireDpopProofForClient, selectDpopRefreshTokenJkt } from '../binding.js';
 import { tokenEndpointErrorOf } from '../error-responses.js';
 import { readDpopProofHeader, verifyDpopRequestProof } from '../proof.js';
+import { authorizationServerNonceOf } from '../server-nonce.js';
 
 export const meta = step({
   id: 'verify-dpop-proof',
@@ -26,17 +27,18 @@ export const meta = step({
  * `DPoP` ヘッダーがなければ、`dpopJkt` と `tokenBinding` が `undefined`（Bearer トークンを発行する）の結果を返す。
  * ただし、`dpop_bound_access_tokens` を登録したクライアント（`dpopBoundAccessTokensOf()`）の、`DPoP` ヘッダーの無いリクエストは拒否する（RFC 9449 §5.2 の MUST）。
  * `DPoP` ヘッダーがあれば、DPoP proof を検査し（`htm` は POST、`htu` は issuer の `/token`）、その鍵の JWK Thumbprint を `dpopJkt` に、その鍵への束縛を `tokenBinding` に入れて返す。
+ * 設定の `dpopNonceRequiredAtAuthorizationServer` が true なら、DPoP proof の `nonce` が認可サーバーの最近発行した nonce であることも、署名と一緒に確かめる（RFC 9449 §8 / §11.3）。
  * 返す `tokenBinding` は、アクセストークンの `cnf.jkt` をその鍵の JWK Thumbprint にし、`token_type` を `DPoP` にする（RFC 9449 §5 / §6.1）。
  * パブリッククライアントには、リフレッシュトークンも同じ鍵に束縛する `refreshTokenCnf` を持たせる（RFC 9449 §5 の MUST）。
  * コンフィデンシャルクライアントのリフレッシュトークンは、クライアント認証で送り手が限られているので束縛しない。
  *
  * どのグラントの前にも実行するので、機能が答えるグラント（client_credentials など）のトークンも同じ鍵に束縛する。
- * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof は検査せず、その `jti` も覚えない。
+ * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof の署名とクレームは検査せず、その `jti` も覚えない（認可サーバーが nonce を求めるときは、認証の前のブロックが、署名を確かめずに DPoP proof の形と JOSE ヘッダーと `nonce` だけを確かめる）。
  *
  * @spec RFC 9449 §4.3
  * @spec RFC 9449 §5
  * @spec RFC 9449 §5.2
- * @throws {TokenEndpointError} 400 の `invalid_dpop_proof`: DPoP proof を受け付けないとき、`dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いとき
+ * @throws {TokenEndpointError} 400 の `invalid_dpop_proof`: DPoP proof を受け付けないとき、`dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いとき。400 の `use_dpop_nonce`: 認可サーバーが nonce を求め、DPoP proof の `nonce` を受け付けないとき
  * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき（設定の誤り。500 の `server_error` で応答する）
  */
 export async function verifyDpopTokenRequest(
@@ -51,7 +53,11 @@ export async function verifyDpopTokenRequest(
     requireDpopProofForClient(dpopBoundAccessTokensOf(tokenClient), proof);
     if (proof === undefined) return { dpopJkt: undefined, tokenBinding: undefined };
 
-    const dpopJkt = await verifyDpopRequestProof(c, proof, { method: c.req.method, path: '/token' });
+    const dpopJkt = await verifyDpopRequestProof(c, proof, {
+      method: c.req.method,
+      path: '/token',
+      nonceServer: authorizationServerNonceOf(c.get('config')),
+    });
 
     // パブリッククライアントのリフレッシュトークンは、DPoP proof の鍵に束縛する（RFC 9449 §5）。
     const refreshTokenJkt = selectDpopRefreshTokenJkt(isPublicTokenClient(tokenClient), dpopJkt);

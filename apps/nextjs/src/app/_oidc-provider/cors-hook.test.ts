@@ -6,9 +6,9 @@ import { GET as userinfoGet, OPTIONS as userinfoOptions } from '../userinfo/rout
 
 // The features of this file: the enabled ones and one more that names CORS
 // headers through the cors hook of feature.ts, so that the tests see what
-// http.ts makes of them. Of the enabled ones, dpop names DPoP and
-// WWW-Authenticate, so the headers of the extra feature come after them, and
-// WWW-Authenticate, which both name, comes once.
+// http.ts makes of them. Of the enabled ones, dpop names DPoP,
+// WWW-Authenticate and DPoP-Nonce, so the headers of the extra feature come
+// after them, and WWW-Authenticate, which both name, comes once.
 vi.mock('./features', async (importOriginal) => {
   const original = await importOriginal<typeof import('./features')>();
   const { defineFeature } = await import('./feature');
@@ -46,7 +46,7 @@ describe('clientCors', () => {
       const response = await userinfoGet(requestTo('/userinfo', { headers: { Origin: RP_ORIGIN } }));
 
       expect(response.status).toBe(401);
-      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,X-Example-Nonce');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,DPoP-Nonce,X-Example-Nonce');
     });
 
     // Discovery and JWKS keep publicCors: no request needs a feature's header there.

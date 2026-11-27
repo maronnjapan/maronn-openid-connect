@@ -28,12 +28,13 @@ describe('dpop', () => {
     expect(discoveryOf([dpop], {}, ISSUER, config)).toEqual({});
   });
 
-  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, and a nonce lifetime of 120 seconds', () => {
+  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, a nonce lifetime of 120 seconds and no nonce required at the authorization server', () => {
     expect(configOf([dpop])).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
       dpopNonceLifetimeSeconds: 120,
+      dpopNonceRequiredAtAuthorizationServer: false,
     });
   });
 
@@ -47,8 +48,9 @@ describe('dpop', () => {
     expect(c.get('dpopNonceSecret')).toBe(secret);
   });
 
-  // RFC 9449 §4.1 / §7.1: a browser sends the DPoP header and reads the challenges of a failure.
-  it('should let browsers send the DPoP header and read WWW-Authenticate', () => {
-    expect(corsHeadersOf([dpop])).toEqual({ allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate'] });
+  // RFC 9449 §4.1 / §7.1 / §8: a browser sends the DPoP header, reads the challenges of a
+  // failure and the nonce the server provides.
+  it('should let browsers send the DPoP header and read WWW-Authenticate and DPoP-Nonce', () => {
+    expect(corsHeadersOf([dpop])).toEqual({ allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate', 'DPoP-Nonce'] });
   });
 });

@@ -60,7 +60,12 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'that key, so the code is exchanged only with a proof of that key; with par, a pushed\n' +
     'authorization request with a DPoP proof in its DPoP header binds its code to the key of that\n' +
     'proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme\n' +
-    '(Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.\n',
+    '(Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token. With\n' +
+    'dpopNonceRequiredAtAuthorizationServer: true (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1\n' +
+    'for Next.js), the token and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and\n' +
+    'reject a proof without a nonce they recently gave (use_dpop_nonce). Give every instance the same\n' +
+    'secret of at least 32 bytes (the dpopNonceSecret option of createApp() / applyOidc();\n' +
+    'OIDC_DPOP_NONCE_SECRET for Next.js): without one, an instance accepts only its own nonces.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -195,8 +200,15 @@ Extension features (disabled by default): ${extensionFeatures}
   pushed authorization request with a DPoP proof in its DPoP header binds its
   code to the key of that proof too. The UserInfo endpoint takes a bound
   access token only with the DPoP scheme (Authorization: DPoP) and a proof of
-  the same key, and rejects it as a Bearer token. Web Crypto only, so it runs
-  on edge runtimes too.
+  the same key, and rejects it as a Bearer token. With
+  dpopNonceRequiredAtAuthorizationServer: true
+  (OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1 for Next.js), the token
+  and PAR endpoints give DPoP requests a nonce in DPoP-Nonce and reject a
+  proof without a nonce they recently gave (use_dpop_nonce). Give every
+  instance the same secret of at least 32 bytes (the dpopNonceSecret option of
+  createApp() / applyOidc(); OIDC_DPOP_NONCE_SECRET for Next.js): without one,
+  an instance accepts only its own nonces. Web Crypto only, so it runs on edge
+  runtimes too.
   Enable with:
   --enable dpop
 

@@ -12,7 +12,8 @@ export const meta = step({
   label: '登録数の上限を確かめてクライアントを保存する',
   spec: 'RFC 7591 §5',
   function: 'storeRegisteredClient',
-  consumes: ['client'],
+  consumes: ['client', 'dpopClient'],
+  optional: ['dpopClient'],
   produces: [],
   removable: false,
 });

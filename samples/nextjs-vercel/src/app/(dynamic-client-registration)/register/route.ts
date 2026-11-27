@@ -18,6 +18,18 @@
  * neither. Metadata beyond the standard fields is accepted through
  * customClientMetadata of the same config.
  *
+ * Each block of registerClient() is one step of the endpoint (endpoint.ts),
+ * as the steps of the Hono pipeline: verify the initial access token, parse
+ * the request, apply the software statement, validate the metadata, store
+ * the client and answer. [verify-initial-access-token] answers its own 401s;
+ * a block after it that throws ends in the [respond-error] block.
+ *
+ * With the dpop extension, the (feature: dpop) block after the metadata is
+ * validated registers dpop_bound_access_tokens (RFC 9449 §5.2): a boolean,
+ * false when omitted, stored with the client and returned in the 201
+ * response; any other value is refused with 400 invalid_client_metadata.
+ * Without the block the client is stored and returned as validated.
+ *
  * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
  * deployment layer (reverse proxy / platform); this endpoint only enforces the
  * inventory and body-size caps of that config.ts. Open registration grants no
@@ -77,11 +89,12 @@ export function OPTIONS(request: Request): Response {
  *
  * 201 のボディには `client_id` と登録したすべてのメタデータを入れ、`client_secret` で認証する方式を登録したクライアントには発行した `client_secret` も入れて、キャッシュを禁止して返す。
  * ストアに保存するクライアントは、シークレットをハッシュでだけ持つ。
+ * DPoP の機能があれば、`dpop_bound_access_tokens`（真偽値。省略すると `false`）も検証して登録し、レスポンスで返す（RFC 9449 §5.2）。
  *
  * 失敗したときは次のように応答する。
  * - `verifyInitialAccessToken` を設定していて `Bearer` トークンがないときは、エラーコードのない 401
  * - 設定の関数がトークンを拒否したときは、`invalid_token` の 401
- * - ボディが `application/json` でないか大きすぎるとき、メタデータが検証を通らないとき、ソフトウェアステートメントを拒否したときは 400（`invalid_client_metadata`、`invalid_redirect_uri`、`invalid_software_statement`、`unapproved_software_statement`）
+ * - ボディが `application/json` でないか大きすぎるとき、メタデータが検証を通らないとき（DPoP の機能があれば、`dpop_bound_access_tokens` が真偽値でないときも）、ソフトウェアステートメントを拒否したときは 400（`invalid_client_metadata`、`invalid_redirect_uri`、`invalid_software_statement`、`unapproved_software_statement`）
  * - 登録数が `maxRegisteredClients` に達しているときは、429 の `too_many_registrations`
  * - 署名鍵を読み込めないときは 503
  * - それ以外の失敗は、500 の `server_error`
@@ -91,6 +104,7 @@ export function OPTIONS(request: Request): Response {
 async function registerClient(request: Request): Promise<Response> {
   const config = dynamicClientRegistrationConfig;
 
+  // [verify-initial-access-token] 登録してよいリクエストか確かめる — OIDC Dynamic Client Registration 1.0 §3 / RFC 6750 §3.1
   // 設定に `verifyInitialAccessToken` があれば、リクエストが登録してよいかを確かめる。
   // 設定になければ、誰でも登録できる状態として、すべてのリクエストを通す（RFC 7591 §3.1 の SHOULD）。
   // 設定にあれば、リクエストは `Bearer` トークンを送らなければならない（RFC 6750 §2.1）。
@@ -105,33 +119,35 @@ async function registerClient(request: Request): Promise<Response> {
     }
   }
 
-  // `Content-Type` が `application/json` でなければ、400 の `invalid_client_metadata` で応答する（RFC 7591 §3.1）。
-  // `charset` などのパラメータは付いていてもよい。
-  // メディアタイプを限ると、CORS のプリフライトなしで送れる別オリジンの `text/plain` のフォーム送信で、JSON の形をしたボディを作られることも防げる。
-  if (!isJson(request.headers.get('Content-Type') ?? '')) {
-    return registrationJson(
-      { error: 'invalid_client_metadata', error_description: 'registration requests must use application/json' },
-      400,
-    );
-  }
-
-  // `Content-Length` が `maxRegistrationBodyBytes` より大きい値を宣言していれば、ボディを読む前に 400 の `invalid_client_metadata` で応答する。
-  // こうすると、大きすぎるリクエストをメモリに読み込まずに済む。
-  // ヘッダーの値は偽れるので、最終的な判定は、ボディそのものの UTF-8 のバイト数で `parseClientRegistrationBody()` が行う。
-  const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
-  if (Number.isFinite(declaredLength) && declaredLength > config.maxRegistrationBodyBytes) {
-    return registrationJson(
-      { error: 'invalid_client_metadata', error_description: 'request body must not exceed the configured maximum size' },
-      400,
-    );
-  }
-
-  // 署名鍵を読み込み、読み込めなければ 503 で応答する。
-  // クライアントが登録できる署名アルゴリズムは、ディスカバリーが公開するのと同じく、署名鍵のアルゴリズムである。
-  const keys = await loadSigningKeys().catch(() => null);
-  if (!keys) return signingKeysUnavailable();
-
   try {
+    // [parse-request] JSON のメタデータを読み取る — RFC 7591 §3.1
+    // `Content-Type` が `application/json` でなければ、400 の `invalid_client_metadata` で応答する（RFC 7591 §3.1）。
+    // `charset` などのパラメータは付いていてもよい。
+    // メディアタイプを限ると、CORS のプリフライトなしで送れる別オリジンの `text/plain` のフォーム送信で、JSON の形をしたボディを作られることも防げる。
+    if (!isJson(request.headers.get('Content-Type') ?? '')) {
+      return registrationJson(
+        { error: 'invalid_client_metadata', error_description: 'registration requests must use application/json' },
+        400,
+      );
+    }
+
+    // `Content-Length` が `maxRegistrationBodyBytes` より大きい値を宣言していれば、ボディを読む前に 400 の `invalid_client_metadata` で応答する。
+    // こうすると、大きすぎるリクエストをメモリに読み込まずに済む。
+    // ヘッダーの値は偽れるので、最終的な判定は、ボディそのものの UTF-8 のバイト数で `parseClientRegistrationBody()` が行う。
+    const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
+    if (Number.isFinite(declaredLength) && declaredLength > config.maxRegistrationBodyBytes) {
+      return registrationJson(
+        { error: 'invalid_client_metadata', error_description: 'request body must not exceed the configured maximum size' },
+        400,
+      );
+    }
+
+    // 署名鍵を読み込み、読み込めなければ 503 で応答する。
+    // クライアントが登録できる署名アルゴリズムは、ディスカバリーが公開するのと同じく、署名鍵のアルゴリズムである。
+    // ボディを読む前に読み込むので、署名鍵を読み込めないあいだは、ボディの誤りより先に 503 で応答する。
+    const keys = await loadSigningKeys().catch(() => null);
+    if (!keys) return signingKeysUnavailable();
+
     // ボディを読む。
     // 読み取りを `try` の中に置くので、転送が中断されたり壊れていたりしても、Next.js の既定の 500 にはならない。
     // Hono 版のパイプラインと同じく、キャッシュを禁止した固定の `server_error` の JSON で応答する。
@@ -140,6 +156,7 @@ async function registerClient(request: Request): Promise<Response> {
     // ボディの大きさと JSON の形を確かめ、`software_statement`（RFC 7591 §2.3）をそれ以外のメタデータから分ける。
     const registration = parseClientRegistrationBody(rawBody, { maxBodyBytes: config.maxRegistrationBodyBytes });
 
+    // [verify-software-statement] ソフトウェアステートメントを検証して適用する — RFC 7591 §2.3 / §3.1.1
     // JSON の値にソフトウェアステートメントを重ねた、登録するメタデータを得る（RFC 7591 §3.1.1）。
     // 設定に `verifySoftwareStatement` がなければ、この OP はソフトウェアステートメントに対応せず、`software_statement` を無視する（RFC 7591 §3.1.1 が許す扱い）。
     // 設定にあれば、すべての登録に `software_statement` を求め、なければ `invalid_client_metadata` で拒否する。
@@ -148,6 +165,7 @@ async function registerClient(request: Request): Promise<Response> {
     // ソフトウェアステートメントそのものは、レスポンスで変えずに返す（RFC 7591 §3.2.1）。
     const metadata = await resolveRegistrationMetadata(config, registration);
 
+    // [validate-metadata] メタデータを検証してクライアントを組み立てる — RFC 7591 §2 / §2.1
     // メタデータを検証して既定値を適用し、登録するクライアントを作る。
     // 検証は `@maronn-openid-connect/experimental/dynamic-client-registration` の副作用のない関数が行う。
     // 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Dynamic Client Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
@@ -181,6 +199,9 @@ async function registerClient(request: Request): Promise<Response> {
     });
     const client = buildRegisteredClient(validated);
 
+    const dpopClient = undefined;
+
+    // [store-client] 登録数の上限を確かめてクライアントを保存する — RFC 7591 §5
     // 登録数がすでに `maxRegisteredClients` に達していれば、固定のボディの 429 で応答する（RFC 7591 §5）。
     // メタデータには誤りがないので、`invalid_client_metadata` にはしない。
     // そう応答すると、クライアントがメタデータを直して送り直す繰り返しを招き、上限で防ぎたいサービス妨害攻撃の負荷をかえって増やす。
@@ -197,7 +218,7 @@ async function registerClient(request: Request): Promise<Response> {
     // 保存するレコード（`toClientRegistration()`）は、静的に登録したクライアント（_oidc-provider/db の `registerClient()`）と同じく `client_secret` をハッシュでだけ持ち、`jwks` の鍵を設定の用途ごとに持つ。
     // 下の 201 のレスポンスはメモリ上のクライアントから組み立てるので、平文のシークレットをストアに置く必要はない。
     const clientSecretHash = client.clientSecret === undefined ? undefined : await hashClientSecret(client.clientSecret);
-    await dynamicClientStore.save(toClientRegistration(client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
+    await dynamicClientStore.save(toClientRegistration(dpopClient ?? client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
     // 保存したあとに登録数を数え直し、上限を超えていればこの登録を削除して 429 で応答する。
     // 同時に届いたリクエストは、上の `await` の間に処理が入れ替わり、そろって最初の確認を通ることがあるためである。
     // これで上限を超えた登録が残ることはない（同時に削除し合って、上限より少ないまま終わることはある）。
@@ -211,10 +232,12 @@ async function registerClient(request: Request): Promise<Response> {
 
     // 登録のメタデータと発行した `client_secret` は、ログに出さない。
 
+    // [respond] 201 と登録レスポンスで応答する — RFC 7591 §3.2.1
     // 発行した値と、登録したすべてのメタデータ（既定値を適用したもの）を 201 で返す（RFC 7591 §3.2.1）。
     // `client_secret_expires_at` の 0 は、シークレットに有効期限がないことを表す。
-    return registrationJson(buildClientRegistrationResponse(client), 201);
+    return registrationJson(buildClientRegistrationResponse(dpopClient ?? client), 201);
   } catch (error) {
+    // [respond-error] 登録エラーで応答する — RFC 7591 §3.2.2
     // 登録のエラーには、400 で `error` と `error_description` の JSON を返す（RFC 7591 §3.2.2）。
     // エラーは、クラスではなく形で見分ける。
     // config.ts の検証関数はアプリの起動時（instrumentation.ts）に設定されることがあり、Next.js はそれをこのルートハンドラとは別にバンドルするので、その関数が投げる `ClientRegistrationError` は別のクラスの複製になるためである。

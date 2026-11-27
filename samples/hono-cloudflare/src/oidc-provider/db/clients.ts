@@ -36,12 +36,13 @@
  *   every private_key_jwt client assertion must be signed with. name,
  *   logo_uri, policy_uri, tos_uri and client_uri are clientName, logoUri,
  *   policyUri, tosUri and clientUri, what the login and consent screens show.
- * - clients.payload: the rest of the RegisteredClient as JSON, the metadata
- *   without a column (default_max_age, the ID Token and UserInfo signing algs)
- *   and the members a feature adds to RegisteredClient (the
- *   backchannelTokenDeliveryMode of ciba, for one). NULL when the client has
- *   none. registerClient() writes no member with a column there, and a
- *   column that holds a value wins over a payload member of the same name.
+ * - clients.payload: the rest of the RegisteredClient as a JSON object keyed
+ *   by its member names ({"defaultMaxAge":300}), the metadata without a column
+ *   (default_max_age, the ID Token and UserInfo signing algs) and the members
+ *   a feature adds to RegisteredClient (the backchannelTokenDeliveryMode of
+ *   ciba, for one). NULL when the client has none. registerClient() writes no
+ *   member with a column there, and a column that holds a value wins over a
+ *   payload member of the same name.
  *
  * The client's public keys (client_jwks) are not part of the RegisteredClient.
  * A process that needs them asks the ClientKeyResolver for the keys of its own
@@ -95,6 +96,7 @@ import type { SqlDatabase } from './database.js';
  * - `clients.payload` の JSON（列を持たないメタデータ。`defaultMaxAge` や、機能が `RegisteredClient` に足すメンバー）は、NULL でなければ、そのメンバーをそのまま `RegisteredClient` に移す。列から移す値は `payload` より後に移すので、同じ名前のメンバーは、列に値があれば列の値になる。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの方式の `client_auths` の行どうしでシークレットが違うクライアントを読んだとき
+ * @throws {Error} 返したリゾルバの `findClient()` が、JSON のオブジェクトでない `clients.payload` を読んだとき（`parsePayload()`）
  */
 export function createClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
   return {
@@ -147,7 +149,7 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
 
       const registered: RegisteredClient = {
         // 列を持たないメタデータを先に移し、同じ名前のメンバーは、後に続く列の値があればそれで上書きする。
-        ...(client.payload === null ? {} : (JSON.parse(client.payload) as Record<string, unknown>)),
+        ...(client.payload === null ? {} : parsePayload(clientId, client.payload)),
         clientId: client.id,
         clientType: client.client_type === 'public' ? 'public' : 'confidential',
         redirectUris: redirectUris.map((row) => row.value),
@@ -237,6 +239,26 @@ function parseJwk(clientId: string, json: string): Jwk {
     throw new Error('Client ' + clientId + ' has a client_jwks row that is not a JSON JWK');
   }
   return jwk as Jwk;
+}
+
+/**
+ * `clients.payload` の JSON を解析して返す。
+ *
+ * `payload` には、列を持たないメタデータを、`RegisteredClient` のメンバーの名前をキーにした JSON のオブジェクトで保存する。
+ *
+ * @throws {Error} `payload` が JSON として正しくないか、JSON のオブジェクトでない（配列や `null` など）とき
+ */
+function parsePayload(clientId: string, json: string): Record<string, unknown> {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(json);
+  } catch {
+    payload = undefined;
+  }
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('Client ' + clientId + ' has a payload that is not a JSON object');
+  }
+  return payload as Record<string, unknown>;
 }
 
 /**

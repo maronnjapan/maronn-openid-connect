@@ -36,6 +36,8 @@ afterEach(() => {
 });
 
 describe('dpopNonceKeyOf', () => {
+  // importDpopNonceKey() is not exported: the tests of dpopNonceKeyOf() reach it.
+  // @subject hono:oidc-provider/features/dpop/nonce.ts#importDpopNonceKey
   it('should give the same key for the same secret', async () => {
     expect(await dpopNonceKeyOf(SECRET)).toBe(await dpopNonceKeyOf(SECRET));
   });
@@ -62,6 +64,8 @@ describe('dpopNonceKeyOf', () => {
 
 describe('issueDpopNonce', () => {
   // RFC 9449 §8.1: the second of issue and the random bytes, then the MAC, both base64url.
+  // macInputOf() is not exported: this test checks the MAC input it builds through the nonces.
+  // @subject hono:oidc-provider/features/dpop/nonce.ts#macInputOf
   it('should give the second of issue and the random bytes with the MAC of the server and the issuer', async () => {
     const key = await dpopNonceKeyOf(SECRET);
     fixRandomBytes();
@@ -133,6 +137,7 @@ describe('verifyDpopNonce', () => {
     await expect(verifyDpopNonce(key, RESOURCE_SERVER_NONCE, RESOURCE_SERVER, policy)).resolves.toBe(true);
   });
 
+  // @subject hono:oidc-provider/features/dpop/nonce.ts#macInputOf
   it('should reject the nonce of another issuer', async () => {
     const key = await dpopNonceKeyOf(SECRET);
 

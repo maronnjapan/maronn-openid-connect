@@ -12,7 +12,7 @@ import { dispatchClientCredentials } from '../client-credentials/grant';
 import { dispatchDeviceCode } from '../device-authorization-grant/grant';
 import { dispatchIdJagIssuance, dispatchIdJagRedemption } from '../id-jag/grant';
 import { dispatchTokenExchange } from '../token-exchange/grant';
-import { verifyDpopTokenRequest } from './token';
+import { validateDpopGrantBinding, verifyDpopTokenRequest } from './token';
 
 // The blocks of the grants a feature answers, as spies that run the block: the
 // tests check what the token route hands them.
@@ -117,20 +117,26 @@ function basicAuthorization(clientId: string, clientSecret: string): string {
 }
 
 /**
- * A confidential client of its own (client_secret_basic), with an
- * authorization code stored for it; and the requests to the token endpoint.
+ * A client of its own, confidential (client_secret_basic) unless publicClient
+ * (none: it sends its client_id and no credential), with an authorization
+ * code and an offline refresh token stored for it, both bound to boundKey
+ * when given; and the requests to the token endpoint.
  */
-async function provider(options: { scope?: string[] } = {}) {
+async function provider(options: { publicClient?: boolean; scope?: string[]; boundKey?: DpopKey } = {}) {
+  const { publicClient = false, scope, boundKey } = options;
   const clientId = unique('dpop-client');
   const code = unique('dpop-code');
+  const refreshToken = unique('dpop-refresh-token');
   await registerClient(createDatabase(), {
     clientId,
     redirectUris: [REDIRECT_URI],
     grantTypes: ['authorization_code', 'refresh_token', 'client_credentials'],
-    clientSecret: CLIENT_SECRET,
-    tokenEndpointAuthMethods: ['client_secret_basic'],
-    ...(options.scope === undefined ? {} : { scope: options.scope }),
+    ...(publicClient
+      ? { tokenEndpointAuthMethods: ['none'] }
+      : { clientSecret: CLIENT_SECRET, tokenEndpointAuthMethods: ['client_secret_basic'] }),
+    ...(scope === undefined ? {} : { scope }),
   });
+  const cnf = boundKey === undefined ? {} : { cnf: { jkt: boundKey.jkt } };
   const storedCode: AuthorizationCodeData = {
     code,
     grantId: unique('grant'),
@@ -146,22 +152,37 @@ async function provider(options: { scope?: string[] } = {}) {
     codeChallenge: CODE_CHALLENGE,
     codeChallengeMethod: 'S256',
   };
-  await stores.authCodeStore.set(code, storedCode);
+  await stores.authCodeStore.set(code, { ...storedCode, ...cnf });
+  await stores.refreshTokenStore.set(refreshToken, {
+    subject: 'dpop-user',
+    clientId,
+    scope: ['openid', 'offline_access'],
+    expiresAt: NOW + 86400,
+    originalIssuedAt: NOW - 3600,
+    used: false,
+    grantId: unique('grant'),
+    iat: NOW - 3600,
+    issuer: TEST_ISSUER,
+    audience: [`${TEST_ISSUER}/userinfo`],
+    authTime: NOW - 3600,
+    ...cnf,
+  });
   const post = (fields: Record<string, string>, headers: Record<string, string> = {}) =>
     token(
       new Request(TOKEN_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: basicAuthorization(clientId, CLIENT_SECRET),
+          ...(publicClient ? {} : { Authorization: basicAuthorization(clientId, CLIENT_SECRET) }),
           ...headers,
         },
-        body: new URLSearchParams(fields).toString(),
+        body: new URLSearchParams({ ...(publicClient ? { client_id: clientId } : {}), ...fields }).toString(),
       }),
     );
   const exchangeCode = (headers: Record<string, string> = {}) =>
     post({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER }, headers);
-  return { clientId, code, post, exchangeCode };
+  const refresh = (headers: Record<string, string> = {}) => post({ grant_type: 'refresh_token', refresh_token: refreshToken }, headers);
+  return { clientId, code, refreshToken, post, exchangeCode, refresh };
 }
 
 /** A POST to the token endpoint of the examples of RFC 9449, from the public client s6BhdRkqt, with the DPoP proof. */
@@ -180,10 +201,12 @@ async function tokenProof(key: DpopKey, overrides: Record<string, unknown> = {})
 }
 
 describe('verifyDpopTokenRequest', () => {
-  // RFC 9449 §5 / §6.1: the access token of a request with a DPoP proof is bound to the key of the proof.
+  // RFC 9449 §5 / §6.1: the access token of a request with a DPoP proof is bound to the key of the proof,
+  // and so is the refresh token of a public client (RFC 9449 §5).
   // The authorization server of the examples is the provider of the file with its issuer set to server.example.com.
   describe('the token requests of RFC 9449', () => {
-    it('should answer the authorization code request of Figure 5 with a DPoP access token whose cnf.jkt is that of Figure 9', async () => {
+    // The code grants offline_access, so its token response carries a refresh token as Figure 6 does.
+    it('should answer the authorization code request of Figure 5 with a DPoP access token and a refresh token bound to the key of Figure 9', async () => {
       vi.setSystemTime(FIGURE_5_IAT * 1000);
       config.issuer = RFC9449_ISSUER;
       await registerClient(createDatabase(), {
@@ -198,7 +221,7 @@ describe('verifyDpopTokenRequest', () => {
         clientId: RFC9449_CLIENT_ID,
         redirectUri: RFC9449_REDIRECT_URI,
         redirectUriExplicit: true,
-        scope: ['openid'],
+        scope: ['openid', 'offline_access'],
         subject: 'dpop-user',
         used: false,
         expiresAt: FIGURE_5_IAT + 300,
@@ -225,9 +248,11 @@ describe('verifyDpopTokenRequest', () => {
       expect(body.token_type).toBe('DPoP');
       expect(decodeJwt(body.access_token).payload.cnf).toEqual({ jkt: RFC9449_JKT });
       expect(await stores.accessTokenStore.get(body.access_token)).toMatchObject({ cnf: { jkt: RFC9449_JKT }, tokenType: 'DPoP' });
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).toMatchObject({ cnf: { jkt: RFC9449_JKT } });
     });
 
-    it('should answer the refresh request of Figure 7 with a DPoP access token whose cnf.jkt is that of Figure 9', async () => {
+    // The refresh token is bound to the key of Figure 9, as the refresh token of Figure 6 is (issued to a public client that sent a proof).
+    it('should answer the refresh request of Figure 7 with a DPoP access token and a rotated refresh token bound to the key of Figure 9', async () => {
       vi.setSystemTime(FIGURE_7_IAT * 1000);
       config.issuer = RFC9449_ISSUER;
       await registerClient(createDatabase(), {
@@ -236,7 +261,7 @@ describe('verifyDpopTokenRequest', () => {
         grantTypes: ['authorization_code', 'refresh_token'],
         tokenEndpointAuthMethods: ['none'],
       });
-      await stores.refreshTokenStore.set('Q..Zkm29lexi8VnWg2zPW1x-tgGad0Ibc3s3EwM_Ni4-g', {
+      const figure7RefreshToken = {
         subject: 'dpop-user',
         clientId: RFC9449_CLIENT_ID,
         scope: ['openid', 'offline_access'],
@@ -248,7 +273,9 @@ describe('verifyDpopTokenRequest', () => {
         issuer: RFC9449_ISSUER,
         audience: [`${RFC9449_ISSUER}/userinfo`],
         authTime: FIGURE_7_IAT - 3600,
-      });
+        cnf: { jkt: RFC9449_JKT },
+      };
+      await stores.refreshTokenStore.set('Q..Zkm29lexi8VnWg2zPW1x-tgGad0Ibc3s3EwM_Ni4-g', figure7RefreshToken);
 
       const response = await postToRfc9449Token(
         { grant_type: 'refresh_token', client_id: RFC9449_CLIENT_ID, refresh_token: 'Q..Zkm29lexi8VnWg2zPW1x-tgGad0Ibc3s3EwM_Ni4-g' },
@@ -260,11 +287,17 @@ describe('verifyDpopTokenRequest', () => {
       expect(body.token_type).toBe('DPoP');
       expect(decodeJwt(body.access_token).payload.cnf).toEqual({ jkt: RFC9449_JKT });
       expect(await stores.accessTokenStore.get(body.access_token)).toMatchObject({ cnf: { jkt: RFC9449_JKT }, tokenType: 'DPoP' });
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).toMatchObject({ cnf: { jkt: RFC9449_JKT } });
     });
   });
 
   it('should decide no binding for a request without a DPoP header', async () => {
-    expect(await verifyDpopTokenRequest(new Request(TOKEN_ENDPOINT, { method: 'POST' }))).toEqual({ tokenBinding: undefined });
+    const request = new Request(TOKEN_ENDPOINT, { method: 'POST' });
+
+    expect(await verifyDpopTokenRequest(request, { clientId: 'dpop-public-client', tokenEndpointAuthMethods: ['none'] })).toEqual({
+      dpopJkt: undefined,
+      tokenBinding: undefined,
+    });
   });
 
   it('should keep issuing Bearer tokens to a request without a DPoP proof', async () => {
@@ -340,6 +373,20 @@ describe('verifyDpopTokenRequest', () => {
       deviceCode: binding,
       ciba: binding,
     });
+  });
+
+  // RFC 9449 §5: the device and CIBA grants bind the refresh token they issue to a public client through refreshTokenCnf.
+  it('should hand a public client the binding of its refresh token too', async () => {
+    const key = await dpopKey();
+    const { exchangeCode } = await provider({ publicClient: true });
+
+    await exchangeCode({ DPoP: await tokenProof(key) });
+
+    const binding = { cnf: { jkt: key.jkt }, tokenType: 'DPoP', refreshTokenCnf: { jkt: key.jkt } };
+    expect({
+      deviceCode: vi.mocked(dispatchDeviceCode).mock.calls[0]?.[3],
+      ciba: vi.mocked(dispatchCiba).mock.calls[0]?.[3],
+    }).toEqual({ deviceCode: binding, ciba: binding });
   });
 
   it.each([
@@ -467,6 +514,142 @@ describe('verifyDpopTokenRequest', () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'server_error' });
+  });
+});
+
+describe('validateDpopGrantBinding', () => {
+  it('should leave a request of another grant unchecked', async () => {
+    expect(await validateDpopGrantBinding({ grant_type: 'client_credentials' }, 'dpop-client', undefined)).toBeUndefined();
+  });
+
+  // RFC 9449 §10: a code bound to a key is exchanged only with a proof of that key.
+  describe('authorization code bound to a key', () => {
+    it('should exchange the code with a proof of the key', async () => {
+      const key = await dpopKey();
+      const { code, exchangeCode } = await provider({ publicClient: true, boundKey: key });
+
+      const response = await exchangeCode({ DPoP: await tokenProof(key) });
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as TokenBody).token_type).toBe('DPoP');
+      expect((await stores.authCodeStore.get(code))?.used).toBe(true);
+    });
+
+    it.each([
+      ['without a proof', false, 'The grant is bound to a DPoP key, but no DPoP proof was sent'],
+      ['with a proof of another key', true, 'The DPoP proof key does not match the key the grant is bound to'],
+    ])('should reject the exchange %s with an uncacheable invalid_grant, and leave the code unused', async (_name, withOtherKey, description) => {
+      const key = await dpopKey();
+      const { code, exchangeCode } = await provider({ publicClient: true, boundKey: key });
+
+      const response = await exchangeCode(withOtherKey ? { DPoP: await tokenProof(await dpopKey()) } : {});
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: description });
+      expect((await stores.authCodeStore.get(code))?.used).toBe(false);
+    });
+
+    // OAuth 2.1 §4.1.2: the grant validation revokes the tokens of a code presented again.
+    it('should leave a used code to the grant validation, which rejects the replay', async () => {
+      const key = await dpopKey();
+      const { code, exchangeCode } = await provider({ publicClient: true, boundKey: key });
+      await exchangeCode({ DPoP: await tokenProof(key) });
+
+      const response = await exchangeCode({ DPoP: await tokenProof(await dpopKey()) });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Authorization code has already been used' });
+      expect((await stores.authCodeStore.get(code))?.used).toBe(true);
+    });
+
+    it('should leave a code of another client to the grant validation', async () => {
+      const key = await dpopKey();
+      const other = await provider({ publicClient: true, boundKey: key });
+      const { post } = await provider({ publicClient: true });
+
+      const response = await post({ grant_type: 'authorization_code', code: other.code, redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Authorization code was issued to a different client' });
+    });
+
+    it('should let an unbound code be exchanged without a proof', async () => {
+      const { exchangeCode } = await provider({ publicClient: true });
+
+      const response = await exchangeCode();
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as TokenBody).token_type).toBe('Bearer');
+    });
+  });
+
+  // RFC 9449 §5: a public client's bound refresh token needs a proof of the same key.
+  describe('refresh token bound to a key', () => {
+    it('should refresh with a proof of the key, and bind the rotated refresh token to it', async () => {
+      const key = await dpopKey();
+      const { refreshToken, refresh } = await provider({ publicClient: true, boundKey: key });
+
+      const response = await refresh({ DPoP: await tokenProof(key) });
+      const body = (await response.json()) as TokenBody;
+
+      expect(response.status).toBe(200);
+      expect(body.token_type).toBe('DPoP');
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).toMatchObject({ cnf: { jkt: key.jkt } });
+      expect((await stores.refreshTokenStore.get(refreshToken))?.used).toBe(true);
+    });
+
+    it.each([
+      ['without a proof', false, 'The grant is bound to a DPoP key, but no DPoP proof was sent'],
+      ['with a proof of another key', true, 'The DPoP proof key does not match the key the grant is bound to'],
+    ])('should reject the refresh %s with an uncacheable invalid_grant, and leave the refresh token unused', async (_name, withOtherKey, description) => {
+      const key = await dpopKey();
+      const { refreshToken, refresh } = await provider({ publicClient: true, boundKey: key });
+
+      const response = await refresh(withOtherKey ? { DPoP: await tokenProof(await dpopKey()) } : {});
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: description });
+      expect((await stores.refreshTokenStore.get(refreshToken))?.used).toBe(false);
+    });
+
+    // OAuth 2.1 §4.3.1: the grant validation revokes the tokens of a rotated refresh token presented again.
+    it('should leave a used refresh token to the grant validation, which rejects the replay and revokes the grant', async () => {
+      const key = await dpopKey();
+      const { refresh } = await provider({ publicClient: true, boundKey: key });
+      const rotated = ((await (await refresh({ DPoP: await tokenProof(key) })).json()) as TokenBody).refresh_token as string;
+
+      const response = await refresh();
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'invalid_grant', error_description: 'Refresh token has already been used' });
+      expect(await stores.refreshTokenStore.get(rotated)).toBeUndefined();
+    });
+
+    it('should let an unbound refresh token be used without a proof, and keep the rotated one unbound', async () => {
+      const { refresh } = await provider({ publicClient: true });
+
+      const response = await refresh();
+      const body = (await response.json()) as TokenBody;
+
+      expect(response.status).toBe(200);
+      expect(body.token_type).toBe('Bearer');
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).not.toHaveProperty('cnf');
+    });
+
+    // RFC 9449 §5: a refresh token issued to a public client that presents a valid proof is bound to its key.
+    it('should bind the refresh token that rotates an unbound one when the public client sends a proof', async () => {
+      const key = await dpopKey();
+      const { refresh } = await provider({ publicClient: true });
+
+      const response = await refresh({ DPoP: await tokenProof(key) });
+      const body = (await response.json()) as TokenBody;
+
+      expect(response.status).toBe(200);
+      expect(body.token_type).toBe('DPoP');
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).toMatchObject({ cnf: { jkt: key.jkt } });
+    });
   });
 });
 

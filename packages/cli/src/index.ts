@@ -52,9 +52,9 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'dpop: the DPoP proof checks are generated into features/dpop/ (_oidc-provider/features/dpop/\n' +
     'for Next.js), with no package to install, so change the policy there. A client opts in by\n' +
     'sending a DPoP proof in the DPoP header of its token requests: the access token is then bound\n' +
-    'to its key (token_type DPoP); without one the tokens stay Bearer. Refresh tokens are not bound\n' +
-    'yet, and the UserInfo endpoint does not check DPoP yet: it takes a bound access token as a\n' +
-    'Bearer token.\n',
+    'to its key (token_type DPoP), and so is the refresh token of a public client, which then needs\n' +
+    'a proof of the same key each time it is used; without one the tokens stay Bearer. The UserInfo\n' +
+    'endpoint does not check DPoP yet: it takes a bound access token as a Bearer token.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -178,8 +178,9 @@ Extension features (disabled by default): ${extensionFeatures}
   features/dpop/ (_oidc-provider/features/dpop/ for Next.js) with no package
   beside core, so change the policy there; the CORS of the endpoints clients
   call allows the DPoP header. The token endpoint checks the DPoP proof of a
-  request and binds the access token to its key (token_type DPoP); without a
-  proof the tokens stay Bearer. Refresh tokens are not bound yet, and the
+  request and binds the access token to its key (token_type DPoP), and the
+  refresh token of a public client too, which then needs a proof of the same
+  key each time it is used; without a proof the tokens stay Bearer. The
   UserInfo endpoint does not check DPoP yet: it takes a bound access token
   as a Bearer token. Web Crypto only, so it runs on edge runtimes too.
   Enable with:

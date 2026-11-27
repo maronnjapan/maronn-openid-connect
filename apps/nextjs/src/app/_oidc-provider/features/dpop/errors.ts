@@ -15,6 +15,8 @@
 const DPOP_ERROR_CODES = [
   /** DPoP proof が無い、形式が正しくない、または検証できない（RFC 9449 §5 / §7.1）。 */
   'invalid_dpop_proof',
+  /** 認可コードかリフレッシュトークンが鍵に束縛されているのに、その鍵の DPoP proof が無い（RFC 9449 §5 / §10）。 */
+  'invalid_grant',
 ] as const;
 
 /** DPoP の検査の失敗を表す OAuth のエラーコード。 */

@@ -124,7 +124,11 @@ async function provider(client: Partial<ClientRegistration> = {}, config: Record
 /**
  * The authorization server of the examples of RFC 9449, on an in-memory
  * database: the public client s6BhdRkqt, and the authorization code of
- * Figure 5 and the refresh token of Figure 7 stored for it.
+ * Figure 5 and the refresh token of Figure 7 stored for it. The code grants
+ * offline_access, so its token response carries a refresh token as Figure 6
+ * does; the refresh token is bound to the key of Figure 9, as the refresh
+ * token of Figure 6 is (RFC 9449 §5: it was issued to a public client that
+ * sent a proof).
  */
 async function rfc9449Provider() {
   const db = createEmptyDatabase();
@@ -141,16 +145,15 @@ async function rfc9449Provider() {
       code: 'SplxlOBeZQQYbYS6WxSbIA',
       clientId: RFC9449_CLIENT_ID,
       redirectUri: RFC9449_REDIRECT_URI,
-      scope: ['openid'],
+      scope: ['openid', 'offline_access'],
       expiresAt: FIGURE_5_IAT + 300,
       authTime: FIGURE_5_IAT - 60,
       codeChallenge: RFC9449_CODE_CHALLENGE,
       codeChallengeMethod: 'S256',
     }),
   );
-  await stores.refreshTokenStore.set(
-    'Q..Zkm29lexi8VnWg2zPW1x-tgGad0Ibc3s3EwM_Ni4-g',
-    storedRefreshToken({
+  const figure7RefreshToken = {
+    ...storedRefreshToken({
       clientId: RFC9449_CLIENT_ID,
       scope: ['openid', 'offline_access'],
       expiresAt: FIGURE_7_IAT + 86400,
@@ -160,7 +163,9 @@ async function rfc9449Provider() {
       audience: [`${RFC9449_ISSUER}/userinfo`],
       authTime: FIGURE_7_IAT - 3600,
     }),
-  );
+    cnf: { jkt: RFC9449_JKT },
+  };
+  await stores.refreshTokenStore.set('Q..Zkm29lexi8VnWg2zPW1x-tgGad0Ibc3s3EwM_Ni4-g', figure7RefreshToken);
   const app = createApp({
     signingKeyProvider: staticKeyProvider(await rs256Key()),
     storage: stores,
@@ -192,9 +197,10 @@ describe('verifyDpopTokenRequest', () => {
     vi.useRealTimers();
   });
 
-  // RFC 9449 §5 / §6.1: the access token of a request with a DPoP proof is bound to the key of the proof.
+  // RFC 9449 §5 / §6.1: the access token of a request with a DPoP proof is bound to the key of the proof,
+  // and so is the refresh token of a public client (RFC 9449 §5).
   describe('the token requests of RFC 9449', () => {
-    it('should answer the authorization code request of Figure 5 with a DPoP access token whose cnf.jkt is that of Figure 9', async () => {
+    it('should answer the authorization code request of Figure 5 with a DPoP access token and a refresh token bound to the key of Figure 9', async () => {
       vi.setSystemTime(FIGURE_5_IAT * 1000);
       const { stores, post } = await rfc9449Provider();
 
@@ -215,9 +221,10 @@ describe('verifyDpopTokenRequest', () => {
       expect(body.token_type).toBe('DPoP');
       expect(decodeJwt(body.access_token).payload.cnf).toEqual({ jkt: RFC9449_JKT });
       expect(await stores.accessTokenStore.get(body.access_token)).toMatchObject({ cnf: { jkt: RFC9449_JKT }, tokenType: 'DPoP' });
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).toMatchObject({ cnf: { jkt: RFC9449_JKT } });
     });
 
-    it('should answer the refresh request of Figure 7 with a DPoP access token whose cnf.jkt is that of Figure 9', async () => {
+    it('should answer the refresh request of Figure 7 with a DPoP access token and a rotated refresh token bound to the key of Figure 9', async () => {
       vi.setSystemTime(FIGURE_7_IAT * 1000);
       const { stores, post } = await rfc9449Provider();
 
@@ -231,6 +238,7 @@ describe('verifyDpopTokenRequest', () => {
       expect(body.token_type).toBe('DPoP');
       expect(decodeJwt(body.access_token).payload.cnf).toEqual({ jkt: RFC9449_JKT });
       expect(await stores.accessTokenStore.get(body.access_token)).toMatchObject({ cnf: { jkt: RFC9449_JKT }, tokenType: 'DPoP' });
+      expect(await stores.refreshTokenStore.get(body.refresh_token as string)).toMatchObject({ cnf: { jkt: RFC9449_JKT } });
     });
   });
 
@@ -304,6 +312,29 @@ describe('verifyDpopTokenRequest', () => {
       deviceCode: binding,
       ciba: binding,
     });
+  });
+
+  // RFC 9449 §5: the device and CIBA grants bind the refresh token they issue to a public client through refreshTokenCnf.
+  it('should hand a public client the binding of its refresh token too', async () => {
+    vi.setSystemTime(FIGURE_5_IAT * 1000);
+    const { post } = await rfc9449Provider();
+
+    await post(
+      {
+        grant_type: 'authorization_code',
+        client_id: RFC9449_CLIENT_ID,
+        code: 'SplxlOBeZQQYbYS6WxSbIA',
+        redirect_uri: RFC9449_REDIRECT_URI,
+        code_verifier: RFC9449_CODE_VERIFIER,
+      },
+      FIGURE_5_PROOF,
+    );
+
+    const binding = { cnf: { jkt: RFC9449_JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: RFC9449_JKT } };
+    expect({
+      deviceCode: vi.mocked(redeemDeviceCode).mock.calls[0]?.[4],
+      ciba: vi.mocked(redeemCibaRequest).mock.calls[0]?.[4],
+    }).toEqual({ deviceCode: binding, ciba: binding });
   });
 
   it.each([

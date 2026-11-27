@@ -1,34 +1,40 @@
 /**
- * EXTENSION (dpop): the block of token/route.ts (RFC 9449 §5).
+ * EXTENSION (dpop): the blocks of token/route.ts (RFC 9449 §5).
  *
  * The token endpoint calls verifyDpopTokenRequest() in its
- * [verify-dpop-proof] block, right after client authentication and before
- * any grant is answered. A failure is answered with a ready-made Response the
- * block returns, so the base token endpoint needs no error type of this
- * feature.
+ * [verify-dpop-proof] block and validateDpopGrantBinding() in its
+ * [validate-dpop-grant-binding] block, right after client authentication and
+ * before any grant is answered. A failure is answered with a ready-made
+ * Response the block returns, so the base token endpoint needs no error type
+ * of this feature.
  */
+import { isPublicTokenClient, type TokenClientInfo, type TokenRequestParams } from '@maronn-openid-connect/core';
+import { stores } from '../../provider';
 import { DPOP_TOKEN_TYPE, type TokenBinding } from '../../token-binding';
-import { buildDpopConfirmation } from './binding';
+import { buildDpopConfirmation, readDpopJkt, selectDpopRefreshTokenJkt, validateDpopBoundGrant } from './binding';
 import { tokenEndpointRejectionOf } from './error-responses';
 import { readDpopProofHeader, verifyDpopRequestProof } from './proof';
 
 /** What verifyDpopTokenRequest() decided. */
 export interface DpopTokenRequest {
-  /** The key the access token of the response is bound to; undefined issues Bearer tokens. */
+  /** The JWK Thumbprint of the key of the verified DPoP proof; undefined when the request had no DPoP header. */
+  dpopJkt: string | undefined;
+  /** The key the tokens of the response are bound to; undefined issues Bearer tokens. */
   tokenBinding: TokenBinding | undefined;
   /** The error response to answer with when the DPoP proof was rejected. */
   dpopRejection?: Response;
 }
 
 /**
- * トークンリクエストの DPoP proof を検証し、発行するアクセストークンを束縛する鍵を返す。
+ * トークンリクエストの DPoP proof を検証し、その鍵の JWK Thumbprint と、発行するトークンを束縛する鍵を返す。
  *
- * `DPoP` ヘッダーがなければ、`tokenBinding` が `undefined`（Bearer トークンを発行する）の結果を返す。
- * `DPoP` ヘッダーがあれば、DPoP proof を検査し（`htm` は POST、`htu` は issuer の `/token`）、その鍵への束縛を `tokenBinding` に入れて返す。
+ * `DPoP` ヘッダーがなければ、`dpopJkt` と `tokenBinding` が `undefined`（Bearer トークンを発行する）の結果を返す。
+ * `DPoP` ヘッダーがあれば、DPoP proof を検査し（`htm` は POST、`htu` は issuer の `/token`）、その鍵の JWK Thumbprint を `dpopJkt` に、その鍵への束縛を `tokenBinding` に入れて返す。
  * 返す `tokenBinding` は、アクセストークンの `cnf.jkt` をその鍵の JWK Thumbprint にし、`token_type` を `DPoP` にする（RFC 9449 §5 / §6.1）。
- * リフレッシュトークンを束縛する `refreshTokenCnf` は持たない。
+ * パブリッククライアントには、リフレッシュトークンも同じ鍵に束縛する `refreshTokenCnf` を持たせる（RFC 9449 §5 の MUST）。
+ * コンフィデンシャルクライアントのリフレッシュトークンは、クライアント認証で送り手が限られているので束縛しない。
  *
- * どのグラントの前にも実行するので、機能が答えるグラント（client_credentials など）のアクセストークンも同じ鍵に束縛する。
+ * どのグラントの前にも実行するので、機能が答えるグラント（client_credentials など）のトークンも同じ鍵に束縛する。
  * クライアントの認証の後に実行するので、認証に失敗したリクエストの DPoP proof は検査せず、その `jti` も覚えない。
  * 拒否するときは、キャッシュさせない 400 の `invalid_dpop_proof` のレスポンスを `dpopRejection` に入れて返す。
  *
@@ -36,17 +42,78 @@ export interface DpopTokenRequest {
  * @spec RFC 9449 §5
  * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき（設定の誤り。500 の `server_error` で応答する）
  */
-export async function verifyDpopTokenRequest(request: Request): Promise<DpopTokenRequest> {
+export async function verifyDpopTokenRequest(request: Request, tokenClient: TokenClientInfo): Promise<DpopTokenRequest> {
   try {
     // `DPoP` ヘッダーは一つだけでなければならない（RFC 9449 §4.3）。
     const proof = readDpopProofHeader(request.headers.get('DPoP'));
-    if (proof === undefined) return { tokenBinding: undefined };
+    if (proof === undefined) return { dpopJkt: undefined, tokenBinding: undefined };
 
     const dpopJkt = await verifyDpopRequestProof(proof, { method: request.method, path: '/token' });
-    return { tokenBinding: { cnf: buildDpopConfirmation(dpopJkt), tokenType: DPOP_TOKEN_TYPE } };
+
+    // パブリッククライアントのリフレッシュトークンは、DPoP proof の鍵に束縛する（RFC 9449 §5）。
+    const refreshTokenJkt = selectDpopRefreshTokenJkt(isPublicTokenClient(tokenClient), dpopJkt);
+    return {
+      dpopJkt,
+      tokenBinding: {
+        cnf: buildDpopConfirmation(dpopJkt),
+        tokenType: DPOP_TOKEN_TYPE,
+        ...(refreshTokenJkt === undefined ? {} : { refreshTokenCnf: buildDpopConfirmation(refreshTokenJkt) }),
+      },
+    };
   } catch (error) {
     const dpopRejection = tokenEndpointRejectionOf(error);
     if (dpopRejection === undefined) throw error;
-    return { tokenBinding: undefined, dpopRejection };
+    return { dpopJkt: undefined, tokenBinding: undefined, dpopRejection };
   }
+}
+
+/**
+ * 提示された認可コードかリフレッシュトークンが DPoP の鍵に束縛されていれば、DPoP proof が同じ鍵のものであることを確かめる。
+ *
+ * 束縛した鍵は、保存したレコードの `cnf.jkt` にある。
+ * リフレッシュトークンは、パブリッククライアントが DPoP proof を送って得たときに束縛されている（RFC 9449 §5）。
+ * 認可コードは、認可リクエストの確認（`cnf`）を引き継いだときに束縛されている（RFC 9449 §10）。
+ * DPoP proof がないか、別の鍵の DPoP proof なら、キャッシュさせない 400 の `invalid_grant` のレスポンスを返す。
+ * 受け付けるときは `undefined` を返す。
+ *
+ * グラントを検証するブロックより前に実行するので、拒否したリクエストでは、認可コードを使用済みにせず、トークンを発行せず、リフレッシュトークンもローテーションしない。
+ * 使用済みのもの、別のクライアントのもの、見つからないものは確かめず、後のグラントの検証に任せる。
+ * 使用済みのコードやトークンの再提示は、グラントの検証がそのグラントのトークンを失効させる（OAuth 2.1 §4.1.2 / §4.3.1）ので、ここで先に拒否しない。
+ *
+ * @spec RFC 9449 §5
+ * @spec RFC 9449 §10
+ */
+export async function validateDpopGrantBinding(
+  params: Pick<TokenRequestParams, 'grant_type' | 'code' | 'refresh_token'>,
+  authenticatedClientId: string,
+  dpopJkt: string | undefined,
+): Promise<Response | undefined> {
+  const record = await boundGrantRecordOf(params);
+  if (record === undefined || record.used || record.clientId !== authenticatedClientId) return undefined;
+  try {
+    validateDpopBoundGrant(readDpopJkt(record), dpopJkt);
+    return undefined;
+  } catch (error) {
+    const rejection = tokenEndpointRejectionOf(error);
+    if (rejection === undefined) throw error;
+    return rejection;
+  }
+}
+
+/**
+ * トークンリクエストが提示した認可コードかリフレッシュトークンの、保存したレコードを返す。
+ *
+ * `grant_type` が `authorization_code` なら `code` の、`refresh_token` なら `refresh_token` のレコードを返す。
+ * ほかのグラントと、見つからないものには `undefined` を返す。
+ */
+async function boundGrantRecordOf(
+  params: Pick<TokenRequestParams, 'grant_type' | 'code' | 'refresh_token'>,
+): Promise<{ used: boolean; clientId: string } | undefined> {
+  if (params.grant_type === 'authorization_code' && typeof params.code === 'string') {
+    return (await stores.authCodeStore.get(params.code)) ?? undefined;
+  }
+  if (params.grant_type === 'refresh_token' && typeof params.refresh_token === 'string') {
+    return (await stores.refreshTokenStore.get(params.refresh_token)) ?? undefined;
+  }
+  return undefined;
 }

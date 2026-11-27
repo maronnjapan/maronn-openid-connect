@@ -5,14 +5,17 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * EXTENSION (dpop) — OAuth 2.0 Demonstrating Proof of Possession (RFC 9449).
  * The token endpoint checks the DPoP proof of a request (the
  * [verify-dpop-proof] block of endpoints/token/pipeline.ts, whose step is
- * steps/verify-dpop-proof.ts) and binds the access token it issues to the key
- * of the proof (cnf.jkt, token_type DPoP); a request without a DPoP header
- * gets Bearer tokens. The checks it calls are the modules of this directory
- * (proof.ts, with jwk.ts and htu.ts), to be changed here when the policy
- * changes. The feature adds the defaults of the DPoP settings
- * (dpopConfigDefaults of ./config.ts) to the defaults of ProviderConfig,
- * advertises the algs of the checks in discovery and lets browsers send the
- * DPoP header.
+ * steps/verify-dpop-proof.ts) and binds the access token it issues, and the
+ * refresh token of a public client, to the key of the proof (cnf.jkt,
+ * token_type DPoP); the [validate-dpop-grant-binding] block after it
+ * (steps/validate-dpop-grant-binding.ts) lets a code or refresh token bound
+ * to a key be used only with a proof of that key. A request without a DPoP
+ * header gets Bearer tokens. The checks it calls are the modules of this
+ * directory (proof.ts, with jwk.ts and htu.ts, and binding.ts), to be changed
+ * here when the policy changes. The feature adds the defaults of the DPoP
+ * settings (dpopConfigDefaults of ./config.ts) to the defaults of
+ * ProviderConfig, advertises the algs of the checks in discovery and lets
+ * browsers send the DPoP header.
  */
 export const dpop = defineFeature({
   id: 'dpop',

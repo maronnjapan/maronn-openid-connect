@@ -69,7 +69,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'rp-initiated-logout', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'RP 起点のログアウト（RP-Initiated Logout 1.0、end_session_endpoint）' },
   { id: 'dynamic-client-registration', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: '動的クライアント登録（RFC 7591）' },
   { id: 'google-login', tier: 'extension', requires: [], packages: ['@maronn-openid-connect/google-login', 'google-auth-library'], frameworks: ALL_FRAMEWORKS, runtimes: ['node'], summary: 'ログイン方法に「Google でログイン」を加える（Node.js 22 以上）' },
-  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）: トークンエンドポイントが DPoP proof を検査し、アクセストークンをその鍵に束縛する（リフレッシュトークンと UserInfo はまだ対象外）' },
+  { id: 'dpop', tier: 'extension', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'DPoP（RFC 9449）: トークンエンドポイントが DPoP proof を検査し、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛する（UserInfo はまだ対象外）' },
 ];
 
 /** The entry of a feature id, or undefined for a name the CLI does not know. */
@@ -199,8 +199,9 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   code is generated into features/dpop/ (Web Crypto only, so edge runtimes
  *   too) and imports no package beside core: the checks of a DPoP proof
  *   (proof.ts), which the token endpoint calls to bind the access tokens it
- *   issues to the key of the proof, their settings, and the DPoP header in
- *   the CORS of the endpoints clients call directly (token, UserInfo, ...).
+ *   issues, and the refresh tokens of public clients, to the key of the
+ *   proof, their settings, and the DPoP header in the CORS of the endpoints
+ *   clients call directly (token, UserInfo, ...).
  */
 export const EXTENSION_FEATURES = ['google-login', 'dpop'] as const;
 
@@ -317,13 +318,15 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   settings of ProviderConfig (dpopSigningAlgValuesSupported,
  *   dpopProofMaxAgeSeconds, dpopProofLeewaySeconds). The token endpoint
  *   checks the DPoP proof of a request that sends one and binds the access
- *   token of every grant to its key (cnf.jkt, token_type DPoP, §5 / §6); a
- *   request without a DPoP header gets Bearer tokens as before. Discovery
- *   advertises dpop_signing_alg_values_supported (§5.1), and the CORS of the
- *   endpoints clients call directly (token, UserInfo, ...) allows the DPoP
- *   header and exposes WWW-Authenticate. Refresh tokens are not bound to the
- *   key yet, and the UserInfo endpoint does not check DPoP yet: it takes a
- *   bound access token as a Bearer token.
+ *   token of every grant to its key (cnf.jkt, token_type DPoP, §5 / §6), and
+ *   the refresh token of a public client too (§5); a code or refresh token
+ *   bound to a key is accepted only with a proof of that key (invalid_grant
+ *   otherwise). A request without a DPoP header gets Bearer tokens as
+ *   before. Discovery advertises dpop_signing_alg_values_supported (§5.1),
+ *   and the CORS of the endpoints clients call directly (token, UserInfo,
+ *   ...) allows the DPoP header and exposes WWW-Authenticate. The UserInfo
+ *   endpoint does not check DPoP yet: it takes a bound access token as a
+ *   Bearer token.
  */
 export interface OidcFeatureConfig {
   pkce: boolean;

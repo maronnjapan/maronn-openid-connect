@@ -572,21 +572,27 @@ Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / 
 
 OpenID Connect のリクエストだけを受け付ける OP に戻すには、`ProviderConfig.requireOpenIdScope` を `true` にする（Next.js は `OIDC_REQUIRE_OPENID_SCOPE=1`）。`openid` のないリクエストは `invalid_scope` になり、PAR とデバイス認可のエンドポイント（`--enable` したとき）も同じ設定に従う。`client_credentials` グラントも外すなら `--disable client-credentials` を付ける。
 
-### 拡張機能（--enable google-login）
+### 拡張機能（--enable google-login / dpop）
 
-拡張機能は、OAuth / OIDC の仕様ではなく**ログイン手段**を生成コードに足すカテゴリで、既定では無効。実装は別 package にあり、有効にしたときだけ import される。
+拡張機能は、OP に任意で足す機能のカテゴリで、既定では無効。`--enable` で名前を挙げたときだけ生成する。実験的機能（`@maronn-openid-connect/experimental`）と違い、API が不安定なことを理由に分けたものではない。
+`google-login` はログイン手段を足す。core が意図して持たないもの（上流の ID プロバイダーと、その公式クライアントライブラリ）を取り込むので、実装は専用の package にあり、有効にしたときだけ import される。
+`dpop` は DPoP（RFC 9449）を足す。package を持たず、コードはすべて生成コードの `features/dpop/`（Next.js は `_oidc-provider/features/dpop/`）に入る。
 
 ```bash
 maronn-oidc generate express --enable google-login
 pnpm add express hono @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library
 pnpm add -D @types/express
+
+maronn-oidc generate hono --enable dpop
+pnpm add hono @maronn-openid-connect/core
 ```
 
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Google Identity Services の redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。ID トークンの検証は Google 公式の `google-auth-library` に委ね、CSRF（`g_csrf_token` の Double Submit Cookie）、nonce による認証トランザクションへの束縛、Google ユーザーの JIT 登録を生成コードが行う（初めてのログインでランダムな ID のユーザーを作り、Google の sub を Federated_identity として記録する。`--db` 無しは `db/` のメモリ、`--db sql` は `federated_identities` テーブル、`--db kv` は `federated_identity:` のキーに入る） | `@maronn-openid-connect/google-login`（Node.js 22 以上限定。Cloudflare Workers などのエッジでは動かない） |
+| `dpop` | 無効 | OAuth 2.0 Demonstrating Proof of Possession（DPoP、RFC 9449）。DPoP proof の検査（`features/dpop/proof.ts`）と、その設定（`ProviderConfig.dpopSigningAlgValuesSupported`、`dpopProofMaxAgeSeconds`、`dpopProofLeewaySeconds`）を生成する。クライアントが直接呼ぶエンドポイント（トークン、UserInfo など）の CORS は `DPoP` ヘッダーを許し、`WWW-Authenticate` を読ませる。どのエンドポイントもまだ DPoP proof を検査しないので、トークンはすべて Bearer のままで、Discovery も DPoP に対応していることを示す `dpop_signing_alg_values_supported` を返さない | なし。生成コードの `features/dpop/` にすべて入る（Web Crypto だけで動くので、エッジランタイムでも動く） |
 
-有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js では `_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()` が、本リポジトリの Express と Fastify の samples では `src/app.ts` が、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
+`google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js では `_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()` が、本リポジトリの Express と Fastify の samples では `src/app.ts` が、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
 
 ## カスタムスコープ（--scope）
 
@@ -692,7 +698,7 @@ OP は private_key_jwt のクライアントアサーション（RFC 7523 §3）
 
 用途は文字列で、DB の側にも CHECK を付けていないので、ほかの処理の用途も同じ形で登録できる。
 たとえば、DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'dpop')` を呼ぶ。
-生成 OP は DPoP を実装しておらず、`request_object` と `private_key_jwt` 以外の用途の鍵を読む処理を持たない。
+生成 OP は `request_object` と `private_key_jwt` 以外の用途の鍵を読む処理を持たない。`--enable dpop` で生成する DPoP proof の検査も、DPoP proof の `jwk` ヘッダーの鍵で署名を検証するので、`dpop` の用途の鍵は読まない。
 
 OP は、クライアントの鍵を発行する機能も、公開鍵を登録する API や画面も持たない。
 鍵の組はクライアントが自分で作り、運用者が公開鍵を DB に書き込む。

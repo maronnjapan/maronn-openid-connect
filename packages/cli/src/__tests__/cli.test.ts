@@ -69,9 +69,9 @@ describe('run', () => {
   it('should error on an unknown feature name', () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
+    run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'unknown-feature']);
     expect(consoleSpy).toHaveBeenCalledWith(
-      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, client-credentials, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration. Extension features (disabled by default): google-login',
+      'Error: Unknown feature: "unknown-feature". Available features: pkce, refresh-token, client-credentials, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration. Extension features (disabled by default): google-login, dpop',
     );
     expect(process.exitCode).toBe(1);
     vi.restoreAllMocks();
@@ -260,6 +260,23 @@ describe('run', () => {
     expect(output.includes('Next steps:')).toBe(false);
     vi.restoreAllMocks();
     process.exitCode = undefined;
+  });
+
+  // All the code of dpop is generated into features/dpop/: setup has no package to install for it.
+  it('should print no install step in setup when only dpop is enabled', () => {
+    const outputDir = join(testDir, 'oidc-provider');
+    const srcDir = join(testDir, 'src');
+    const entryFile = join(srcDir, 'index.ts');
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(
+      entryFile,
+      "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\n",
+    );
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    run(['setup', 'hono', '-o', outputDir, '-e', entryFile, '--enable', 'dpop']);
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect([output.includes('Start the server'), output.includes('pnpm add')]).toEqual([true, false]);
+    vi.restoreAllMocks();
   });
 
   it('should report already patched and leave the file unchanged on a second setup run', () => {
@@ -459,6 +476,52 @@ describe('run', () => {
     });
   });
 
+  // EXTENSION (RFC 9449): the files --enable dpop writes, and the default output without them.
+  describe('--enable dpop', () => {
+    function generatedInto(args: string[]): string {
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', ...args, '-o', outputDir]);
+      vi.restoreAllMocks();
+      return outputDir;
+    }
+
+    it('should generate the DPoP proof checks into features/dpop/ and list dpop last in features/enabled.ts', () => {
+      const outputDir = generatedInto(['hono', '--enable', 'dpop']);
+      const enabled = readFileSync(join(outputDir, 'features', 'enabled.ts'), 'utf-8');
+
+      expect(['feature.ts', 'config.ts', 'proof.ts'].filter((file) => !existsSync(join(outputDir, 'features', 'dpop', file)))).toEqual([]);
+      expect(enabled).toContain("import { dpop } from './dpop/feature.js';\n");
+      expect(enabled.endsWith('  dpop,\n];\n')).toBe(true);
+      expect(JSON.parse(readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8')).features.dpop).toBe(true);
+    });
+
+    it('should generate the DPoP proof checks into _oidc-provider/features/dpop/ and list dpop last in features.ts for Next.js', () => {
+      const outputDir = generatedInto(['nextjs', '--enable', 'dpop']);
+      const providerDir = join(outputDir, '_oidc-provider');
+      const list = readFileSync(join(providerDir, 'features.ts'), 'utf-8');
+
+      expect(['feature.ts', 'config.ts', 'proof.ts'].filter((file) => !existsSync(join(providerDir, 'features', 'dpop', file)))).toEqual([]);
+      expect(list).toContain("import { dpop } from './features/dpop/feature';\n");
+      expect(list.endsWith('  dpop,\n];\n')).toBe(true);
+    });
+
+    it('should leave features/dpop/ and dpop out of the feature list by default', () => {
+      const outputDir = generatedInto(['hono']);
+
+      expect(existsSync(join(outputDir, 'features', 'dpop'))).toBe(false);
+      expect(readFileSync(join(outputDir, 'features', 'enabled.ts'), 'utf-8')).not.toContain('dpop');
+      expect(JSON.parse(readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8')).features.dpop).toBe(false);
+    });
+
+    it('should leave _oidc-provider/features/dpop/ and dpop out of the feature list by default for Next.js', () => {
+      const providerDir = join(generatedInto(['nextjs']), '_oidc-provider');
+
+      expect(existsSync(join(providerDir, 'features', 'dpop'))).toBe(false);
+      expect(readFileSync(join(providerDir, 'features.ts'), 'utf-8')).not.toContain('dpop');
+    });
+  });
+
   describe('install guidance', () => {
     function guidanceOf(args: string[]): string {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -488,6 +551,40 @@ describe('run', () => {
       expect(guidanceOf(['hono', '--enable', 'google-login'])).toContain(
         'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library',
       );
+    });
+
+    // The generated dpop feature imports nothing beside core.
+    it('should add no package to the install guidance for dpop', () => {
+      expect(guidanceOf(['hono', '--enable', 'dpop'])).toContain(
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core\n',
+      );
+    });
+
+    it('should tell that the DPoP proof checks are generated into features/dpop/, and where for Next.js', () => {
+      expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
+        'dpop: the DPoP proof checks are generated into features/dpop/ (_oidc-provider/features/dpop/ for Next.js), with no package to install, so change the policy there.',
+      );
+    });
+
+    // No endpoint calls the proof checks: the client must not expect a DPoP-bound token,
+    // and discovery does not signal support for DPoP (RFC 9449 §5.1).
+    it('should tell that every token is still a Bearer token and discovery does not advertise DPoP when dpop is enabled', () => {
+      expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
+        'No endpoint checks a DPoP proof yet, so discovery does not advertise dpop_signing_alg_values_supported and every token is still a Bearer token.',
+      );
+    });
+
+    // The Google guidance belongs to google-login alone, not to every extension.
+    it('should not print the Sign in with Google guidance when only dpop is enabled', () => {
+      expect(guidanceOf(['hono', '--enable', 'dpop'])).not.toContain('config.googleLogin.clientId');
+    });
+
+    it('should print the guidance of each enabled extension', () => {
+      const output = guidanceOf(['hono', '--enable', 'google-login', '--enable', 'dpop']);
+      expect([output.includes('config.googleLogin.clientId'), output.includes('dpop: the DPoP proof checks are generated')]).toEqual([
+        true,
+        true,
+      ]);
     });
 
     it('should add the experimental package once for several experimental features', () => {
@@ -537,6 +634,28 @@ describe('run', () => {
       vi.restoreAllMocks();
       return output;
     }
+
+    it('should describe the dpop extension and how to enable it', () => {
+      expect(helpText()).toContain('  dpop: OAuth 2.0 DPoP (RFC 9449).');
+      expect(helpText()).toContain('  --enable dpop\n');
+    });
+
+    // dpop has no package of its own: the help points at the generated code instead.
+    it('should say that the dpop checks are generated into features/dpop/ with no package beside core', () => {
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'Generates the checks of a DPoP proof into features/dpop/ (_oidc-provider/features/dpop/ for Next.js) with no package beside core, so change the policy there;',
+      );
+    });
+
+    it('should say that no endpoint checks a DPoP proof yet', () => {
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'No endpoint checks a DPoP proof yet: every token is still a Bearer token, and discovery does not advertise dpop_signing_alg_values_supported.',
+      );
+    });
+
+    it('should list dpop among the extension features', () => {
+      expect(helpText()).toContain('Extension features (disabled by default): google-login, dpop');
+    });
 
     // schema.sql and keys.ts carry the Sign in with Google records for every feature set.
     it('should say that the Sign in with Google records are generated without --enable google-login', () => {
@@ -725,9 +844,9 @@ describe('run', () => {
 
     it('should error on an unknown endpoint', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      run(['graph', '--endpoint', 'dpop']);
+      run(['graph', '--endpoint', 'unknown-endpoint']);
       expect(errorSpy).toHaveBeenCalledWith(
-        'Error: Unknown endpoint: "dpop". Endpoints of this configuration: discovery, jwks, authorize, login, consent, token, userinfo, introspection, revocation',
+        'Error: Unknown endpoint: "unknown-endpoint". Endpoints of this configuration: discovery, jwks, authorize, login, consent, token, userinfo, introspection, revocation',
       );
       expect(process.exitCode).toBe(1);
       vi.restoreAllMocks();

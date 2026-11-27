@@ -465,7 +465,7 @@ API は安定しておらず、破壊的に変更されることがあります�
 
 ### Extension Features
 
-拡張機能は、OAuth / OIDC の仕様ではなく**ログイン手段**を生成コードに足すカテゴリで、**既定では無効**です。実装は別 package にあり、`--enable` で明示したときだけ生成コードから import されます。
+拡張機能は、OP に任意で足す機能のカテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成します。API が不安定なことを理由に分けた Experimental とは別のカテゴリです。`google-login` の実装は別 package にあり、有効にしたときだけ生成コードから import されます。`dpop` は package を持たず、コードはすべて生成コードの `features/dpop/` に入ります。
 
 ```bash
 maronn-oidc generate express --enable google-login
@@ -475,8 +475,9 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
+| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。どのエンドポイントもまだ DPoP proof を検査しないので、トークンはすべて Bearer のままで、Discovery も `dpop_signing_alg_values_supported` を載せない | なし（生成コードの `features/dpop/`） |
 
-有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
+`google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
 
 ## Custom Scopes
 
@@ -618,7 +619,7 @@ discovery は `token_endpoint_auth_methods_supported` に `private_key_jwt` を�
 
 用途は文字列で、DB の側にも CHECK を付けていないので、ほかの処理の用途も同じ形で登録できます。
 たとえば、DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'dpop')` を呼びます。
-生成 OP は DPoP を実装しておらず、`request_object` と `private_key_jwt` 以外の用途の鍵を読む処理を持ちません。
+生成 OP は `request_object` と `private_key_jwt` 以外の用途の鍵を読む処理を持ちません。`--enable dpop` で生成する DPoP proof の検査も、DPoP proof の `jwk` ヘッダーの鍵で署名を検証するので、`dpop` の用途の鍵は読みません。
 
 OP は、クライアントの鍵を発行する機能も、公開鍵を登録する API や画面も持ちません。
 鍵の組はクライアントが自分で作り、運用者が公開鍵を DB に書き込みます。

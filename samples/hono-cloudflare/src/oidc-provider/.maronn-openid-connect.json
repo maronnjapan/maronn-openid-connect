@@ -20,7 +20,8 @@
     "jwtIntrospectionResponse": true,
     "rpInitiatedLogout": true,
     "dynamicClientRegistration": true,
-    "googleLogin": false
+    "googleLogin": false,
+    "dpop": false
   },
   "scopes": [],
   "db": "sql",

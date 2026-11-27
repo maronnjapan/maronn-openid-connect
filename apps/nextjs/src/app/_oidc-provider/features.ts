@@ -27,6 +27,7 @@ import { jwtIntrospectionResponse } from './features/jwt-introspection-response/
 import { rpInitiatedLogout } from './features/rp-initiated-logout/feature';
 import { dynamicClientRegistration } from './features/dynamic-client-registration/feature';
 import { googleLogin } from './features/google-login/feature';
+import { dpop } from './features/dpop/feature';
 
 export const features: readonly Feature[] = [
   pkce,
@@ -48,4 +49,5 @@ export const features: readonly Feature[] = [
   rpInitiatedLogout,
   dynamicClientRegistration,
   googleLogin,
+  dpop,
 ];

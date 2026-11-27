@@ -23,6 +23,7 @@ const ALL_FEATURES: OidcFeatureConfig = {
   rpInitiatedLogout: true,
   dynamicClientRegistration: true,
   googleLogin: true,
+  dpop: true,
 };
 
 describe('buildOpFlow', () => {

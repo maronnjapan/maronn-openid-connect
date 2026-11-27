@@ -34,6 +34,7 @@ import {
   signingKeysUnavailable,
   withCors,
 } from '../../_oidc-provider/http';
+import { withTokenBinding } from '../../_oidc-provider/token-binding';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -130,9 +131,11 @@ async function introspect(request: Request): Promise<Response> {
     // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
     // トークンが有効ならその内容を、そうでなければ `{ active: false }` だけを返す（RFC 7662 §2.2）。
     // 登録されていない、期限切れ、まだ有効になっていない、ローテーションで使用済みになったトークンにはほかのメンバーを含めないので、呼び出し元は「存在しなかった」トークンと「もう有効でない」トークンを区別できない。
+    // 機能（dpop）が鍵に束縛したアクセストークンには、保存した確認の `cnf` と、`token_type`（DPoP なら `DPoP`）を返す（RFC 9449 §6.2）。
     let response: IntrospectionResponse = INACTIVE_INTROSPECTION_RESPONSE;
     if (resolved !== null && isIntrospectionTokenActive(resolved)) {
       response = buildIntrospectionResponse(resolved);
+      if (resolved.tokenType === 'access_token') response = withTokenBinding(response, resolved.accessToken);
     }
 
     // [respond-jwt] (feature: jwt-introspection-response) 求められたら署名付き JWT で応答する — RFC 9701 §4 / §5

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accessTokenInfo, refreshTokenInfo } from '../../../../../../test-support/feature-endpoints.js';
+import { accessTokenRecordOf, refreshTokenRecordOf } from '../../../../../token-binding.js';
 import { describeIntrospectedToken } from './build-response.js';
 
 /** 2026-01-01T00:00:00Z in Unix seconds. */
@@ -44,6 +45,49 @@ describe('describeIntrospectedToken', () => {
 
     it('should describe an unused refresh token within its lifetime', () => {
       const refreshToken = refreshTokenInfo({ subject: 'user-1', clientId: 'client-1', expiresAt: NOW + 600 });
+
+      expect(describeIntrospectedToken({ tokenType: 'refresh_token', refreshToken })).toEqual({
+        active: true,
+        scope: 'openid',
+        client_id: 'client-1',
+        token_type: 'refresh_token',
+        sub: 'user-1',
+        exp: NOW + 600,
+      });
+    });
+  });
+
+  // RFC 9449 §6.2: the access token record keeps the cnf and the token_type of the binding (token-binding.ts).
+  describe('Tokens Bound to a Key', () => {
+    it('should describe the key and the token_type of an access token bound to a key', () => {
+      const accessToken = {
+        ...accessTokenInfo({ sub: 'user-1', clientId: 'client-1', expiresAt: NOW + 600 }),
+        ...accessTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' }),
+      };
+
+      expect(describeIntrospectedToken({ tokenType: 'access_token', accessToken })).toEqual({
+        active: true,
+        scope: 'openid',
+        client_id: 'client-1',
+        token_type: 'DPoP',
+        sub: 'user-1',
+        exp: NOW + 600,
+        cnf: { jkt: 'jkt-1' },
+      });
+    });
+
+    it('should answer { active: false } alone for an expired access token bound to a key', () => {
+      const accessToken = { ...accessTokenInfo({ expiresAt: NOW - 1 }), cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' };
+
+      expect(describeIntrospectedToken({ tokenType: 'access_token', accessToken })).toEqual({ active: false });
+    });
+
+    // RFC 9449 §6.2 is about access tokens: a bound refresh token keeps the response of RFC 7662.
+    it('should describe a refresh token bound to a key without its key', () => {
+      const refreshToken = {
+        ...refreshTokenInfo({ subject: 'user-1', clientId: 'client-1', expiresAt: NOW + 600 }),
+        ...refreshTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP', refreshTokenCnf: { jkt: 'jkt-1' } }),
+      };
 
       expect(describeIntrospectedToken({ tokenType: 'refresh_token', refreshToken })).toEqual({
         active: true,

@@ -282,7 +282,7 @@ test.describe('the flow follows the request as the reader edits it', () => {
     const workspace = await workspaceOf(context);
     const prepared = await exchangeIds(request, workspace);
     const inactive = '返して終わる。INACTIVE_INTROSPECTION_RESPONSE を返す';
-    const active = '返して終わる。有効なトークンのレスポンスを組み立てて返す';
+    const active = '有効なトークンのレスポンスを組み立てて返す';
 
     await test.step('the prepared token: the steps of the endpoint, and nothing to tell apart', async () => {
       await expect(previewLine(page)).toBeVisible();

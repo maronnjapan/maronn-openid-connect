@@ -3,7 +3,7 @@
 DPoP（RFC 9449）を生成 OP に入れる段の 22 個目で、`dpop` と `dynamic-client-registration` を一緒に有効にしたときに、`POST /register` がクライアントメタデータ `dpop_bound_access_tokens`（RFC 9449 §5.2）を検証して登録し、201 のレスポンスで返すようにする。
 段 21 で、トークンエンドポイントは動的に登録したクライアントの登録したメタデータ（`registrationMetadata`）からこの値を読むようになったが、動的クライアント登録はこの名前を理解しないメタデータとして黙って捨てていた（`customClientMetadata` に検証関数を足した場合だけ残った）。この段で、動的に登録したクライアントも `true` を登録すれば、DPoP proof の無いトークンリクエストを拒否されるようになる。
 Next.js のクライアント登録のルートハンドラはブロックに分けていなかったので、DPoP のブロックを置くために、まず Hono のパイプラインと同じステップのブロックに分け、隣に `endpoint.ts` を置いた。この分割では答えを変えていない。
-`dpop` を有効にした OP では、`dpop_bound_access_tokens` を送らない登録の 201 にも `"dpop_bound_access_tokens": false` が加わる（省略したときの既定値を、ほかの既定値と同じく登録して返すため）。それ以外の登録への答えは前と同じで、地図の実 OP のケースもすべて前と同じに答えた。`dpop` を有効にしない生成物ではブロックが消え、登録への答えは前と同じである。
+`dpop` を有効にした OP では、`dpop_bound_access_tokens` を送らない登録の 201 にも `"dpop_bound_access_tokens": false` が加わる（省略したときの既定値を、ほかの既定値と同じく登録して返すため）。真偽値でない値を送る登録は、前は（`customClientMetadata` に検証関数が無ければ）値を捨てて 201 で答えていたが、400 の `invalid_client_metadata` になる。それ以外の登録への答えは前と同じで、地図の実 OP のケースもすべて前と同じに答えた。`dpop` を有効にしない生成物ではブロックが消え、登録への答えは前と同じである。
 
 ## register <!-- endpoint:register -->
 
@@ -30,7 +30,7 @@ Next.js のクライアント登録のルートハンドラはブロックに分
 
 - 値は真偽値で、省略したときは `false` を登録して返す（RFC 9449 §5.2 の既定値）。RFC 7591 §3.2.1 は登録したメタデータをすべて返すことを求め、この OP はほかの既定値（`application_type` など）も登録して返すので、同じ扱いにした
 - 真偽値でない値は、文字列の `"true"` も `null` も、400 の `invalid_client_metadata`（`dpop_bound_access_tokens must be a boolean`）で拒否する。トークンエンドポイントの `dpopBoundAccessTokensOf()` は真偽値の `true` だけを数えるので、ほかの値を登録すると、クライアントは DPoP を求められるつもりで求められなくなるためである
-- 前のステップ（ブロック）が `dpop_bound_access_tokens` を登録していれば、リクエストの値の代わりにその値を検証する。そうなるのは `customClientMetadata` にこの名前の検証関数を置いたときだけで、段 21 の案内に従ってその関数を足した OP（たとえばすべての動的登録クライアントを `true` にする関数）の登録が、この段で変わらないようにするためである。その関数が `undefined` を返したときはリクエストの値を検証する
+- 前のステップ（ブロック）が `dpop_bound_access_tokens` を登録していれば、リクエストの値の代わりにその値を検証する。そうなるのは `customClientMetadata` にこの名前の検証関数を置いたときだけで、段 21 の案内に従ってその関数を足した OP で、その関数が決めた値（たとえばすべての動的登録クライアントを `true` にする関数の値）がこの段の後も登録されるようにするためである。その関数が `undefined` を返したときはリクエストの値を検証するので、省略した登録には `false` が入る（前は何も登録されなかった）
 - 登録した値は `client.metadata` に入り、保存するレコードの `registrationMetadata` に写る（動的クライアント登録の `toClientRegistration()`）。`RegisteredClient.dpopBoundAccessTokens` には入れない。動的クライアント登録のコードは機能の名前を使えず、トークンエンドポイントはどちらも読むためである。`client` と `metadata` は書き換えず、新しいクライアントを返す
 - 生成器は機能のディレクトリをまとめて出力するので、このファイルは `dynamic-client-registration` を有効にしない OP にも入る。登録エンドポイントがないので、どこからも呼ばれない（段 20 の PAR のファイルと同じで、関数の説明と Next.js のファイルの先頭にそう書いた）
 - Hono のステップは、拒否のレスポンスをコンテキスト（`c.json()`）で作り、CORS のミドルウェアが先に付けたヘッダーを残す。Next.js の関数は `Response` を作り、ルートの `POST` が CORS のヘッダーを付ける

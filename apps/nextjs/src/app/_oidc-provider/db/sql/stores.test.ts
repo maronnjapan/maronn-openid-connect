@@ -8,7 +8,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSqliteDatabase } from '../../../../test-support/databases';
 import type { ProviderStores } from '../../store';
-import { accessTokenRecordOf, refreshTokenRecordOf } from '../../token-binding';
+import { accessTokenRecordOf, confirmationRecordOf, refreshTokenRecordOf } from '../../token-binding';
 import type { SqlDatabase } from './database';
 import { createProviderStores } from './stores';
 import { registerUser } from './users';
@@ -153,6 +153,14 @@ describe('createProviderStores', () => {
       expect(await stores.transactionStore.get('auth_txn:txn-1')).toEqual(stored);
     });
 
+    // RFC 9449 §10: the key a request is bound to (dpop_jkt) comes back with the transaction, for the code issued from it.
+    it('should return the cnf a binding added to a transaction', async () => {
+      const stored = { ...transaction(), ...confirmationRecordOf({ cnf: { jkt: 'jkt-1' } }) };
+      await stores.transactionStore.put('auth_txn:txn-1', stored, 60);
+
+      expect(await stores.transactionStore.get('auth_txn:txn-1')).toEqual(stored);
+    });
+
     // OpenID Connect Core 1.0 §3.1.2.1 / §5.2 / §5.5: each parameter of the
     // authentication request has a column of its own.
     it('should keep each OpenID Connect Core parameter in a column of its own and the rest in payload', async () => {
@@ -253,6 +261,16 @@ describe('createProviderStores', () => {
   });
 
   describe('authCodeStore', () => {
+    // RFC 9449 §10: the key of a bound request comes back with the code, for the check at the token endpoint.
+    it('should return the cnf a binding added to a code, before and after it is consumed', async () => {
+      const stored = { ...code(), ...confirmationRecordOf({ cnf: { jkt: 'jkt-1' } }) };
+      await stores.authCodeStore.set('code-1', stored);
+      const beforeConsume = await stores.authCodeStore.get('code-1');
+      await stores.authCodeStore.consume('code-1');
+
+      expect([beforeConsume, await stores.authCodeStore.get('code-1')]).toEqual([stored, { ...stored, used: true }]);
+    });
+
     it('should mark a consumed code used and keep returning it', async () => {
       await stores.authCodeStore.set('code-1', code());
       await stores.authCodeStore.consume('code-1');

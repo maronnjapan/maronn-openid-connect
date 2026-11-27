@@ -75,6 +75,8 @@ describe('createApp', () => {
       expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST,GET,OPTIONS');
       expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type');
       expect(response.headers.get('Access-Control-Max-Age')).toBe('600');
+      // No enabled feature names a header of its own (the cors hook of features/feature.ts).
+      expect(response.headers.has('Access-Control-Expose-Headers')).toBe(false);
     });
 
     it('should allow only the configured corsOrigins on /userinfo', async () => {

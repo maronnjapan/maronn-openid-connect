@@ -13,6 +13,7 @@
  * 乱数と、秘密の鍵の MAC があるので、nonce は推測できない（RFC 9449 §8）。
  * 役割を MAC に入れるので、認可サーバーの nonce は保護されたリソースで、保護されたリソースの nonce は認可サーバーで受け付けない（RFC 9449 §9）。
  */
+import { shared } from '../../shared';
 import { decodeBase64Url, encodeBase64Url } from './base64url';
 
 /**
@@ -49,9 +50,6 @@ const DPOP_NONCE_FUTURE_SKEW_SECONDS = 5;
 /** nonce の秘密の最小のバイト数（HMAC-SHA256 の出力の長さ、RFC 2104 §3）。 */
 const MIN_DPOP_NONCE_SECRET_BYTES = 32;
 
-/** 秘密を設定しないときに使う、このプロセスで作った鍵。 */
-let processDpopNonceKey: Promise<CryptoKey> | undefined;
-
 /** 最後に秘密から作った鍵と、その秘密。 */
 let configuredDpopNonceKey: { secret: string; key: Promise<CryptoKey> } | undefined;
 
@@ -60,8 +58,9 @@ let configuredDpopNonceKey: { secret: string; key: Promise<CryptoKey> } | undefi
  *
  * `secret` があれば、その UTF-8 のバイト列を HMAC-SHA256 の鍵にする。
  * 同じ秘密を持つインスタンスは、互いが発行した nonce を受け付ける。
- * `secret` が無ければ、このプロセスで初めて呼ばれたときに 32 バイトの乱数から鍵を作り、以後はその鍵を返す。
- * その鍵はどこにも保存しないので、ほかのインスタンスや、再起動した後のプロセスは、その鍵の nonce を受け付けない。
+ * `secret` が無ければ、このプロセス（サーバーレスの関数ではそのインスタンス）で初めて呼ばれたときに 32 バイトの乱数から鍵を作り、以後はその鍵を返す。
+ * その鍵は `globalThis` に置く（`shared()`）ので、Next.js がこのモジュールを層（ルートハンドラ、サーバーアクションとページ）ごとに読み込んでも、開発サーバーが読み込み直しても、同じプロセスの中では同じ鍵である。
+ * その鍵はどこにも保存しないので、ほかのインスタンスや、再起動した後のプロセスは、その鍵の nonce を受け付けない（`config.ts` の先頭を参照）。
  *
  * @spec RFC 9449 §8
  * @spec RFC 2104 §3
@@ -69,8 +68,7 @@ let configuredDpopNonceKey: { secret: string; key: Promise<CryptoKey> } | undefi
  */
 export async function dpopNonceKeyOf(secret: string | undefined): Promise<CryptoKey> {
   if (secret === undefined) {
-    processDpopNonceKey ??= importDpopNonceKey(crypto.getRandomValues(new Uint8Array(MIN_DPOP_NONCE_SECRET_BYTES)));
-    return processDpopNonceKey;
+    return shared('dpopNonceKey', () => importDpopNonceKey(crypto.getRandomValues(new Uint8Array(MIN_DPOP_NONCE_SECRET_BYTES))));
   }
   if (configuredDpopNonceKey?.secret !== secret) {
     const bytes = new TextEncoder().encode(secret);

@@ -43,7 +43,8 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * error-responses.ts imports http.ts, so no file the feature list loads
  * imports them, token.ts or userinfo.ts, which import both, or par.ts, which
  * imports proof.ts: token/route.ts, userinfo/route.ts and (par)/par/route.ts
- * do. nonce.ts imports base64url.ts only; only proof.ts imports it.
+ * do. nonce.ts imports base64url.ts and shared.ts only; only proof.ts
+ * imports it.
  * register.ts imports nothing; only
  * (dynamic-client-registration)/register/route.ts imports it.
  */

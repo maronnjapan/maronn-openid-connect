@@ -60,6 +60,18 @@ describe('dpopNonceKeyOf', () => {
       false,
     );
   });
+
+  // Next.js loads a module once per module layer, and again when the dev server
+  // reloads it: every copy of the module uses the key the first one made.
+  it('should give the key made without a secret to a copy of the module loaded again', async () => {
+    const processKey = await dpopNonceKeyOf(undefined);
+    vi.resetModules();
+
+    const reloaded = await import('./nonce');
+
+    expect(reloaded.dpopNonceKeyOf).not.toBe(dpopNonceKeyOf);
+    expect(await reloaded.dpopNonceKeyOf(undefined)).toBe(processKey);
+  });
 });
 
 describe('issueDpopNonce', () => {

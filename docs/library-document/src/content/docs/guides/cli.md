@@ -475,7 +475,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
+| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
 

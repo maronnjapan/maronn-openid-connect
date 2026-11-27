@@ -43,6 +43,12 @@ const DPOP_ERROR_CODES = [
    * RFC 6749 §4.1.2.1 / §5.2 のコードでもあり、認可エンドポイントはクライアントへのリダイレクト（エラーの認可レスポンス）で、トークンエンドポイント、PAR エンドポイント、保護されたリソースは 400 で応答する。
    */
   'invalid_request',
+  /**
+   * DPoP proof に `nonce` が無い、またはその `nonce` が、サーバーが最近発行した nonce でない（RFC 9449 §8 / §9 / §11.3）。
+   * DPoP proof の検査に nonce を発行したサーバーの役割（`DpopProofTarget.nonceServer`）を渡して nonce を求めたエンドポイントだけが返す。
+   * RFC 9449 では、認可サーバーは 400 のエラーレスポンスで（§8）、保護されたリソースは 401 と `WWW-Authenticate: DPoP` のチャレンジで（§9）応答する。
+   */
+  'use_dpop_nonce',
 ] as const;
 
 /** DPoP の検査の失敗を表す OAuth のエラーコード。 */

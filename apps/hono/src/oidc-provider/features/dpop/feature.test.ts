@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { providerContext } from '../../../test-support/context.js';
 import { createProviderConfig } from '../../config.js';
 import { configOf, corsHeadersOf, discoveryOf } from '../feature.js';
 import { dpop } from './feature.js';
@@ -27,12 +28,23 @@ describe('dpop', () => {
     expect(discoveryOf([dpop], {}, ISSUER, config)).toEqual({});
   });
 
-  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew', () => {
+  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, and a nonce lifetime of 120 seconds', () => {
     expect(configOf([dpop])).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
+      dpopNonceLifetimeSeconds: 120,
     });
+  });
+
+  // The nonce check of proof.ts reads the secret of the DPoP nonces from the request context.
+  it.each([
+    ['the secret of the options', { dpopNonceSecret: 'dpop-nonce-secret-for-the-unit-tests-0001' }, 'dpop-nonce-secret-for-the-unit-tests-0001'],
+    ['no secret when the options have none', {}, undefined],
+  ])('should put into the request context %s', async (_name, options, secret) => {
+    const { c } = await providerContext({ options });
+
+    expect(c.get('dpopNonceSecret')).toBe(secret);
   });
 
   // RFC 9449 §4.1 / §7.1: a browser sends the DPoP header and reads the challenges of a failure.

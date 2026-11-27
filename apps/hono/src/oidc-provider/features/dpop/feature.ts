@@ -31,9 +31,11 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * [verify-dpop-proof] block reads from the registered metadata.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
- * policy changes. The feature adds the defaults of the DPoP
- * settings (dpopConfigDefaults of ./config.ts) to the defaults of
- * ProviderConfig, advertises the algs of the checks in discovery and lets
+ * policy changes. proof.ts also checks the nonce of a proof (nonce.ts) for an
+ * endpoint that passes the server whose nonce it requires. The feature adds
+ * the defaults of the DPoP settings (dpopConfigDefaults of ./config.ts) to
+ * the defaults of ProviderConfig, puts the secret of the DPoP nonces into the
+ * request context, advertises the algs of the checks in discovery and lets
  * browsers send the DPoP header.
  */
 export const dpop = defineFeature({
@@ -46,6 +48,9 @@ export const dpop = defineFeature({
     const algs = dpopSigningAlgsOf(config);
     return algs.length === 0 ? {} : { dpop_signing_alg_values_supported: [...algs] };
   },
+  // The secret of the DPoP nonces (OidcProviderOptions.dpopNonceSecret of
+  // ./config.ts), read by the nonce check of proof.ts.
+  context: ({ options }) => ({ dpopNonceSecret: options.dpopNonceSecret }),
   // A browser-based client sends its proof in the DPoP header (RFC 9449 §4.1),
   // and reads the challenges of a failure in WWW-Authenticate (RFC 9449 §7.1).
   cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate'] },

@@ -2,8 +2,11 @@
  * EXTENSION (dpop): the checks of the DPoP proof sent with a request
  * (RFC 9449 §4.3). An endpoint that accepts DPoP passes the proof of its DPoP
  * header, read by readDpopProofHeader(), and the method and the path of the
- * request to verifyDpopRequestProof(). It reads the settings and the stores of
- * provider.ts, which loads the feature list, so feature.ts must not import it.
+ * request to verifyDpopRequestProof(), with the server whose nonce the proof
+ * must carry (nonce.ts) where the endpoint requires a nonce. It reads the
+ * settings and the stores of provider.ts, which loads the feature list, so
+ * feature.ts must not import it, and the secret of the DPoP nonces from the
+ * environment variable OIDC_DPOP_NONCE_SECRET.
  *
  * DPoP proof JWT の検査（RFC 9449 §4.3）。
  *
@@ -15,10 +18,11 @@
  * 3. {@link validateDpopProofAlg}: `alg` が OP の受け付ける非対称鍵の署名であることを確かめる
  * 4. `validateDpopProofJwk()` と {@link verifyDpopProofSignature}: `jwk` が公開鍵であることと、その鍵で署名を検証できることを確かめる
  * 5. {@link validateDpopProofClaims}: `jti`、`htm`、`htu`、`iat` を確かめる
- * 6. {@link validateDpopProofAccessTokenHash}: 保護されたリソースへのリクエストでは `ath` を確かめる
- * 7. {@link consumeDpopProofJti}: `jti` を覚え、同じ DPoP proof の再利用を拒否する
+ * 6. {@link validateDpopProofNonce}: nonce を求めるエンドポイントでは、`nonce` がそのサーバーの最近発行した nonce であることを確かめる
+ * 7. {@link validateDpopProofAccessTokenHash}: 保護されたリソースへのリクエストでは `ath` を確かめる
+ * 8. {@link consumeDpopProofJti}: `jti` を覚え、同じ DPoP proof の再利用を拒否する
  *
- * どの失敗も `invalid_dpop_proof` の `DpopError` になる（RFC 9449 §5 / §7.1）。
+ * nonce の失敗は `use_dpop_nonce` の、ほかの失敗は `invalid_dpop_proof` の `DpopError` になる（RFC 9449 §5 / §7.1 / §8 / §9）。
  */
 import { config, stores } from '../../provider';
 import { decodeBase64Url, encodeBase64Url } from './base64url';
@@ -26,6 +30,7 @@ import { dpopSigningAlgsOf } from './config';
 import { DpopError } from './errors';
 import { normalizeDpopHtu } from './htu';
 import { computeJwkThumbprint, isSupportedDpopSigningAlg, validateDpopProofJwk, verifyJwsSignature, type DpopPublicJwk } from './jwk';
+import { dpopNonceKeyOf, verifyDpopNonce, type DpopNonceScope, type DpopNonceServer, type DpopNoncePolicy } from './nonce';
 
 /** The request a DPoP proof was sent with. */
 export interface DpopProofTarget {
@@ -35,6 +40,13 @@ export interface DpopProofTarget {
   path: string;
   /** The access token sent with the proof to a protected resource (compared with ath); undefined at the token and PAR endpoints. */
   accessToken?: string;
+  /**
+   * The server whose nonce the proof must carry, for an endpoint that
+   * requires a nonce (RFC 9449 §8 / §9): 'authorization-server' at the token
+   * and PAR endpoints, 'resource-server' at a protected resource. Left out,
+   * the nonce claim is not checked.
+   */
+  nonceServer?: DpopNonceServer;
 }
 
 /**
@@ -45,30 +57,43 @@ export interface DpopProofTarget {
  * 2. `alg` が設定の `dpopSigningAlgValuesSupported` のうちこの実装が検証できるものであることを確かめる（`validateDpopProofAlg()`）
  * 3. `jwk` が `alg` の公開鍵であることを確かめ、その鍵で署名を検証する（`validateDpopProofJwk()`、`verifyDpopProofSignature()`）
  * 4. `jti`、`htm`、`htu`、`iat` を確かめる（`validateDpopProofClaims()`）。`htu` は、プロキシの後ろでもクライアントが見る URL と比べられるよう、リクエストの URL ではなく issuer とエンドポイントのパスから組み立てる（`endpointUrisOf()`）。`iat` の範囲は設定の `dpopProofMaxAgeSeconds` と `dpopProofLeewaySeconds` で決まる
- * 5. 保護されたリソースへのリクエストでは、`ath` がアクセストークンのハッシュであることを確かめる（`validateDpopProofAccessTokenHash()`）
- * 6. `jti` を消費し、同じ DPoP proof の再利用を拒否する（`consumeDpopProofJti()`）
+ * 5. `target.nonceServer` があれば、`nonce` がそのサーバーの最近発行した nonce であることを確かめる（`validateDpopProofNonce()`）。nonce の鍵は環境変数 `OIDC_DPOP_NONCE_SECRET` の秘密から作り（`dpopNonceKeyOf()`）、受け付ける期間は設定の `dpopNonceLifetimeSeconds` で決まる
+ * 6. 保護されたリソースへのリクエストでは、`ath` がアクセストークンのハッシュであることを確かめる（`validateDpopProofAccessTokenHash()`）
+ * 7. `jti` を消費し、同じ DPoP proof の再利用を拒否する（`consumeDpopProofJti()`）
  *
  * `jti` を覚えるストアには、private_key_jwt のクライアントアサーションの `jti` を覚えるストア（`stores.clientAssertionJtiStore`）を使う。
  * キーの形が違う（DPoP は `["dpop", jkt, jti のハッシュ]`）ので、二つの `jti` が重なることはない。
- * サーバーが発行する nonce（RFC 9449 §8 / §9）は確かめない。
+ * nonce は `jti` を消費する前に確かめるので、nonce を受け付けない DPoP proof の `jti` は、ほかの検査で拒否した DPoP proof と同じく覚えない。
  *
  * @spec RFC 9449 §4.3
+ * @spec RFC 9449 §8
+ * @spec RFC 9449 §9
  * @spec RFC 9449 §11.1
  * @throws {DpopError} `invalid_dpop_proof`: DPoP proof を受け付けないとき
- * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき（設定の誤り）
+ * @throws {DpopError} `use_dpop_nonce`: `target.nonceServer` があり、`nonce` がそのサーバーの最近発行した nonce でないとき
+ * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき、nonce を確かめるのに秘密が 32 バイトより短いか `dpopNonceLifetimeSeconds` が 0 以上の有限の数でないとき（設定の誤り）
  */
 export async function verifyDpopRequestProof(proof: string, target: DpopProofTarget): Promise<string> {
   const decoded = decodeDpopProof(proof);
   validateDpopProofAlg(decoded.alg, dpopSigningAlgsOf(config));
   const jwk = validateDpopProofJwk(decoded.jwk, decoded.alg);
   await verifyDpopProofSignature(decoded, jwk);
+  const now = Math.floor(Date.now() / 1000);
   const claims = validateDpopProofClaims(decoded.claims, {
     method: target.method,
     uris: endpointUrisOf(config.issuer, target.path),
-    now: Math.floor(Date.now() / 1000),
+    now,
     maxAgeSeconds: config.dpopProofMaxAgeSeconds,
     leewaySeconds: config.dpopProofLeewaySeconds,
   });
+  if (target.nonceServer !== undefined) {
+    await validateDpopProofNonce(
+      decoded.claims,
+      await dpopNonceKeyOf(process.env.OIDC_DPOP_NONCE_SECRET),
+      { server: target.nonceServer, issuer: config.issuer },
+      { now, lifetimeSeconds: config.dpopNonceLifetimeSeconds },
+    );
+  }
   if (target.accessToken !== undefined) {
     await validateDpopProofAccessTokenHash(decoded.claims, target.accessToken);
   }
@@ -261,7 +286,7 @@ export async function verifyDpopProofSignature(
  * - `htu` が、エンドポイントの URI のどれかと、クエリとフラグメントを除いて同じである（どちらも {@link normalizeDpopHtu} で正規化して比べる）
  * - `iat` が数値で、`now - maxAgeSeconds - leewaySeconds` 以上、`now + leewaySeconds` 以下である
  *
- * `nonce` は確かめない。
+ * `nonce` は確かめない（nonce を求めるエンドポイントでは {@link validateDpopProofNonce} が確かめる）。
  * `maxAgeSeconds` か `leewaySeconds` が 0 以上の有限の数でない（設定に無い `undefined`、`NaN`、負の数など）ときは、範囲を決められないので、クレームを確かめずに `Error` を投げる。
  * `undefined` や `NaN` のままでは `iat` の比較がどれも偽になり、どの `iat` も受け付けて、`jti` を覚える期限も無くなるためである。
  *
@@ -303,6 +328,47 @@ export function validateDpopProofClaims(
   // 受け付ける最後の秒（`now` が `iat + maxAge + leeway` 以下の整数）の次の秒までを、`jti` を覚える期間にする。
   // `jti` のストアは期限の時刻になった `jti` を忘れてよい（`DpopProofJtiStore`）ので、最後の秒を期限にすると、その秒の再利用を見逃す。
   return { jti, iat, replayWindowEndsAt: Math.floor(iat + maxAge + leeway) + 1 };
+}
+
+/** {@link validateDpopProofNonce} が拒否するときの `error_description`（無いときは RFC 9449 Figure 20 / Figure 24 の文）。 */
+const DPOP_NONCE_DESCRIPTIONS: Readonly<Record<DpopNonceServer, { missing: string; stale: string }>> = {
+  'authorization-server': {
+    missing: 'Authorization server requires nonce in DPoP proof',
+    stale: 'The DPoP proof nonce is not a nonce the authorization server recently provided',
+  },
+  'resource-server': {
+    missing: 'Resource server requires nonce in DPoP proof',
+    stale: 'The DPoP proof nonce is not a nonce the resource server recently provided',
+  },
+};
+
+/**
+ * DPoP proof の `nonce` が、`scope` のサーバーが `key` で最近発行した nonce であることを確かめる。
+ *
+ * `nonce` が無いときと、文字列でないとき、そのサーバーが発行した nonce でないとき、`policy.lifetimeSeconds` より古いとき（`verifyDpopNonce()`）は拒否する。
+ * nonce を求めるサーバーは、`nonce` の無い DPoP proof を受け付けない（RFC 9449 §11.3）。
+ * 拒否には、そのサーバーの新しい nonce を入れてやり直すよう求める `use_dpop_nonce` を使う（RFC 9449 §8 / §9）。
+ *
+ * @spec RFC 9449 §4.3
+ * @spec RFC 9449 §8
+ * @spec RFC 9449 §9
+ * @spec RFC 9449 §11.3
+ * @throws {DpopError} `use_dpop_nonce`: `nonce` を受け付けないとき
+ * @throws {Error} `policy.lifetimeSeconds` が 0 以上の有限の数でないとき（設定の誤り）
+ */
+export async function validateDpopProofNonce(
+  claims: Record<string, unknown>,
+  key: CryptoKey,
+  scope: DpopNonceScope,
+  policy: DpopNoncePolicy,
+): Promise<void> {
+  const descriptions = DPOP_NONCE_DESCRIPTIONS[scope.server];
+  if (!('nonce' in claims)) {
+    throw new DpopError('use_dpop_nonce', descriptions.missing);
+  }
+  if (typeof claims.nonce !== 'string' || !(await verifyDpopNonce(key, claims.nonce, scope, policy))) {
+    throw new DpopError('use_dpop_nonce', descriptions.stale);
+  }
 }
 
 /**

@@ -5,6 +5,7 @@ import { dpopKey, dpopProof, generateDpopKey, signDpopProof } from '../../../tes
 import { dpopConfigDefaults } from './config.js';
 import { DpopError } from './errors.js';
 import { computeJwkThumbprint, validateDpopProofJwk, SUPPORTED_DPOP_SIGNING_ALGS } from './jwk.js';
+import { dpopNonceKeyOf, issueDpopNonce } from './nonce.js';
 import {
   computeDpopAccessTokenHash,
   consumeDpopProofJti,
@@ -13,6 +14,7 @@ import {
   validateDpopProofAccessTokenHash,
   validateDpopProofAlg,
   validateDpopProofClaims,
+  validateDpopProofNonce,
   verifyDpopProofSignature,
   verifyDpopRequestProof,
   type DpopProofJtiStore,
@@ -34,6 +36,25 @@ const RFC9449_PROOF =
 
 /** The iat of RFC9449_PROOF. */
 const RFC9449_IAT = 1_562_262_616;
+
+/** The secret of the DPoP nonces of the tests (41 bytes). */
+const NONCE_SECRET = 'dpop-nonce-secret-for-the-unit-tests-0001';
+
+// The nonces below were computed apart from the code under test, with the HMAC
+// of node:crypto and NONCE_SECRET, for the issuer https://op.example.com and
+// the random bytes 0x00 to 0x0b (see nonce.test.ts).
+
+/** The nonce the authorization server issues at NOW. */
+const AUTHORIZATION_SERVER_NONCE_AT_NOW = 'AAAAAGlVuQAAAQIDBAUGBwgJCgs.qlRn_qjLCd4ScDSkutyR475dsXalwZpCxni6jPVshAI';
+/** The nonce the resource server issues at NOW. */
+const RESOURCE_SERVER_NONCE_AT_NOW = 'AAAAAGlVuQAAAQIDBAUGBwgJCgs.qMJbK4hF-YMMuV93-YOisKgT890kG1mcLWrlBS0Hgvc';
+/** The nonce the authorization server issues at RFC9449_IAT. */
+const AUTHORIZATION_SERVER_NONCE = 'AAAAAF0ePFgAAQIDBAUGBwgJCgs.oX681jrJpG-doHAfZ89Wt772ISEHiijMP6KmwtBVYCo';
+/** The nonce the resource server issues at RFC9449_IAT. */
+const RESOURCE_SERVER_NONCE = 'AAAAAF0ePFgAAQIDBAUGBwgJCgs.U9tLcI-I6_c1xgq7OnOa_aVQMg2KBBGM4yLSmZSb_NU';
+
+/** The message of the Error thrown for a secret of the DPoP nonces shorter than 32 bytes. */
+const SHORT_SECRET_MESSAGE = 'The secret of the DPoP nonces must be at least 32 bytes long';
 
 function claimsAt(iat: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return { jti: 'jti-1', htm: 'POST', htu: TOKEN_URI, iat, ...overrides };
@@ -60,9 +81,9 @@ function errorOf(run: () => unknown): DpopError | undefined {
   return undefined;
 }
 
-/** A provider context whose config has the DPoP settings, laid over their defaults. */
-function dpopContext(config: Record<string, unknown> = {}) {
-  return providerContext({ options: { config: { ...dpopConfigDefaults, ...config } } });
+/** A provider context whose config has the DPoP settings, laid over their defaults, with the other options given. */
+function dpopContext(config: Record<string, unknown> = {}, options: { dpopNonceSecret?: string } = {}) {
+  return providerContext({ options: { ...options, config: { ...dpopConfigDefaults, ...config } } });
 }
 
 describe('readDpopProofHeader', () => {
@@ -307,6 +328,73 @@ describe('validateDpopProofClaims', () => {
   });
 });
 
+describe('validateDpopProofNonce', () => {
+  const scope = { server: 'authorization-server', issuer: 'https://op.example.com' } as const;
+  const policy = { now: NOW, lifetimeSeconds: 120 };
+
+  it('should accept the nonce the server recently issued', async () => {
+    const key = await dpopNonceKeyOf(NONCE_SECRET);
+
+    await expect(validateDpopProofNonce(claimsAt(NOW, { nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW }), key, scope, policy)).resolves.toBeUndefined();
+  });
+
+  // RFC 9449 §8 Figure 20 / §9 Figure 24, §11.3: no proof without a nonce once the server requires one.
+  it.each([
+    ['authorization-server', 'Authorization server requires nonce in DPoP proof'],
+    ['resource-server', 'Resource server requires nonce in DPoP proof'],
+  ] as const)('should ask the client for a nonce of the %s when the proof has none', async (server, errorDescription) => {
+    const key = await dpopNonceKeyOf(NONCE_SECRET);
+
+    await expect(validateDpopProofNonce(claimsAt(NOW), key, { ...scope, server }, policy)).rejects.toMatchObject({
+      error: 'use_dpop_nonce',
+      errorDescription,
+    });
+  });
+
+  // RFC 9449 §8 / §9: a nonce that is not one the server recently supplied is rejected with use_dpop_nonce too.
+  it.each([
+    [
+      'the nonce of the resource server at the authorization server',
+      'authorization-server',
+      RESOURCE_SERVER_NONCE_AT_NOW,
+      'The DPoP proof nonce is not a nonce the authorization server recently provided',
+    ],
+    [
+      'the nonce of the authorization server at the resource server',
+      'resource-server',
+      AUTHORIZATION_SERVER_NONCE_AT_NOW,
+      'The DPoP proof nonce is not a nonce the resource server recently provided',
+    ],
+    ['a nonce that is not a string', 'authorization-server', 1_767_225_600, 'The DPoP proof nonce is not a nonce the authorization server recently provided'],
+  ] as const)('should reject %s', async (_name, server, nonce, errorDescription) => {
+    const key = await dpopNonceKeyOf(NONCE_SECRET);
+
+    await expect(validateDpopProofNonce(claimsAt(NOW, { nonce }), key, { ...scope, server }, policy)).rejects.toMatchObject({
+      error: 'use_dpop_nonce',
+      errorDescription,
+    });
+  });
+
+  it('should accept the nonce of the resource server at the resource server', async () => {
+    const key = await dpopNonceKeyOf(NONCE_SECRET);
+
+    await expect(
+      validateDpopProofNonce(claimsAt(NOW, { nonce: RESOURCE_SERVER_NONCE_AT_NOW }), key, { ...scope, server: 'resource-server' }, policy),
+    ).resolves.toBeUndefined();
+  });
+
+  it('should reject a nonce older than the lifetime', async () => {
+    const key = await dpopNonceKeyOf(NONCE_SECRET);
+
+    await expect(
+      validateDpopProofNonce(claimsAt(NOW, { nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW }), key, scope, { now: NOW + 121, lifetimeSeconds: 120 }),
+    ).rejects.toMatchObject({
+      error: 'use_dpop_nonce',
+      errorDescription: 'The DPoP proof nonce is not a nonce the authorization server recently provided',
+    });
+  });
+});
+
 describe('computeDpopAccessTokenHash', () => {
   it('should hash the access token of the example of RFC 9449 §7.1 to its ath', async () => {
     await expect(computeDpopAccessTokenHash('Kz~8mXK1EalYznwH-LC-1fBAo.4Ljp~zsPE_NeO.gxU')).resolves.toBe(
@@ -512,5 +600,155 @@ describe('verifyDpopRequestProof', () => {
     const proof = await signDpopProof(key, { jti: 'jti-ps256', htm: 'POST', htu: 'https://op.example.com/token', iat: RFC9449_IAT });
 
     await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token' })).resolves.toBe(await computeJwkThumbprint(key.publicJwk));
+  });
+
+  // RFC 9449 §8 / §11.3: where the authorization server requires a nonce, a proof without one is rejected, and its jti is not used up.
+  it('should require a nonce of the authorization server, without remembering the jti of a proof that has none', async () => {
+    const key = await dpopKey();
+    const { c, db } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' });
+
+    await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token', nonceServer: 'authorization-server' })).rejects.toMatchObject({
+      error: 'use_dpop_nonce',
+      errorDescription: 'Authorization server requires nonce in DPoP proof',
+    });
+    expect(db.clientAssertionJtis.size).toBe(0);
+  });
+
+  it('should accept a nonce of the authorization server made with the secret of the options, and remember the jti', async () => {
+    const key = await dpopKey();
+    const { c, db } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: AUTHORIZATION_SERVER_NONCE });
+
+    await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token', nonceServer: 'authorization-server' })).resolves.toBe(key.jkt);
+    expect(db.clientAssertionJtis.size).toBe(1);
+  });
+
+  it('should reject a nonce made with another secret than the one of the options', async () => {
+    const key = await dpopKey();
+    const { c } = await dpopContext({}, { dpopNonceSecret: 'another-dpop-nonce-secret-of-the-tests' });
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: AUTHORIZATION_SERVER_NONCE });
+
+    await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token', nonceServer: 'authorization-server' })).rejects.toMatchObject({
+      error: 'use_dpop_nonce',
+      errorDescription: 'The DPoP proof nonce is not a nonce the authorization server recently provided',
+    });
+  });
+
+  // RFC 9449 §9: a nonce is accepted only by the server that issued it.
+  it('should reject the nonce of the resource server at the authorization server', async () => {
+    const key = await dpopKey();
+    const { c } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: RESOURCE_SERVER_NONCE });
+
+    await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token', nonceServer: 'authorization-server' })).rejects.toMatchObject({
+      error: 'use_dpop_nonce',
+      errorDescription: 'The DPoP proof nonce is not a nonce the authorization server recently provided',
+    });
+  });
+
+  // RFC 9449 §9: a protected resource asks for a nonce of its own.
+  it.each([
+    ['no nonce', {}, 'Resource server requires nonce in DPoP proof'],
+    ['the nonce of the authorization server', { nonce: AUTHORIZATION_SERVER_NONCE }, 'The DPoP proof nonce is not a nonce the resource server recently provided'],
+  ])('should reject a proof with %s where the resource server requires a nonce', async (_name, overrides, errorDescription) => {
+    const key = await dpopKey();
+    const { c } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(key, { htm: 'GET', htu: 'https://op.example.com/userinfo', accessToken: 'token-1' }, overrides);
+
+    await expect(
+      verifyDpopRequestProof(c, proof, { method: 'GET', path: '/userinfo', accessToken: 'token-1', nonceServer: 'resource-server' }),
+    ).rejects.toMatchObject({ error: 'use_dpop_nonce', errorDescription });
+  });
+
+  it('should accept the nonce of the resource server at a protected resource', async () => {
+    const key = await dpopKey();
+    const { c } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(
+      key,
+      { htm: 'GET', htu: 'https://op.example.com/userinfo', accessToken: 'token-1' },
+      { nonce: RESOURCE_SERVER_NONCE },
+    );
+
+    await expect(
+      verifyDpopRequestProof(c, proof, { method: 'GET', path: '/userinfo', accessToken: 'token-1', nonceServer: 'resource-server' }),
+    ).resolves.toBe(key.jkt);
+  });
+
+  it.each([
+    [10, 'accept', RFC9449_IAT + 10],
+    [10, 'reject', RFC9449_IAT + 11],
+  ])('should, with a dpopNonceLifetimeSeconds of %i, %s a nonce at %i', async (lifetime, outcome, now) => {
+    vi.setSystemTime(now * 1000);
+    const key = await dpopKey();
+    const { c } = await dpopContext({ dpopNonceLifetimeSeconds: lifetime }, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: AUTHORIZATION_SERVER_NONCE });
+
+    const verified = verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token', nonceServer: 'authorization-server' });
+
+    await (outcome === 'accept'
+      ? expect(verified).resolves.toBe(key.jkt)
+      : expect(verified).rejects.toMatchObject({
+          error: 'use_dpop_nonce',
+          errorDescription: 'The DPoP proof nonce is not a nonce the authorization server recently provided',
+        }));
+  });
+
+  // RFC 9449 §8: the client retries with the nonce; the jti of the rejected proof was not used up.
+  it('should accept a proof made again with a nonce and the jti of a proof rejected for having none', async () => {
+    const key = await dpopKey();
+    const { c, db } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const claims = { jti: 'jti-retried-with-a-nonce', htm: 'POST', htu: 'https://op.example.com/token', iat: RFC9449_IAT };
+    const target = { method: 'POST', path: '/token', nonceServer: 'authorization-server' } as const;
+
+    await expect(verifyDpopRequestProof(c, await signDpopProof(key, claims), target)).rejects.toMatchObject({ error: 'use_dpop_nonce' });
+    await expect(verifyDpopRequestProof(c, await signDpopProof(key, { ...claims, nonce: AUTHORIZATION_SERVER_NONCE }), target)).resolves.toBe(
+      key.jkt,
+    );
+    expect(db.clientAssertionJtis.size).toBe(1);
+  });
+
+  // Without a secret, the nonces are made with a key of this instance (an isolate on Workers, a process on Node.js).
+  it('should check the nonce with the key of the instance when the options have no secret', async () => {
+    const key = await dpopKey();
+    const { c } = await dpopContext();
+    const target = { method: 'POST', path: '/token', nonceServer: 'authorization-server' } as const;
+    const instanceNonce = await issueDpopNonce(
+      await dpopNonceKeyOf(undefined),
+      { server: 'authorization-server', issuer: 'https://op.example.com' },
+      RFC9449_IAT,
+    );
+
+    await expect(
+      verifyDpopRequestProof(c, await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: AUTHORIZATION_SERVER_NONCE }), target),
+    ).rejects.toMatchObject({ error: 'use_dpop_nonce' });
+    await expect(
+      verifyDpopRequestProof(c, await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: instanceNonce }), target),
+    ).resolves.toBe(key.jkt);
+  });
+
+  it('should leave the nonce claim unchecked where the endpoint requires no nonce', async () => {
+    const key = await dpopKey();
+    const { c } = await dpopContext({}, { dpopNonceSecret: NONCE_SECRET });
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: 'not-a-nonce-of-this-server' });
+
+    await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token' })).resolves.toBe(key.jkt);
+  });
+
+  it.each([
+    ['a secret shorter than 32 bytes', {}, { dpopNonceSecret: 'a'.repeat(31) }, SHORT_SECRET_MESSAGE],
+    [
+      'a dpopNonceLifetimeSeconds that is NaN',
+      { dpopNonceLifetimeSeconds: Number.NaN },
+      { dpopNonceSecret: NONCE_SECRET },
+      'The lifetime of the DPoP nonces (dpopNonceLifetimeSeconds) must be a non-negative finite number',
+    ],
+  ])('should throw, without remembering the jti, when a nonce is required with %s', async (_name, config, options, message) => {
+    const key = await dpopKey();
+    const { c, db } = await dpopContext(config, options);
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: AUTHORIZATION_SERVER_NONCE });
+
+    await expect(verifyDpopRequestProof(c, proof, { method: 'POST', path: '/token', nonceServer: 'authorization-server' })).rejects.toThrow(message);
+    expect(db.clientAssertionJtis.size).toBe(0);
   });
 });

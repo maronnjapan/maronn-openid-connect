@@ -29,10 +29,12 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * registered metadata.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
- * policy changes. The feature adds the defaults of the DPoP
- * settings (dpopConfigDefaults of ./config.ts) to the defaults of
- * ProviderConfig, advertises the algs of the checks in discovery and lets
- * browsers send the DPoP header.
+ * policy changes. proof.ts also checks the nonce of a proof (nonce.ts, with
+ * the secret of the environment variable OIDC_DPOP_NONCE_SECRET) for an
+ * endpoint that passes the server whose nonce it requires. The feature adds
+ * the defaults of the DPoP settings (dpopConfigDefaults of ./config.ts) to
+ * the defaults of ProviderConfig, advertises the algs of the checks in
+ * discovery and lets browsers send the DPoP header.
  *
  * This file and config.ts are loaded with the feature list (features.ts),
  * which provider.ts, config.ts and http.ts import, so they import neither
@@ -41,7 +43,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * error-responses.ts imports http.ts, so no file the feature list loads
  * imports them, token.ts or userinfo.ts, which import both, or par.ts, which
  * imports proof.ts: token/route.ts, userinfo/route.ts and (par)/par/route.ts
- * do. register.ts imports nothing; only
+ * do. nonce.ts imports base64url.ts and shared.ts only; only proof.ts
+ * imports it.
+ * register.ts imports nothing; only
  * (dynamic-client-registration)/register/route.ts imports it.
  */
 export const dpop = defineFeature({

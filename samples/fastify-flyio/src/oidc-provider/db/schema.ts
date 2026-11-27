@@ -52,7 +52,11 @@ CREATE TABLE IF NOT EXISTS clients (
   logo_uri                        VARCHAR(5000),
   policy_uri                      VARCHAR(5000),
   tos_uri                         VARCHAR(5000),
-  client_uri                      VARCHAR(5000)
+  client_uri                      VARCHAR(5000),
+  -- Not in the ER model: the rest of the client as JSON, the metadata without
+  -- a column (default_max_age, the ID Token and UserInfo signing algs) and the
+  -- members a feature adds to the client. NULL when the client has none.
+  payload                         TEXT
 );
 
 -- Client_auth: a method the client may authenticate with at the token

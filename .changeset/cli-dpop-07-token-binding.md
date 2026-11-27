@@ -8,4 +8,4 @@
 - Hono（Express、Fastify を含む）のトークンエンドポイントのステップ `issueAccessToken()`、`persistAccessToken()`、`buildTokenResponse()` と、リフレッシュトークンの `issueRefreshToken()`（Next.js の `features/refresh-token/token.ts` も）は、省略できる入力 `binding` を受け取る。渡すと、アクセストークンに `cnf` が入り、保存するアクセストークンのレコードに `cnf` と `tokenType` が、リフレッシュトークンのレコードに `refreshTokenCnf` が `cnf` として残り、トークンレスポンスの `token_type` が束縛の `tokenType` になる。ステップの説明の入力には、省略できる `tokenBinding` が加わる。
 
 今はどのパイプラインも Route Handler も `binding` を渡さないので、トークンエンドポイントの応答、発行するアクセストークン、保存するレコードは変わらない。
-`buildTokenResponse()` の返すボディの `token_type` の型は、`'Bearer'` のリテラルから `string` に変わる。
+`buildTokenResponse()` の戻り値の型（`TokenEndpointResponse`）も変わらない。

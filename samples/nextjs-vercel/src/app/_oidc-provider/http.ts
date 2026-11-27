@@ -5,6 +5,9 @@
  * - CORS: the back-channel endpoints may be called from client applications in
  *   the browser; discovery and JWKS are public. Each Route Handler exports an
  *   OPTIONS handler (corsPreflight) and wraps its answers with withCors.
+ * - A block of a Route Handler that has a header for whatever response the
+ *   request gets sets it with setResponseHeader, and withCors puts it on the
+ *   answer (as c.header() does in the Hono template).
  * - Responses that carry credentials are never cached (RFC 6749 §5.1 / §5.2).
  * - OAuth request parameters must not be repeated (RFC 6749 §3.1 / §3.2), which
  *   Object.fromEntries(searchParams) would hide by keeping only the last value.
@@ -61,13 +64,30 @@ export function corsPreflight(request: Request, policy: CorsPolicy): Response {
   return new Response(null, { status: 204, headers: corsHeaders(request, policy) });
 }
 
+/** The headers setResponseHeader() set for each request, until withCors() answers it. */
+const responseHeadersByRequest = new WeakMap<Request, Headers>();
+
+/**
+ * `request` へのレスポンスに付けるヘッダーを設定する。
+ *
+ * Route Handler のブロックが、どこで応答するかによらずレスポンスに付けるヘッダー（DPoP の機能の `DPoP-Nonce` など）を設定する。
+ * `withCors()` が、同じ `request` へのレスポンスにこのヘッダーを付ける。
+ * 同じ名前を二度設定すると、後の値だけが残る。
+ */
+export function setResponseHeader(request: Request, name: string, value: string): void {
+  const headers = responseHeadersByRequest.get(request) ?? new Headers();
+  headers.set(name, value);
+  responseHeadersByRequest.set(request, headers);
+}
+
 /**
  * レスポンスに `policy` の CORS のヘッダーを付けて返す。
  *
- * ボディ、ステータス、ヘッダーを写した新しいレスポンスを作り、`corsHeaders()` が作る CORS のヘッダーで上書きする。
+ * ボディ、ステータス、ヘッダーを写した新しいレスポンスを作り、`setResponseHeader()` が `request` に設定したヘッダーと、`corsHeaders()` が作る CORS のヘッダーで上書きする。
  */
 export function withCors(request: Request, policy: CorsPolicy, response: Response): Response {
   const headers = new Headers(response.headers);
+  responseHeadersByRequest.get(request)?.forEach((value, name) => headers.set(name, value));
   corsHeaders(request, policy).forEach((value, name) => headers.set(name, value));
   return new Response(response.body, {
     status: response.status,

@@ -25,7 +25,11 @@ import { validatePushedRequest } from './steps/validate-request.js';
  * request that has a DPoP header and pushes the request with its key as
  * dpop_jkt, so the code issued for the request_uri is bound to that key
  * (RFC 9449 §10.1). Without the block the pushed parameters are validated and
- * stored as they came.
+ * stored as they came. With dpopNonceRequiredAtAuthorizationServer, the
+ * (feature: dpop) block before client authentication gives every response to
+ * a request with a DPoP header a new nonce of the authorization server
+ * (DPoP-Nonce) and rejects a proof without a nonce it recently provided
+ * (400 use_dpop_nonce).
  *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * deliberately left to the deployment layer (reverse proxy / platform), not

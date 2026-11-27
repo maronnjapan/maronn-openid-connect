@@ -39,7 +39,11 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  * are bound to (tokenBinding, token-binding.ts) and reject a code or refresh
  * token bound to a key unless the proof is of that key; every grant below
  * then binds the access token it issues, and the refresh token of a public
- * client, to it. Without a binding the tokens are Bearer tokens.
+ * client, to it. Without a binding the tokens are Bearer tokens. With
+ * dpopNonceRequiredAtAuthorizationServer, the (feature: dpop) block before
+ * client authentication gives every response to a request with a DPoP header
+ * a new nonce of the authorization server (DPoP-Nonce) and rejects a proof
+ * without a nonce it recently provided (use_dpop_nonce).
  */
 export const tokenApp = new WebRouter();
 

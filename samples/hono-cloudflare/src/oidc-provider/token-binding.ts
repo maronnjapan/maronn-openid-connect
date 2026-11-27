@@ -8,6 +8,10 @@
  * endpoint reports both from the stored access token record (RFC 9449 §6.2).
  * Without a binding the tokens are Bearer tokens, as they are in a provider
  * without such a feature.
+ *
+ * An authorization request can be bound to a key too (dpop_jkt, RFC 9449
+ * §10): the transaction keeps its cnf, and the code issued from it carries
+ * the same cnf to the token endpoint.
  */
 import type { IntrospectionResponse } from '@maronn-openid-connect/core';
 
@@ -21,7 +25,7 @@ export interface TokenBinding {
   readonly refreshTokenCnf?: Readonly<Record<string, string>>;
 }
 
-/** What a binding adds to a stored token record. */
+/** What a binding adds to a stored token or grant record (a transaction, an authorization code). */
 export interface TokenBindingRecord {
   cnf?: Readonly<Record<string, string>>;
   tokenType?: string;
@@ -83,18 +87,33 @@ export function refreshTokenRecordOf(binding: TokenBinding | undefined): TokenBi
 }
 
 /**
- * レコード（保存したトークンなど）が持つ束縛の確認（`cnf`）を返す。
+ * レコード（トランザクション、認可コード、保存したトークン）が持つ束縛の確認（`cnf`）を返す。
  *
  * `cnf` がないか、JSON のオブジェクトでなければ `undefined` を返す。
  * レコードはストアから読んだ値で、機能や独自のコードが書いたものもあるので、型を信じずに形を確かめる。
+ * 認可リクエストを束縛した鍵（DPoP の `dpop_jkt`、RFC 9449 §10）を、トランザクションから認可コードへ引き継ぐのにも使う。
  *
  * @spec RFC 7800 §3.1
  * @spec RFC 9449 §6.2
+ * @spec RFC 9449 §10
  */
 export function confirmationOf(record: unknown): Readonly<Record<string, string>> | undefined {
   if (typeof record !== 'object' || record === null) return undefined;
   const cnf = (record as { cnf?: unknown }).cnf;
   return typeof cnf === 'object' && cnf !== null && !Array.isArray(cnf) ? (cnf as Record<string, string>) : undefined;
+}
+
+/**
+ * レコードの束縛の確認（`cnf`）を、別のレコードに展開できる形で返す。
+ *
+ * 認可トランザクションの `cnf`（DPoP の `dpop_jkt` の鍵。RFC 9449 §10）を、そこから発行する認可コードのレコードへ引き継ぐのに使う。
+ * `cnf` のないレコードには、空のオブジェクトを返すので、展開しても何も加わらない。
+ *
+ * @spec RFC 9449 §10
+ */
+export function confirmationRecordOf(record: unknown): TokenBindingRecord {
+  const cnf = confirmationOf(record);
+  return cnf === undefined ? {} : { cnf };
 }
 
 /**

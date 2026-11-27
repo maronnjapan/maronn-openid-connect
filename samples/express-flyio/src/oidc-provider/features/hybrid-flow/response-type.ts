@@ -11,6 +11,7 @@ import { completeAuthTransaction, HYBRID_RESPONSE_TYPES } from '@maronn-openid-c
 import type { AuthorizationResponseTypeHandler } from '../../endpoints/authorize/response-type.js';
 import { contribute } from '../../endpoints/step.js';
 import { createFragmentResponseMode } from '../implicit-flow/response-mode.js';
+import { confirmationOf } from '../../token-binding.js';
 import { issueHybridTokens } from './tokens.js';
 
 /**
@@ -45,6 +46,7 @@ export const hybridResponseTypeHandler: AuthorizationResponseTypeHandler = {
       responseParams,
       session,
       grantedScope,
+      codeConfirmation: confirmationOf(transaction),
     });
     // Withdrawing the consent revokes the tokens of this grant: those of the
     // authorization endpoint and those the token endpoint issues for the code.

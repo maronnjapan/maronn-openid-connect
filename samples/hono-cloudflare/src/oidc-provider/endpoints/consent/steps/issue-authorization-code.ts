@@ -3,6 +3,7 @@ import {
   createAuthorizationCode,
   type AuthTransaction,
 } from '@maronn-openid-connect/core';
+import { confirmationRecordOf } from '../../../token-binding.js';
 import type { AuthSessionInfo } from '../../../store.js';
 import { resolveGrantableScopes } from '../../../scopes.js';
 import type { ConsentedAuthorization } from '../screen.js';
@@ -25,6 +26,7 @@ export const meta = step({
  *
  * まずトランザクションをストアから削除し（同じトランザクションで認可コードを二度発行しないため）、許可するスコープに対して認可コードを発行する。
  * 認可コードの有効期間は `config.authorizationCodeTtl` 秒（既定では 300 秒）である。
+ * トランザクションが束縛の確認（`cnf`。DPoP の `dpop_jkt`、RFC 9449 §10）を持てば、それも認可コードのレコードに入れる。
  * 認可レスポンスのパラメータ、認可コードのデータ、許可したスコープを返す。
  *
  * `transaction.scope` は、認可リクエストを検証したときに `applyOfflineAccessPolicy` を通っている。
@@ -32,6 +34,7 @@ export const meta = step({
  *
  * @spec OIDC Core 1.0 §3.1.2.5
  * @spec OIDC Core 1.0 §3.1.3.1
+ * @spec RFC 9449 §10
  */
 export async function issueConsentedAuthorizationCode(
   c: any,
@@ -59,6 +62,8 @@ export async function issueConsentedAuthorizationCode(
     sessionId: session.sessionId,
     ttlSeconds: config.authorizationCodeTtl,
   });
-  await authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
+  // トークンエンドポイントは、同じ鍵の DPoP proof が付いた交換だけを受け付ける。
+  await authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
   return { responseParams, authCodeData, grantedScope };
 }

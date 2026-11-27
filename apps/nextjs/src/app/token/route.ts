@@ -11,11 +11,12 @@
  * grant.ts of its feature.
  *
  * With the dpop extension, the (feature: dpop) blocks after client
- * authentication check the DPoP proof, decide the key the tokens are bound
- * to (tokenBinding, token-binding.ts) and reject a code or refresh token
- * bound to a key unless the proof is of that key; every grant then binds the
- * access token it issues, and the refresh token of a public client, to it.
- * Without a binding the tokens are Bearer tokens.
+ * authentication check the DPoP proof, reject a request without one from a
+ * client registered with dpop_bound_access_tokens, decide the key the tokens
+ * are bound to (tokenBinding, token-binding.ts) and reject a code or refresh
+ * token bound to a key unless the proof is of that key; every grant then
+ * binds the access token it issues, and the refresh token of a public client,
+ * to it. Without a binding the tokens are Bearer tokens.
  */
 import {
   validateGrantTypeSupported,
@@ -115,9 +116,10 @@ export function OPTIONS(request: Request): Response {
  * 有効にした機能のグラント（`client_credentials`、ID-JAG、トークン交換、`device_code`、CIBA）には、クライアントの認証の直後にあるそれぞれのブロックが応答する。
  * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンとパブリッククライアントのリフレッシュトークンをその鍵に束縛し、`token_type` を `DPoP` にする。
  * 鍵に束縛した認可コードかリフレッシュトークンは、同じ鍵の DPoP proof を送ったリクエストだけが使える。
+ * `dpop_bound_access_tokens` を登録したクライアントは、DPoP proof を送ったリクエストでだけトークンを得られる。
  *
  * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
- * - 400: リクエストが不正なとき、またはグラントを拒否したとき。DPoP の機能があれば、DPoP proof を受け付けないとき（`invalid_dpop_proof`）と、鍵に束縛した認可コードかリフレッシュトークンにその鍵の DPoP proof が無いとき（`invalid_grant`）。
+ * - 400: リクエストが不正なとき、またはグラントを拒否したとき。DPoP の機能があれば、DPoP proof を受け付けないときと、`dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いとき（`invalid_dpop_proof`）と、鍵に束縛した認可コードかリフレッシュトークンにその鍵の DPoP proof が無いとき（`invalid_grant`）。
  * - 401 `invalid_client`（`WWW-Authenticate` ヘッダー付き）: クライアントの認証に失敗したとき。
  * - 500 `server_error`: クライアントの `alg` に合う ID トークンの署名鍵がないとき、またはそのほかの失敗のとき。
  *
@@ -175,7 +177,7 @@ async function token(request: Request): Promise<Response> {
 
     const authenticatedClientId = presentedCredentials.clientId;
 
-    // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5
+    // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5 / §5.2
     const { dpopJkt, tokenBinding, dpopRejection } = await verifyDpopTokenRequest(request, tokenClient);
     if (dpopRejection) return dpopRejection;
 

@@ -9,13 +9,16 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * to the key of the proof (cnf.jkt, token_type DPoP); the
  * [validate-dpop-grant-binding] block after it lets a code or refresh token
  * bound to a key be used only with a proof of that key. A request without a
- * DPoP header gets Bearer tokens. The UserInfo endpoint takes a token
- * presented with the DPoP scheme and its proof (the [read-dpop-access-token]
- * block of userinfo/route.ts, which calls ./userinfo.ts) and lets a bound
- * token be used only with a proof of its key, never as a Bearer token
- * ([verify-dpop-access-token]). The authorization endpoint reads the
- * dpop_jkt of a request (the [validate-dpop-jkt] block of authorize/route.ts,
- * which calls ./authorize.ts) and binds the code issued for it to that key.
+ * DPoP header gets Bearer tokens, unless its client is registered with
+ * dpopBoundAccessTokens (dpop_bound_access_tokens, ./config.ts): the
+ * [verify-dpop-proof] block rejects it then. The UserInfo endpoint takes a
+ * token presented with the DPoP scheme and its proof (the
+ * [read-dpop-access-token] block of userinfo/route.ts, which calls
+ * ./userinfo.ts) and lets a bound token be used only with a proof of its key,
+ * never as a Bearer token ([verify-dpop-access-token]). The authorization
+ * endpoint reads the dpop_jkt of a request (the [validate-dpop-jkt] block of
+ * authorize/route.ts, which calls ./authorize.ts) and binds the code issued
+ * for it to that key.
  * With par, the PAR endpoint checks the DPoP proof of a pushed request (the
  * [bind-pushed-dpop-key] block of (par)/par/route.ts, which calls ./par.ts)
  * and pushes the request with the key of the proof as its dpop_jkt.

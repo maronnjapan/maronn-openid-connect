@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER } from '../../../../test-support/context.js';
+import { createMapKvDatabase, createSqliteDatabase } from '../../../../test-support/databases.js';
 import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop.js';
 import { rs256Key, staticKeyProvider } from '../../../../test-support/keys.js';
 import {
@@ -15,7 +16,17 @@ import {
 } from '../../../../test-support/token.js';
 import { createApp } from '../../../app.js';
 import type { ClientRegistration } from '../../../config.js';
+import {
+  createClientKeyResolver as createKvClientKeyResolver,
+  createClientResolver as createKvClientResolver,
+  registerClient as registerKvClient,
+} from '../../../db/kv/clients.js';
 import { createClientKeyResolver, createClientResolver, registerClient } from '../../../db/memory/clients.js';
+import {
+  createClientKeyResolver as createSqlClientKeyResolver,
+  createClientResolver as createSqlClientResolver,
+  registerClient as registerSqlClient,
+} from '../../../db/sql/clients.js';
 import { createEmptyDatabase } from '../../../db/memory/database.js';
 import { createProviderStores } from '../../../db/memory/stores.js';
 import { redeemCibaRequest } from '../../ciba/steps/dispatch-ciba.js';
@@ -90,8 +101,18 @@ interface TokenBody {
   error_description?: string;
 }
 
-/** The provider on an in-memory database, with the confidential client-1 registered and code-1 stored for it. */
-async function provider(client: Partial<ClientRegistration> = {}, config: Record<string, unknown> = {}) {
+/** The client resolvers of a database. */
+interface ClientResolvers {
+  clientResolver: ReturnType<typeof createClientResolver>;
+  clientKeyResolver: ReturnType<typeof createClientKeyResolver>;
+}
+
+/**
+ * The provider on an in-memory database, with the confidential client-1
+ * registered and code-1 stored for it. resolvers replace the client resolvers
+ * of the in-memory database, to read the clients of another database.
+ */
+async function provider(client: Partial<ClientRegistration> = {}, config: Record<string, unknown> = {}, resolvers: Partial<ClientResolvers> = {}) {
   const db = createEmptyDatabase();
   const stores = createProviderStores(db);
   await registerClient(db, confidentialClient({ grantTypes: ['authorization_code', 'refresh_token', 'client_credentials'], ...client }));
@@ -104,6 +125,7 @@ async function provider(client: Partial<ClientRegistration> = {}, config: Record
     storage: stores,
     clientResolver: createClientResolver(db),
     clientKeyResolver: createClientKeyResolver(db),
+    ...resolvers,
     config: { issuer: TEST_ISSUER, ...config },
   });
   const post = (fields: Record<string, string>, headers: Record<string, string> = {}) =>
@@ -335,6 +357,108 @@ describe('verifyDpopTokenRequest', () => {
       deviceCode: vi.mocked(redeemDeviceCode).mock.calls[0]?.[4],
       ciba: vi.mocked(redeemCibaRequest).mock.calls[0]?.[4],
     }).toEqual({ deviceCode: binding, ciba: binding });
+  });
+
+  // RFC 9449 §5.2: the authorization server MUST reject the token requests without a DPoP header of a client
+  // registered with dpop_bound_access_tokens true.
+  describe('a client registered with dpop_bound_access_tokens', () => {
+    const BOUND_CLIENT_ERROR = {
+      error: 'invalid_dpop_proof',
+      error_description: 'This client must send a DPoP proof with every token request',
+    };
+    // A request of each grant from client-1: the code and the refresh token are client-1's, and the
+    // client_credentials grant asks for a scope client-1 registers.
+    const GRANT_REQUESTS: Array<[grant: string, client: Partial<ClientRegistration>, fields: Record<string, string>]> = [
+      ['authorization_code', {}, { grant_type: 'authorization_code', code: 'code-1', redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER }],
+      ['refresh_token', {}, { grant_type: 'refresh_token', refresh_token: 'rt-1' }],
+      ['client_credentials', { scope: ['api:read'] }, { grant_type: 'client_credentials', scope: 'api:read' }],
+    ];
+
+    // The check runs before the step of any grant, so no grant step is called and nothing is spent.
+    it.each(GRANT_REQUESTS)(
+      'should reject a %s request without a DPoP proof before any grant step, and leave the code and the refresh token unused',
+      async (_grant, client, fields) => {
+        const { stores, post } = await provider({ dpopBoundAccessTokens: true, ...client });
+        await stores.refreshTokenStore.set('rt-1', storedRefreshToken());
+
+        const response = await post(fields);
+
+        expect(response.status).toBe(400);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(await response.json()).toEqual(BOUND_CLIENT_ERROR);
+        expect(vi.mocked(issueClientCredentialsToken)).not.toHaveBeenCalled();
+        expect((await stores.authCodeStore.get('code-1'))?.used).toBe(false);
+        expect((await stores.refreshTokenStore.get('rt-1'))?.used).toBe(false);
+      },
+    );
+
+    it.each(GRANT_REQUESTS)('should answer a %s request with a DPoP proof with a DPoP access token', async (_grant, client, fields) => {
+      const key = await dpopKey();
+      const { stores, post } = await provider({ dpopBoundAccessTokens: true, ...client });
+      await stores.refreshTokenStore.set('rt-1', storedRefreshToken());
+
+      const response = await post(fields, { DPoP: await tokenProof(key) });
+      const body = (await response.json()) as TokenBody;
+
+      expect(response.status).toBe(200);
+      expect(body.token_type).toBe('DPoP');
+      expect(decodeJwt(body.access_token).payload.cnf).toEqual({ jkt: key.jkt });
+    });
+
+    // RFC 9449 §5.2: false is the same as omitted, so the client may also ask for Bearer tokens.
+    it('should keep issuing Bearer tokens without a DPoP proof to a client registered with dpopBoundAccessTokens false', async () => {
+      const { exchangeCode } = await provider({ dpopBoundAccessTokens: false });
+
+      const response = await exchangeCode();
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as TokenBody).token_type).toBe('Bearer');
+    });
+
+    // A dynamic registration keeps the metadata it registered in registrationMetadata, under its wire name.
+    it('should reject a request without a DPoP proof from a client whose dynamic registration kept dpop_bound_access_tokens true', async () => {
+      const { stores, exchangeCode } = await provider({ registrationMetadata: { dpop_bound_access_tokens: true } });
+
+      const response = await exchangeCode();
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual(BOUND_CLIENT_ERROR);
+      expect((await stores.authCodeStore.get('code-1'))?.used).toBe(false);
+    });
+
+    // The key-value database keeps the member, which has no field, in the payload of the client record (db/kv/clients.ts).
+    it('should keep dpopBoundAccessTokens of a client registered in the key-value database, and require a proof of the client', async () => {
+      const kv = createMapKvDatabase();
+      await registerKvClient(kv, confidentialClient({ grantTypes: ['client_credentials'], scope: ['api:read'], dpopBoundAccessTokens: true }));
+      const { post } = await provider({}, {}, { clientResolver: createKvClientResolver(kv), clientKeyResolver: createKvClientKeyResolver(kv) });
+
+      const withoutProof = await post({ grant_type: 'client_credentials', scope: 'api:read' });
+      const withProof = await post({ grant_type: 'client_credentials', scope: 'api:read' }, { DPoP: await tokenProof(await dpopKey()) });
+
+      expect(JSON.parse((await kv.get('oidc:client:client-1')) ?? 'null')).toMatchObject({ payload: { dpopBoundAccessTokens: true } });
+      expect(withoutProof.status).toBe(400);
+      expect(await withoutProof.json()).toEqual(BOUND_CLIENT_ERROR);
+      expect(withProof.status).toBe(200);
+      expect(((await withProof.json()) as TokenBody).token_type).toBe('DPoP');
+    });
+
+    // The SQL database keeps the member, which has no column, in the payload of the client (db/sql/clients.ts).
+    it('should keep dpopBoundAccessTokens of a client registered in the SQL database, and require a proof of the client', async () => {
+      const sql = createSqliteDatabase();
+      await registerSqlClient(sql, confidentialClient({ grantTypes: ['client_credentials'], scope: ['api:read'], dpopBoundAccessTokens: true }));
+      const { post } = await provider({}, {}, { clientResolver: createSqlClientResolver(sql), clientKeyResolver: createSqlClientKeyResolver(sql) });
+
+      const withoutProof = await post({ grant_type: 'client_credentials', scope: 'api:read' });
+      const withProof = await post({ grant_type: 'client_credentials', scope: 'api:read' }, { DPoP: await tokenProof(await dpopKey()) });
+
+      expect(await sql.all({ sql: 'SELECT id, payload FROM clients', params: [] })).toEqual([
+        { id: 'client-1', payload: '{"dpopBoundAccessTokens":true}' },
+      ]);
+      expect(withoutProof.status).toBe(400);
+      expect(await withoutProof.json()).toEqual(BOUND_CLIENT_ERROR);
+      expect(withProof.status).toBe(200);
+      expect(((await withProof.json()) as TokenBody).token_type).toBe('DPoP');
+    });
   });
 
   it.each([

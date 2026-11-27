@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildDpopConfirmation,
+  dpopBoundAccessTokensOf,
   parseDpopJkt,
   readDpopJkt,
+  requireDpopProofForClient,
   resolvePushedDpopJkt,
   selectDpopRefreshTokenJkt,
   validateDpopBoundGrant,
@@ -95,6 +97,52 @@ describe('resolvePushedDpopJkt', () => {
     expect(error).toMatchObject({
       error: 'invalid_dpop_proof',
       errorDescription: 'dpop_jkt does not match the key of the DPoP proof',
+    });
+  });
+});
+
+describe('dpopBoundAccessTokensOf', () => {
+  // RFC 9449 §5.2: dpop_bound_access_tokens true says the client always uses DPoP.
+  it.each([
+    ['its dpopBoundAccessTokens is true', { clientId: 'client-1', dpopBoundAccessTokens: true }],
+    [
+      'the metadata of its dynamic registration has dpop_bound_access_tokens true',
+      { clientId: 'client-1', registrationMetadata: { client_name: 'RP One', dpop_bound_access_tokens: true } },
+    ],
+  ])('should be true for a client when %s', (_name, client) => {
+    expect(dpopBoundAccessTokensOf(client)).toBe(true);
+  });
+
+  // RFC 9449 §5.2: omitted means false. Only the boolean true counts.
+  it.each([
+    ['has no dpopBoundAccessTokens', { clientId: 'client-1' }],
+    ['has dpopBoundAccessTokens false', { clientId: 'client-1', dpopBoundAccessTokens: false }],
+    ['has the string "true" as dpopBoundAccessTokens', { clientId: 'client-1', dpopBoundAccessTokens: 'true' }],
+    ['registered dynamically without dpop_bound_access_tokens', { clientId: 'client-1', registrationMetadata: { client_name: 'RP One' } }],
+    ['registered dynamically with dpop_bound_access_tokens false', { clientId: 'client-1', registrationMetadata: { dpop_bound_access_tokens: false } }],
+    ['registered dynamically with the string "true"', { clientId: 'client-1', registrationMetadata: { dpop_bound_access_tokens: 'true' } }],
+  ])('should be false for a client that %s', (_name, client) => {
+    expect(dpopBoundAccessTokensOf(client)).toBe(false);
+  });
+});
+
+describe('requireDpopProofForClient', () => {
+  it('should accept a request with a proof from a client that always uses DPoP, and any request from another client', () => {
+    expect(() => {
+      requireDpopProofForClient(true, 'proof');
+      requireDpopProofForClient(false, 'proof');
+      requireDpopProofForClient(false, undefined);
+    }).not.toThrow();
+  });
+
+  // RFC 9449 §5.2: the authorization server MUST reject a token request without the DPoP header.
+  it('should reject a request without a proof from a client that always uses DPoP with invalid_dpop_proof', () => {
+    const error = errorOf(() => requireDpopProofForClient(true, undefined));
+
+    expect(error).toBeInstanceOf(DpopError);
+    expect(error).toMatchObject({
+      error: 'invalid_dpop_proof',
+      errorDescription: 'This client must send a DPoP proof with every token request',
     });
   });
 });

@@ -39,10 +39,11 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  * respondTokenError().
  *
  * With the dpop extension, the (feature: dpop) blocks after client
- * authentication check the DPoP proof, decide the key the tokens are bound
- * to (tokenBinding, token-binding.ts) and reject a code or refresh token
- * bound to a key unless the proof is of that key; every grant below then
- * binds the access token it issues, and the refresh token of a public
+ * authentication check the DPoP proof, reject a request without one from a
+ * client registered with dpop_bound_access_tokens, decide the key the tokens
+ * are bound to (tokenBinding, token-binding.ts) and reject a code or refresh
+ * token bound to a key unless the proof is of that key; every grant below
+ * then binds the access token it issues, and the refresh token of a public
  * client, to it. Without a binding the tokens are Bearer tokens.
  */
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
@@ -55,7 +56,7 @@ tokenApp.post('/', async (c) => {
     // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
 
-    // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5
+    // [verify-dpop-proof] (feature: dpop) DPoP proof を検証し、トークンを束縛する鍵を決める — RFC 9449 §4.3 / §5 / §5.2
     const { dpopJkt, tokenBinding } = await verifyDpopTokenRequest(c, tokenClient);
 
     // [validate-dpop-grant-binding] (feature: dpop) 認可コードとリフレッシュトークンを束縛した鍵を確かめる — RFC 9449 §5 / §10

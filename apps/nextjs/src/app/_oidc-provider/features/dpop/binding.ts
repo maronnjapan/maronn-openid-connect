@@ -7,7 +7,10 @@
  * 認可リクエストの `dpop_jkt` は、その認可リクエストから発行する認可コードを束縛する鍵の JWK Thumbprint として読む（RFC 9449 §10）。
  * PAR のリクエストの `DPoP` ヘッダーの鍵は、プッシュした認可リクエストの `dpop_jkt` として扱う（RFC 9449 §10.1）。
  * レコードの `cnf.jkt` で鍵に束縛した認可コードとリフレッシュトークンは、同じ鍵の DPoP proof を送ったトークンリクエストだけが使える（RFC 9449 §5 / §10）。
+ * `dpop_bound_access_tokens` を登録したクライアントは、DPoP proof の無いトークンリクエストでトークンを得られない（RFC 9449 §5.2）。
  */
+import type { TokenClientInfo } from '@maronn-openid-connect/core';
+import type { RegisteredClient } from '../../config';
 import { decodeBase64Url } from './base64url';
 import { DpopError } from './errors';
 
@@ -85,6 +88,38 @@ export function resolvePushedDpopJkt(dpopJkt: string | undefined, proofJkt: stri
     throw new DpopError('invalid_dpop_proof', 'dpop_jkt does not match the key of the DPoP proof');
   }
   return proofJkt;
+}
+
+/**
+ * クライアントが `dpop_bound_access_tokens`（常に DPoP を使う）を登録しているかを返す。
+ *
+ * クライアントの `dpopBoundAccessTokens`（`config.ts` が `RegisteredClient` に足すメンバー）が `true` なら `true` を返す。
+ * 動的クライアント登録のクライアントは、登録したメタデータを `registrationMetadata` に `dpop_bound_access_tokens` の名前で持つので、その値が `true` のときも `true` を返す。
+ * どちらでもなければ `false` を返す（省略したときの既定値は `false`）。
+ * 真偽値の `true` だけを数え、文字列の `"true"` のような値は数えない。
+ *
+ * @spec RFC 9449 §5.2
+ */
+export function dpopBoundAccessTokensOf(client: TokenClientInfo): boolean {
+  const { dpopBoundAccessTokens, registrationMetadata } = client as RegisteredClient & {
+    registrationMetadata?: Readonly<Record<string, unknown>>;
+  };
+  return dpopBoundAccessTokens === true || registrationMetadata?.dpop_bound_access_tokens === true;
+}
+
+/**
+ * `dpop_bound_access_tokens` を登録したクライアントのトークンリクエストに、DPoP proof があることを確かめる。
+ *
+ * `dpopBoundAccessTokens` が `true`（クライアントが常に DPoP を使うと登録した）なのに、`DPoP` ヘッダーが無い（`proof` が `undefined`）リクエストを拒否する（MUST）。
+ * `dpopBoundAccessTokens` が `false` なら、DPoP proof が無くても何もしない。
+ *
+ * @spec RFC 9449 §5.2
+ * @throws {DpopError} `invalid_dpop_proof`: `dpop_bound_access_tokens` を登録したクライアントのリクエストに DPoP proof が無いとき
+ */
+export function requireDpopProofForClient(dpopBoundAccessTokens: boolean, proof: string | undefined): void {
+  if (dpopBoundAccessTokens && proof === undefined) {
+    throw new DpopError('invalid_dpop_proof', 'This client must send a DPoP proof with every token request');
+  }
 }
 
 /**

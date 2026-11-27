@@ -1,6 +1,9 @@
+import type { Jwk } from '@maronn-openid-connect/core';
 import { NextRequest } from 'next/server';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, requestTo } from '../../../test-support/context';
+import { signRs256Jwt } from '../../../test-support/jwt';
+import { rs256Key } from '../../../test-support/keys';
 import { createDatabase, registerClient } from '../../_oidc-provider/db';
 import { parStore } from '../../_oidc-provider/features/par/store';
 import { GET as authorize } from '../../authorize/route';
@@ -13,6 +16,9 @@ import { POST } from './route';
 const CLIENT_ID = 'par-route-client';
 const CLIENT_SECRET = 'par-route-secret';
 const POST_CLIENT_ID = 'par-route-post-client';
+const PUBLIC_CLIENT_ID = 'par-route-public-client';
+const JWT_CLIENT_ID = 'par-route-jwt-client';
+const JWT_CLIENT_KEY_ID = 'par-route-jwt-client-key';
 const REDIRECT_URI = 'https://rp.example.com/callback';
 /** RFC 7636 Appendix B: the S256 code_challenge of its example code_verifier. */
 const CODE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
@@ -38,6 +44,18 @@ beforeAll(async () => {
     redirectUris: [REDIRECT_URI],
     tokenEndpointAuthMethods: ['client_secret_post'],
   });
+  await registerClient(createDatabase(), {
+    clientId: PUBLIC_CLIENT_ID,
+    redirectUris: [REDIRECT_URI],
+    tokenEndpointAuthMethods: ['none'],
+  });
+  const key = await rs256Key(JWT_CLIENT_KEY_ID);
+  await registerClient(createDatabase(), {
+    clientId: JWT_CLIENT_ID,
+    redirectUris: [REDIRECT_URI],
+    tokenEndpointAuthMethods: ['private_key_jwt'],
+    keys: { private_key_jwt: { keys: [{ ...(key.publicJwk as Jwk), kid: key.keyId }] } },
+  });
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -59,6 +77,13 @@ function basicCredentials(secret = CLIENT_SECRET): Record<string, string> {
 /** A pushed authorization request of the client of client_secret_basic, with the fields over the usual code flow parameters. */
 function pushedRequest(fields: Record<string, string> = {}, secret = CLIENT_SECRET): Request {
   return postToPar(new URLSearchParams({ ...PUSHED_FIELDS, ...fields }).toString(), basicCredentials(secret));
+}
+
+/** A client assertion of the client of private_key_jwt for /par (OIDC Core 1.0 §9). */
+async function parClientAssertion(): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const claims = { iss: JWT_CLIENT_ID, sub: JWT_CLIENT_ID, aud: `${TEST_ISSUER}/par`, exp: now + 60, iat: now, jti: crypto.randomUUID() };
+  return signRs256Jwt(claims, await rs256Key(JWT_CLIENT_KEY_ID));
 }
 
 /** The status, the cache headers and the JSON body of a response of /par. */
@@ -111,6 +136,36 @@ describe('POST /par', () => {
 
       expect(response.status).toBe(201);
       expect(record?.params).toEqual({ ...PUSHED_FIELDS, client_id: POST_CLIENT_ID });
+    });
+
+    // RFC 9126 §2.1: a public client sends only its client_id.
+    it('should store the parameters of a public client that sent only its client_id', async () => {
+      const body = new URLSearchParams({ ...PUSHED_FIELDS, client_id: PUBLIC_CLIENT_ID });
+      const response = await POST(postToPar(body.toString()));
+      const { request_uri: requestUri } = (await response.json()) as { request_uri: string };
+
+      const record = await parStore.consume(requestUri);
+
+      expect(response.status).toBe(201);
+      expect(record?.clientId).toBe(PUBLIC_CLIENT_ID);
+      expect(record?.params).toEqual({ ...PUSHED_FIELDS, client_id: PUBLIC_CLIENT_ID });
+    });
+
+    // RFC 9126 §2.1: the client assertion authenticates the request and is not stored with it.
+    it('should store the parameters without the client assertion of a private_key_jwt client', async () => {
+      const body = new URLSearchParams({
+        ...PUSHED_FIELDS,
+        client_id: JWT_CLIENT_ID,
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: await parClientAssertion(),
+      });
+      const response = await POST(postToPar(body.toString()));
+      const { request_uri: requestUri } = (await response.json()) as { request_uri: string };
+
+      const record = await parStore.consume(requestUri);
+
+      expect(response.status).toBe(201);
+      expect(record?.params).toEqual({ ...PUSHED_FIELDS, client_id: JWT_CLIENT_ID });
     });
 
     // RFC 9126 §4 / §7.3: /authorize expands the request_uri once.
@@ -173,13 +228,33 @@ describe('POST /par', () => {
       });
     });
 
+    // RFC 9126 §2.1 / §3: the request parameter (a Request Object) is not accepted here.
+    it('should answer 400 invalid_request to a pushed request parameter', async () => {
+      const answer = await answerOf(await POST(pushedRequest({ request: 'eyJhbGciOiJub25lIn0.e30.' })));
+
+      expect(answer).toEqual({
+        status: 400,
+        cache: ['no-cache, no-store', 'no-cache'],
+        body: {
+          error: 'invalid_request',
+          error_description: 'The request parameter (Request Object) is not supported by this pushed authorization request endpoint',
+        },
+      });
+    });
+
     // RFC 9126 §2.1 / RFC 6749 §5.2: the client is authenticated as at the token endpoint.
     it('should answer 401 invalid_client with a Basic challenge for a wrong client_secret', async () => {
       const response = await POST(pushedRequest({}, 'wrong-secret'));
+      const challenge = response.headers.get('WWW-Authenticate');
 
-      expect(response.status).toBe(401);
-      expect(response.headers.get('WWW-Authenticate')).toBe('Basic realm="Client Authentication"');
-      expect(await response.json()).toEqual({ error: 'invalid_client', error_description: 'Client authentication failed' });
+      const answer = await answerOf(response);
+
+      expect(challenge).toBe('Basic realm="Client Authentication"');
+      expect(answer).toEqual({
+        status: 401,
+        cache: ['no-cache, no-store', 'no-cache'],
+        body: { error: 'invalid_client', error_description: 'Client authentication failed' },
+      });
     });
 
     // RFC 9126 §2.1: validated as the authorization endpoint would, and answered as JSON.

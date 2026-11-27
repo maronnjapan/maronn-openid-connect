@@ -165,7 +165,8 @@ describe('readDpopUserInfoRequest', () => {
     ]);
   });
 
-  // RFC 6750 §2: one method per request; the DPoP header names the scheme, so its challenge carries the error.
+  // RFC 6750 §2: one method per request. The token was presented with the DPoP scheme (Authorization: DPoP),
+  // so the DPoP challenge carries the error.
   it('should reject a DPoP token sent with another token in the form body, with the error in the DPoP challenge', async () => {
     const key = await dpopKey();
     const { app } = await setUp({ key });
@@ -193,6 +194,26 @@ describe('readDpopUserInfoRequest', () => {
     const response = await app.request(formPost('/userinfo', { access_token: '' }, { Authorization: 'DPoP token-1', DPoP: proof }));
 
     expect([response.status, await response.json()]).toEqual([200, CLAIMS]);
+  });
+
+  // RFC 6750 §3.1: a repeated access_token is malformed; any value that is not empty is a second token.
+  it('should reject a DPoP token sent with a repeated access_token of the form body that has a value', async () => {
+    const key = await dpopKey();
+    const { app } = await setUp({ key });
+    const proof = await dpopProof(key, { htm: 'POST', htu: USERINFO_ENDPOINT, accessToken: 'token-1' });
+
+    const response = await app.request(
+      requestTo('/userinfo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'DPoP token-1', DPoP: proof },
+        body: 'access_token=&access_token=token-1',
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('WWW-Authenticate')).toBe(
+      `${CHALLENGES}, error="invalid_request", error_description="Multiple access token methods are not allowed"`,
+    );
   });
 
   it('should reject the DPoP scheme without a token with 400 invalid_request', async () => {

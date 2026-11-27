@@ -70,9 +70,10 @@ export async function readDpopUserInfoRequest(
 }
 
 /**
- * POST のフォームのボディが、空でない `access_token` パラメータを持つかを返す。
+ * POST のフォームのボディの `access_token` パラメータに、空でない値が一つでもあるかを返す。
  *
  * メディアタイプが `application/x-www-form-urlencoded` の POST だけを読む。
+ * パラメータを繰り返したボディ（RFC 6750 §3.1 の `invalid_request`）も、値のどれかが空でなければ、二つ目のトークンを送ったとみなす。
  * DPoP スキームのリクエストでは Bearer のステップがボディを読まないので、ボディを読むのはこの一回だけである。
  *
  * @spec RFC 6750 §2.2
@@ -88,5 +89,5 @@ async function formBodyHasAccessToken(c: any): Promise<boolean> {
   } catch {
     throw new UserInfoEndpointError({ status: 400, body: { error: 'invalid_request' } });
   }
-  return (new URLSearchParams(body).get('access_token') ?? '') !== '';
+  return new URLSearchParams(body).getAll('access_token').some((value) => value !== '');
 }

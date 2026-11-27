@@ -1,11 +1,13 @@
+import type { SigningKeyProvider } from '@maronn-openid-connect/core';
 import { ClientRegistrationError } from '@maronn-openid-connect/experimental/dynamic-client-registration';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER } from '../../../test-support/context';
 import { config as providerConfig } from '../../_oidc-provider/provider';
 import {
   dynamicClientRegistrationConfig,
   type DynamicClientRegistrationConfig,
 } from '../../_oidc-provider/features/dynamic-client-registration/config';
+import { dynamicClientStore } from '../../_oidc-provider/features/dynamic-client-registration/store';
 import { POST, registrableGrantTypes, registrableScopes } from './route';
 
 const REDIRECT_URIS = ['https://rp.example.com/callback'];
@@ -21,10 +23,17 @@ const providerDefaults = {
 afterEach(() => {
   Object.assign(dynamicClientRegistrationConfig, defaults);
   Object.assign(providerConfig, providerDefaults);
+  vi.restoreAllMocks();
 });
 
 function configure(overrides: Partial<DynamicClientRegistrationConfig>): void {
   Object.assign(dynamicClientRegistrationConfig, overrides);
+}
+
+/** Make the signing key provider that provider.ts keeps on globalThis fail to load the keys. */
+function failToLoadSigningKeys(): void {
+  const registry = globalThis as typeof globalThis & { __oidcSigningKeyProvider: SigningKeyProvider };
+  vi.spyOn(registry.__oidcSigningKeyProvider, 'getSigningKeys').mockRejectedValue(new Error('the key store is down'));
 }
 
 function register(metadata: unknown, headers: Record<string, string> = {}): Promise<Response> {
@@ -303,6 +312,73 @@ describe('POST /register', () => {
 
     expect(response.status).toBe(429);
     expect(await response.json()).toEqual({ error: 'too_many_registrations', error_description: 'registration limit reached' });
+  });
+
+  // RFC 7591 §5: a request that declares a body above the limit is refused before the body is read.
+  it('should answer a Content-Length above maxRegistrationBodyBytes with invalid_client_metadata before reading the body', async () => {
+    configure({ maxRegistrationBodyBytes: 64 });
+    const request = new Request(`${TEST_ISSUER}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': '65' },
+      body: JSON.stringify({ redirect_uris: REDIRECT_URIS }),
+    });
+    const text = vi.spyOn(request, 'text');
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect([response.headers.get('Cache-Control'), response.headers.get('Pragma')]).toEqual(['no-store', 'no-cache']);
+    expect(await response.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'request body must not exceed the configured maximum size',
+    });
+    expect(text).not.toHaveBeenCalled();
+  });
+
+  // RFC 7591 §3.1: the body must be one JSON object.
+  it('should answer a body that is not a JSON object with invalid_client_metadata', async () => {
+    const response = await register(['https://rp.example.com/callback']);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_client_metadata', error_description: 'request body must be a JSON object' });
+  });
+
+  // The signing keys are loaded once the media type and the declared length passed, before the body is read.
+  it('should answer 503 when the signing keys cannot be loaded, after the media type check', async () => {
+    failToLoadSigningKeys();
+
+    const otherMediaType = await register({ redirect_uris: REDIRECT_URIS }, { 'Content-Type': 'text/plain' });
+    const json = await register({ redirect_uris: REDIRECT_URIS });
+
+    expect(otherMediaType.status).toBe(400);
+    expect(json.status).toBe(503);
+    expect(await json.json()).toEqual({ error: 'server_error', error_description: 'Failed to load signing key' });
+  });
+
+  it('should answer an unexpected failure of the store with an uncacheable 500 server_error', async () => {
+    vi.spyOn(dynamicClientStore, 'save').mockRejectedValue(new Error('the store is down'));
+
+    const response = await register({ redirect_uris: REDIRECT_URIS });
+
+    expect(response.status).toBe(500);
+    expect([response.headers.get('Cache-Control'), response.headers.get('Pragma')]).toEqual(['no-store', 'no-cache']);
+    expect(await response.json()).toEqual({ error: 'server_error' });
+  });
+
+  // RFC 7591 §5: concurrent registrations may all pass the first count; the one that finds the cap
+  // overshot after its save withdraws it.
+  it('should withdraw the registration and answer 429 when the count after the save is above the cap', async () => {
+    configure({ maxRegisteredClients: 1 });
+    vi.spyOn(dynamicClientStore, 'count').mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+    const save = vi.spyOn(dynamicClientStore, 'save');
+    const remove = vi.spyOn(dynamicClientStore, 'delete');
+
+    const response = await register({ redirect_uris: REDIRECT_URIS });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: 'too_many_registrations', error_description: 'registration limit reached' });
+    expect(remove).toHaveBeenCalledWith(save.mock.calls[0]?.[0].clientId);
+    expect(await dynamicClientStore.get(save.mock.calls[0]?.[0].clientId ?? '')).toBeUndefined();
   });
 });
 

@@ -54,20 +54,21 @@ describe('parseUserInfoRequest', () => {
 
   describe('Errors', () => {
     // RFC 6750 §2: a client MUST NOT use more than one method in a request.
-    it('should reject a token sent both in the header and in the body with 400 invalid_request', async () => {
+    // RFC 9449 §7.2: the mechanism is ambiguous, so every challenge delivers the error.
+    it('should reject a token sent both in the header and in the body with 400 invalid_request in every challenge', async () => {
       const c = contextOf(formPost('/userinfo', { access_token: 'token-2' }, { Authorization: 'Bearer token-1' }));
 
       await expect(parseUserInfoRequest(c)).rejects.toMatchObject({
         response: {
           status: 400,
           body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
-          headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo", error="invalid_request"' },
         },
+        challenge: { error: 'invalid_request', everyScheme: true },
       });
     });
 
-    // RFC 6750 §3.1: a request without authentication gets the realm-only challenge.
-    it('should reject a request without a token with 401 and the realm-only challenge', async () => {
+    // RFC 6750 §3.1: a request without authentication gets challenges without an error.
+    it('should reject a request without a token with 401 and challenges without an error', async () => {
       const c = contextOf(requestTo('/userinfo'));
 
       const rejection = parseUserInfoRequest(c);
@@ -77,9 +78,30 @@ describe('parseUserInfoRequest', () => {
         response: {
           status: 401,
           body: { error: 'invalid_token', error_description: 'Access token is required' },
-          headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo"' },
+        },
+        challenge: 'without-error',
+      });
+    });
+
+    it('should reject a body it cannot read with 400 invalid_request and no challenge', async () => {
+      const brokenBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error('the connection was reset'));
         },
       });
+      const c = contextOf(
+        requestTo('/userinfo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: brokenBody,
+          duplex: 'half',
+        } as RequestInit),
+      );
+
+      const rejection = parseUserInfoRequest(c);
+
+      await expect(rejection).rejects.toMatchObject({ response: { status: 400, body: { error: 'invalid_request' } } });
+      await expect(rejection).rejects.toHaveProperty('challenge', undefined);
     });
 
     it('should treat another authentication scheme as no token', async () => {

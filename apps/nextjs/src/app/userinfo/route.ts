@@ -9,7 +9,8 @@
  * Each block of userinfo() is one step of the endpoint (endpoint.ts), as the
  * steps of the Hono pipeline: read the Bearer token, resolve and validate it,
  * resolve the claims it may see, build the response and answer. A block that
- * throws ends in the [respond-error] block.
+ * throws ends in the [respond-error] block, which answers with the challenges
+ * of the schemes the endpoint accepts.
  */
 import {
   resolveUserInfoAccessToken,
@@ -41,7 +42,13 @@ import {
   signingKeysUnavailable,
   withCors,
 } from '../_oidc-provider/http';
-import { UserInfoEndpointError, type UserInfoEndpointResponse } from './response';
+import {
+  BEARER_CHALLENGE,
+  UserInfoEndpointError,
+  userInfoChallengeHeader,
+  type UserInfoChallenges,
+  type UserInfoEndpointResponse,
+} from './response';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -80,7 +87,7 @@ export function OPTIONS(request: Request): Response {
  * 返すクレームは、アクセストークンのスコープと `claims` パラメータに応じて決まる。
  * 応答はキャッシュさせない JSON で、クライアントが `userinfo_signed_response_alg` を登録していれば、署名した JWT（`application/jwt`）で応答する。
  *
- * トークンのエラーには、キャッシュさせない JSON と、`Bearer` の `WWW-Authenticate` チャレンジで応答する。
+ * トークンのエラーには、キャッシュさせない JSON と、受け付ける認証スキームの `WWW-Authenticate` チャレンジ（機能を有効にしなければ `Bearer`）で応答する。
  * - 401 の `invalid_token`: トークンがない、または登録されていない、期限切れ、このエンドポイント向けでない（`aud`）、サブジェクトのユーザーが見つからないとき。
  * - 403 の `insufficient_scope`: トークンが `openid` スコープを含まないとき。
  * - 400 の `invalid_request`: トークンを複数の方法で送ったとき。
@@ -91,6 +98,11 @@ export function OPTIONS(request: Request): Response {
  * @spec OIDC Core 1.0 §5.3
  */
 async function userinfo(request: Request): Promise<Response> {
+  // 失敗の応答に並べるチャレンジ（`WWW-Authenticate`）。受け付ける認証スキームごとに一つで、機能を有効にしなければ Bearer だけである（RFC 6750 §3）。
+  // 自分のスキームを受け付ける機能のブロックは、そのチャレンジを足し、リクエストがそのスキームでトークンを提示したら `scheme` を書き換える（RFC 9449 §7.2）。
+  // どのブロックが失敗しても `respond-error` のブロックで読めるよう、最初のブロックの前で宣言する。
+  const challenges: UserInfoChallenges = { offered: [BEARER_CHALLENGE], scheme: BEARER_CHALLENGE.scheme };
+
   // [load-signing-keys] 署名鍵を読み込む — OIDC Core 1.0 §10.1
   // 署名鍵は、`userinfo_signed_response_alg` を登録したクライアントへの署名付きのレスポンスに使う。
   const keys = await loadSigningKeys().catch(() => null);
@@ -103,7 +115,7 @@ async function userinfo(request: Request): Promise<Response> {
     // [resolve-access-token] アクセストークンを取得して検証する — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
     // ここからのブロックは、UserInfo リクエストのパイプラインを構成する core の独立した関数を呼ぶ。
     // 呼び出しを消せばその検証を外せ、ブロックのあいだに独自の処理を入れることもできる。
-    // どの検証も失敗すると `UserInfoError` を投げ、下の `respond-error` のブロックが RFC 6750 の `Bearer` のチャレンジで応答する。
+    // どの検証も失敗すると `UserInfoError` を投げ、下の `respond-error` のブロックが、トークンを提示したスキームのチャレンジにエラーを入れて応答する（RFC 6750 §3）。
 
     // 提示されたアクセストークンの情報を取得し、登録されていなければ `invalid_token` のエラーを投げる（OIDC Core 1.0 §5.3.1）。
     const tokenInfo = await resolveUserInfoAccessToken(accessToken, resolvers.accessTokenResolver);
@@ -135,8 +147,8 @@ async function userinfo(request: Request): Promise<Response> {
     // [respond] 応答する（no-store） — RFC 6750 §5.2
     return respondUserInfo(userInfoResponse);
   } catch (error) {
-    // [respond-error] Bearer のチャレンジで応答する — RFC 6750 §3
-    return respondUserInfoError(error);
+    // [respond-error] 受け付ける認証スキームのチャレンジで応答する — RFC 6750 §3 / RFC 9449 §7.2
+    return respondUserInfoError(error, challenges);
   }
 }
 
@@ -152,8 +164,8 @@ async function userinfo(request: Request): Promise<Response> {
  *
  * @spec RFC 6750 §2.1
  * @spec RFC 6750 §2.2
- * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、チャレンジは `realm` だけを示す、RFC 6750 §3.1）。
- * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request`）。
+ * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、どのチャレンジもエラーを伝えない、RFC 6750 §3.1）。
+ * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request` で、どのチャレンジもそのエラーを伝える、RFC 9449 §7.2）。
  * @throws {UserInfoEndpointError} リクエストのボディを読めないとき（チャレンジの付かない 400 の `invalid_request`）。
  */
 async function parseBearerAccessToken(request: Request): Promise<string> {
@@ -166,19 +178,21 @@ async function parseBearerAccessToken(request: Request): Promise<string> {
   }
   if (methodCount > 1) {
     // クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
-    throw new UserInfoEndpointError({
-      status: 400,
-      body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
-      headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo", error="invalid_request"' },
-    });
+    // どの方法で認証しようとしたのか決められないので、どのスキームのチャレンジにもエラーを入れる（RFC 9449 §7.2）。
+    throw new UserInfoEndpointError(
+      {
+        status: 400,
+        body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+      },
+      { error: 'invalid_request', everyScheme: true },
+    );
   }
   if (!token) {
-    // 認証情報のないリクエストへのチャレンジには `error` と `error_description` を付けず、`realm` だけを示す（RFC 6750 §3.1）。
-    throw new UserInfoEndpointError({
-      status: 401,
-      body: { error: 'invalid_token', error_description: 'Access token is required' },
-      headers: { 'WWW-Authenticate': 'Bearer realm="UserInfo"' },
-    });
+    // 認証情報のないリクエストへのチャレンジには `error` と `error_description` を付けない（RFC 6750 §3.1、RFC 9449 §7.2）。
+    throw new UserInfoEndpointError(
+      { status: 401, body: { error: 'invalid_token', error_description: 'Access token is required' } },
+      'without-error',
+    );
   }
   return token;
 }
@@ -248,22 +262,35 @@ function respondUserInfo(response: UserInfoEndpointResponse): Response {
  * ブロックが投げたエラーを、種類に応じたキャッシュさせない UserInfo のエラーレスポンスにして返す。
  *
  * エラーの種類ごとに、次のように応答する。
- * - `UserInfoEndpointError`: ブロックが決めたレスポンスをそのまま返す。
- * - `UserInfoError`: パイプラインが拒否したトークンに、RFC 6750 §3 の `Bearer` のチャレンジ（`WWW-Authenticate` ヘッダー）とエラーの JSON で応答する（`invalid_token` なら 401、`insufficient_scope` なら 403）。
+ * - `UserInfoEndpointError`: ブロックが決めたレスポンスを返す。ブロックがチャレンジを求めたときは、受け付ける認証スキームのチャレンジ（`WWW-Authenticate` ヘッダー）を付ける。
+ * - `UserInfoError`: パイプラインが拒否したトークンに、受け付ける認証スキームのチャレンジとエラーの JSON で応答する（`invalid_token` なら 401、`insufficient_scope` なら 403）。
+ *   エラーの情報は、リクエストがトークンを提示したスキーム（`challenges.scheme`）のチャレンジが伝える（RFC 6750 §3、RFC 9449 §7.2）。
  * - それ以外: 500 の `server_error` で応答する。
  *
+ * チャレンジは `challenges` のスキームごとに一つで、機能を有効にしなければ `Bearer realm="UserInfo"` だけである。
+ *
  * @spec RFC 6750 §3
+ * @spec RFC 9449 §7.2
  */
-function respondUserInfoError(error: unknown): Response {
+function respondUserInfoError(error: unknown, challenges: UserInfoChallenges): Response {
   if (error instanceof UserInfoEndpointError) {
-    return respondUserInfo(error.response);
+    if (error.challenge === undefined) {
+      return respondUserInfo(error.response);
+    }
+    return respondUserInfo({
+      ...error.response,
+      headers: { ...error.response.headers, 'WWW-Authenticate': userInfoChallengeHeader(challenges, error.challenge) },
+    });
   }
   if (error instanceof UserInfoError) {
     return respondUserInfo({
       status: error.statusCode,
       body: { error: error.error, error_description: error.errorDescription },
       headers: {
-        'WWW-Authenticate': `Bearer realm="UserInfo", error="${error.error}", error_description="${error.errorDescription}"`,
+        'WWW-Authenticate': userInfoChallengeHeader(challenges, {
+          error: error.error,
+          errorDescription: error.errorDescription,
+        }),
       },
     });
   }

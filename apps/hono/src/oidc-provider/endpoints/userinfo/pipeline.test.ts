@@ -103,6 +103,47 @@ describe('userinfoApp', () => {
     const response = await app.request(requestTo('/userinfo', { headers: { Authorization: 'Bearer unknown' } }));
 
     expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toBe(
+      'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid"',
+    );
     expect(await response.json()).toEqual({ error: 'invalid_token', error_description: 'Access token is invalid' });
+  });
+
+  // RFC 6750 §2.2: a token of the form body is a Bearer token, so the Bearer challenge carries its error.
+  it('should answer an unknown token of the form body with the Bearer challenge of the error', async () => {
+    const app = await setUp();
+
+    const response = await app.request(formPost('/userinfo', { access_token: 'unknown' }));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toBe(
+      'Bearer realm="UserInfo", error="invalid_token", error_description="Access token is invalid"',
+    );
+  });
+
+  // RFC 6750 §2: one method per request; the challenge names the error without its description.
+  it('should answer a token sent both in the header and in the form body with 400 and the invalid_request challenge', async () => {
+    const app = await setUp();
+
+    const response = await app.request(
+      formPost('/userinfo', { access_token: 'token-1' }, { Authorization: 'Bearer token-1' }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo", error="invalid_request"');
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'Multiple access token methods are not allowed',
+    });
+  });
+
+  it('should answer another authentication scheme as no token, with the realm-only challenge', async () => {
+    const app = await setUp();
+
+    const response = await app.request(requestTo('/userinfo', { headers: { Authorization: 'Basic dXNlcjpwYXNz' } }));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo"');
+    expect(await response.json()).toEqual({ error: 'invalid_token', error_description: 'Access token is required' });
   });
 });

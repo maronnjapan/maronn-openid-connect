@@ -1,4 +1,5 @@
 import { WebRouter } from '../../web-router.js';
+import { BEARER_CHALLENGE, type UserInfoChallenges } from './response.js';
 import { buildUserInfoResponse } from './steps/build-response.js';
 import { parseUserInfoRequest } from './steps/parse-access-token.js';
 import { resolveUserInfoToken } from './steps/resolve-access-token.js';
@@ -15,12 +16,17 @@ import { respondUserInfo } from './steps/respond.js';
  * token, resolve and validate it, resolve the claims it may see, build the
  * response (JSON, or a signed JWT when the client registered
  * userinfo_signed_response_alg) and answer. A step that throws ends in
- * respondUserInfoError().
+ * respondUserInfoError(), with the challenges of the schemes the endpoint
+ * accepts.
  */
 export const userinfoApp = new WebRouter();
 
 /** アクセストークンを検証し、開示できる UserInfo を JSON か署名付き JWT で返す。 */
 async function handler(c: any): Promise<Response> {
+  // 失敗の応答に並べるチャレンジ（`WWW-Authenticate`）。受け付ける認証スキームごとに一つで、機能を有効にしなければ Bearer だけである（RFC 6750 §3）。
+  // 自分のスキームを受け付ける機能のブロックは、そのチャレンジを足し、リクエストがそのスキームでトークンを提示したら `scheme` を書き換える（RFC 9449 §7.2）。
+  // どのステップが失敗しても `catch` で読めるよう、`try` の前で宣言する。
+  const challenges: UserInfoChallenges = { offered: [BEARER_CHALLENGE], scheme: BEARER_CHALLENGE.scheme };
   try {
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
     const accessToken = await parseUserInfoRequest(c);
@@ -37,7 +43,7 @@ async function handler(c: any): Promise<Response> {
     // [respond] 応答する（no-store） — RFC 6750 §5.2
     return respondUserInfo(c, userInfoResponse);
   } catch (error) {
-    return respondUserInfoError(c, error);
+    return respondUserInfoError(c, error, challenges);
   }
 }
 

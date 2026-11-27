@@ -60,18 +60,26 @@ describe('token binding', () => {
     });
 
     // RFC 9449 §6.2: the token_type of a DPoP-bound token, if present, MUST be DPoP; jkt is the DPoP confirmation method (§6.1).
-    it('should answer token_type DPoP for a record whose cnf has jkt but that keeps no tokenType', () => {
-      expect([withTokenBinding(active, { cnf: { jkt: 'jkt-1' } }), withTokenBinding(active, { cnf: { jkt: 'jkt-1' }, tokenType: 7 })]).toEqual([
+    it('should answer token_type DPoP for a record whose cnf has jkt, whatever tokenType the record keeps', () => {
+      expect([
+        withTokenBinding(active, { cnf: { jkt: 'jkt-1' } }),
+        withTokenBinding(active, { cnf: { jkt: 'jkt-1' }, tokenType: 7 }),
+        withTokenBinding(active, { cnf: { jkt: 'jkt-1' }, tokenType: 'Bearer' }),
+      ]).toEqual([
+        { ...active, token_type: 'DPoP', cnf: { jkt: 'jkt-1' } },
         { ...active, token_type: 'DPoP', cnf: { jkt: 'jkt-1' } },
         { ...active, token_type: 'DPoP', cnf: { jkt: 'jkt-1' } },
       ]);
     });
 
-    it('should keep the token_type of the response for a record whose cnf names another method and that keeps no tokenType', () => {
-      expect(withTokenBinding(active, { cnf: { 'x5t#S256': 'thumbprint-1' } })).toEqual({
-        ...active,
-        cnf: { 'x5t#S256': 'thumbprint-1' },
-      });
+    it('should answer the tokenType of the record, or else the token_type of the response, for a cnf that names another method', () => {
+      expect([
+        withTokenBinding(active, { cnf: { 'x5t#S256': 'thumbprint-1' }, tokenType: 'PoP' }),
+        withTokenBinding(active, { cnf: { 'x5t#S256': 'thumbprint-1' } }),
+      ]).toEqual([
+        { ...active, token_type: 'PoP', cnf: { 'x5t#S256': 'thumbprint-1' } },
+        { ...active, cnf: { 'x5t#S256': 'thumbprint-1' } },
+      ]);
     });
 
     it('should keep the members of the response in their order and put cnf last', () => {

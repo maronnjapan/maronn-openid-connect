@@ -100,10 +100,11 @@ export function confirmationOf(record: unknown): Readonly<Record<string, string>
 /**
  * 有効なアクセストークンのイントロスペクションのレスポンスに、束縛の確認（`cnf`）と `token_type` を加えて返す。
  *
- * 保存したレコードに `cnf` があれば、`cnf` と、レコードの `tokenType`（DPoP で束縛したトークンは `DPoP`）を返す（RFC 9449 §6.2）。
- * レコードに `tokenType` がなくても、`cnf` が DPoP の確認のメソッド `jkt`（RFC 9449 §6.1）を持てば、`token_type` は `DPoP` にする。RFC 9449 §6.2 は、DPoP で束縛したトークンに `token_type` を返すなら `DPoP` でなければならないとしているためである。
+ * 保存したレコードに `cnf` があれば、`cnf` と `token_type` を加える（RFC 9449 §6.2）。
+ * `cnf` が DPoP の確認のメソッド `jkt`（RFC 9449 §6.1）を持てば、`token_type` はレコードの `tokenType` によらず `DPoP` にする。RFC 9449 §6.2 は、DPoP で束縛したトークンに `token_type` を返すなら `DPoP` でなければならないとしているためである。
+ * ほかの確認のメソッドでは、レコードの `tokenType` が文字列ならそれを、そうでなければレスポンスの `token_type` を返す。
  * 有効でないトークンのレスポンスと、`cnf` のないレコードのレスポンスは、そのまま返す。
- * core の `IntrospectionResponse` は `token_type` に `Bearer` と `refresh_token` しか認めないので、加えた値の型だけを広げて返す。
+ * core の `IntrospectionResponse` は `token_type` に `Bearer` と `refresh_token` しか認めず、`cnf` も持たないので、結果は core の型にキャストして返す。呼び出し側の型には、加えた `cnf` も `DPoP` も現れない。
  *
  * @spec RFC 9449 §6.2
  * @spec RFC 7662 §2.2
@@ -112,6 +113,6 @@ export function withTokenBinding(response: IntrospectionResponse, record: unknow
   const cnf = confirmationOf(record);
   if (!response.active || cnf === undefined) return response;
   const storedTokenType = (record as TokenBindingRecord).tokenType;
-  const derivedTokenType = typeof cnf.jkt === 'string' ? DPOP_TOKEN_TYPE : response.token_type;
-  return { ...response, token_type: typeof storedTokenType === 'string' ? storedTokenType : derivedTokenType, cnf } as IntrospectionResponse;
+  const otherTokenType = typeof storedTokenType === 'string' ? storedTokenType : response.token_type;
+  return { ...response, token_type: typeof cnf.jkt === 'string' ? DPOP_TOKEN_TYPE : otherTokenType, cnf } as IntrospectionResponse;
 }

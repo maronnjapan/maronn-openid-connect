@@ -1,7 +1,7 @@
 /**
- * EXTENSION (dpop): the setting of OAuth 2.0 Demonstrating Proof of
- * Possession (RFC 9449), added to ProviderConfig (config.ts), and its default
- * (dpopConfigDefaults), to be laid over the defaults of config.ts.
+ * EXTENSION (dpop): the settings of OAuth 2.0 Demonstrating Proof of
+ * Possession (RFC 9449), added to ProviderConfig (config.ts), and their
+ * defaults (dpopConfigDefaults), to be laid over the defaults of config.ts.
  */
 import type { ProviderConfig } from '../../config';
 import { isSupportedDpopSigningAlg, SUPPORTED_DPOP_SIGNING_ALGS, type DpopSigningAlg } from './jwk';
@@ -18,13 +18,28 @@ declare module '../../config' {
      * accept ES256 only.
      */
     dpopSigningAlgValuesSupported: readonly string[];
+    /**
+     * EXTENSION (dpop): the seconds after its iat a DPoP proof is still
+     * accepted (RFC 9449 §11.1), not counting dpopProofLeewaySeconds. Its
+     * default is dpopConfigDefaults (60).
+     */
+    dpopProofMaxAgeSeconds: number;
+    /**
+     * EXTENSION (dpop): the seconds of clock skew allowed for the iat of a
+     * DPoP proof, both into the future and added to dpopProofMaxAgeSeconds
+     * (RFC 9449 §11.1). Its default is dpopConfigDefaults (60).
+     */
+    dpopProofLeewaySeconds: number;
   }
 }
 
-/** The default of the DPoP setting, to be laid over the defaults of config.ts. */
+/** The defaults of the DPoP settings, to be laid over the defaults of config.ts. */
 export const dpopConfigDefaults = {
   // RFC 9449 §5.1: every alg the checks of jwk.ts verify.
   dpopSigningAlgValuesSupported: [...SUPPORTED_DPOP_SIGNING_ALGS],
+  // RFC 9449 §11.1: a proof is accepted from 60 seconds before its iat until 120 seconds after it.
+  dpopProofMaxAgeSeconds: 60,
+  dpopProofLeewaySeconds: 60,
 } satisfies Partial<ProviderConfig>;
 
 /**

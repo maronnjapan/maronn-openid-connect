@@ -1,15 +1,23 @@
 /**
- * Helpers for the tests of the dpop extension: a client's DPoP key pairs and
- * the JWS it signs with them (RFC 9449 §4.2).
+ * Helpers for the tests of the dpop extension: a client's DPoP key pairs, the
+ * DPoP proofs it signs (RFC 9449 §4.2), and the thumbprint and ath the
+ * provider computes from them.
  */
 import { encodeBase64Url } from '../oidc-provider/features/dpop/base64url.js';
-import type { DpopPublicJwk, DpopSigningAlg } from '../oidc-provider/features/dpop/jwk.js';
+import { computeJwkThumbprint, type DpopPublicJwk, type DpopSigningAlg } from '../oidc-provider/features/dpop/jwk.js';
+import { computeDpopAccessTokenHash } from '../oidc-provider/features/dpop/proof.js';
 
 /** A DPoP key pair of a client for alg. */
 export interface TestDpopKey {
   alg: DpopSigningAlg;
   privateKey: CryptoKey;
   publicJwk: DpopPublicJwk;
+}
+
+/** A DPoP key pair of a client (ES256) with its thumbprint. */
+export interface DpopKey extends TestDpopKey {
+  /** The JWK Thumbprint of the public key (RFC 7638), the jkt of cnf. */
+  jkt: string;
 }
 
 const RSA = { modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) };
@@ -24,6 +32,12 @@ export async function generateDpopKey(alg: DpopSigningAlg = 'ES256'): Promise<Te
     if (jwk[member] !== undefined) publicJwk[member] = jwk[member];
   }
   return { alg, privateKey: pair.privateKey, publicJwk: publicJwk as unknown as DpopPublicJwk };
+}
+
+/** A new ES256 DPoP key pair and its thumbprint. */
+export async function dpopKey(): Promise<DpopKey> {
+  const key = await generateDpopKey('ES256');
+  return { ...key, jkt: await computeJwkThumbprint(key.publicJwk) };
 }
 
 function keyGenParamsOf(alg: DpopSigningAlg): Record<string, unknown> {
@@ -67,4 +81,31 @@ export async function signDpopProof(
     new TextEncoder().encode(signingInput),
   );
   return `${signingInput}.${encodeBase64Url(signature)}`;
+}
+
+let proofCount = 0;
+
+/**
+ * A DPoP proof of key for a request: htm and htu as given, iat now (Date.now,
+ * so fake timers apply), a fresh jti, ath of the access token when one is
+ * given, then the claims of overrides (undefined leaves a claim out).
+ */
+export async function dpopProof(
+  key: DpopKey,
+  request: { htm: string; htu: string; accessToken?: string },
+  overrides: Record<string, unknown> = {},
+): Promise<string> {
+  proofCount += 1;
+  const claims: Record<string, unknown> = {
+    jti: `proof-${proofCount}-${crypto.randomUUID()}`,
+    htm: request.htm,
+    htu: request.htu,
+    iat: Math.floor(Date.now() / 1000),
+    ...(request.accessToken === undefined ? {} : { ath: await computeDpopAccessTokenHash(request.accessToken) }),
+    ...overrides,
+  };
+  for (const name of Object.keys(claims)) {
+    if (claims[name] === undefined) delete claims[name];
+  }
+  return signDpopProof(key, claims);
 }

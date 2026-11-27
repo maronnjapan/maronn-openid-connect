@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDpopConfirmation, readDpopJkt, selectDpopRefreshTokenJkt, validateDpopBoundGrant } from './binding';
+import { buildDpopConfirmation, parseDpopJkt, readDpopJkt, selectDpopRefreshTokenJkt, validateDpopBoundGrant } from './binding';
 import { DpopError } from './errors';
 
 /** The JWK Thumbprint of RFC 9449 Figure 25 (dpop_jkt). */
@@ -38,6 +38,40 @@ describe('readDpopJkt', () => {
     ['undefined', undefined],
   ])('should return undefined for %s', (_name, record) => {
     expect(readDpopJkt(record)).toBeUndefined();
+  });
+});
+
+describe('parseDpopJkt', () => {
+  it('should return a JWK Thumbprint as it is', () => {
+    expect([parseDpopJkt(JKT), parseDpopJkt(OTHER_JKT)]).toEqual([JKT, OTHER_JKT]);
+  });
+
+  // RFC 6749 §3.1: a parameter sent without a value is treated as omitted.
+  it.each([
+    ['no value', undefined],
+    ['an empty value', ''],
+  ])('should return undefined for %s', (_name, value) => {
+    expect(parseDpopJkt(value)).toBeUndefined();
+  });
+
+  // RFC 9449 §10 / RFC 7638 §3: the base64url of a SHA-256 hash, 43 characters without padding.
+  it.each([
+    ['a value that is not base64url', 'not a thumbprint'],
+    ['a value one character short', JKT.slice(0, 42)],
+    ['a value one character long', `${JKT}A`],
+    ['a value with padding', `${JKT}=`],
+    ['a value of the base64 alphabet', 'NzbLsXh8uDCcd+6MNwXF4W/7noWXFZAfHkxZsRGC9Xs'],
+    // The last character of 43 carries two bits beyond the 32 bytes; 't' sets one of them where the hash has 's'.
+    ['a value whose last character is not the canonical one', 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xt'],
+    ['a value with a space before it', ` ${JKT}`],
+    ['a number', 42],
+    ['null', null],
+    ['an object', { jkt: JKT }],
+  ])('should reject %s with invalid_request', (_name, value) => {
+    const error = errorOf(() => parseDpopJkt(value));
+
+    expect(error).toBeInstanceOf(DpopError);
+    expect(error).toMatchObject({ error: 'invalid_request', errorDescription: 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint' });
   });
 });
 

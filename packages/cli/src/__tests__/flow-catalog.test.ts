@@ -305,6 +305,19 @@ describe('buildOpFlow', () => {
       ]);
     });
 
+    // RFC 9449 §10: dpop_jkt is checked once the request is valid, and kept by the transaction.
+    it('should check dpop_jkt after the request is validated and before the transaction is created when dpop is enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
+      const authorize = flow.endpoints.find((e) => e.id === 'authorize');
+      expect(authorize?.steps.map((s) => s.id).slice(7, 12)).toEqual([
+        'validate-request',
+        'validate-implicit-request',
+        'validate-hybrid-request',
+        'validate-dpop-jkt',
+        'create-transaction',
+      ]);
+    });
+
     it('should leave out the form_post step when form-post-response-mode is disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, formPostResponseMode: false } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');

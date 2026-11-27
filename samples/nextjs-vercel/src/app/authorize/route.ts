@@ -282,6 +282,8 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // [validate-hybrid-request] (feature: hybrid-flow) ハイブリッドフローのリクエストを検証する — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
     validateHybridRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, responseMode);
 
+    const codeConfirmation = undefined;
+
     // [create-transaction] 認可トランザクションを作って保存する — OIDC Core 1.0 §3.1.2.3
     // 各検証の結果から、検証済みのリクエストを組み立てる。
     // 形は core の `ValidatedAuthorizationRequest`（`createAuthTransaction()` が受け取る型）なので、上の検証を足したり消したりしても、後の処理（トランザクション、認可コード）は影響を受けない。
@@ -311,8 +313,14 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // ログインと同意のあいだリクエストを保持するトランザクションを、検証済みのリクエストと新しい CSRF トークンから作る。
     // CSRF トークンは、ログインフォームと同意画面のフォームに埋め込む。
     // トランザクション ID は、`HttpOnly` のトランザクションの Cookie（`_oidc-provider/cookies.ts` の `buildTransactionCookie()`）でしか OP の外へ出さない。
+    // 機能（dpop）が認可リクエストを鍵に束縛するとき（`codeConfirmation`。`dpop_jkt`、RFC 9449 §10）は、その確認を `cnf` としてトランザクションに入れる。
+    // このトランザクションから発行する認可コードは、同じ `cnf` を引き継ぐ。
+    // `codeConfirmation` がなければ、`cnf` は入れない。
     const csrfToken = generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken);
+    const transaction = {
+      ...createAuthTransaction(validatedRequest, csrfToken),
+      ...confirmationRecordOf({ cnf: codeConfirmation }),
+    };
     const transactionId = generateRandomString(32);
     const transactionTtlSeconds = 10 * 60;
     // 同意のステップはストアから読み戻したトランザクションしか使わないので、求められたレスポンスモードの名前をトランザクションに記録してから、10 分間保存する。

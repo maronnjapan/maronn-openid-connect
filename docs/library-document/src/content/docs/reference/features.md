@@ -49,6 +49,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `claims` | JSON をパースし `userinfo` / `id_token` の個別クレーム要求に対応（OIDC Core 1.0 §5.5） |
 | `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。受け付ける alg は `requestObjectSigningAlgValuesSupported`（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512）で、discovery の `request_object_signing_alg_values_supported` に広告する。クライアントが `request_object_signing_alg` を登録していれば、その alg の Request Object だけを受け付ける（OIDC Core 1.0 §6.3.2）。鍵は、クライアントが `request_object` の用途に登録した公開鍵か、登録した `jwks_uri` から取得した鍵で、使える alg がヘッダーの `alg` と同じ鍵だけを使う（RFC 8725 §3.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理 |
 | `request_uri` | URL の `request_uri`（Request Object by reference, OIDC Core 1.0 §6.2）から Request Object を取得し、`request` と同じく検証する。取得は https の公開ホストに限り、512 文字まで、フラグメントを除いて GET し、リダイレクトに従わず、タイムアウト 3 秒、本文 64 KiB までに制限する。取得に失敗すると、リダイレクトせずに固定文言の `invalid_request_uri` で拒否する。`request` との併用は `invalid_request`。`requireRequestUriRegistration: true` では、クライアントが登録した `request_uris` と完全一致する値だけを取得する。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する。トグル `request-object` を外すと `request_uri_not_supported` で拒否する。PAR の `urn:ietf:params:oauth:request_uri:` は PAR が解決する |
+| `dpop_jkt` | 拡張機能 `dpop` 有効時のみ。DPoP の鍵の JWK Thumbprint（RFC 7638、SHA-256 を base64url にした 43 文字）で、その認可リクエストから発行する認可コードを鍵に束縛する（RFC 9449 §10）。トークンエンドポイントは、同じ鍵の DPoP proof を送った交換だけを受け付ける（無い・別の鍵なら `invalid_grant`）。Request Object の `dpop_jkt` はクエリより優先し、PAR でプッシュしたパラメータの `dpop_jkt` も読む。空の値は省略と同じに扱い（RFC 6749 §3.1）、JWK Thumbprint の形でない値は `invalid_request` |
 | `registration` | 未対応。仕様通り `registration_not_supported` で拒否（OIDC Core 1.0 §3.1.2.6） |
 
 ### OAuth 2.0 のリクエスト（`openid` なし）
@@ -194,7 +195,7 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credenti
 | 機能名 | 内容 | 実装 |
 |---|---|---|
 | `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | 生成コードの `features/dpop/`（package なし） |
+| `dpop` | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | 生成コードの `features/dpop/`（package なし） |
 
 ## Custom Scopes
 

@@ -4,8 +4,10 @@
  * OP は、DPoP proof の鍵の JWK Thumbprint（`jkt`）を、発行するアクセストークンの `cnf` に入れ（RFC 9449 §6.1）、
  * 保存するアクセストークンのレコードにも同じ `cnf` を残す（イントロスペクションが返す。RFC 9449 §6.2）。
  * パブリッククライアントに発行するリフレッシュトークンも、同じ鍵に束縛する（RFC 9449 §5）。
+ * 認可リクエストの `dpop_jkt` は、その認可リクエストから発行する認可コードを束縛する鍵の JWK Thumbprint として読む（RFC 9449 §10）。
  * レコードの `cnf.jkt` で鍵に束縛した認可コードとリフレッシュトークンは、同じ鍵の DPoP proof を送ったトークンリクエストだけが使える（RFC 9449 §5 / §10）。
  */
+import { decodeBase64Url } from './base64url.js';
 import { DpopError } from './errors.js';
 
 /**
@@ -43,6 +45,29 @@ export function readDpopJkt(record: unknown): string | undefined {
   if (typeof cnf !== 'object' || cnf === null) return undefined;
   const jkt = (cnf as { jkt?: unknown }).jkt;
   return typeof jkt === 'string' ? jkt : undefined;
+}
+
+/** JWK Thumbprint（RFC 7638 §3）の SHA-256 のバイト数。 */
+const JWK_THUMBPRINT_BYTES = 32;
+
+/**
+ * 認可リクエストの `dpop_jkt` を確かめ、JWK Thumbprint として返す。
+ *
+ * パラメータがないときと、値が空のときは `undefined` を返す（値のないパラメータは、省略したものとして扱う。RFC 6749 §3.1）。
+ * `dpop_jkt` は、DPoP の鍵の JWK Thumbprint で、SHA-256 の 32 バイトをパディングのない正規の base64url にした 43 文字でなければならない。
+ * 正規でない base64url の値（末尾の文字の余りのビットが 0 でない値）は、トークンリクエストの DPoP proof の鍵から計算する JWK Thumbprint と一致することがないので、これも拒否する。
+ *
+ * @spec RFC 9449 §10
+ * @spec RFC 7638 §3
+ * @spec RFC 6749 §3.1
+ * @throws {DpopError} `invalid_request`: 値が JWK Thumbprint の形でないとき
+ */
+export function parseDpopJkt(value: unknown): string | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (typeof value !== 'string' || decodeBase64Url(value)?.length !== JWK_THUMBPRINT_BYTES) {
+    throw new DpopError('invalid_request', 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint');
+  }
+  return value;
 }
 
 /**

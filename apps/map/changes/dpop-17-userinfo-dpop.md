@@ -5,7 +5,7 @@ DPoP（RFC 9449）を生成 OP に入れる段の 17 個目で、保護された
 同時に、束縛したアクセストークンを正しく使う道として、`Authorization: DPoP <token>` と `ath` 入りの DPoP proof を受け付ける（RFC 9449 §7.1）。
 失敗の応答は段 5 のチャレンジの形に乗せた。DPoP スキームのリクエストでは、`dpop` のブロックが `challenges` に `DPoP algs="…"` を足して、トークンを提示したスキームを DPoP にするので、エラーの情報は DPoP のチャレンジに入る。Bearer のリクエストには DPoP のチャレンジを足さないので、`WWW-Authenticate` は前と同じである。認証情報の無いリクエストと Bearer の失敗にも DPoP のチャレンジを並べる（RFC 9449 §7.2 の Figure 17 / 18）のは段 18 である。
 `Authorization: DPoP` の値が一つの token68 であることも確かめる（RFC 9449 Figure 12）。PR #205 は空でない値なら何でもトークンとして読んでいた（B-2）。
-`Authorization: DPoP` を送らないリクエストへの答えは、DPoP の鍵に束縛したアクセストークンを Bearer で提示したもの（401 の `invalid_token` になる）のほかは前と同じで、地図の実 OP のケースもすべて前と同じに答えた。
+`Authorization: DPoP` を送らないリクエストへの答えは、DPoP の鍵に束縛したアクセストークンを Bearer で提示したもの（期限、`openid` スコープ、`aud` の検査を通れば 401 の `invalid_token` になる）のほかは前と同じで、地図の実 OP のケースもすべて前と同じに答えた。
 
 ## handler, userinfo <!-- hono:oidc-provider/endpoints/userinfo/pipeline.ts#handler nextjs:app/userinfo/route.ts#userinfo -->
 

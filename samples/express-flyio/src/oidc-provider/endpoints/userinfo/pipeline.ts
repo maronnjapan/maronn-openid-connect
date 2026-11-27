@@ -18,6 +18,11 @@ import { respondUserInfo } from './steps/respond.js';
  * userinfo_signed_response_alg) and answer. A step that throws ends in
  * respondUserInfoError(), with the challenges of the schemes the endpoint
  * accepts.
+ *
+ * With the dpop extension, the (feature: dpop) block before the Bearer token
+ * reads a token presented with the DPoP scheme and checks its DPoP proof, and
+ * the one after the token is resolved checks that the key the token is bound
+ * to matches how it was presented (RFC 9449 §7.1 / §7.2).
  */
 export const userinfoApp = new WebRouter();
 
@@ -28,8 +33,11 @@ async function handler(c: any): Promise<Response> {
   // どのステップが失敗しても `catch` で読めるよう、`try` の前で宣言する。
   const challenges: UserInfoChallenges = { offered: [BEARER_CHALLENGE], scheme: BEARER_CHALLENGE.scheme };
   try {
+    const dpopAccessToken = undefined;
+
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
-    const accessToken = await parseUserInfoRequest(c);
+    // 機能のブロックが別のスキームのトークンを読んだ（`dpopAccessToken`）ときは、そのトークンを使う。
+    const accessToken = dpopAccessToken ?? (await parseUserInfoRequest(c));
 
     // [resolve-access-token] アクセストークンを取得して検証する — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
     const tokenInfo = await resolveUserInfoToken(c, accessToken);

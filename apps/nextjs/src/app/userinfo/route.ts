@@ -11,6 +11,11 @@
  * resolve the claims it may see, build the response and answer. A block that
  * throws ends in the [respond-error] block, which answers with the challenges
  * of the schemes the endpoint accepts.
+ *
+ * With the dpop extension, the (feature: dpop) block before the Bearer token
+ * reads a token presented with the DPoP scheme and checks its DPoP proof, and
+ * the one after the token is resolved checks that the key the token is bound
+ * to matches how it was presented (RFC 9449 §7.1 / §7.2).
  */
 import {
   resolveUserInfoAccessToken,
@@ -27,6 +32,7 @@ import {
   type UserInfoResponse,
 } from '@maronn-openid-connect/core';
 import type { RegisteredClient } from '../_oidc-provider/config';
+import { readDpopUserInfoRequest, verifyDpopUserInfoAccess } from '../_oidc-provider/features/dpop/userinfo';
 import {
   clientResolver,
   config,
@@ -56,7 +62,7 @@ export const runtime = 'nodejs';
 /**
  * UserInfo の GET リクエストに応答する。
  *
- * 応答は、`userinfo()` のレスポンス（エンドユーザーのクレームか `Bearer` のエラー）に、`clientCors` のヘッダーを付けたものである。
+ * 応答は、`userinfo()` のレスポンス（エンドユーザーのクレームか、受け付ける認証スキームのチャレンジ付きのエラー）に、`clientCors` のヘッダーを付けたものである。
  */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, clientCors, await userinfo(request));
@@ -91,6 +97,7 @@ export function OPTIONS(request: Request): Response {
  * - 401 の `invalid_token`: トークンがない、または登録されていない、期限切れ、このエンドポイント向けでない（`aud`）、サブジェクトのユーザーが見つからないとき。
  * - 403 の `insufficient_scope`: トークンが `openid` スコープを含まないとき。
  * - 400 の `invalid_request`: トークンを複数の方法で送ったとき。
+ * 機能のブロックが拒否したリクエスト（dpop なら、DPoP proof を受け付けない 401 の `invalid_dpop_proof` など）にも、同じ形で応答する。
  *
  * リクエストのボディを読めないときは、チャレンジを付けずに 400 の `invalid_request` で応答する。
  * 署名鍵を読み込めないときは 503 で、それ以外の失敗（登録されたアルゴリズムの UserInfo の鍵がないときを含む）では 500 の `server_error` で応答する。
@@ -109,8 +116,12 @@ async function userinfo(request: Request): Promise<Response> {
   if (!keys) return signingKeysUnavailable();
 
   try {
+    // [read-dpop-access-token] (feature: dpop) DPoP スキームのアクセストークンを読み、DPoP proof を検証する — RFC 9449 §7.1 / §4.3
+    const { dpopAccessToken, dpopJkt } = await readDpopUserInfoRequest(request, challenges);
+
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
-    const accessToken = await parseBearerAccessToken(request);
+    // 機能のブロックが別のスキームのトークンを読んだ（`dpopAccessToken`）ときは、そのトークンを使い、ボディを読み直さない（リクエストのボディは一度しか読めない）。
+    const accessToken = dpopAccessToken ?? (await parseBearerAccessToken(request));
 
     // [resolve-access-token] アクセストークンを取得して検証する — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
     // ここからのブロックは、UserInfo リクエストのパイプラインを構成する core の独立した関数を呼ぶ。
@@ -130,6 +141,9 @@ async function userinfo(request: Request): Promise<Response> {
     // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を入れる（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
     // 確認をやめるときは、第 2 引数に `undefined` を渡す。
     validateUserInfoAudience(tokenInfo, `${config.issuer}/userinfo`);
+
+    // [verify-dpop-access-token] (feature: dpop) トークンを束縛した鍵と提示の仕方を照らし合わせる — RFC 9449 §7.1 / §7.2
+    verifyDpopUserInfoAccess(tokenInfo, dpopJkt);
 
     // [resolve-claims] トークンで開示できるクレームを決める — OIDC Core 1.0 §5.4 / §5.5
     // トークンのサブジェクトについて、保存されているすべてのクレームを読み込む。

@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { readDpopUserInfoRequest } from '../../features/dpop/steps/read-dpop-access-token.js';
+import { verifyDpopUserInfoAccess } from '../../features/dpop/steps/verify-dpop-access-token.js';
 import { BEARER_CHALLENGE, type UserInfoChallenges } from './response.js';
 import { buildUserInfoResponse } from './steps/build-response.js';
 import { parseUserInfoRequest } from './steps/parse-access-token.js';
@@ -18,6 +20,11 @@ import { respondUserInfo } from './steps/respond.js';
  * userinfo_signed_response_alg) and answer. A step that throws ends in
  * respondUserInfoError(), with the challenges of the schemes the endpoint
  * accepts.
+ *
+ * With the dpop extension, the (feature: dpop) block before the Bearer token
+ * reads a token presented with the DPoP scheme and checks its DPoP proof, and
+ * the one after the token is resolved checks that the key the token is bound
+ * to matches how it was presented (RFC 9449 §7.1 / §7.2).
  */
 export const userinfoApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -28,11 +35,18 @@ async function handler(c: any): Promise<Response> {
   // どのステップが失敗しても `catch` で読めるよう、`try` の前で宣言する。
   const challenges: UserInfoChallenges = { offered: [BEARER_CHALLENGE], scheme: BEARER_CHALLENGE.scheme };
   try {
+    // [read-dpop-access-token] (feature: dpop) DPoP スキームのアクセストークンを読み、DPoP proof を検証する — RFC 9449 §7.1 / §4.3
+    const { dpopAccessToken, dpopJkt } = await readDpopUserInfoRequest(c, challenges);
+
     // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
-    const accessToken = await parseUserInfoRequest(c);
+    // 機能のブロックが別のスキームのトークンを読んだ（`dpopAccessToken`）ときは、そのトークンを使う。
+    const accessToken = dpopAccessToken ?? (await parseUserInfoRequest(c));
 
     // [resolve-access-token] アクセストークンを取得して検証する — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
     const tokenInfo = await resolveUserInfoToken(c, accessToken);
+
+    // [verify-dpop-access-token] (feature: dpop) トークンを束縛した鍵と提示の仕方を照らし合わせる — RFC 9449 §7.1 / §7.2
+    verifyDpopUserInfoAccess(tokenInfo, dpopJkt);
 
     // [resolve-claims] トークンで開示できるクレームを決める — OIDC Core 1.0 §5.4 / §5.5
     const claims = await resolveUserInfoResponseClaims(c, tokenInfo);

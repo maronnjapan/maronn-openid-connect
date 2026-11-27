@@ -17,8 +17,10 @@ export const endpoint = defineEndpoint({
   path: '/userinfo',
   steps: [
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
-    { id: 'parse-access-token', consumes: [], produces: ['accessToken'] },
+    { id: 'read-dpop-access-token', feature: 'dpop', consumes: ['challenges'], produces: ['dpopAccessToken', 'dpopJkt'] },
+    { id: 'parse-access-token', consumes: ['dpopAccessToken'], produces: ['accessToken'] },
     { id: 'resolve-access-token', consumes: ['accessToken'], produces: ['tokenInfo'] },
+    { id: 'verify-dpop-access-token', feature: 'dpop', consumes: ['tokenInfo', 'dpopJkt'], produces: [] },
     { id: 'resolve-claims', consumes: ['tokenInfo'], produces: ['claims'] },
     { id: 'build-response', consumes: ['tokenInfo', 'claims', 'keys'], produces: ['userInfoResponse'] },
     { id: 'respond', consumes: ['userInfoResponse'], produces: [] },

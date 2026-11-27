@@ -54,7 +54,8 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'sending a DPoP proof in the DPoP header of its token requests: the access token is then bound\n' +
     'to its key (token_type DPoP), and so is the refresh token of a public client, which then needs\n' +
     'a proof of the same key each time it is used; without one the tokens stay Bearer. The UserInfo\n' +
-    'endpoint does not check DPoP yet: it takes a bound access token as a Bearer token.\n',
+    'endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP) and a\n' +
+    'proof of the same key, and rejects it as a Bearer token.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -181,8 +182,9 @@ Extension features (disabled by default): ${extensionFeatures}
   request and binds the access token to its key (token_type DPoP), and the
   refresh token of a public client too, which then needs a proof of the same
   key each time it is used; without a proof the tokens stay Bearer. The
-  UserInfo endpoint does not check DPoP yet: it takes a bound access token
-  as a Bearer token. Web Crypto only, so it runs on edge runtimes too.
+  UserInfo endpoint takes a bound access token only with the DPoP scheme
+  (Authorization: DPoP) and a proof of the same key, and rejects it as a
+  Bearer token. Web Crypto only, so it runs on edge runtimes too.
   Enable with:
   --enable dpop
 

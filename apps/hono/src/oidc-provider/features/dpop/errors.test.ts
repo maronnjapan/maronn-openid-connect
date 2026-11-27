@@ -33,6 +33,17 @@ describe('isDpopError', () => {
     ]).toEqual([true, true]);
   });
 
+  // RFC 9449 §7.1 / §7.2, RFC 6750 §3.1: the failures of a protected resource.
+  it.each([
+    ['invalid_token', 'A DPoP-bound access token must be presented with the DPoP scheme'],
+    ['invalid_request', 'The DPoP authorization header has no access token'],
+  ])('should recognise the %s of a protected resource', (error, errorDescription) => {
+    expect([
+      isDpopError(new DpopError(error as 'invalid_token' | 'invalid_request', errorDescription)),
+      isDpopError({ name: 'DpopError', error, errorDescription }),
+    ]).toEqual([true, true]);
+  });
+
   it.each([
     ['an Error of another name', Object.assign(new Error('x'), { error: 'invalid_dpop_proof', errorDescription: 'x' })],
     ['a value without errorDescription', { name: 'DpopError', error: 'invalid_dpop_proof' }],

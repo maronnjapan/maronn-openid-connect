@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDpopConfirmation, parseDpopJkt, readDpopJkt, selectDpopRefreshTokenJkt, validateDpopBoundGrant } from './binding';
+import {
+  buildDpopConfirmation,
+  parseDpopJkt,
+  readDpopJkt,
+  resolvePushedDpopJkt,
+  selectDpopRefreshTokenJkt,
+  validateDpopBoundGrant,
+} from './binding';
 import { DpopError } from './errors';
 
 /** The JWK Thumbprint of RFC 9449 Figure 25 (dpop_jkt). */
@@ -72,6 +79,23 @@ describe('parseDpopJkt', () => {
 
     expect(error).toBeInstanceOf(DpopError);
     expect(error).toMatchObject({ error: 'invalid_request', errorDescription: 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint' });
+  });
+});
+
+// RFC 9449 §10.1: the key of the DPoP proof of a pushed request is used as its dpop_jkt.
+describe('resolvePushedDpopJkt', () => {
+  it('should return the thumbprint of the proof key without a pushed dpop_jkt, and with one of the same key', () => {
+    expect([resolvePushedDpopJkt(undefined, JKT), resolvePushedDpopJkt(JKT, JKT)]).toEqual([JKT, JKT]);
+  });
+
+  it('should reject a pushed dpop_jkt of another key than the proof with invalid_dpop_proof', () => {
+    const error = errorOf(() => resolvePushedDpopJkt(OTHER_JKT, JKT));
+
+    expect(error).toBeInstanceOf(DpopError);
+    expect(error).toMatchObject({
+      error: 'invalid_dpop_proof',
+      errorDescription: 'dpop_jkt does not match the key of the DPoP proof',
+    });
   });
 });
 

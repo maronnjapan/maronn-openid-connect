@@ -16,6 +16,12 @@
  * request_uri and answer. [parse-request] answers its own 400s; a block after
  * it that throws ends in the [respond-error] block.
  *
+ * With the dpop extension, the (feature: dpop) block after client
+ * authentication checks the DPoP proof of a request that has a DPoP header
+ * and pushes the request with its key as dpop_jkt, so the code issued for the
+ * request_uri is bound to that key (RFC 9449 §10.1). Without the block the
+ * pushed parameters are validated and stored as they came.
+ *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * left to the deployment layer (reverse proxy / platform). This endpoint is
  * unauthenticated until the client credentials are checked, so put a rate
@@ -42,6 +48,7 @@ import {
   withCors,
 } from '../../_oidc-provider/http';
 import { parConfig } from '../../_oidc-provider/features/par/config';
+import { bindPushedDpopKey } from '../../_oidc-provider/features/dpop/par';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -69,11 +76,13 @@ export function OPTIONS(request: Request): Response {
  *
  * クライアントを認証し、プッシュされたパラメータを `/authorize` と同じ規則で検証して保存する。
  * 201 のボディには、`/authorize` に渡す `request_uri` とその有効期間（`expires_in`）を入れ、キャッシュを禁止して返す。
+ * DPoP の機能があり、リクエストに `DPoP` ヘッダーがあれば、その鍵を `dpop_jkt` として保存するリクエストに入れる（RFC 9449 §10.1）。
  *
  * 失敗したときは、キャッシュを禁止した OAuth のエラーの JSON で次のように応答する。
  * - ボディがフォームの形式でないとき、パラメータが繰り返されたとき、`request_uri` か `request` が含まれるときは、400 の `invalid_request`
  * - クライアントの認証に失敗したときは、`WWW-Authenticate` ヘッダーを付けた 401 の `invalid_client`
  * - パラメータが正しくないとき（`redirect_uri`、`scope`、PKCE など）は、`/authorize` と同じエラーの 400
+ * - DPoP proof を受け付けないとき、`dpop_jkt` が DPoP proof の鍵と違うときは 400 の `invalid_dpop_proof`、`dpop_jkt` が JWK Thumbprint の形でないときは 400 の `invalid_request`（DPoP の機能）
  * - それ以外の失敗は、500 の `server_error`
  *
  * @spec RFC 9126 §2
@@ -128,11 +137,15 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
     const { client_assertion_type: _assertionType, client_assertion: _assertion, ...requestParams } = params;
     const pushedParams = { ...requestParams, client_id: clientId };
 
+    // [bind-pushed-dpop-key] (feature: dpop) プッシュした認可リクエストを DPoP の鍵に束縛する — RFC 9449 §10.1
+    const { dpopBoundParams, dpopRejection } = await bindPushedDpopKey(request, pushedParams);
+    if (dpopRejection) return dpopRejection;
+
     // [validate-request] /authorize と同じ規則でリクエストを検証する — RFC 9126 §2.1
     // パラメータを、認可エンドポイントと同じ規則で検証する（RFC 9126 §2.1）。
     // 登録されていない `redirect_uri` や不正な `scope` は、エンドユーザーが画面を見る前にここで拒否する。
     // PKCE を省いたリクエストを許すかどうかと、`scope` に `openid` を求めるかどうかは、認可エンドポイントと同じ設定に従う。
-    await validatePushedAuthorizationParams(pushedParams, clientResolver, {
+    await validatePushedAuthorizationParams(dpopBoundParams ?? pushedParams, clientResolver, {
       allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
       requireOpenIdScope: config.requireOpenIdScope,
     });
@@ -142,7 +155,7 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
     // クライアントの認証情報は保存しない。
     const record = await createPushedAuthorizationRecord({
       clientId,
-      params: pushedParams,
+      params: dpopBoundParams ?? pushedParams,
       store: parStore,
       expiresInSeconds: parConfig.expiresInSeconds,
     });

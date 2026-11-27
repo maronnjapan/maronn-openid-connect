@@ -16,6 +16,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * ([verify-dpop-access-token]). The authorization endpoint reads the
  * dpop_jkt of a request (the [validate-dpop-jkt] block of authorize/route.ts,
  * which calls ./authorize.ts) and binds the code issued for it to that key.
+ * With par, the PAR endpoint checks the DPoP proof of a pushed request (the
+ * [bind-pushed-dpop-key] block of (par)/par/route.ts, which calls ./par.ts)
+ * and pushes the request with the key of the proof as its dpop_jkt.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. The feature adds the defaults of the DPoP
@@ -28,8 +31,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * provider.ts nor http.ts. The same holds for the modules config.ts imports
  * (jwk.ts, base64url.ts and errors.ts). proof.ts reads provider.ts and
  * error-responses.ts imports http.ts, so no file the feature list loads
- * imports them, token.ts or userinfo.ts, which import both: token/route.ts
- * and userinfo/route.ts do.
+ * imports them, token.ts or userinfo.ts, which import both, or par.ts, which
+ * imports proof.ts: token/route.ts, userinfo/route.ts and (par)/par/route.ts
+ * do.
  */
 export const dpop = defineFeature({
   id: 'dpop',

@@ -55,9 +55,10 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'to its key (token_type DPoP), and so is the refresh token of a public client, which then needs\n' +
     'a proof of the same key each time it is used; without one the tokens stay Bearer. An\n' +
     'authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that key,\n' +
-    'so the code is exchanged only with a proof of that key. The UserInfo endpoint takes a bound\n' +
-    'access token only with the DPoP scheme (Authorization: DPoP) and a proof of the same key, and\n' +
-    'rejects it as a Bearer token.\n',
+    'so the code is exchanged only with a proof of that key; with par, a pushed authorization\n' +
+    'request with a DPoP proof in its DPoP header binds its code to the key of that proof too. The\n' +
+    'UserInfo endpoint takes a bound access token only with the DPoP scheme (Authorization: DPoP)\n' +
+    'and a proof of the same key, and rejects it as a Bearer token.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -185,8 +186,10 @@ Extension features (disabled by default): ${extensionFeatures}
   refresh token of a public client too, which then needs a proof of the same
   key each time it is used; without a proof the tokens stay Bearer. An
   authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its
-  code to that key, so the code is exchanged only with a proof of that key.
-  The UserInfo endpoint takes a bound access token only with the DPoP scheme
+  code to that key, so the code is exchanged only with a proof of that key;
+  with par, a pushed authorization request with a DPoP proof in its DPoP
+  header binds its code to the key of that proof too. The UserInfo endpoint
+  takes a bound access token only with the DPoP scheme
   (Authorization: DPoP) and a proof of the same key, and rejects it as a
   Bearer token. Web Crypto only, so it runs on edge runtimes too.
   Enable with:

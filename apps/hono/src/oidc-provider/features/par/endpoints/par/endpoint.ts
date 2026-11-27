@@ -5,6 +5,7 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
  * 201 で、`/authorize` に渡す `request_uri` とその有効期間（`expires_in`）を返す。
  *
  * 失敗したときはトークンエンドポイントと同じ形の JSON のエラーで応答し（クライアントの認証の失敗は 401、それ以外は 400）、リダイレクトはしない。
+ * DPoP の機能があり、リクエストに `DPoP` ヘッダーがあれば、その鍵を `dpop_jkt` として保存するリクエストに入れる。
  *
  * 実験的な機能で、`--enable par` を指定したときに生成される。
  *
@@ -24,6 +25,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'authenticate-client',
+    'bind-pushed-dpop-key',
     'validate-request',
     'store-request',
     'respond',

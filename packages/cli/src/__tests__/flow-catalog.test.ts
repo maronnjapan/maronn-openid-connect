@@ -318,6 +318,22 @@ describe('buildOpFlow', () => {
       ]);
     });
 
+    // RFC 9449 §10.1: the key of the DPoP header of a pushed request becomes its dpop_jkt, checked once the
+    // client is authenticated and before the pushed request is validated and stored.
+    it('should bind the pushed request to the DPoP key after client authentication when par and dpop are enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, par: true, dpop: true } });
+      const par = flow.endpoints.find((e) => e.id === 'par');
+      expect(par?.steps.map((s) => s.id)).toEqual([
+        'parse-request',
+        'authenticate-client',
+        'bind-pushed-dpop-key',
+        'validate-request',
+        'store-request',
+        'respond',
+        'respond-error',
+      ]);
+    });
+
     it('should leave out the form_post step when form-post-response-mode is disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, formPostResponseMode: false } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');

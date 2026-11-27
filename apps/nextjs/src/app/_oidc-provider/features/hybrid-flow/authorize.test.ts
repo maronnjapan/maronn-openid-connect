@@ -22,6 +22,8 @@ const CLIENT_ID = 'hybrid-client';
 const CODE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 /** 2026-01-01T00:00:00Z in Unix seconds. */
 const NOW = 1767225600;
+/** RFC 7638 §3.1: the thumbprint of its example key, the dpop_jkt of a request bound to a DPoP key (RFC 9449 §10). */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
 
 const fragment = createFragmentResponseMode({ issuer: ISSUER });
 
@@ -103,13 +105,14 @@ describe('issueHybridResponse', () => {
     transactionId: string,
     responseType: AuthorizationResponseType,
     responseMode: AuthorizationResponseMode | undefined = fragment,
+    cnf?: Record<string, string>,
   ) {
     await registerClient(createDatabase(), {
       clientId: CLIENT_ID,
       redirectUris: [REDIRECT_URI],
       responseTypes: ['code id_token token', 'code id_token', 'code token'],
     });
-    const transaction = createAuthTransaction(
+    const created = createAuthTransaction(
       {
         responseType,
         clientId: CLIENT_ID,
@@ -123,6 +126,7 @@ describe('issueHybridResponse', () => {
       },
       'csrf-1',
     );
+    const transaction = cnf === undefined ? created : { ...created, cnf };
     await stores.transactionStore.put('auth_txn:' + transactionId, transaction, 600);
     const response = await issueHybridResponse({
       transactionId,
@@ -194,6 +198,16 @@ describe('issueHybridResponse', () => {
     });
     expect(accessToken?.grantId).toBe(code?.grantId);
     expect(recordGrant.mock.calls).toEqual([['hybrid-user', CLIENT_ID, code?.grantId]]);
+  });
+
+  // RFC 9449 §10: the code of a request bound to a key with dpop_jkt (the dpop
+  // extension) carries the key of the transaction to the token endpoint.
+  it('should carry the confirmation of the transaction into the stored code', async () => {
+    const { response } = await respond('hybrid-txn-cnf', 'code id_token', fragment, { jkt: JKT });
+    const { response: unbound } = await respond('hybrid-txn-no-cnf', 'code id_token');
+
+    expect(await stores.authCodeStore.get(fragmentOf(response).params['code'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
+    expect(await stores.authCodeStore.get(fragmentOf(unbound).params['code'] ?? '')).not.toHaveProperty('cnf');
   });
 
   // OAuth 2.0 Multiple Response Type Encoding Practices §5: never the

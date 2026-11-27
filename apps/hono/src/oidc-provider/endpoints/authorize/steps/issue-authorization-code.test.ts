@@ -1,3 +1,4 @@
+import type { AuthTransaction } from '@maronn-openid-connect/core';
 import type { OidcProviderOptions } from '../../../app.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -25,10 +26,14 @@ const RANDOM_VALUE = /^[A-Za-z0-9_-]{43}$/;
 
 /** Issue the code for the stored transaction of the signed-in End-User. */
 async function issue(
-  input: { options?: Partial<OidcProviderOptions>; responseMode?: AuthorizationResponseMode } = {},
+  input: {
+    options?: Partial<OidcProviderOptions>;
+    responseMode?: AuthorizationResponseMode;
+    transaction?: AuthTransaction;
+  } = {},
 ) {
   const context = await providerContext({ options: input.options });
-  const transaction = transactionOf({ scope: 'openid profile' });
+  const transaction = input.transaction ?? transactionOf({ scope: 'openid profile' });
   await storeTransaction(context.stores, transaction);
   const outcome = await issueAuthorizationCodeResponse(context.c, {
     transactionId: TRANSACTION_ID,
@@ -148,6 +153,16 @@ describe('issueAuthorizationCodeResponse', () => {
           transactionId: TRANSACTION_ID,
         },
       ]);
+    });
+
+    // RFC 9449 §10: the code of a request bound to a key (dpop_jkt) carries the key
+    // of the transaction to the token endpoint.
+    it('should carry the confirmation of the transaction into the stored code', async () => {
+      const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+      const { db } = await issue({ transaction: { ...transactionOf({ scope: 'openid profile' }), cnf } as AuthTransaction });
+
+      expect([...db.codes.values()]).toEqual([expect.objectContaining({ clientId: CLIENT_ID, subject: SUBJECT, cnf })]);
     });
 
     it('should give the code the lifetime the provider settings configure', async () => {

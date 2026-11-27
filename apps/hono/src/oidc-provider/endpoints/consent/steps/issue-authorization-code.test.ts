@@ -1,3 +1,4 @@
+import type { AuthTransaction } from '@maronn-openid-connect/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { providerContext } from '../../../../test-support/context.js';
 import {
@@ -13,12 +14,10 @@ import { issueConsentedAuthorizationCode } from './issue-authorization-code.js';
 const NOW_SECONDS = 1767225600; // 2026-01-01T00:00:00Z
 const session = { subject: 'alice', authTime: NOW_SECONDS - 30, sessionId: 'sid-1' };
 
-async function setUp(input: { authorizationCodeTtl?: number; scope?: string } = {}) {
+async function setUp(input: { authorizationCodeTtl?: number; scope?: string; cnf?: Record<string, string> } = {}) {
   const db = createEmptyDatabase();
-  const transaction = await storeTransaction(
-    db,
-    sampleTransaction({ scope: input.scope ?? 'openid profile', nonce: 'nonce-1', codeChallenge: 'challenge-1', codeChallengeMethod: 'S256' }),
-  );
+  const sample = sampleTransaction({ scope: input.scope ?? 'openid profile', nonce: 'nonce-1', codeChallenge: 'challenge-1', codeChallengeMethod: 'S256' });
+  const transaction = await storeTransaction(db, input.cnf === undefined ? sample : ({ ...sample, cnf: input.cnf } as AuthTransaction));
   const { c } = await providerContext({
     db,
     options: {
@@ -64,6 +63,18 @@ describe('issueConsentedAuthorizationCode', () => {
       sessionId: 'sid-1',
       transactionId: TRANSACTION_ID,
     });
+  });
+
+  // RFC 9449 §10: the code of a request bound to a key (dpop_jkt) carries the key
+  // of the transaction to the token endpoint.
+  it('should carry the confirmation of the transaction into the stored code', async () => {
+    const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+    const { c, db, transaction } = await setUp({ cnf });
+
+    const { authCodeData } = await issueConsentedAuthorizationCode(c, TRANSACTION_ID, transaction, session);
+
+    expect(db.codes.get(authCodeData.code)).toEqual({ ...authCodeData, cnf });
+    expect(authCodeData).not.toHaveProperty('cnf');
   });
 
   it('should finish the transaction so that it cannot issue a second code', async () => {

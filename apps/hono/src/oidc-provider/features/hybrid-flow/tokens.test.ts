@@ -46,6 +46,7 @@ async function issue(
     responseParams?: Partial<AuthorizationResponseParams>;
     grantedScope?: string[];
     client?: Partial<ClientRegistration>;
+    codeConfirmation?: Record<string, string>;
   } = {},
 ) {
   const context = await providerContext({ options: input.options });
@@ -56,6 +57,7 @@ async function issue(
     responseParams: responseParamsOf(input.responseParams),
     session: { subject: SUBJECT, authTime: AUTH_TIME, sessionId: SESSION_ID },
     grantedScope: input.grantedScope ?? ['openid', 'profile'],
+    codeConfirmation: input.codeConfirmation,
   });
   return { ...context, ...issued };
 }
@@ -236,6 +238,15 @@ describe('issueHybridTokens', () => {
           transactionId: TRANSACTION_ID,
         },
       ]);
+    });
+
+    // RFC 9449 §10: the code of a request bound with dpop_jkt carries the key to the token endpoint.
+    it('should store the code with the confirmation the request was bound to', async () => {
+      const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+      const { db, parameters } = await issue('code id_token', { codeConfirmation: cnf });
+
+      expect([...db.codes.values()]).toEqual([expect.objectContaining({ code: parameters['code'], cnf })]);
     });
 
     // RFC 6749 §4.2.2: the authorization endpoint issues no refresh token; the

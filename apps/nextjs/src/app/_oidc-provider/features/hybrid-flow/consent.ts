@@ -21,6 +21,7 @@ import { config, loadSigningKeys, resolvers, stores } from '../../provider';
 import { resolveGrantableScopes } from '../../scopes';
 import type { AuthSessionInfo } from '../../store';
 import { createFragmentResponseMode } from '../implicit-flow/response-mode';
+import { confirmationOf } from '../../token-binding';
 import { issueHybridTokens } from './tokens';
 
 /**
@@ -30,6 +31,7 @@ import { issueHybridTokens } from './tokens';
  * ほかのレスポンスタイプには `undefined` を返し、あとのブロック（認可コードの発行）に任せる。
  *
  * トランザクションを終え、同意されたスコープで認可コードと ID トークンかアクセストークン（または両方）を発行し、同意とグラントを記録する。
+ * トランザクションが束縛の確認（`cnf`。DPoP の `dpop_jkt`、RFC 9449 §10）を持てば、それを認可コードに引き継ぐ。
  * トークンの発行が `AuthorizationError` で失敗したときは、同意とグラントを記録せず、そのエラーを認可レスポンスで返す。
  * 署名鍵を読み込めないときは、トランザクションを終える前に、OP のエラーページ（`server_error`）へ 303 でリダイレクトする。
  *
@@ -38,6 +40,7 @@ import { issueHybridTokens } from './tokens';
  * 応答には、トランザクションの Cookie を消す `Set-Cookie` ヘッダーを付ける。
  *
  * @spec OIDC Core 1.0 §3.3.2.5
+ * @spec RFC 9449 §10
  */
 export async function issueHybridConsentResponse(input: {
   transactionId: string;
@@ -72,6 +75,7 @@ export async function issueHybridConsentResponse(input: {
       session,
       grantedScope,
       keys,
+      codeConfirmation: confirmationOf(transaction),
     });
   } catch (error) {
     if (!(error instanceof AuthorizationError)) throw error;

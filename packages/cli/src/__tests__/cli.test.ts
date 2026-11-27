@@ -566,11 +566,11 @@ describe('run', () => {
       );
     });
 
-    // No endpoint calls the proof checks: the client must not expect a DPoP-bound token,
-    // and discovery does not signal support for DPoP (RFC 9449 §5.1).
-    it('should tell that every token is still a Bearer token and discovery does not advertise DPoP when dpop is enabled', () => {
+    // RFC 9449 §5: the token endpoint binds the access token of a request with a DPoP proof;
+    // the refresh token and the UserInfo endpoint do not take part yet.
+    it('should tell how a client gets a DPoP-bound access token and what is not bound yet when dpop is enabled', () => {
       expect(guidanceOf(['hono', '--enable', 'dpop']).replace(/\s+/g, ' ')).toContain(
-        'No endpoint checks a DPoP proof yet, so discovery does not advertise dpop_signing_alg_values_supported and every token is still a Bearer token.',
+        'A client opts in by sending a DPoP proof in the DPoP header of its token requests: the access token is then bound to its key (token_type DPoP); without one the tokens stay Bearer. Refresh tokens are not bound yet, and the UserInfo endpoint does not check DPoP yet: it takes a bound access token as a Bearer token.',
       );
     });
 
@@ -647,9 +647,9 @@ describe('run', () => {
       );
     });
 
-    it('should say that no endpoint checks a DPoP proof yet', () => {
+    it('should say that the token endpoint binds the access token to the key of the DPoP proof, and what is not bound yet', () => {
       expect(helpText().replace(/\s+/g, ' ')).toContain(
-        'No endpoint checks a DPoP proof yet: every token is still a Bearer token, and discovery does not advertise dpop_signing_alg_values_supported.',
+        'The token endpoint checks the DPoP proof of a request and binds the access token to its key (token_type DPoP); without a proof the tokens stay Bearer. Refresh tokens are not bound yet, and the UserInfo endpoint does not check DPoP yet: it takes a bound access token as a Bearer token.',
       );
     });
 

@@ -50,9 +50,11 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
   dpop:
     'dpop: the DPoP proof checks are generated into features/dpop/ (_oidc-provider/features/dpop/\n' +
-    'for Next.js), with no package to install, so change the policy there. No endpoint checks a\n' +
-    'DPoP proof yet, so discovery does not advertise dpop_signing_alg_values_supported and every\n' +
-    'token is still a Bearer token.\n',
+    'for Next.js), with no package to install, so change the policy there. A client opts in by\n' +
+    'sending a DPoP proof in the DPoP header of its token requests: the access token is then bound\n' +
+    'to its key (token_type DPoP); without one the tokens stay Bearer. Refresh tokens are not bound\n' +
+    'yet, and the UserInfo endpoint does not check DPoP yet: it takes a bound access token as a\n' +
+    'Bearer token.\n',
 };
 
 /** The step that registers the clients and users the generated OP starts without. */
@@ -175,10 +177,12 @@ Extension features (disabled by default): ${extensionFeatures}
   dpop: OAuth 2.0 DPoP (RFC 9449). Generates the checks of a DPoP proof into
   features/dpop/ (_oidc-provider/features/dpop/ for Next.js) with no package
   beside core, so change the policy there; the CORS of the endpoints clients
-  call allows the DPoP header. No endpoint checks a DPoP proof yet: every
-  token is still a Bearer token, and discovery does not advertise
-  dpop_signing_alg_values_supported. Web Crypto only, so it runs on edge
-  runtimes too. Enable with:
+  call allows the DPoP header. The token endpoint checks the DPoP proof of a
+  request and binds the access token to its key (token_type DPoP); without a
+  proof the tokens stay Bearer. Refresh tokens are not bound yet, and the
+  UserInfo endpoint does not check DPoP yet: it takes a bound access token
+  as a Bearer token. Web Crypto only, so it runs on edge runtimes too.
+  Enable with:
   --enable dpop
 
 Custom scopes (none declared by default): the standard scopes (openid, profile,

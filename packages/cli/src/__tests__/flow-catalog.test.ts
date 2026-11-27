@@ -183,9 +183,10 @@ describe('buildOpFlow', () => {
     it('should place the grant dispatches of the features between client authentication and grant_type validation', () => {
       const flow = buildOpFlow({ features: ALL_FEATURES });
       const token = flow.endpoints.find((e) => e.id === 'token');
-      expect(token?.steps.slice(0, 9).map((s) => s.id)).toEqual([
+      expect(token?.steps.slice(0, 10).map((s) => s.id)).toEqual([
         'parse-request',
         'authenticate-client',
+        'verify-dpop-proof',
         'dispatch-client-credentials',
         'dispatch-id-jag-issuance',
         'dispatch-id-jag-redemption',
@@ -193,6 +194,19 @@ describe('buildOpFlow', () => {
         'dispatch-device-code',
         'dispatch-ciba',
         'validate-grant-type',
+      ]);
+    });
+
+    // RFC 9449 §5: the DPoP proof decides the key every grant binds its access
+    // token to, so it is checked before the first grant is answered.
+    it('should check the DPoP proof right after client authentication when dpop is enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dpop: true } });
+      const token = flow.endpoints.find((e) => e.id === 'token');
+      expect(token?.steps.slice(0, 4).map((s) => s.id)).toEqual([
+        'parse-request',
+        'authenticate-client',
+        'verify-dpop-proof',
+        'dispatch-client-credentials',
       ]);
     });
 

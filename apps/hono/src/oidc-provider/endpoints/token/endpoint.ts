@@ -3,6 +3,7 @@ import { defineEndpoint } from '../step.js';
 /**
  * クライアントを認証し、提示されたグラント（認可コード、リフレッシュトークン、有効にした機能が扱うグラント）を検証して、トークンレスポンスで応答する。
  * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
+ * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンをその鍵に束縛し、`token_type` を `DPoP` にする。
  * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
  *
  * @spec OIDC Core 1.0 §3.1.3
@@ -20,6 +21,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'authenticate-client',
+    'verify-dpop-proof',
     'dispatch-client-credentials',
     'dispatch-id-jag-issuance',
     'dispatch-id-jag-redemption',

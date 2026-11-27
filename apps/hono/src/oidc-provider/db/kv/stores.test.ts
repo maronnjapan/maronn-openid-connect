@@ -8,7 +8,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMapKvDatabase, type MapKvDatabase } from '../../../test-support/databases.js';
 import type { ProviderStores } from '../../store.js';
-import { accessTokenRecordOf, confirmationRecordOf, refreshTokenRecordOf } from '../../token-binding.js';
+import { confirmationRecordOf } from '../../token-binding.js';
 import { readRecord } from './database.js';
 import {
   keys,
@@ -418,7 +418,8 @@ describe('createProviderStores', () => {
 
     // RFC 9449 §6.2: what a binding adds to the record comes back with it, for the introspection of a bound token.
     it('should return the cnf and the token_type a binding added to an access token', async () => {
-      const stored = { ...accessToken({ jti: 'jti-1' }), ...accessTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' }) };
+      // The members are written out, not built with accessTokenRecordOf(), so the test fails if the store drops them.
+      const stored = { ...accessToken({ jti: 'jti-1' }), cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' };
       await stores.accessTokenStore.set('at-1', stored);
 
       expect(await stores.accessTokenStore.get('at-1')).toEqual(stored);
@@ -546,8 +547,8 @@ describe('createProviderStores', () => {
   describe('refreshTokenStore', () => {
     // RFC 9449 §5: the confirmation of a bound refresh token comes back with it, for the check at the next refresh.
     it('should return the cnf a binding added to a refresh token', async () => {
-      const binding = { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP', refreshTokenCnf: { jkt: 'jkt-1' } };
-      const stored = { ...refreshToken(), ...refreshTokenRecordOf(binding) };
+      // The member is written out, not built with refreshTokenRecordOf(), so the test fails if the store drops it.
+      const stored = { ...refreshToken(), cnf: { jkt: 'jkt-1' } };
       await stores.refreshTokenStore.set('rt-1', stored);
 
       expect(await stores.refreshTokenStore.get('rt-1')).toEqual(stored);

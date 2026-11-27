@@ -144,6 +144,20 @@ describe('verifyDpopNonce', () => {
     await expect(verifyDpopNonce(key, OTHER_ISSUER_NONCE, AUTHORIZATION_SERVER, { now: NOW, lifetimeSeconds: 120 })).resolves.toBe(false);
   });
 
+  // Issued and checked by the code itself, so that the server and the issuer must be in the MAC input of both.
+  // @subject hono:oidc-provider/features/dpop/nonce.ts#macInputOf
+  it.each([
+    ['another issuer', { server: 'authorization-server', issuer: 'https://other.example.com' }],
+    ['the other server', RESOURCE_SERVER],
+  ] as const)('should reject a nonce it issued for %s, which that scope accepts', async (_name, scope) => {
+    const key = await dpopNonceKeyOf(SECRET);
+    const policy = { now: NOW, lifetimeSeconds: 120 };
+    const nonce = await issueDpopNonce(key, scope, NOW);
+
+    await expect(verifyDpopNonce(key, nonce, AUTHORIZATION_SERVER, policy)).resolves.toBe(false);
+    await expect(verifyDpopNonce(key, nonce, scope, policy)).resolves.toBe(true);
+  });
+
   it('should reject a nonce of another secret', async () => {
     const key = await dpopNonceKeyOf('another-dpop-nonce-secret-of-the-tests');
 

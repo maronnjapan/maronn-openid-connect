@@ -476,6 +476,52 @@ describe('run', () => {
     });
   });
 
+  // EXTENSION (RFC 9449): the files --enable dpop writes, and the default output without them.
+  describe('--enable dpop', () => {
+    function generatedInto(args: string[]): string {
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', ...args, '-o', outputDir]);
+      vi.restoreAllMocks();
+      return outputDir;
+    }
+
+    it('should generate the DPoP proof checks into features/dpop/ and list dpop last in features/enabled.ts', () => {
+      const outputDir = generatedInto(['hono', '--enable', 'dpop']);
+      const enabled = readFileSync(join(outputDir, 'features', 'enabled.ts'), 'utf-8');
+
+      expect(['feature.ts', 'config.ts', 'proof.ts'].filter((file) => !existsSync(join(outputDir, 'features', 'dpop', file)))).toEqual([]);
+      expect(enabled).toContain("import { dpop } from './dpop/feature.js';\n");
+      expect(enabled.endsWith('  dpop,\n];\n')).toBe(true);
+      expect(JSON.parse(readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8')).features.dpop).toBe(true);
+    });
+
+    it('should generate the DPoP proof checks into _oidc-provider/features/dpop/ and list dpop last in features.ts for Next.js', () => {
+      const outputDir = generatedInto(['nextjs', '--enable', 'dpop']);
+      const providerDir = join(outputDir, '_oidc-provider');
+      const list = readFileSync(join(providerDir, 'features.ts'), 'utf-8');
+
+      expect(['feature.ts', 'config.ts', 'proof.ts'].filter((file) => !existsSync(join(providerDir, 'features', 'dpop', file)))).toEqual([]);
+      expect(list).toContain("import { dpop } from './features/dpop/feature';\n");
+      expect(list.endsWith('  dpop,\n];\n')).toBe(true);
+    });
+
+    it('should leave features/dpop/ and dpop out of the feature list by default', () => {
+      const outputDir = generatedInto(['hono']);
+
+      expect(existsSync(join(outputDir, 'features', 'dpop'))).toBe(false);
+      expect(readFileSync(join(outputDir, 'features', 'enabled.ts'), 'utf-8')).not.toContain('dpop');
+      expect(JSON.parse(readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8')).features.dpop).toBe(false);
+    });
+
+    it('should leave _oidc-provider/features/dpop/ and dpop out of the feature list by default for Next.js', () => {
+      const providerDir = join(generatedInto(['nextjs']), '_oidc-provider');
+
+      expect(existsSync(join(providerDir, 'features', 'dpop'))).toBe(false);
+      expect(readFileSync(join(providerDir, 'features.ts'), 'utf-8')).not.toContain('dpop');
+    });
+  });
+
   describe('install guidance', () => {
     function guidanceOf(args: string[]): string {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

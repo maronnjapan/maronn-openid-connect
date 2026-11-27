@@ -57,11 +57,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * error-responses.ts imports http.ts and server-nonce.ts imports both, so no
  * file the feature list loads imports them, or token.ts, par.ts and
  * userinfo.ts, which import all three: token/route.ts, userinfo/route.ts and
- * (par)/par/route.ts do. nonce.ts
- * imports base64url.ts and shared.ts only; only proof.ts and server-nonce.ts
- * import it.
- * register.ts imports nothing; only
- * (dynamic-client-registration)/register/route.ts imports it.
+ * (par)/par/route.ts do. nonce.ts imports base64url.ts and shared.ts only;
+ * only proof.ts and server-nonce.ts import it. register.ts imports nothing;
+ * only (dynamic-client-registration)/register/route.ts imports it.
  */
 export const dpop = defineFeature({
   id: 'dpop',
@@ -85,6 +83,6 @@ export const dpop = defineFeature({
   },
   // A browser-based client sends its proof in the DPoP header (RFC 9449 §4.1),
   // reads the challenges of a failure in WWW-Authenticate (RFC 9449 §7.1) and
-  // the nonce to put in its next proof in DPoP-Nonce (RFC 9449 §8).
+  // the nonce to put in its next proof in DPoP-Nonce (RFC 9449 §8 / §9).
   cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate', 'DPoP-Nonce'] },
 });

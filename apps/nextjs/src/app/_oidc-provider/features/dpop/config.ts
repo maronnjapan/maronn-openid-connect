@@ -74,14 +74,15 @@ declare module '../../config' {
      * (RFC 9449 §9). true: once the endpoint has read the DPoP scheme in the
      * Authorization header of a request, every response to the request
      * carries a new nonce in the DPoP-Nonce header (a request that also names
-     * the Bearer scheme there is rejected before that, without one), and a
-     * proof without a nonce, or with one the protected resource did not
-     * provide within dpopNonceLifetimeSeconds (a nonce of the authorization
-     * server included), is rejected with use_dpop_nonce (401, with the error
-     * in the DPoP challenge). false: no DPoP-Nonce header is sent, and the
-     * nonce claim of a proof is not checked. Its default is
-     * dpopConfigDefaults (false); the dpop feature (feature.ts) sets it to
-     * true when the environment variable
+     * the Bearer scheme there is rejected before that, and a secret of the
+     * nonces shorter than 32 bytes is answered with a 500 instead of a nonce,
+     * both without one), and a proof without a nonce, or with one the
+     * protected resource did not provide within dpopNonceLifetimeSeconds (a
+     * nonce of the authorization server included), is rejected with
+     * use_dpop_nonce (401, with the error in the DPoP challenge). false: no
+     * DPoP-Nonce header is sent, and the nonce claim of a proof is not
+     * checked. Its default is dpopConfigDefaults (false); the dpop feature
+     * (feature.ts) sets it to true when the environment variable
      * OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER is 1.
      */
     dpopNonceRequiredAtResourceServer: boolean;

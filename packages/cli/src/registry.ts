@@ -331,14 +331,13 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   dpopNonceRequiredAtAuthorizationServer, dpopNonceRequiredAtResourceServer).
  *   The token endpoint checks the DPoP proof of a request that sends one and
  *   binds the access token of every grant to its key (cnf.jkt, token_type
- *   DPoP, §5 / §6), and
- *   the refresh token of a public client too (§5); a code or refresh token
- *   bound to a key is accepted only with a proof of that key (invalid_grant
- *   otherwise). A request without a DPoP header gets Bearer tokens as
- *   before, unless its client is registered with dpopBoundAccessTokens
- *   (dpop_bound_access_tokens, §5.2; with dynamic-client-registration, POST
- *   /register registers it too, false when omitted): then it is
- *   invalid_dpop_proof.
+ *   DPoP, §5 / §6), and the refresh token of a public client too (§5); a
+ *   code or refresh token bound to a key is accepted only with a proof of
+ *   that key (invalid_grant otherwise). A request without a DPoP header gets
+ *   Bearer tokens as before, unless its client is registered with
+ *   dpopBoundAccessTokens (dpop_bound_access_tokens, §5.2; with
+ *   dynamic-client-registration, POST /register registers it too, false
+ *   when omitted): then it is invalid_dpop_proof.
  *   With dpopNonceRequiredAtAuthorizationServer (§8), the token and PAR
  *   endpoints give their responses to a request with a DPoP header a nonce
  *   (DPoP-Nonce) and, before client authentication, reject a proof without a

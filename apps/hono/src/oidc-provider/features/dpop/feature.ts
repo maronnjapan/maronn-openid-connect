@@ -61,10 +61,11 @@ export const dpop = defineFeature({
     return algs.length === 0 ? {} : { dpop_signing_alg_values_supported: [...algs] };
   },
   // The secret of the DPoP nonces (OidcProviderOptions.dpopNonceSecret of
-  // ./config.ts), read by the nonce check of proof.ts.
+  // ./config.ts), read by server-nonce.ts (the nonces the token, PAR and
+  // UserInfo endpoints give) and by the nonce check of proof.ts.
   context: ({ options }) => ({ dpopNonceSecret: options.dpopNonceSecret }),
   // A browser-based client sends its proof in the DPoP header (RFC 9449 §4.1),
   // reads the challenges of a failure in WWW-Authenticate (RFC 9449 §7.1) and
-  // the nonce to put in its next proof in DPoP-Nonce (RFC 9449 §8).
+  // the nonce to put in its next proof in DPoP-Nonce (RFC 9449 §8 / §9).
   cors: { allowHeaders: ['DPoP'], exposeHeaders: ['WWW-Authenticate', 'DPoP-Nonce'] },
 });

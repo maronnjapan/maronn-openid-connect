@@ -106,6 +106,7 @@ describe('discoveryApp', () => {
       introspection_signing_alg_values_supported: ['RS256'],
       end_session_endpoint: 'https://op.example.com/logout',
       registration_endpoint: 'https://op.example.com/register',
+      dpop_signing_alg_values_supported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
     });
   });
 

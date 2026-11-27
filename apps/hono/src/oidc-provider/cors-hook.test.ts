@@ -5,7 +5,9 @@ import { createEmptyDatabase } from './db/memory/database.js';
 
 // The features of this file: the enabled ones and one more that names CORS
 // headers through the cors hook of features/feature.ts, so that the tests see
-// what createApp() makes of them. No enabled feature names one yet.
+// what createApp() makes of them. Of the enabled ones, dpop names DPoP and
+// WWW-Authenticate, so the headers of the extra feature come after them, and
+// WWW-Authenticate, which both name, comes once.
 vi.mock('./features/enabled.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('./features/enabled.js')>();
   const { defineFeature } = await import('./features/feature.js');
@@ -36,9 +38,9 @@ describe('createApp', () => {
 
       expect(responses.map((response) => response.status)).toEqual([204, 204, 204]);
       expect(responses.map((response) => response.headers.get('Access-Control-Allow-Headers'))).toEqual([
-        'Authorization,Content-Type,X-Example-Proof',
-        'Authorization,Content-Type,X-Example-Proof',
-        'Authorization,Content-Type,X-Example-Proof',
+        'Authorization,Content-Type,DPoP,X-Example-Proof',
+        'Authorization,Content-Type,DPoP,X-Example-Proof',
+        'Authorization,Content-Type,DPoP,X-Example-Proof',
       ]);
     });
 

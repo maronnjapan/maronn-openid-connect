@@ -10,7 +10,12 @@ import {
   EXTENSION_FEATURES,
   resolveFeatures,
 } from './registry.js';
-import { enabledFeatureIds, findFeature, type OidcFeatureConfig } from './registry.js';
+import {
+  enabledFeatureIds,
+  findFeature,
+  type ExtensionFeatureName,
+  type OidcFeatureConfig,
+} from './registry.js';
 import type { GeneratedFile } from './generated-file.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
@@ -36,6 +41,19 @@ const INSTALL_COMMANDS: Record<string, string> = {
 
 const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
+
+/** What generate and setup say is left to do, or to know, for each extension feature they generated. */
+const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
+  'google-login':
+    'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
+    'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
+    'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
+  dpop:
+    'dpop: the DPoP proof checks are generated into features/dpop/ (_oidc-provider/features/dpop/\n' +
+    'for Next.js), with no package to install, so change the policy there. Discovery advertises\n' +
+    'dpop_signing_alg_values_supported, but no endpoint checks a DPoP proof: every token is\n' +
+    'still a Bearer token.\n',
+};
 
 /** The step that registers the clients and users the generated OP starts without. */
 const REGISTER_STEP =
@@ -154,6 +172,14 @@ Extension features (disabled by default): ${extensionFeatures}
   samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
   authorized redirect URI of that Google OAuth client. Enable with:
   --enable google-login
+  dpop: OAuth 2.0 DPoP (RFC 9449). Generates the checks of a DPoP proof into
+  features/dpop/ (_oidc-provider/features/dpop/ for Next.js) with no package
+  beside core, so change the policy there; discovery advertises
+  dpop_signing_alg_values_supported and the CORS of the endpoints clients
+  call allows the DPoP header. No endpoint checks a DPoP proof yet: every
+  token is still a Bearer token. Web Crypto only, so it runs on edge runtimes
+  too. Enable with:
+  --enable dpop
 
 Custom scopes (none declared by default): the standard scopes (openid, profile,
   email, address, phone, offline_access) are always handled by the generated
@@ -907,11 +933,9 @@ export function run(args: string[]): void {
     const enabledExtensions = EXTENSION_FEATURES.filter((name) => parsed.enable.includes(name));
     if (enabledExtensions.length > 0) {
       console.log(`Extension features enabled: ${enabledExtensions.join(', ')}`);
-      console.log(
-        'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
-          'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
-          'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
-      );
+      for (const name of enabledExtensions) {
+        console.log(EXTENSION_NOTES[name]);
+      }
     }
     if (scopes.length > 0) {
       console.log(`Custom scopes: ${scopes.join(', ')}`);

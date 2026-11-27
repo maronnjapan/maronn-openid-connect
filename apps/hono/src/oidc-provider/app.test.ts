@@ -73,10 +73,11 @@ describe('createApp', () => {
       expect(response.status).toBe(204);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
       expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST,GET,OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type');
+      // The dpop extension lets a browser send its DPoP proof (RFC 9449 §4.1) and read
+      // the challenges of a failure (RFC 9449 §7.1), through the cors hook of features/feature.ts.
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type,DPoP');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
       expect(response.headers.get('Access-Control-Max-Age')).toBe('600');
-      // No enabled feature names a header of its own (the cors hook of features/feature.ts).
-      expect(response.headers.has('Access-Control-Expose-Headers')).toBe(false);
     });
 
     it('should allow only the configured corsOrigins on /userinfo', async () => {

@@ -67,12 +67,13 @@ describe('withCors', () => {
 });
 
 describe('clientCors', () => {
-  // No enabled feature names a header of its own (the cors hook of feature.ts).
-  it('should keep the headers of the provider while no feature names one', () => {
+  // The dpop extension lets a browser send its DPoP proof (RFC 9449 §4.1) and read
+  // the challenges of a failure (RFC 9449 §7.1), through the cors hook of feature.ts.
+  it('should add the headers of the enabled features to the endpoints clients call directly', () => {
     const response = withCors(new Request('https://op.example.com/token', { method: 'POST' }), clientCors, new Response(null, { status: 401 }));
 
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST,GET,OPTIONS');
-    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type');
-    expect(response.headers.has('Access-Control-Expose-Headers')).toBe(false);
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type,DPoP');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
   });
 });

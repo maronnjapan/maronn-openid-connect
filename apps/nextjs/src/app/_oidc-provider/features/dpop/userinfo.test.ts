@@ -1,5 +1,5 @@
 import type { AccessTokenInfo, AuthorizationCodeData } from '@maronn-openid-connect/core';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, requestTo } from '../../../../test-support/context';
 import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop';
 import { accessTokenInfo } from '../../../../test-support/fixtures';
@@ -36,6 +36,29 @@ const CLAIMS = { sub: SUBJECT, email: 'alice@example.com', email_verified: true 
 const CODE_VERIFIER = 'verifier-0123456789-abcdefghijklmnopqrstuvwxyz';
 const CODE_CHALLENGE = 'P2z9-HISyfGmQCy3zRro9mnHlNQpSqpAR_U0x5EiBdU';
 const SAVED_ALGS = config.dpopSigningAlgValuesSupported;
+const SAVED_NONCE_SETTINGS = {
+  dpopNonceRequiredAtAuthorizationServer: config.dpopNonceRequiredAtAuthorizationServer,
+  dpopNonceRequiredAtResourceServer: config.dpopNonceRequiredAtResourceServer,
+};
+/** 2026-01-01T00:00:00Z in Unix seconds. */
+const NOW = 1_767_225_600;
+/** The secret of the DPoP nonces of the tests (41 bytes). */
+const NONCE_SECRET = 'dpop-nonce-secret-for-the-unit-tests-0001';
+/** The random bytes 0x00 to 0x0b. */
+const RANDOM = Uint8Array.from({ length: 12 }, (_, index) => index);
+// The nonces below were computed apart from the code under test, with the HMAC
+// of node:crypto and NONCE_SECRET, for the issuer https://op.example.com
+// (TEST_ISSUER) and RANDOM (see nonce.test.ts).
+/** The nonce the protected resource issues at NOW. */
+const RESOURCE_SERVER_NONCE_AT_NOW = 'AAAAAGlVuQAAAQIDBAUGBwgJCgs.qMJbK4hF-YMMuV93-YOisKgT890kG1mcLWrlBS0Hgvc';
+/** The nonce the protected resource issues 60 seconds before NOW. */
+const RESOURCE_SERVER_NONCE_A_MINUTE_AGO = 'AAAAAGlVuMQAAQIDBAUGBwgJCgs.nqqlWQTffRmDCkTSydKKh-0jY-TTN63lEhXSRrjSmCU';
+/** The nonce the authorization server issues at NOW. */
+const AUTHORIZATION_SERVER_NONCE_AT_NOW = 'AAAAAGlVuQAAAQIDBAUGBwgJCgs.qlRn_qjLCd4ScDSkutyR475dsXalwZpCxni6jPVshAI';
+/** The form of a nonce of this OP (RFC 9449 §8.1): the base64url of 20 bytes, a dot and the base64url of an HMAC-SHA256. */
+const NONCE_FORM = /^[A-Za-z0-9_-]{27}\.[A-Za-z0-9_-]{43}$/;
+const NONCE_REQUIRED = 'Resource server requires nonce in DPoP proof';
+const STALE_NONCE = 'The DPoP proof nonce is not a nonce the resource server recently provided';
 
 beforeAll(async () => {
   await registerUser(createDatabase(), { sub: SUBJECT, name: 'Alice Example', email: 'alice@example.com', email_verified: true });
@@ -521,5 +544,240 @@ describe('an access token bound at the token endpoint', () => {
       401,
       BEARER_DOWNGRADE_CHALLENGES,
     ]);
+  });
+});
+
+describe('readDpopUserInfoRequest with dpopNonceRequiredAtResourceServer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW * 1000);
+    vi.stubEnv('OIDC_DPOP_NONCE_SECRET', NONCE_SECRET);
+    config.dpopNonceRequiredAtResourceServer = true;
+  });
+
+  afterEach(() => {
+    Object.assign(config, SAVED_NONCE_SETTINGS);
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  /** Makes crypto.getRandomValues() fill its array with RANDOM. */
+  function fixRandomBytes(): void {
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      (array as Uint8Array).set(RANDOM);
+      return array;
+    });
+  }
+
+  // RFC 9449 §9 Figure 24: 401 use_dpop_nonce in the DPoP challenge, with the nonce to use in DPoP-Nonce, which a browser may read.
+  it('should answer a DPoP proof without a nonce with 401 use_dpop_nonce in the DPoP challenge and the nonce to use', async () => {
+    const key = await dpopKey();
+    const request = await dpopGet(key, await storeToken(key.jkt));
+    request.headers.set('Origin', 'https://rp.example.com');
+    fixRandomBytes();
+
+    const response = await GET(request);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toBe(`${DPOP_CHALLENGES}, error="use_dpop_nonce", error_description="${NONCE_REQUIRED}"`);
+    expect(await response.json()).toEqual({ error: 'use_dpop_nonce', error_description: NONCE_REQUIRED });
+    expect(response.headers.get('DPoP-Nonce')).toBe(RESOURCE_SERVER_NONCE_AT_NOW);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate,DPoP-Nonce');
+  });
+
+  // RFC 9449 §9 / §8.2: the retry with the nonce succeeds, and the 200 carries the nonce to use next.
+  it('should answer the retry with the nonce it gave, with the next nonce', async () => {
+    const key = await dpopKey();
+    const accessToken = await storeToken(key.jkt);
+    const nonce = (await GET(await dpopGet(key, accessToken))).headers.get('DPoP-Nonce') ?? '';
+
+    const retry = await GET(await dpopGet(key, accessToken, { nonce }));
+
+    expect([retry.status, await retry.json()]).toEqual([200, CLAIMS]);
+    expect(retry.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
+    expect(retry.headers.get('DPoP-Nonce')).not.toBe(nonce);
+  });
+
+  // RFC 9449 §8 / §9: the server keeps a window of recent nonces (dpopNonceLifetimeSeconds, 120 by default).
+  it('should accept a nonce it issued a minute ago, and give the nonce it issues now', async () => {
+    const key = await dpopKey();
+    const request = await dpopGet(key, await storeToken(key.jkt), { nonce: RESOURCE_SERVER_NONCE_A_MINUTE_AGO });
+    fixRandomBytes();
+
+    const response = await GET(request);
+
+    expect([response.status, await response.json(), response.headers.get('DPoP-Nonce')]).toEqual([200, CLAIMS, RESOURCE_SERVER_NONCE_AT_NOW]);
+  });
+
+  // RFC 9449 §8.2 / §9: the signed UserInfo response (OIDC Core 1.0 §5.3.2) carries the nonce to use next too.
+  it('should give the nonce it issues now with a signed UserInfo response', async () => {
+    const clientId = unique('dpop-userinfo-signed-client');
+    await registerClient(createDatabase(), {
+      clientId,
+      redirectUris: [REDIRECT_URI],
+      grantTypes: ['authorization_code'],
+      tokenEndpointAuthMethods: ['none'],
+      userinfoSignedResponseAlg: 'RS256',
+    });
+    const key = await dpopKey();
+    const request = await dpopGet(key, await storeToken(key.jkt, { clientId }), { nonce: RESOURCE_SERVER_NONCE_A_MINUTE_AGO });
+    fixRandomBytes();
+
+    const response = await GET(request);
+
+    expect([response.status, response.headers.get('Content-Type'), response.headers.get('DPoP-Nonce')]).toEqual([
+      200,
+      'application/jwt',
+      RESOURCE_SERVER_NONCE_AT_NOW,
+    ]);
+  });
+
+  it('should reject a nonce older than dpopNonceLifetimeSeconds and give a new one', async () => {
+    const key = await dpopKey();
+    const accessToken = await storeToken(key.jkt);
+    const nonce = (await GET(await dpopGet(key, accessToken))).headers.get('DPoP-Nonce') ?? '';
+    vi.setSystemTime((NOW + 121) * 1000);
+
+    const response = await GET(await dpopGet(key, accessToken, { nonce }));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toBe(`${DPOP_CHALLENGES}, error="use_dpop_nonce", error_description="${STALE_NONCE}"`);
+    expect(response.headers.get('DPoP-Nonce')).toMatch(NONCE_FORM);
+    expect(response.headers.get('DPoP-Nonce')).not.toBe(nonce);
+  });
+
+  // RFC 9449 §9: the nonces of the authorization server and of the resource server are not the same.
+  it('should reject a nonce of the authorization server', async () => {
+    const key = await dpopKey();
+
+    const response = await GET(await dpopGet(key, await storeToken(key.jkt), { nonce: AUTHORIZATION_SERVER_NONCE_AT_NOW }));
+
+    expect([response.status, await response.json()]).toEqual([401, { error: 'use_dpop_nonce', error_description: STALE_NONCE }]);
+  });
+
+  // RFC 9449 §9: a nonce given by the token endpoint is not one of the protected resource, and the other way round.
+  it('should not accept a nonce of the token endpoint at UserInfo, nor a nonce of UserInfo at the token endpoint', async () => {
+    config.dpopNonceRequiredAtAuthorizationServer = true;
+    const key = await dpopKey();
+    const accessToken = await storeToken(key.jkt);
+    const tokenRequest = async (claims: Record<string, unknown>) =>
+      token(
+        new Request(TOKEN_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', DPoP: await dpopProof(key, { htm: 'POST', htu: TOKEN_ENDPOINT }, claims) },
+          body: new URLSearchParams({ grant_type: 'authorization_code', code: unique('dpop-userinfo-code') }).toString(),
+        }),
+      );
+    const tokenEndpointNonce = (await tokenRequest({})).headers.get('DPoP-Nonce') ?? '';
+    const userInfoNonce = (await GET(await dpopGet(key, accessToken))).headers.get('DPoP-Nonce') ?? '';
+
+    const atUserInfo = await GET(await dpopGet(key, accessToken, { nonce: tokenEndpointNonce }));
+    const atTokenEndpoint = await tokenRequest({ nonce: userInfoNonce });
+
+    expect([tokenEndpointNonce, userInfoNonce]).toEqual([expect.stringMatching(NONCE_FORM), expect.stringMatching(NONCE_FORM)]);
+    expect([atUserInfo.status, await atUserInfo.json()]).toEqual([401, { error: 'use_dpop_nonce', error_description: STALE_NONCE }]);
+    expect([atTokenEndpoint.status, await atTokenEndpoint.json()]).toEqual([
+      400,
+      { error: 'use_dpop_nonce', error_description: 'The DPoP proof nonce is not a nonce the authorization server recently provided' },
+    ]);
+  });
+
+  // RFC 9449 §8.2 / §9: every response to a request presented with the DPoP scheme carries the nonce to use next, the other errors too.
+  it.each([
+    ['no proof', async (_key: DpopKey, accessToken: string) => requestTo('/userinfo', { headers: { Authorization: `DPoP ${accessToken}` } }), {}, 401, 'invalid_dpop_proof'],
+    [
+      'a proof for another URI',
+      async (key: DpopKey, accessToken: string) =>
+        requestTo('/userinfo', {
+          headers: {
+            Authorization: `DPoP ${accessToken}`,
+            DPoP: await dpopProof(key, { htm: 'GET', htu: TOKEN_ENDPOINT, accessToken }, { nonce: RESOURCE_SERVER_NONCE_AT_NOW }),
+          },
+        }),
+      {},
+      401,
+      'invalid_dpop_proof',
+    ],
+    [
+      'another token in the form body',
+      async (key: DpopKey, accessToken: string) =>
+        formPost(
+          { access_token: accessToken },
+          { Authorization: `DPoP ${accessToken}`, DPoP: await dpopProof(key, { htm: 'POST', htu: USERINFO_ENDPOINT, accessToken }) },
+        ),
+      {},
+      400,
+      'invalid_request',
+    ],
+    [
+      'a token bound to another key',
+      async (_key: DpopKey, accessToken: string) => dpopGet(await dpopKey(), accessToken, { nonce: RESOURCE_SERVER_NONCE_AT_NOW }),
+      {},
+      401,
+      'invalid_token',
+    ],
+    [
+      'a token without the openid scope',
+      async (key: DpopKey, accessToken: string) => dpopGet(key, accessToken, { nonce: RESOURCE_SERVER_NONCE_AT_NOW }),
+      { scope: ['email'] },
+      403,
+      'insufficient_scope',
+    ],
+  ])('should give the nonce to use next with the error of a request with %s', async (_name, requestOf, tokenOverrides: Partial<AccessTokenInfo>, status, error) => {
+    const key = await dpopKey();
+    const request = await requestOf(key, await storeToken(key.jkt, tokenOverrides));
+    fixRandomBytes();
+
+    const response = request.method === 'POST' ? await POST(request) : await GET(request);
+
+    expect([response.status, ((await response.json()) as { error: string }).error]).toEqual([status, error]);
+    expect(response.headers.get('DPoP-Nonce')).toBe(RESOURCE_SERVER_NONCE_AT_NOW);
+  });
+
+  // A request that does not present its token with the DPoP scheme is given no nonce and asked for none.
+  it.each([
+    ['a Bearer token', 'Bearer', 200],
+    ['no token', undefined, 401],
+  ])('should give no nonce to a request with %s', async (_name, scheme, status) => {
+    const accessToken = await storeToken();
+    const headers: Record<string, string> = scheme === undefined ? {} : { Authorization: `${scheme} ${accessToken}` };
+
+    const response = await GET(requestTo('/userinfo', { headers }));
+
+    expect([response.status, response.headers.has('DPoP-Nonce')]).toEqual([status, false]);
+  });
+
+  // RFC 9449 §7.2 Figure 19: a request that names both schemes in Authorization is rejected before the DPoP scheme is read.
+  it('should give no nonce to a request that names both Bearer and DPoP in Authorization', async () => {
+    const accessToken = await storeToken();
+
+    const response = await GET(requestTo('/userinfo', { headers: { Authorization: `Bearer ${accessToken}, DPoP ${accessToken}` } }));
+
+    expect([response.status, response.headers.get('WWW-Authenticate'), response.headers.has('DPoP-Nonce')]).toEqual([400, MULTIPLE_METHODS_CHALLENGES, false]);
+  });
+
+  // RFC 9449 §11.3: a server that provides no nonce requires none.
+  it.each([
+    ['without a nonce', {}],
+    ['with a nonce the server never issued', { nonce: 'a-nonce-of-another-server' }],
+  ])('should neither give nor require a nonce when dpopNonceRequiredAtResourceServer is false: a proof %s', async (_name, claims) => {
+    config.dpopNonceRequiredAtResourceServer = false;
+    const key = await dpopKey();
+
+    const response = await GET(await dpopGet(key, await storeToken(key.jkt), claims));
+
+    expect([response.status, await response.json(), response.headers.has('DPoP-Nonce')]).toEqual([200, CLAIMS, false]);
+  });
+
+  // RFC 2104 §3: a secret shorter than 32 bytes is a misconfiguration, not a bad request.
+  it('should answer server_error when the secret of the DPoP nonces is shorter than 32 bytes', async () => {
+    vi.stubEnv('OIDC_DPOP_NONCE_SECRET', 'a'.repeat(31));
+    const key = await dpopKey();
+
+    const response = await GET(await dpopGet(key, await storeToken(key.jkt)));
+
+    expect([response.status, await response.json(), response.headers.has('DPoP-Nonce')]).toEqual([500, { error: 'server_error' }, false]);
   });
 });

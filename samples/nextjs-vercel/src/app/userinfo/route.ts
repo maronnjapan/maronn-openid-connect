@@ -16,7 +16,12 @@
  * adds the DPoP challenge beside the Bearer one, rejects a token sent with
  * both schemes, and reads a token presented with the DPoP scheme and checks
  * its DPoP proof; the one after the token is resolved checks that the key the
- * token is bound to matches how it was presented (RFC 9449 §7.1 / §7.2).
+ * token is bound to matches how it was presented (RFC 9449 §7.1 / §7.2). With
+ * dpopNonceRequiredAtResourceServer, the first block gives every response
+ * from then on to a request presented with the DPoP scheme a new nonce of the
+ * protected resource (DPoP-Nonce, which withCors puts on the answer) and
+ * rejects a proof without a nonce it recently provided (use_dpop_nonce,
+ * RFC 9449 §9).
  */
 import {
   resolveUserInfoAccessToken,
@@ -97,7 +102,8 @@ export function OPTIONS(request: Request): Response {
  * - 401 の `invalid_token`: トークンがない、または登録されていない、期限切れ、このエンドポイント向けでない（`aud`）、サブジェクトのユーザーが見つからないとき。
  * - 403 の `insufficient_scope`: トークンが `openid` スコープを含まないとき。
  * - 400 の `invalid_request`: トークンを複数の方法で送ったとき。
- * 機能のブロックが拒否したリクエスト（dpop なら、DPoP proof を受け付けない 401 の `invalid_dpop_proof` など）にも、同じ形で応答する。
+ * 機能のブロックが拒否したリクエスト（dpop なら、DPoP proof を受け付けない 401 の `invalid_dpop_proof`、設定が保護されたリソースに nonce を求め、DPoP proof にその nonce が無い 401 の `use_dpop_nonce` など）にも、同じ形で応答する。
+ * DPoP の機能があり、設定が保護されたリソースに DPoP の nonce を求めるときは、DPoP スキーム（`Authorization: DPoP`）のリクエストには、そのスキームを読んだ後のどのレスポンスにも次の nonce（`DPoP-Nonce`）を付ける。
  *
  * リクエストのボディを読めないときは、チャレンジを付けずに 400 の `invalid_request` で応答する。
  * 署名鍵を読み込めないときは 503 で、それ以外の失敗（登録されたアルゴリズムの UserInfo の鍵がないときを含む）では 500 の `server_error` で応答する。

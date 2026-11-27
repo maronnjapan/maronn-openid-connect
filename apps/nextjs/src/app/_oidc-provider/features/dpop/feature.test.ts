@@ -29,13 +29,14 @@ describe('dpop', () => {
     expect(discoveryOf([dpop], {}, ISSUER, config)).toEqual({});
   });
 
-  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, a nonce lifetime of 120 seconds and no nonce required at the authorization server', () => {
+  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, a nonce lifetime of 120 seconds and no nonce required at the authorization server or at the protected resource', () => {
     expect(configOf([dpop])).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
       dpopNonceLifetimeSeconds: 120,
       dpopNonceRequiredAtAuthorizationServer: false,
+      dpopNonceRequiredAtResourceServer: false,
     });
   });
 
@@ -54,6 +55,23 @@ describe('dpop', () => {
     const { dpop: loaded } = await import('./feature');
 
     expect(loaded.config?.dpopNonceRequiredAtAuthorizationServer).toBe(required);
+  });
+
+  // RFC 9449 §9: OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1 makes the UserInfo endpoint require a nonce.
+  it.each([
+    ['1', true],
+    ['true', false],
+  ])('should require a nonce at the protected resource when OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER is %s: %s', async (value, required) => {
+    vi.stubEnv('OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER', value);
+    vi.resetModules();
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
+
+    const { dpop: loaded } = await import('./feature');
+
+    expect([loaded.config?.dpopNonceRequiredAtResourceServer, loaded.config?.dpopNonceRequiredAtAuthorizationServer]).toEqual([required, false]);
   });
 
   // RFC 9449 §4.1 / §7.1 / §8: a browser sends the DPoP header, reads the challenges of a

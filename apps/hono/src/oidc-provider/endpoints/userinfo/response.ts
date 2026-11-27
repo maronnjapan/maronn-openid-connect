@@ -36,15 +36,21 @@ export const BEARER_CHALLENGE: UserInfoChallenge = { scheme: 'Bearer', parameter
 export interface UserInfoChallenges {
   /** The challenge of every scheme the endpoint accepts, in the order WWW-Authenticate lists them. */
   readonly offered: UserInfoChallenge[];
-  /** The scheme the request presented its access token with: Bearer (the header or the form body, RFC 6750 §2) unless a feature read it. */
+  /**
+   * The scheme the request presented its access token with: Bearer (the header or the form body, RFC 6750 §2) unless a feature read it.
+   * It names the challenge that delivers the error, so it is the `scheme` of one of `offered` exactly (the comparison is case-sensitive), not the scheme as the request spelled it.
+   */
   scheme: string;
 }
 
 /**
  * The error information a failure delivers in its challenges (RFC 6750 §3):
  * in the challenge of the scheme the request used, or in every challenge when
- * the request used several methods, so the mechanism is ambiguous
- * (RFC 9449 §7.2).
+ * the request presented tokens with several schemes, so the mechanism is
+ * ambiguous (RFC 9449 §7.2). Several methods of one scheme (the Bearer header
+ * and form body) are not ambiguous. `error` and `errorDescription` are written
+ * into quoted-strings as they are, so they use only the characters RFC 6749
+ * §5.2 allows (no `"` or `\`), as core's UserInfoError descriptions do.
  */
 export interface UserInfoChallengeError {
   readonly error: string;
@@ -76,7 +82,7 @@ export class UserInfoEndpointError extends Error {
  * 受け付ける認証スキームのチャレンジを、コンマで区切って並べた `WWW-Authenticate` の値を返す。
  *
  * エラーの情報（`error` と `error_description`）は、リクエストがトークンを提示した認証スキーム（`challenges.scheme`）のチャレンジだけに入れ、ほかのスキームのチャレンジには入れない（RFC 9449 §7.2）。
- * 複数の方法でトークンを送ったリクエスト（`everyScheme`）では、どのスキームのチャレンジにも入れる。
+ * どのスキームでトークンを提示したのか決められないリクエスト（`everyScheme`、二つのスキームでトークンを送ったときなど）では、どのスキームのチャレンジにも入れる。
  * `'without-error'` なら、どのチャレンジにもエラーの情報を入れない（認証情報のないリクエスト、RFC 6750 §3.1）。
  * 一つの値に複数のチャレンジを並べてよい（RFC 9110 §11.6.1）。
  *

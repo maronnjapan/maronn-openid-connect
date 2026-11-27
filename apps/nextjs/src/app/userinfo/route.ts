@@ -165,7 +165,7 @@ async function userinfo(request: Request): Promise<Response> {
  * @spec RFC 6750 §2.1
  * @spec RFC 6750 §2.2
  * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、どのチャレンジもエラーを伝えない、RFC 6750 §3.1）。
- * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request` で、どのチャレンジもそのエラーを伝える、RFC 9449 §7.2）。
+ * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request` で、`Bearer` のチャレンジがそのエラーを伝える、RFC 9449 §7.2）。
  * @throws {UserInfoEndpointError} リクエストのボディを読めないとき（チャレンジの付かない 400 の `invalid_request`）。
  */
 async function parseBearerAccessToken(request: Request): Promise<string> {
@@ -178,13 +178,13 @@ async function parseBearerAccessToken(request: Request): Promise<string> {
   }
   if (methodCount > 1) {
     // クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
-    // どの方法で認証しようとしたのか決められないので、どのスキームのチャレンジにもエラーを入れる（RFC 9449 §7.2）。
+    // ヘッダーもフォームのボディも Bearer の方法（RFC 6750 §2.1 / §2.2）で、認証しようとしたスキームは決まるので、`Bearer` のチャレンジだけにエラーを入れる（RFC 9449 §7.2）。
     throw new UserInfoEndpointError(
       {
         status: 400,
         body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
       },
-      { error: 'invalid_request', everyScheme: true },
+      { error: 'invalid_request' },
     );
   }
   if (!token) {

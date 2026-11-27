@@ -23,7 +23,7 @@ describe('userInfoChallengeHeader', () => {
     });
 
     it('should leave out error_description when the error has no description', () => {
-      expect(userInfoChallengeHeader(bearerOnly, { error: 'invalid_request', everyScheme: true })).toBe(
+      expect(userInfoChallengeHeader(bearerOnly, { error: 'invalid_request' })).toBe(
         'Bearer realm="UserInfo", error="invalid_request"',
       );
     });

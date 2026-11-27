@@ -34,13 +34,13 @@ DPoP proof を検査するブロックにクライアントを渡し、その直
 - 使用済みのもの、別のクライアントのもの、見つからないものは確かめず、後のグラントの検証に任せる。使用済みのコードやリフレッシュトークンの再提示では、グラントの検証がそのグラントのトークンを失効させる（OAuth 2.1 §4.1.2 / §4.3.1）ので、ここで `invalid_grant` を先に返すと、その失効が起きなくなるためである
 - 拒否は 400 の `invalid_grant` にした。RFC 9449 §5 と §10 は束縛を確かめて拒否するとだけ言い、エラーコードを決めていない。DPoP proof そのものは正しく、提示したグラントがこのリクエストに使えないので、RFC 6749 §5.2 の `invalid_grant` に当たる
 - `grant_type` が `authorization_code` と `refresh_token` 以外のリクエストではストアを読まない。デバイス認可や CIBA が発行するリフレッシュトークンも `refreshTokenStore` に入るので、それを提示するリフレッシュのリクエストは同じように確かめる
-- テストは、束縛したコードとリフレッシュトークンを、同じ鍵の DPoP proof で使えること、DPoP proof が無い・別の鍵のときに `invalid_grant` で拒否し、コードもリフレッシュトークンも使用済みにしないこと、使用済みのものの再提示と別のクライアントのコードは core の `invalid_grant`（説明の文言もそのまま書く）になること、束縛の無いものは前と同じに使えることを確かめる
+- テストは、束縛したコードとリフレッシュトークンを、同じ鍵の DPoP proof で使えること、DPoP proof が無い・別の鍵のときに `invalid_grant` で拒否し、コードもリフレッシュトークンも使用済みにしないこと、使用済みのものの再提示と、別のクライアントのコードとリフレッシュトークンは core の `invalid_grant`（説明の文言もそのまま書く）になること、ほかのグラントのリクエストは、束縛したコードやリフレッシュトークンを送っても確かめないこと、束縛の無いものは前と同じに使えることを確かめる
 
 ## readDpopJkt, validateDpopBoundGrant, selectDpopRefreshTokenJkt <!-- hono:oidc-provider/features/dpop/binding.ts#readDpopJkt hono:oidc-provider/features/dpop/binding.ts#validateDpopBoundGrant hono:oidc-provider/features/dpop/binding.ts#selectDpopRefreshTokenJkt nextjs:app/_oidc-provider/features/dpop/binding.ts#readDpopJkt nextjs:app/_oidc-provider/features/dpop/binding.ts#validateDpopBoundGrant nextjs:app/_oidc-provider/features/dpop/binding.ts#selectDpopRefreshTokenJkt -->
 
 束縛の規則を集める `binding.ts` に、レコードの `cnf.jkt` を読む関数、束縛した鍵と DPoP proof の鍵を照らし合わせる関数、リフレッシュトークンを束縛する鍵を選ぶ関数を足した。
 
 - `readDpopJkt()` は、`cnf` が無いか、`cnf.jkt` が文字列でないレコードを束縛していないものとして読む。`x5t#S256`（mTLS）など、ほかの方法の確認だけを持つレコードも、DPoP の鍵には束縛していない
-- `validateDpopBoundGrant()` の失敗は `DpopError` の `invalid_grant` で、`errors.ts` のエラーコードの一覧に `invalid_grant` を足した。`tokenEndpointErrorOf()` と `tokenEndpointRejectionOf()` は、コードによらず DPoP の失敗を 400 にするので、手を加えていない（JSDoc に `invalid_grant` を書き足しただけである）
+- `validateDpopBoundGrant()` の失敗は `DpopError` の `invalid_grant` で、`errors.ts` のエラーコードの一覧に `invalid_grant` を足し、トークンエンドポイントだけが返すコードで、保護されたリソースのチャレンジには載せないことも書いた。`tokenEndpointErrorOf()` と `tokenEndpointRejectionOf()` は、コードによらず DPoP の失敗を 400 にするので、手を加えていない（JSDoc に `invalid_grant` を書き足しただけである）
 - 説明の文言は、DPoP proof が無いときと別の鍵のときで分けた。どちらもクライアントが送った値を含まない固定の文言である
 - テストは、PR #205 のテストに、`cnf` が `null` のとき、`cnf.jkt` が文字列でないときを足した

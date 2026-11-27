@@ -80,6 +80,19 @@ describe('createApp', () => {
       expect(response.headers.get('Access-Control-Max-Age')).toBe('600');
     });
 
+    // Access-Control-Expose-Headers takes effect on the actual response, where the
+    // dpop extension lets a browser read the challenge of the failure (RFC 9449 §7.1).
+    it('should let a browser read WWW-Authenticate on the 401 of a cross-origin /userinfo request', async () => {
+      const app = await providerApp(createEmptyDatabase());
+
+      const response = await app.request(requestTo('/userinfo', { headers: { Origin: RP_ORIGIN } }));
+
+      expect(response.status).toBe(401);
+      expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="UserInfo"');
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Expose-Headers')).toBe('WWW-Authenticate');
+    });
+
     it('should allow only the configured corsOrigins on /userinfo', async () => {
       const app = await providerApp(createEmptyDatabase(), { corsOrigins: [RP_ORIGIN] });
 

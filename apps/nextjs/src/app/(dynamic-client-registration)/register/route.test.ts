@@ -346,15 +346,27 @@ describe('POST /register', () => {
   });
 
   // The signing keys are loaded once the media type and the declared length passed, before the body is read.
-  it('should answer 503 when the signing keys cannot be loaded, after the media type check', async () => {
+  it('should answer 503 when the signing keys cannot be loaded, after the media type and declared length checks and before reading the body', async () => {
     failToLoadSigningKeys();
+    const request = new Request(`${TEST_ISSUER}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: REDIRECT_URIS }),
+    });
+    const text = vi.spyOn(request, 'text');
 
     const otherMediaType = await register({ redirect_uris: REDIRECT_URIS }, { 'Content-Type': 'text/plain' });
-    const json = await register({ redirect_uris: REDIRECT_URIS });
+    const tooLong = await register(
+      { redirect_uris: REDIRECT_URIS },
+      { 'Content-Length': String(dynamicClientRegistrationConfig.maxRegistrationBodyBytes + 1) },
+    );
+    const json = await POST(request);
 
     expect(otherMediaType.status).toBe(400);
+    expect(tooLong.status).toBe(400);
     expect(json.status).toBe(503);
     expect(await json.json()).toEqual({ error: 'server_error', error_description: 'Failed to load signing key' });
+    expect(text).not.toHaveBeenCalled();
   });
 
   it('should answer an unexpected failure of the store with an uncacheable 500 server_error', async () => {

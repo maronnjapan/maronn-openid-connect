@@ -158,6 +158,25 @@ describe('registerDpopClientMetadata', () => {
     expect(await answerOf(refused)).toEqual([400, NOT_A_BOOLEAN]);
   });
 
+  // A validator that returns undefined registers nothing, so the block checks the value of the request:
+  // with the validator `(value) => value`, an omitted value registers false (the default of RFC 9449 §5.2).
+  it('should check the value of the request when the customClientMetadata validator registered nothing', async () => {
+    const echoing = await providerApp({ dynamicClientRegistration: { customClientMetadata: { dpop_bound_access_tokens: (value) => value } } });
+    const silent = await providerApp({ dynamicClientRegistration: { customClientMetadata: { dpop_bound_access_tokens: () => undefined } } });
+
+    const [omittedStatus, omittedBody] = await answerOf(await register(echoing, { redirect_uris: [REDIRECT_URI] }));
+    const omittedStored = await dynamicClientStore.get(String(omittedBody['client_id']));
+    const [trueStatus, trueBody] = await answerOf(await register(silent, { redirect_uris: [REDIRECT_URI], dpop_bound_access_tokens: true }));
+    const trueStored = await dynamicClientStore.get(String(trueBody['client_id']));
+
+    expect(omittedStatus).toBe(201);
+    expect(omittedBody['dpop_bound_access_tokens']).toBe(false);
+    expect(omittedStored?.registrationMetadata).toEqual({ ...REGISTERED_DEFAULTS, dpop_bound_access_tokens: false });
+    expect(trueStatus).toBe(201);
+    expect(trueBody['dpop_bound_access_tokens']).toBe(true);
+    expect(trueStored?.registrationMetadata).toEqual({ ...REGISTERED_DEFAULTS, dpop_bound_access_tokens: true });
+  });
+
   // The refusal is built through the context, so the CORS middleware's headers stay on it.
   it('should keep the CORS headers on a refused dpop_bound_access_tokens', async () => {
     const app = await providerApp();

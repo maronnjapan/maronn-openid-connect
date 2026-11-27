@@ -48,8 +48,8 @@ export interface DpopUserInfoRequest {
  * その失敗のエラーの情報は Bearer のチャレンジが伝え、DPoP のチャレンジはエラーなしで並ぶ（RFC 9449 §7.2 Figure 17 / 18）。
  * DPoP スキームなら、トークンを提示したスキームを DPoP にして、このブロックと後のブロックの失敗のエラーの情報を DPoP のチャレンジに入れる（RFC 9449 §7.2）。
  * そのうえで、次を確かめる。
+ * - POST のフォームのボディに空でない `access_token` がない（あれば、`Authorization` の credentials の形によらず、上の両方のスキームでトークンを送ったリクエストとして拒否する。RFC 6750 §2）
  * - `Authorization` の値がアクセストークンを一つの token68 で持つ（RFC 9449 §7.1）
- * - POST のフォームのボディに空でない `access_token` がない（あれば、上の両方のスキームでトークンを送ったリクエストとして拒否する。RFC 6750 §2）
  * - `DPoP` ヘッダーがちょうど一つある（RFC 9449 §7.1 / §4.3）
  * - DPoP proof が正しい（`htm` はリクエストのメソッド、`htu` は issuer の `/userinfo`、`ath` はアクセストークンのハッシュ。RFC 9449 §4.3）
  *
@@ -79,11 +79,11 @@ export async function readDpopUserInfoRequest(request: Request, challenges: User
   // DPoP スキームで提示したリクエストの失敗は、DPoP のチャレンジがエラーの情報を伝える（RFC 9449 §7.2）。
   challenges.scheme = DPOP_AUTHENTICATION_SCHEME;
   try {
-    const accessToken = validateDpopCredentials(credentials);
     if (await formBodyHasAccessToken(request)) {
-      // フォームのボディのトークンは Bearer の方法（RFC 6750 §2.2）なので、二つのスキームでトークンを送ったことになる。
+      // フォームのボディのトークンは Bearer の方法（RFC 6750 §2.2）なので、DPoP の credentials の形によらず、二つのスキームでトークンを送ったことになる。
       throw ambiguousUserInfoRequestError();
     }
+    const accessToken = validateDpopCredentials(credentials);
     // `DPoP` ヘッダーは一つだけでなければならない（RFC 9449 §4.3）。
     const proof = readDpopProofHeader(request.headers.get('DPoP'));
     if (proof === undefined) {

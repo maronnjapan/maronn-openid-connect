@@ -17,7 +17,7 @@ import { readDpopUserInfoRequest } from './userinfo';
 
 const USERINFO_ENDPOINT = `${TEST_ISSUER}/userinfo`;
 const TOKEN_ENDPOINT = `${TEST_ISSUER}/token`;
-/** The challenges every failure answers with, before the error: Bearer, then DPoP with the default algs. */
+/** The challenges of a request that presented its token with the DPoP scheme, before the error: Bearer, then DPoP with the default algs. */
 const DPOP_CHALLENGES = 'Bearer realm="UserInfo", DPoP algs="ES256 ES384 ES512 PS256 PS384 PS512 RS256 RS384 RS512 EdDSA"';
 /** The challenges of a request that sent its token with both Bearer and DPoP: both carry the error (RFC 9449 Figure 19). */
 const MULTIPLE_METHODS_CHALLENGES =
@@ -288,6 +288,23 @@ describe('readDpopUserInfoRequest', () => {
       body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
     });
   });
+
+  // RFC 9449 §7.2 Figure 19: the form body is a Bearer method whatever the DPoP credentials are, as a
+  // Bearer field without a token beside a DPoP field is.
+  it.each(['DPoP', 'DPoP token-1 token-1'])(
+    'should reject "%s" sent with a token in the form body with 400 and the error in both challenges',
+    async (authorization) => {
+      const accessToken = await storeToken();
+
+      const response = await POST(formPost({ access_token: accessToken }, { Authorization: authorization }));
+
+      expect(await answerOf(response)).toEqual({
+        status: 400,
+        challenge: MULTIPLE_METHODS_CHALLENGES,
+        body: { error: 'invalid_request', error_description: 'Multiple access token methods are not allowed' },
+      });
+    },
+  );
 
   it('should take an empty access_token of the form body for no second token', async () => {
     const key = await dpopKey();

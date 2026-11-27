@@ -193,7 +193,7 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `client-credenti
 | 機能名 | 内容 | 実装 |
 |---|---|---|
 | `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、Discovery に `dpop_signing_alg_values_supported` を載せ、CORS で `DPoP` ヘッダーを許す。どのエンドポイントもまだ DPoP proof を検査しないので、トークンはすべて Bearer のまま | 生成コードの `features/dpop/`（package なし） |
+| `dpop` | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。どのエンドポイントもまだ DPoP proof を検査しないので、トークンはすべて Bearer のままで、Discovery も `dpop_signing_alg_values_supported` を載せない | 生成コードの `features/dpop/`（package なし） |
 
 ## Custom Scopes
 

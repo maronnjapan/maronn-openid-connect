@@ -475,7 +475,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
+| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
 
@@ -1044,7 +1044,7 @@ Hono（Cloudflare D1）では、管理用のスクリプトから `registerClien
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行います（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の生成コードは、クライアントを環境変数から読みません。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
-テーブルの列やレコードの項目に無い登録メタデータ（`defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、ciba の `backchannelTokenDeliveryMode` のように機能が `RegisteredClient` に足すメタデータ）は、`clients.payload` 列（`--db kv` はクライアントのレコードの `payload`）に JSON で保存し、クライアントを読むときにそのまま返します。
+テーブルの列やレコードの項目に無い登録メタデータ（`defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、ciba の `backchannelTokenDeliveryMode`、dpop の `dpopBoundAccessTokens` のように機能が `RegisteredClient` に足すメタデータ）は、`clients.payload` 列（`--db kv` はクライアントのレコードの `payload`）に JSON で保存し、クライアントを読むときにそのまま返します。
 JSON で表せない値（関数など）は残りません。
 `clientSecret` と公開鍵（`keys`）は `payload` に入れません。
 `jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri` は `clients` のそれぞれ `jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` 列（`--db kv` はクライアントのレコードの同じ名前の項目）に、`requestUris` は `client_request_uris` の行（`--db kv` はレコードの `request_uris`）に保存します。

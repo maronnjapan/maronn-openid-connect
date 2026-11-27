@@ -175,6 +175,23 @@ describe('issueHybridConsentResponse', () => {
     });
   });
 
+  // RFC 9449 §10: a transaction bound to a key with dpop_jkt binds the code it issues.
+  describe('Key binding of the request', () => {
+    it('should carry the cnf of the transaction into the code', async () => {
+      const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+      const { db } = await approve({ ...hybridTransaction(), cnf } as AuthTransaction);
+
+      expect([...db.codes.values()]).toEqual([expect.objectContaining({ cnf })]);
+    });
+
+    it('should store a code without cnf for a transaction that is not bound', async () => {
+      const { db } = await approve(hybridTransaction());
+
+      expect([...db.codes.values()].map((code) => 'cnf' in code)).toEqual([false]);
+    });
+  });
+
   describe('Scope policy', () => {
     beforeEach(() => {
       RESTRICTED_SCOPE_SUBJECTS['reports.read'] = ['bob'];

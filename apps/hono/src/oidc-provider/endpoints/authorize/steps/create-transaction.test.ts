@@ -1,3 +1,4 @@
+import { createAuthTransaction } from '@maronn-openid-connect/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLIENT_ID,
@@ -84,5 +85,30 @@ describe('createAuthorizationTransaction', () => {
 
     expect(db.transactions.get('auth_txn:' + transactionId)?.value).toEqual({ ...transaction, responseMode: 'query.jwt' });
     expect(transaction).not.toHaveProperty('responseMode');
+  });
+
+  // RFC 9449 §10: a request a feature bound to a key (dpop_jkt) keeps the key as
+  // cnf, so the code issued from the transaction carries it to the token endpoint.
+  describe('Key binding of the request', () => {
+    const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+    it('should put the confirmation on the transaction it returns and on the one it stores', async () => {
+      const { c, db } = await providerContext();
+      const { responseMode } = recordingResponseMode('query.jwt');
+
+      const { transactionId, transaction } = await createAuthorizationTransaction(c, validatedRequestOf(), responseMode, cnf);
+
+      expect(transaction).toMatchObject({ clientId: CLIENT_ID, cnf });
+      expect(db.transactions.get('auth_txn:' + transactionId)?.value).toEqual({ ...transaction, responseMode: 'query.jwt' });
+    });
+
+    it('should make the transaction core makes, member for member, for a request that is not bound', async () => {
+      const { c } = await providerContext();
+
+      const { transaction } = await createAuthorizationTransaction(c, validatedRequestOf(), undefined, undefined);
+
+      const made = createAuthTransaction(validatedRequestOf(), transaction.csrfToken);
+      expect([transaction, Object.keys(transaction)]).toEqual([made, Object.keys(made)]);
+    });
   });
 });

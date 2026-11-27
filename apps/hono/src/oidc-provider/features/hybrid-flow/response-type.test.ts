@@ -1,3 +1,4 @@
+import type { AuthTransaction } from '@maronn-openid-connect/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLIENT_ID,
@@ -25,11 +26,17 @@ const AUTH_TIME = NOW_SECONDS - 30;
 /** Answer the stored Hybrid Flow transaction of the signed-in End-User. */
 async function respond(
   responseType: 'code id_token token' | 'code id_token' | 'code token',
-  input: { options?: Partial<OidcProviderOptions>; responseMode?: AuthorizationResponseMode; scope?: string } = {},
+  input: {
+    options?: Partial<OidcProviderOptions>;
+    responseMode?: AuthorizationResponseMode;
+    scope?: string;
+    cnf?: Record<string, string>;
+  } = {},
 ) {
   const context = await providerContext({ options: input.options });
   await registerTestClient(context.db);
-  const transaction = transactionOf({ responseType, scope: input.scope ?? 'openid profile' });
+  const made = transactionOf({ responseType, scope: input.scope ?? 'openid profile' });
+  const transaction = input.cnf === undefined ? made : ({ ...made, cnf: input.cnf } as AuthTransaction);
   await storeTransaction(context.stores, transaction);
   const outcome = await hybridResponseTypeHandler.respond(context.c, {
     transactionId: TRANSACTION_ID,
@@ -172,6 +179,23 @@ describe('hybridResponseTypeHandler', () => {
       expect(fragmentOf(outcome).params['scope']).toBe('openid');
       expect([...db.codes.values()].map((record) => record.scope)).toEqual([['openid']]);
       expect([...db.accessTokens.values()].map((record) => record.scope)).toEqual([['openid']]);
+    });
+  });
+
+  // RFC 9449 §10: a transaction bound to a key with dpop_jkt binds the code it issues.
+  describe('Key binding of the request', () => {
+    it('should carry the cnf of the transaction into the code', async () => {
+      const cnf = { jkt: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs' };
+
+      const { db, outcome } = await respond('code id_token', { cnf });
+
+      expect([...db.codes.values()]).toEqual([expect.objectContaining({ code: fragmentOf(outcome).params['code'], cnf })]);
+    });
+
+    it('should store a code without cnf for a transaction that is not bound', async () => {
+      const { db } = await respond('code id_token');
+
+      expect([...db.codes.values()].map((code) => 'cnf' in code)).toEqual([false]);
     });
   });
 });

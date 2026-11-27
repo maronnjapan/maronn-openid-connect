@@ -74,6 +74,7 @@ import {
 } from '../_oidc-provider/http';
 import { buildTransactionCookie } from '../_oidc-provider/cookies';
 import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider/scopes';
+import { confirmationRecordOf } from '../_oidc-provider/token-binding';
 import {
   authorizationResponseOf,
   respondToClient,
@@ -487,6 +488,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
  * 画面の要らないリクエスト（`prompt=none`、または以前に同意したエンドユーザーの SSO）から呼ばれる。
  * インプリシットフローかハイブリッドフローの機能がレスポンスタイプに応答すれば、その機能の応答を返す。
  * そうでなければ、トランザクションを削除してから認可コードを作ってストアに保存し、エンドユーザー、クライアント、グラント ID の組を同意リゾルバに記録して、認可コードを含む認可レスポンスで応答する。
+ * トランザクションが束縛の確認（`cnf`。DPoP の `dpop_jkt`、RFC 9449 §10）を持てば、それも認可コードのレコードに入れる。
  *
  * `transaction.scope` は、認可リクエストの検証で `applyOfflineAccessPolicy()` を通した後の値である。
  * `offline_access` を残すかどうか（OIDC Core 1.0 §11 の `prompt=consent` と、クライアント登録の `grant_types` に `refresh_token` があるか）はそこで判定済みなので、ここではスコープを絞り直さない。
@@ -494,6 +496,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
  * @spec OIDC Core 1.0 §3.1.2.5
  * @spec OIDC Core 1.0 §3.1.3.1
  * @spec RFC 9207 §2
+ * @spec RFC 9449 §10
  */
 async function issueAuthorizationResponse(
   transactionId: string,
@@ -522,7 +525,9 @@ async function issueAuthorizationResponse(
     // 認可コードの有効期間は `ProviderConfig` の `authorizationCodeTtl` で設定でき、既定は 300 秒である（OIDC Core 1.0 §3.1.3.1）。
     ttlSeconds: config.authorizationCodeTtl,
   });
-  await authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、トランザクションの `cnf` を認可コードのレコードに引き継ぐ。
+  // DPoP の機能が、トークンエンドポイントでこの `cnf` と DPoP proof の鍵を照らし合わせられるようにするためである。
+  await authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf(transaction) });
   // エンドユーザー、クライアント、グラント ID の組を記録する。
   // 同意を取り消すと、このグラントから発行したトークンも失効する。
   await consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);

@@ -46,6 +46,7 @@ import {
   type ProviderSigningKeys,
 } from '../../provider';
 import { issueImplicitAccessToken } from '../implicit-flow/tokens';
+import { confirmationRecordOf } from '../../token-binding';
 
 /** What the Hybrid Flow issues the code and the tokens for: an authenticated, consented request. */
 export interface HybridTokensInput {
@@ -65,6 +66,8 @@ export interface HybridTokensInput {
   /** The scope the End-User granted, after the scope policy (scopes.ts). */
   grantedScope: string[];
   keys: ProviderSigningKeys;
+  /** The confirmation the authorization request was bound to (dpop_jkt, RFC 9449 §10), carried into the code. */
+  codeConfirmation?: Readonly<Record<string, string>>;
 }
 
 export interface HybridTokens {
@@ -87,6 +90,7 @@ export interface HybridTokens {
  *
  * `response_type` に応じて、認可コードと一緒に ID トークン（`code id_token`）、アクセストークン（`code token`）、またはその両方（`code id_token token`）を発行する。
  * 認可コードはストアに保存し、アクセストークンを発行したときはそのレコードも保存する。
+ * 認可リクエストを鍵に束縛したとき（`codeConfirmation`。DPoP の `dpop_jkt`、RFC 9449 §10）は、その確認を `cnf` として認可コードのレコードに入れる。
  * 返すのは、認可レスポンスのパラメータ（`code` と `state` を含む）、グラント ID、保存した認可コードである。
  *
  * 呼び出す時点で、トランザクションは `completeAuthTransaction()` で終わっている。
@@ -96,7 +100,7 @@ export interface HybridTokens {
  *   このエラーは何かを保存する前に投げ、リクエストのほかのエラーと同じくクライアントへリダイレクトで返る。
  */
 export async function issueHybridTokens(input: HybridTokensInput): Promise<HybridTokens> {
-  const { responseType, responseParams, session, grantedScope, keys } = input;
+  const { responseType, responseParams, session, grantedScope, keys, codeConfirmation } = input;
   const grantId = generateRandomString(32);
   // レスポンス全体で一つの時刻を使い、認可コード、トークン、保存するレコードの `iat` と `exp` を揃える。
   const issuedAt = Math.floor(Date.now() / 1000);
@@ -135,7 +139,8 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
       sessionId: session.sessionId,
     },
   );
-  await stores.authCodeStore.set(authCodeData.code, authCodeData);
+  // 認可リクエストを鍵に束縛したとき（DPoP の `dpop_jkt`、RFC 9449 §10）は、その `cnf` を認可コードのレコードに引き継ぐ。
+  await stores.authCodeStore.set(authCodeData.code, { ...authCodeData, ...confirmationRecordOf({ cnf: codeConfirmation }) });
 
   // `code token` と `code id_token token` では、認可コードと一緒に返すアクセストークンを、認可コードと同じグラントで発行する。
   const accessToken = responseTypeIncludes(responseType, 'token')

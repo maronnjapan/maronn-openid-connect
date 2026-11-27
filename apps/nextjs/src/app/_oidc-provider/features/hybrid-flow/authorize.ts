@@ -17,6 +17,7 @@ import {
 import { respondToClient, type AuthorizationResponseMode } from '../../../authorize/response-mode';
 import { config, loadSigningKeys, resolvers, stores } from '../../provider';
 import { createFragmentResponseMode } from '../implicit-flow/response-mode';
+import { confirmationOf } from '../../token-binding';
 import { issueHybridTokens } from './tokens';
 
 /**
@@ -62,6 +63,7 @@ export function validateHybridRequest(
  * ほかのレスポンスタイプには `undefined` を返し、あとのブロック（認可コードの発行）に任せる。
  *
  * トランザクションを終え、そのスコープで認可コードと ID トークンかアクセストークン（または両方）を発行し、グラントを記録する。
+ * トランザクションが束縛の確認（`cnf`。DPoP の `dpop_jkt`、RFC 9449 §10）を持てば、それを認可コードに引き継ぐ。
  * 認可レスポンスは `responseMode` で返し、ないときはフラグメントで返す（OIDC Core 1.0 §3.3.2.5）。
  * クエリでは返さない。
  *
@@ -94,6 +96,7 @@ export async function issueHybridResponse(input: {
     session,
     grantedScope,
     keys,
+    codeConfirmation: confirmationOf(transaction),
   });
   // グラントを記録する。
   // 同意を取り消すと、このグラントのトークン（認可エンドポイントが発行したものと、トークンエンドポイントがこの認可コードに対して発行するもの）が失効する。

@@ -16,6 +16,7 @@ import { step } from '../../../endpoints/step.js';
 import { resolveGrantableScopes } from '../../../scopes.js';
 import type { AuthSessionInfo } from '../../../store.js';
 import { createFragmentResponseMode } from '../../implicit-flow/response-mode.js';
+import { confirmationOf } from '../../../token-binding.js';
 import { issueHybridTokens } from '../tokens.js';
 
 export const meta = step({
@@ -38,6 +39,7 @@ export const meta = step({
  * ほかのレスポンスタイプには `undefined` を返し、あとのステップ（認可コードの発行）に任せる。
  *
  * トランザクションを終え、同意されたスコープで認可コードと ID トークンかアクセストークン（または両方）を発行し、同意とグラントを記録する。
+ * トランザクションが束縛の確認（`cnf`。DPoP の `dpop_jkt`、RFC 9449 §10）を持てば、それを認可コードに引き継ぐ。
  * トークンの発行が `AuthorizationError` で失敗したときは、同意とグラントを記録せず、そのエラーを認可レスポンスで返す。
  *
  * 認可レスポンスは、トランザクションに保存したレスポンスモードで返し、保存がなければフラグメントで返す（OIDC Core 1.0 §3.3.2.5）。
@@ -46,6 +48,7 @@ export const meta = step({
  *
  * @throws {Error} トランザクションに保存したレスポンスモードを扱う機能が有効でないとき（`restoreResponseMode()`）。
  * @spec OIDC Core 1.0 §3.3.2.5
+ * @spec RFC 9449 §10
  */
 export async function issueHybridConsentResponse(
   c: any,
@@ -84,6 +87,7 @@ export async function issueHybridConsentResponse(
       responseParams,
       session,
       grantedScope,
+      codeConfirmation: confirmationOf(transaction),
     });
   } catch (error) {
     if (!(error instanceof AuthorizationError)) throw error;

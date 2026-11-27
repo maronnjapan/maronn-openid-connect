@@ -6,6 +6,7 @@ import {
 } from '@maronn-openid-connect/core';
 import type { AuthorizationTransaction } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
+import { confirmationRecordOf } from '../../../token-binding.js';
 import { step } from '../../step.js';
 
 export const meta = step({
@@ -15,8 +16,8 @@ export const meta = step({
   label: '認可トランザクションを作って保存する',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'createAuthorizationTransaction',
-  consumes: ['validatedRequest', 'responseMode'],
-  optional: ['responseMode'],
+  consumes: ['validatedRequest', 'responseMode', 'codeConfirmation'],
+  optional: ['responseMode', 'codeConfirmation'],
   produces: ['transactionId', 'transaction', 'transactionTtlSeconds'],
   removable: false,
 });
@@ -32,16 +33,25 @@ export const meta = step({
  * 同意のステップはストアから読み戻したトランザクションしか使わないので、この記録から同じモードを復元して応答する（`response-mode.ts` の `restoreResponseMode()`）。
  * そのため、ストアは、型に定義されていないフィールドも捨てずに保存する必要がある。
  *
+ * 機能（dpop）が認可リクエストを鍵に束縛するとき（`codeConfirmation`。`dpop_jkt`、RFC 9449 §10）は、その確認を `cnf` としてトランザクションに入れる。
+ * このトランザクションから発行する認可コードは、同じ `cnf` を引き継ぐ。
+ * `codeConfirmation` がなければ、`cnf` は入れない。
+ *
  * @spec OIDC Core 1.0 §3.1.2.3
+ * @spec RFC 9449 §10
  */
 export async function createAuthorizationTransaction(
   c: any,
   validatedRequest: ValidatedAuthorizationRequest,
   responseMode: AuthorizationResponseMode | undefined,
+  codeConfirmation?: Readonly<Record<string, string>>,
 ): Promise<AuthorizationTransaction> {
   const transactionStore = c.get('transactionStore');
   const csrfToken = await generateRandomString(32);
-  const transaction: AuthTransaction = createAuthTransaction(validatedRequest, csrfToken);
+  const transaction: AuthTransaction = {
+    ...createAuthTransaction(validatedRequest, csrfToken),
+    ...confirmationRecordOf({ cnf: codeConfirmation }),
+  };
   const transactionId = await generateRandomString(32);
 
   const transactionTtlSeconds = 10 * 60; // 有効期間は 10 分。

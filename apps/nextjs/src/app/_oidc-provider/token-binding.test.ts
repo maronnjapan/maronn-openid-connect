@@ -3,6 +3,7 @@ import {
   accessTokenClaimsOf,
   accessTokenRecordOf,
   confirmationOf,
+  confirmationRecordOf,
   refreshTokenRecordOf,
   tokenTypeOf,
   withTokenBinding,
@@ -44,7 +45,7 @@ describe('token binding', () => {
     ['a cnf that is null', { cnf: null }, undefined],
     ['undefined', undefined, undefined],
   ])('should read the confirmation of %s', (_name, record, expected) => {
-    expect(confirmationOf(record)).toEqual(expected);
+    expect([confirmationOf(record), confirmationRecordOf(record)]).toStrictEqual([expected, expected === undefined ? {} : { cnf: expected }]);
   });
 
   describe('withTokenBinding', () => {

@@ -8,6 +8,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSqliteDatabase } from '../../../test-support/databases.js';
 import type { ProviderStores } from '../../store.js';
+import { accessTokenRecordOf, refreshTokenRecordOf } from '../../token-binding.js';
 import type { SqlDatabase } from './database.js';
 import { createProviderStores } from './stores.js';
 import { registerUser } from './users.js';
@@ -354,6 +355,14 @@ describe('createProviderStores', () => {
       expect(await stores.accessTokenStore.get('at-1')).toEqual(stored);
     });
 
+    // RFC 9449 §6.2: what a binding adds to the record comes back with it, for the introspection of a bound token.
+    it('should return the cnf and the token_type a binding added to an access token', async () => {
+      const stored = { ...accessToken({ jti: 'jti-1' }), ...accessTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' }) };
+      await stores.accessTokenStore.set('at-1', stored);
+
+      expect(await stores.accessTokenStore.get('at-1')).toEqual(stored);
+    });
+
     it('should store a token without a jti under its SHA-256 hash and return it without a jti', async () => {
       await stores.accessTokenStore.set('at-1', accessToken());
 
@@ -427,6 +436,15 @@ describe('createProviderStores', () => {
   });
 
   describe('refreshTokenStore', () => {
+    // RFC 9449 §5: the confirmation of a bound refresh token comes back with it, for the check at the next refresh.
+    it('should return the cnf a binding added to a refresh token', async () => {
+      const binding = { cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP', refreshTokenCnf: { jkt: 'jkt-1' } };
+      const stored = { ...refreshToken(), ...refreshTokenRecordOf(binding) };
+      await stores.refreshTokenStore.set('rt-1', stored);
+
+      expect(await stores.refreshTokenStore.get('rt-1')).toEqual(stored);
+    });
+
     // OAuth 2.1 §4.3.1: a rotated refresh token stays readable so a replay is detected.
     it('should keep a consumed refresh token readable and reject a second consume with invalid_grant', async () => {
       await stores.refreshTokenStore.set('rt-1', refreshToken());

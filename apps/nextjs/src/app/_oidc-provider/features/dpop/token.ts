@@ -28,7 +28,10 @@ export interface DpopTokenRequest {
   dpopJkt: string | undefined;
   /** The key the tokens of the response are bound to; undefined issues Bearer tokens. */
   tokenBinding: TokenBinding | undefined;
-  /** The error response to answer with when the DPoP proof was rejected. */
+  /**
+   * The error response to answer with when the DPoP proof was rejected, or was
+   * missing from a request of a client registered with dpop_bound_access_tokens.
+   */
   dpopRejection?: Response;
 }
 

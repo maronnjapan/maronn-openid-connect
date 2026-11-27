@@ -10,9 +10,13 @@
  * also go to the summary of the run on GitHub Actions.
  *
  * The history is read from the first-parent history of the newest commit
- * that brought code HEAD has of the base (MAP_BASE), else of the main of a
- * remote (origin/main, upstream/main), else of HEAD. MAP_PULLS names a JSON file of the pull requests on GitHub
- * (`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp`):
+ * that brought code HEAD has of MAP_HISTORY_BASE (a git revision of main:
+ * origin/main), else of the base (MAP_BASE), else of the main of a remote
+ * (origin/main, upstream/main), else of HEAD. Give MAP_HISTORY_BASE to the
+ * map of a pull request stacked on another one's branch: that branch is its
+ * MAP_BASE, whose commits have not reached main, and its history would list
+ * them as changes that did. MAP_PULLS names a JSON file
+ * of the pull requests on GitHub (`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp`):
  * the title and body of each join the change whose commit merged it (its
  * merge_commit_sha; a number alone can name another repository's pull
  * request in commits brought in from it). MAP_REPOSITORY (owner/name, else
@@ -80,6 +84,7 @@ mkdirSync(testsOut, { recursive: true });
 rmSync(join(out, 'tests'), { recursive: true, force: true });
 rmSync(join(out, 'tests.json'), { force: true });
 const base = process.env.MAP_BASE?.trim() || undefined;
+const historyBase = process.env.MAP_HISTORY_BASE?.trim() || undefined;
 const pullRequest = pullRequestOf(process.env);
 const started = Date.now();
 const reports = process.env.MAP_TEST_REPORTS?.trim() ? resolve(process.env.MAP_TEST_REPORTS.trim()) : undefined;
@@ -133,7 +138,7 @@ const result = await buildMap({
   out,
   ...(base === undefined ? {} : { base }),
   ...(pullRequest === undefined ? {} : { pullRequest }),
-  history: { ...(pulls === undefined ? {} : { pulls }), ...(github === undefined ? {} : { github }) },
+  history: { ...(historyBase === undefined ? {} : { base: historyBase }), ...(pulls === undefined ? {} : { pulls }), ...(github === undefined ? {} : { github }) },
   extend: async (context) => {
     const live = await runCases();
     const read = (path) => readFileSync(join(repository, path), 'utf8');

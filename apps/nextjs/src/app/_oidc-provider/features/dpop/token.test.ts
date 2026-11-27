@@ -1,12 +1,12 @@
-import type { AuthorizationCodeData } from '@maronn-openid-connect/core';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createOpaqueAccessTokenIssuer, type AuthorizationCodeData } from '@maronn-openid-connect/core';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TEST_ISSUER } from '../../../../test-support/context';
 import { dpopKey, dpopProof, type DpopKey } from '../../../../test-support/dpop';
 import { decodeJwt } from '../../../../test-support/jwt';
 import { POST as introspect } from '../../../(introspection)/introspect/route';
 import { POST as token } from '../../../token/route';
 import { createDatabase, registerClient } from '../../db';
-import { config, stores } from '../../provider';
+import { accessTokenIssuer, config, stores } from '../../provider';
 import { dispatchCiba } from '../ciba/grant';
 import { dispatchClientCredentials } from '../client-credentials/grant';
 import { dispatchDeviceCode } from '../device-authorization-grant/grant';
@@ -278,6 +278,20 @@ describe('verifyDpopTokenRequest', () => {
     expect(await stores.accessTokenStore.get(body.access_token)).not.toHaveProperty('tokenType');
   });
 
+  // provider.ts picks the issuer from config.accessTokenFormat when it loads, so the test swaps in the opaque one.
+  it('should bind an opaque access token through its stored record', async () => {
+    const issue = vi.spyOn(accessTokenIssuer, 'issue').mockImplementation(createOpaqueAccessTokenIssuer().issue);
+    onTestFinished(() => issue.mockRestore());
+    const key = await dpopKey();
+    const { exchangeCode } = await provider();
+
+    const body = (await (await exchangeCode({ DPoP: await tokenProof(key) })).json()) as TokenBody;
+
+    expect(body.token_type).toBe('DPoP');
+    expect(body.access_token.split('.')).toHaveLength(1);
+    expect(await stores.accessTokenStore.get(body.access_token)).toMatchObject({ cnf: { jkt: key.jkt }, tokenType: 'DPoP' });
+  });
+
   // RFC 9449 §5: a confidential client's refresh token is sender-constrained by its client authentication.
   it('should leave the refresh token of a confidential client unbound', async () => {
     const key = await dpopKey();
@@ -346,14 +360,46 @@ describe('verifyDpopTokenRequest', () => {
     expect((await stores.authCodeStore.get(code))?.used).toBe(false);
   });
 
-  it('should reject a proof signed with an alg the OP does not list', async () => {
+  it('should reject a proof signed with an alg the OP does not list, and leave the code unused', async () => {
     const key = await dpopKey();
-    const { exchangeCode } = await provider();
+    const { code, exchangeCode } = await provider();
     config.dpopSigningAlgValuesSupported = ['PS256'];
 
     const response = await exchangeCode({ DPoP: await tokenProof(key) });
 
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(await response.json()).toEqual({ error: 'invalid_dpop_proof', error_description: 'The DPoP proof alg is not supported' });
+    expect((await stores.authCodeStore.get(code))?.used).toBe(false);
+  });
+
+  // The proof is checked before the refresh token is validated and rotated.
+  it('should reject a bad proof of a refresh request, and leave the refresh token unused', async () => {
+    const key = await dpopKey();
+    const { clientId, post } = await provider();
+    const refreshToken = unique('dpop-refresh-token');
+    await stores.refreshTokenStore.set(refreshToken, {
+      subject: 'dpop-user',
+      clientId,
+      scope: ['openid', 'offline_access'],
+      expiresAt: NOW + 86400,
+      originalIssuedAt: NOW - 3600,
+      used: false,
+      grantId: unique('grant'),
+      iat: NOW - 3600,
+      issuer: TEST_ISSUER,
+      audience: [`${TEST_ISSUER}/userinfo`],
+      authTime: NOW - 3600,
+    });
+
+    const response = await post({ grant_type: 'refresh_token', refresh_token: refreshToken }, { DPoP: await tokenProof(key, { htm: 'GET' }) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_dpop_proof',
+      error_description: 'The DPoP proof htm claim does not match the request method',
+    });
+    expect((await stores.refreshTokenStore.get(refreshToken))?.used).toBe(false);
   });
 
   // RFC 9449 §11.1: a proof is accepted once.
@@ -376,13 +422,13 @@ describe('verifyDpopTokenRequest', () => {
 
     const response = await exchangeCode({ DPoP: `${await tokenProof(key)}, ${await tokenProof(key)}` });
 
+    expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'invalid_dpop_proof', error_description: 'More than one DPoP header is not allowed' });
   });
 
-  it('should let the client authentication fail before the proof is checked, and remember no jti', async () => {
+  it('should answer a failed client authentication before it checks the proof', async () => {
     const key = await dpopKey();
     const { clientId, post, code } = await provider();
-    const consume = vi.spyOn(stores.clientAssertionJtiStore, 'consume');
 
     const response = await post(
       { grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER },
@@ -391,8 +437,24 @@ describe('verifyDpopTokenRequest', () => {
 
     expect(response.status).toBe(401);
     expect(((await response.json()) as TokenBody).error).toBe('invalid_client');
+  });
+
+  // Checking the proof after the client authentication keeps a request that fails it from spending the jti of a good proof.
+  it('should remember no jti of a good proof sent with a request that fails client authentication', async () => {
+    const key = await dpopKey();
+    const { clientId, post, code, exchangeCode } = await provider();
+    const proof = await tokenProof(key);
+    const consume = vi.spyOn(stores.clientAssertionJtiStore, 'consume');
+    onTestFinished(() => consume.mockRestore());
+
+    const response = await post(
+      { grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER },
+      { DPoP: proof, Authorization: basicAuthorization(clientId, 'wrong') },
+    );
+
+    expect(response.status).toBe(401);
     expect(consume).not.toHaveBeenCalled();
-    consume.mockRestore();
+    expect(((await (await exchangeCode({ DPoP: proof })).json()) as TokenBody).token_type).toBe('DPoP');
   });
 
   // A window that is not a non-negative finite number is a misconfiguration, not a bad proof.

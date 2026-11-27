@@ -252,6 +252,7 @@ describe('verifyDpopTokenRequest', () => {
     const body = (await (await exchangeCode({ DPoP: await tokenProof(key) })).json()) as TokenBody;
 
     expect(body.token_type).toBe('DPoP');
+    expect(body.access_token.split('.')).toHaveLength(1);
     expect(await stores.accessTokenStore.get(body.access_token)).toMatchObject({ cnf: { jkt: key.jkt }, tokenType: 'DPoP' });
   });
 
@@ -322,13 +323,32 @@ describe('verifyDpopTokenRequest', () => {
     expect((await stores.authCodeStore.get('code-1'))?.used).toBe(false);
   });
 
-  it('should reject a proof signed with an alg the OP does not list', async () => {
+  it('should reject a proof signed with an alg the OP does not list, and leave the code unused', async () => {
     const key = await dpopKey();
-    const { exchangeCode } = await provider({}, { dpopSigningAlgValuesSupported: ['PS256'] });
+    const { stores, exchangeCode } = await provider({}, { dpopSigningAlgValuesSupported: ['PS256'] });
 
     const response = await exchangeCode({ DPoP: await tokenProof(key) });
 
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(await response.json()).toEqual({ error: 'invalid_dpop_proof', error_description: 'The DPoP proof alg is not supported' });
+    expect((await stores.authCodeStore.get('code-1'))?.used).toBe(false);
+  });
+
+  // The proof is checked before the refresh token is validated and rotated.
+  it('should reject a bad proof of a refresh request, and leave the refresh token unused', async () => {
+    const key = await dpopKey();
+    const { stores, post } = await provider();
+    await stores.refreshTokenStore.set('rt-1', storedRefreshToken());
+
+    const response = await post({ grant_type: 'refresh_token', refresh_token: 'rt-1' }, { DPoP: await tokenProof(key, { htm: 'GET' }) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_dpop_proof',
+      error_description: 'The DPoP proof htm claim does not match the request method',
+    });
+    expect((await stores.refreshTokenStore.get('rt-1'))?.used).toBe(false);
   });
 
   // RFC 9449 §11.1: a proof is accepted once.
@@ -351,12 +371,13 @@ describe('verifyDpopTokenRequest', () => {
 
     const response = await exchangeCode({ DPoP: `${await tokenProof(key)}, ${await tokenProof(key)}` });
 
+    expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'invalid_dpop_proof', error_description: 'More than one DPoP header is not allowed' });
   });
 
-  it('should let the client authentication fail before the proof is checked, and remember no jti', async () => {
+  it('should answer a failed client authentication before it checks the proof', async () => {
     const key = await dpopKey();
-    const { db, post } = await provider();
+    const { post } = await provider();
 
     const response = await post(
       { grant_type: 'authorization_code', code: 'code-1', redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER },
@@ -365,7 +386,22 @@ describe('verifyDpopTokenRequest', () => {
 
     expect(response.status).toBe(401);
     expect(((await response.json()) as TokenBody).error).toBe('invalid_client');
+  });
+
+  // Checking the proof after the client authentication keeps a request that fails it from spending the jti of a good proof.
+  it('should remember no jti of a good proof sent with a request that fails client authentication', async () => {
+    const key = await dpopKey();
+    const { db, post, exchangeCode } = await provider();
+    const proof = await tokenProof(key);
+
+    const response = await post(
+      { grant_type: 'authorization_code', code: 'code-1', redirect_uri: REDIRECT_URI, code_verifier: CODE_VERIFIER },
+      { DPoP: proof, Authorization: basicAuthorization(CLIENT_ID, 'wrong') },
+    );
+
+    expect(response.status).toBe(401);
     expect(db.clientAssertionJtis.size).toBe(0);
+    expect(((await (await exchangeCode({ DPoP: proof })).json()) as TokenBody).token_type).toBe('DPoP');
   });
 
   // A window that is not a non-negative finite number is a misconfiguration, not a bad proof.

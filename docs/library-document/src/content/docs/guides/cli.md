@@ -478,9 +478,11 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。`dynamic-client-registration` と一緒に有効にすると、`POST /register` も `dpop_bound_access_tokens`（真偽値。省略すると `false`）を登録して返す。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する。`dpopNonceRequiredAtAuthorizationServer: true`（Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_AUTHORIZATION_SERVER=1`）にすると、トークンエンドポイントと PAR エンドポイントは、DPoP のリクエストへのレスポンスに次の nonce を `DPoP-Nonce` ヘッダーで付け、認可サーバーが最近発行した nonce の無い DPoP proof を `use_dpop_nonce` で拒否する。`dpopNonceRequiredAtResourceServer: true`（Next.js は `OIDC_DPOP_NONCE_REQUIRED_AT_RESOURCE_SERVER=1`）にすると、UserInfo エンドポイントも、DPoP スキームのリクエストへのレスポンスに保護されたリソースの nonce を付け、その nonce の無い DPoP proof を 401 の `use_dpop_nonce` で拒否する（nonce の秘密は `dpopNonceSecret`、Next.js は `OIDC_DPOP_NONCE_SECRET`。どのインスタンスにも同じ値を渡す）。CORS は `WWW-Authenticate` と `DPoP-Nonce` を読ませる | なし（生成コードの `features/dpop/`） |
+| `dpop` | 無効 | DPoP（RFC 9449）。トークンエンドポイントが `DPoP` ヘッダーの DPoP proof を検査し、アクセストークン（パブリッククライアントにはリフレッシュトークンも）をその鍵に束縛する（`token_type` は `DPoP`）。UserInfo エンドポイントは、束縛したトークンを `Authorization: DPoP` と同じ鍵の DPoP proof でだけ受け付ける。認可リクエストの `dpop_jkt` と、`par` を有効にしたときの PAR のリクエストの DPoP proof の鍵は、認可コードを鍵に束縛する。`dpop_bound_access_tokens` を登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（`dynamic-client-registration` を有効にすると、`POST /register` でも登録できる）。`dpopNonceRequiredAtAuthorizationServer` と `dpopNonceRequiredAtResourceServer` で、サーバーが発行する nonce（`DPoP-Nonce`）を DPoP proof に求められる | なし（生成コードの `features/dpop/`。Web Crypto だけで動き、エッジランタイムでも動く） |
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
+
+`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには、これまでどおり Bearer トークンを発行します（`dpop_bound_access_tokens` を登録したクライアントを除く）。エンドポイントごとの動き、設定（nonce の秘密を含む）、クライアントのメタデータ、生成されるファイルと方針の変え方、既存の生成物に足すときの移行、制限は [DPoP（拡張）](../dpop/) を参照してください。
 
 ## Custom Scopes
 
@@ -862,7 +864,7 @@ export function createDatabase(): SqlDatabase {
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を、`private_key_jwt` の用途の鍵でクライアントアサーションを検証する（[Client Keys](#client-keys) を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
 | `client_request_uris` | クライアントが登録した `request_uris`（[request_uri](#request_uri) を参照） |
-| `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う |
+| `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う。`dpop` を有効にすると、受け付けた DPoP proof の鍵と `jti` から作ったハッシュも、その DPoP proof を受け付ける最後の秒まで入る |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -984,7 +986,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | `auth_user:<transaction_id>` | トランザクションでログインしたユーザー |
 | `code:<hash>`、`access_token:<hash>`、`refresh_token:<hash>` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュをキーにする |
 | `code_used:<hash>`、`refresh_token_used:<hash>` | 使用済みの印。`setIfAbsent` で書く |
-| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のクライアントアサーション（client_id と `jti` のハッシュ）。`setIfAbsent` で書き、アサーションの期限まで残す |
+| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のクライアントアサーション（client_id と `jti` のハッシュ）。`setIfAbsent` で書き、アサーションの期限まで残す。`dpop` を有効にすると、受け付けた DPoP proof（鍵と `jti` から作ったハッシュ）も、その DPoP proof を受け付ける最後の秒まで入る |
 | `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
 | `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
 

@@ -51,7 +51,7 @@ Requesting App          IdP OP                   Resource App の AS
 | ID-JAG draft §3.2（sub_id / SAML NameID） | **非対応** |
 | ID-JAG draft §4.3（saml2 subject） | **非対応**（明示的に拒否） |
 | RFC 9396（authorization_details / RAR） | **非対応**（明示的に拒否） |
-| DPoP による sender-constraining（draft §9.8） | **非対応** |
+| DPoP による sender-constraining（draft §9.8） | **非対応**（ID-JAG に `cnf` を入れない。拡張機能 `dpop` を有効にしても ID-JAG は鍵に束縛せず、jwt-bearer での受領が発行するアクセストークンだけを、ほかのグラントと同じく DPoP proof の鍵に束縛する。[DPoP（拡張）](../../guides/dpop/)） |
 
 ## ユースケース
 

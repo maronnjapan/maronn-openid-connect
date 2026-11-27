@@ -598,6 +598,26 @@ pnpm add hono @maronn-openid-connect/core
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js では `_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()` が、本リポジトリの Express と Fastify の samples では `src/app.ts` が、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
 
+`dpop` を有効にしても、`DPoP` ヘッダーを送らないクライアントには、これまでどおり Bearer トークンを発行する（`dpop_bound_access_tokens` を登録したクライアントを除く）。
+設定で変えられない方針（受け付ける alg と鍵の形、`htu` の比べ方、束縛の規則、nonce の形、エラーの応答など）は、`features/dpop/`（Next.js は `_oidc-provider/features/dpop/`）のファイルを直して変える。
+
+| ファイル | 内容 |
+|---|---|
+| `proof.ts` | DPoP proof の検査（RFC 9449 §4.3）。`DPoP` ヘッダーの読み取り、JWS の分解、`alg`、署名、`jti` / `htm` / `htu` / `iat`、`nonce`、`ath` の検査と、`jti` の消費 |
+| `jwk.ts` | `jwk` ヘッダーの公開鍵の検査、署名の検証、JWK Thumbprint（RFC 7638）。検証できる alg（`SUPPORTED_DPOP_SIGNING_ALGS`） |
+| `htu.ts` | `htu` とエンドポイントの URI を比べる前の正規化（RFC 3986 §6.2.2 / §6.2.3） |
+| `binding.ts` | トークンと認可コードの鍵への束縛（`cnf.jkt`、`dpop_jkt`、`dpop_bound_access_tokens`、パブリッククライアントのリフレッシュトークン） |
+| `resource.ts` | UserInfo エンドポイントの `Authorization: DPoP` の読み取り、束縛の検査、DPoP のチャレンジ |
+| `nonce.ts`、`server-nonce.ts` | サーバーが発行する nonce（RFC 9449 §8 / §9）。nonce の発行と確認、エンドポイントが nonce を求めるかと、その付与 |
+| `base64url.ts` | JWS と JWK Thumbprint が使う base64url |
+| `errors.ts` | 検査の失敗（`DpopError`）と、どのエンドポイントがどのエラーコードを返すか |
+| `error-responses.ts` | `DpopError` から作る、トークンエンドポイント、PAR エンドポイント、UserInfo エンドポイントのエラーレスポンス |
+| `config.ts` | `ProviderConfig`、`RegisteredClient`（と Hono・Express・Fastify では `OidcProviderOptions`）に足す設定と既定値 |
+| `feature.ts` | 機能の登録（設定の既定値、Discovery の `dpop_signing_alg_values_supported`、CORS の `DPoP`、`WWW-Authenticate`、`DPoP-Nonce`） |
+| `steps/`（Next.js は `token.ts`、`userinfo.ts`、`authorize.ts`、`par.ts`、`register.ts`） | トークン、UserInfo、認可、PAR、動的クライアント登録の各エンドポイントで、上のファイルの検査を呼ぶステップ。PAR と動的クライアント登録のものは、その機能を有効にしなくても生成され、そのときはどこからも呼ばれない |
+
+エンドポイントごとの動き、設定、クライアントのメタデータ、運用の注意、既存の生成物に足すときの移行、制限は [DPoP（拡張）のガイド](../../docs/library-document/src/content/docs/guides/dpop.md) を参照。
+
 ## カスタムスコープ（--scope）
 
 標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）以外に受け付けるスコープを、生成時に宣言できる。
@@ -838,7 +858,7 @@ export function createDatabase(): SqlDatabase {
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を、`private_key_jwt` の用途の鍵でクライアントアサーションを検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
 | `client_request_uris` | クライアントが登録した `request_uris`（OIDC Core 1.0 §6.2） |
-| `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う |
+| `client_assertion_jtis` | 受け付けた private_key_jwt のクライアントアサーションの client_id と `jti` のハッシュ。アサーションの期限（`expired_at`）まで、同じアサーションの再送を拒否するのに使う。`dpop` を有効にすると、受け付けた DPoP proof の鍵と `jti` から作ったハッシュも、その DPoP proof を受け付ける最後の秒まで入る |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -955,7 +975,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | `auth_user:<transaction_id>` | トランザクションでログインしたユーザー |
 | `code:<hash>`、`access_token:<hash>`、`refresh_token:<hash>` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュをキーにする |
 | `code_used:<hash>`、`refresh_token_used:<hash>` | 使用済みの印。`setIfAbsent` で書く |
-| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のクライアントアサーション（client_id と `jti` のハッシュ）。`setIfAbsent` で書き、アサーションの期限まで残す |
+| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のクライアントアサーション（client_id と `jti` のハッシュ）。`setIfAbsent` で書き、アサーションの期限まで残す。`dpop` を有効にすると、受け付けた DPoP proof（鍵と `jti` から作ったハッシュ）も、その DPoP proof を受け付ける最後の秒まで入る |
 | `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
 | `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
 

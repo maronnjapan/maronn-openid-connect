@@ -9,7 +9,8 @@ import { decodeJwt } from '../../../../test-support/jwt';
 import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { stores } from '../../provider';
-import { dispatchTokenExchange } from './grant';
+import type { TokenBinding } from '../../token-binding';
+import { dispatchTokenExchange, exchangeToken } from './grant';
 
 // provider.ts keeps its stores in the key-value store of db/ (in memory for
 // the tests, vitest.config.ts) for the whole file, so every test uses tokens
@@ -25,6 +26,12 @@ const client: TokenClientInfo = {
   grantTypes: [TOKEN_EXCHANGE_GRANT_TYPE],
   tokenEndpointAuthMethods: ['client_secret_basic'],
 };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the exchanged token is bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the grant for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -88,6 +95,46 @@ describe('dispatchTokenExchange', () => {
     expect(decodeJwt(accessToken as string).payload).toMatchObject({ iss: ISSUER, sub: 'alice', client_id: 'service-1' });
   });
 
+  // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the exchanged access token
+  // and its record, and answers its token_type.
+  it('should bind the exchanged access token to the key of the binding', async () => {
+    const signingKey = await rs256Key();
+    await stores.accessTokenStore.set(
+      'subject-at-bound',
+      accessTokenInfo({ sub: 'alice', clientId: 'rp-1', scope: ['openid', 'profile'], grantId: 'grant-bound' }),
+    );
+
+    const response = await dispatchTokenExchange(
+      exchangeRequest('subject-at-bound'),
+      client,
+      providerSigningKeys(signingKey),
+      BINDING,
+    );
+    const parts = await jsonResponseOf(response);
+    const { access_token: accessToken, ...body } = parts?.body as Record<string, unknown>;
+
+    expect({ ...parts, body }).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      cacheControl: 'no-store',
+      pragma: 'no-cache',
+      body: {
+        issued_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        token_type: 'DPoP',
+        expires_in: 3600,
+        scope: 'openid profile',
+      },
+    });
+    expect(await stores.accessTokenStore.get(accessToken as string)).toMatchObject({
+      sub: 'alice',
+      clientId: 'service-1',
+      grantId: 'grant-bound',
+      cnf: { jkt: JKT },
+      tokenType: 'DPoP',
+    });
+    expect(decodeJwt(accessToken as string).payload).toMatchObject({ sub: 'alice', client_id: 'service-1', cnf: { jkt: JKT } });
+  });
+
   // RFC 6749 §5.2: the errors of the exchange in the JSON error shape, never cached.
   describe('Errors', () => {
     // RFC 7591 §2: grant_types defaults to ["authorization_code"], so the exchange needs registering.
@@ -143,5 +190,23 @@ describe('dispatchTokenExchange', () => {
         body: { error: 'invalid_target', error_description: 'The requested target is not allowed for token exchange' },
       });
     });
+  });
+});
+
+describe('exchangeToken', () => {
+  // The token_type of the binding replaces the Bearer of the exchange response, so the members keep their order.
+  it('should answer the members of the exchange response in the order of a Bearer response', async () => {
+    const keys = providerSigningKeys(await rs256Key());
+    await stores.accessTokenStore.set(
+      'subject-at-member-order',
+      accessTokenInfo({ sub: 'alice', clientId: 'rp-1', scope: ['openid', 'profile'], grantId: 'grant-member-order' }),
+    );
+
+    const bearer = await exchangeToken(exchangeRequest('subject-at-member-order'), client, keys);
+    const bound = await exchangeToken(exchangeRequest('subject-at-member-order'), client, keys, BINDING);
+
+    const bearerMembers = Object.keys((await bearer.json()) as object);
+    expect(bearerMembers).toEqual(['access_token', 'issued_token_type', 'token_type', 'expires_in', 'scope']);
+    expect(Object.keys((await bound.json()) as object)).toEqual(bearerMembers);
   });
 });

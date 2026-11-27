@@ -29,6 +29,13 @@ import {
 } from '../../provider';
 import { cibaAuthenticationRequestStore } from './store';
 import { noStoreJson, oauthError } from '../../http';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  refreshTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../token-binding';
 
 /**
  * 承認済みの `auth_req_id` でトークンを発行して返す。
@@ -37,14 +44,18 @@ import { noStoreJson, oauthError } from '../../http';
  * 承認済みでなければ `CibaGrantError` を投げ、`dispatchCiba()` がそれを OAuth のエラーレスポンスにして返す。
  * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` で応答する。
  *
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、アクセストークンをその鍵に束縛し、束縛が `refreshTokenCnf` を持つとき（パブリッククライアントのとき）はリフレッシュトークンも束縛する（RFC 9449 §5）。
+ *
  * @spec CIBA Core 1.0 §10.1
  * @spec CIBA Core 1.0 §11
+ * @spec RFC 9449 §5
  * @throws {CibaGrantError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `auth_req_id` のリクエストが承認済みでないか、使えないとき。
  */
 export async function redeemCibaRequest(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response> {
   const cibaGrant = await processCibaGrant({
     params,
@@ -85,7 +96,8 @@ export async function redeemCibaRequest(
     issuedAt,
   });
   const accessToken = await accessTokenIssuer.issue({
-    payload: accessTokenPayload,
+    // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+    payload: { ...accessTokenPayload, ...accessTokenClaimsOf(binding) },
     privateKey: keys.general[0].privateKey,
     keyId: keys.general[0].keyId,
   });
@@ -129,6 +141,8 @@ export async function redeemCibaRequest(
     audience,
     issuer: config.issuer,
     jti: accessTokenPayload.jti,
+    // 鍵に束縛したトークンは、確認の `cnf` と `token_type` も保存する（RFC 9449 §6.2）。
+    ...accessTokenRecordOf(binding),
   });
 
   // `scope` に `offline_access` があれば、リフレッシュトークンを発行する（OIDC Core 1.0 §11）。
@@ -157,12 +171,14 @@ export async function redeemCibaRequest(
       acr,
       amr,
       azp: undefined,
+      // 束縛が `refreshTokenCnf` を持つとき（DPoP proof を送ったパブリッククライアントのトークン。RFC 9449 §5）は、リフレッシュトークンもその鍵に束縛する。
+      ...refreshTokenRecordOf(binding),
     });
   }
 
   return noStoreJson({
     access_token: accessToken,
-    token_type: 'Bearer' as const,
+    token_type: tokenTypeOf(binding),
     expires_in: config.accessTokenExpiresIn,
     id_token: idToken,
     scope: cibaGrant.scope.join(' '),
@@ -180,17 +196,21 @@ export async function redeemCibaRequest(
  * CIBA のグラントなら `redeemCibaRequest()` で応答し、`CibaGrantError` は RFC 6749 §5.2 の形のエラーレスポンス（400）にして返す。
  * それ以外の例外は、そのまま投げ直す。
  *
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、`redeemCibaRequest()` が発行するトークンをその鍵に束縛する（RFC 9449 §5）。
+ *
  * @spec CIBA Core 1.0 §10.1
  * @spec CIBA Core 1.0 §11
+ * @spec RFC 9449 §5
  */
 export async function dispatchCiba(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== CIBA_GRANT_TYPE) return undefined;
   try {
-    return await redeemCibaRequest(params, client, keys);
+    return await redeemCibaRequest(params, client, keys, binding);
   } catch (error) {
     if (error instanceof CibaGrantError) {
       return oauthError(error.code, error.errorDescription, error.statusCode);

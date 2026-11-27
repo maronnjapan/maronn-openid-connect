@@ -16,6 +16,13 @@ import {
 } from '@maronn-openid-connect/core';
 import type { RegisteredClient } from '../../../config.js';
 import { CIBA_GRANT_TYPE, CibaGrantError, processCibaGrant } from '@maronn-openid-connect/experimental/ciba';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  refreshTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../../token-binding.js';
 import { type TokenRequestBody, TokenEndpointError } from '../../../endpoints/token/response.js';
 import { respondToken } from '../../../endpoints/token/steps/respond.js';
 import { step } from '../../../endpoints/step.js';
@@ -28,7 +35,8 @@ export const meta = step({
   label: 'auth_req_id を引き換える（CIBA）',
   spec: 'CIBA Core 1.0 §10.1 / §11',
   function: 'redeemCibaRequest',
-  consumes: ['params', 'tokenClient', 'authenticatedClientId'],
+  consumes: ['params', 'tokenClient', 'authenticatedClientId', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: [],
   removable: false,
   before: ['validate-grant-type'],
@@ -46,12 +54,14 @@ export const meta = step({
  * 承認済みでなければ、`processCibaGrant()` が投げる `CibaGrantError` を、同じコードとステータス（400）の `TokenEndpointError` にして投げる。
  * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` を表す `TokenEndpointError` を投げる。
  * 投げた `TokenEndpointError` は、トークンエンドポイントのエラー応答のステップがそのまま返す。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、アクセストークンをその鍵に束縛し、束縛が `refreshTokenCnf` を持つとき（パブリッククライアントのとき）はリフレッシュトークンも束縛する（RFC 9449 §5）。
  *
  * experimental パッケージの API は安定しておらず、リリースの間で互換性のない変更が入ることがある。
  * 本番のコードで使うときは、バージョンを固定する。
  *
  * @spec CIBA Core 1.0 §10.1
  * @spec CIBA Core 1.0 §11
+ * @spec RFC 9449 §5
  * @throws {TokenEndpointError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `auth_req_id` のリクエストが承認済みでないか、使えないとき（ステータスは 400）。
  * @throws {TokenEndpointError} `server_error`: クライアントの `alg` に合う ID トークンの署名鍵がないとき（ステータスは 500）。
  */
@@ -60,6 +70,7 @@ export async function redeemCibaRequest(
   params: TokenRequestBody,
   tokenClient: TokenClientInfo,
   authenticatedClientId: string,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== CIBA_GRANT_TYPE) return undefined;
 
@@ -128,7 +139,8 @@ export async function redeemCibaRequest(
       issuedAt: cibaIssuedAt,
     });
     const cibaAccessToken = await cibaIssuer.issue({
-      payload: cibaAccessTokenPayload,
+      // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+      payload: { ...cibaAccessTokenPayload, ...accessTokenClaimsOf(binding) },
       privateKey: cibaPrivateKey,
       keyId: cibaKeyId,
     });
@@ -175,6 +187,8 @@ export async function redeemCibaRequest(
       audience: cibaAudience,
       issuer: cibaConfig.issuer,
       jti: cibaAccessTokenPayload.jti,
+      // 鍵に束縛したトークンは、確認の `cnf` と `token_type` も保存する（RFC 9449 §6.2）。
+      ...accessTokenRecordOf(binding),
     });
 
     // `scope` に `offline_access` があれば、リフレッシュトークンを発行する（OIDC Core 1.0 §11）。
@@ -204,6 +218,8 @@ export async function redeemCibaRequest(
         acr: cibaAcr,
         amr: cibaAmr,
         azp: undefined,
+        // 束縛が `refreshTokenCnf` を持つとき（DPoP proof を送ったパブリッククライアントのトークン。RFC 9449 §5）は、リフレッシュトークンもその鍵に束縛する。
+        ...refreshTokenRecordOf(binding),
       });
     }
 
@@ -211,7 +227,7 @@ export async function redeemCibaRequest(
       status: 200,
       body: {
         access_token: cibaAccessToken,
-        token_type: 'Bearer' as const,
+        token_type: tokenTypeOf(binding),
         expires_in: cibaConfig.accessTokenExpiresIn,
         id_token: cibaIdToken,
         scope: cibaGrant.scope.join(' '),

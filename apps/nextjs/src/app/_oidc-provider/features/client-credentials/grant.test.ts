@@ -5,6 +5,7 @@ import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { config, stores } from '../../provider';
 import { findUnsupportedScopes } from '../../scopes';
+import type { TokenBinding } from '../../token-binding';
 import { dispatchClientCredentials } from './grant';
 
 // The provider declares no custom scope (CUSTOM_SCOPES in scopes.ts is
@@ -24,6 +25,12 @@ const NOW = 1767225600;
 const ISSUER = 'https://op.example.com';
 const API = 'https://api.example.com';
 const defaultAudiences = config.clientCredentialsAllowedAudiences;
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the access token is bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the grant for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 /** A confidential client registered for the grant and for two scopes of a resource server. */
 const client: TokenClientInfo = {
@@ -289,6 +296,57 @@ describe('dispatchClientCredentials', () => {
         error: 'invalid_target',
         errorDescription: 'Requested audience is not allowed: https://other.example.com',
       });
+    });
+  });
+
+  // RFC 9449 §5 / §6.1 / §6.2: a binding of the dpop extension puts its cnf into the access token and its record,
+  // and answers its token_type in the place of Bearer.
+  describe('Token binding', () => {
+    // The grant issues no refresh token (RFC 6749 §4.4.3), so the refreshTokenCnf of the binding binds nothing.
+    it('should bind the access token to the key of the binding', async () => {
+      const keys = providerSigningKeys(await rs256Key());
+
+      const response = await dispatchClientCredentials(request({ scope: 'reports.read' }), client, keys, BINDING);
+      const parts = await jsonResponseOf(response);
+      const { access_token: accessToken, ...body } = parts?.body as Record<string, unknown>;
+
+      expect({ ...parts, body }).toEqual({
+        status: 200,
+        contentType: 'application/json',
+        cacheControl: 'no-store',
+        pragma: 'no-cache',
+        body: { token_type: 'DPoP', expires_in: 3600, scope: 'reports.read' },
+      });
+      expect(decodeJwt(accessToken as string).payload).toMatchObject({
+        sub: 'service-1',
+        client_id: 'service-1',
+        cnf: { jkt: JKT },
+      });
+      expect(await stores.accessTokenStore.get(accessToken as string)).toEqual({
+        sub: 'service-1',
+        clientId: 'service-1',
+        scope: ['reports.read'],
+        expiresAt: NOW + 3600,
+        iat: NOW,
+        nbf: NOW,
+        audience: [ISSUER],
+        issuer: ISSUER,
+        jti: decodeJwt(accessToken as string).payload['jti'],
+        cnf: { jkt: JKT },
+        tokenType: 'DPoP',
+      });
+    });
+
+    // The token_type of the binding replaces the Bearer of core's response, so the members keep their order.
+    it('should answer the members of the token response in the order of a Bearer response', async () => {
+      const keys = providerSigningKeys(await rs256Key());
+
+      const bearer = await dispatchClientCredentials(request(), client, keys);
+      const bound = await dispatchClientCredentials(request(), client, keys, BINDING);
+
+      const bearerMembers = Object.keys((await bearer!.json()) as object);
+      expect(bearerMembers).toEqual(['access_token', 'token_type', 'expires_in', 'scope']);
+      expect(Object.keys((await bound!.json()) as object)).toEqual(bearerMembers);
     });
   });
 });

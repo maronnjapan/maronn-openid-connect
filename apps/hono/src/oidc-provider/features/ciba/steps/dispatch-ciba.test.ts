@@ -6,6 +6,7 @@ import { providerContext, TEST_ISSUER } from '../../../../test-support/context.j
 import { registerClient } from '../../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../../db/memory/database.js';
 import type { TokenRequestBody } from '../../../endpoints/token/response.js';
+import type { TokenBinding } from '../../../token-binding.js';
 import { redeemCibaRequest } from './dispatch-ciba.js';
 
 const CIBA_GRANT = 'urn:openid:params:grant-type:ciba';
@@ -17,6 +18,12 @@ const tokenClient: TokenClientInfo = {
   grantTypes: [CIBA_GRANT, 'refresh_token'],
   tokenEndpointAuthMethods: ['client_secret_basic'],
 };
+
+/** The JWK Thumbprint (RFC 7638) of a DPoP key the tokens are bound to. */
+const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+/** The binding the dpop extension hands the step for a DPoP proof of that key (RFC 9449 §5). */
+const BINDING: TokenBinding = { cnf: { jkt: JKT }, tokenType: 'DPoP', refreshTokenCnf: { jkt: JKT } };
 
 function cibaRequest(authReqId: string): TokenRequestBody {
   return { grant_type: CIBA_GRANT, auth_req_id: authReqId } as TokenRequestBody;
@@ -161,6 +168,53 @@ describe('redeemCibaRequest', () => {
         used: false,
         expiresAt: NOW_SECONDS + 7_776_000,
       });
+    });
+
+    // RFC 9449 §5 / §6.1: a binding of the dpop extension puts its cnf into the access token and its record,
+    // answers its token_type, and binds the refresh token to refreshTokenCnf.
+    it('should bind the access token and the refresh token to the key of the binding', async () => {
+      const { c, stores, record } = await tokenContext(approved({ approvedScope: ['openid', 'offline_access'] }));
+
+      const response = await redeemCibaRequest(c, cibaRequest(record.authReqId), tokenClient, 'ciba-client', BINDING);
+      const body = (await response?.json()) as Record<string, string>;
+      const accessToken = body['access_token'] ?? '';
+
+      expect(response?.status).toBe(200);
+      expect(body).toMatchObject({ token_type: 'DPoP', expires_in: 3600, scope: 'openid offline_access' });
+      expect(decodeJwtPayload(accessToken)).toMatchObject({ sub: 'alice', client_id: 'ciba-client', cnf: { jkt: JKT } });
+      expect(await stores.accessTokenStore.get(accessToken)).toMatchObject({
+        sub: 'alice',
+        grantId: 'grant-1',
+        cnf: { jkt: JKT },
+        tokenType: 'DPoP',
+      });
+      expect(await stores.refreshTokenStore.get(body['refresh_token'] ?? '')).toMatchObject({
+        subject: 'alice',
+        grantId: 'grant-1',
+        cnf: { jkt: JKT },
+      });
+    });
+
+    // RFC 9449 §5: the refresh token of a confidential client stays unbound (its client authentication constrains it);
+    // the dpop extension says so with a binding without refreshTokenCnf.
+    it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
+      const { c, stores, record } = await tokenContext(approved({ approvedScope: ['openid', 'offline_access'] }));
+      const { refreshTokenCnf: _refreshTokenCnf, ...accessTokenBinding } = BINDING;
+
+      const response = await redeemCibaRequest(
+        c,
+        cibaRequest(record.authReqId),
+        tokenClient,
+        'ciba-client',
+        accessTokenBinding,
+      );
+      const body = (await response?.json()) as Record<string, string>;
+      const refreshTokenRecord = await stores.refreshTokenStore.get(body['refresh_token'] ?? '');
+
+      expect(body).toMatchObject({ token_type: 'DPoP' });
+      expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
+      expect(refreshTokenRecord).toMatchObject({ subject: 'alice', grantId: 'grant-1' });
+      expect(refreshTokenRecord).not.toHaveProperty('cnf');
     });
   });
 });

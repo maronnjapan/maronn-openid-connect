@@ -31,6 +31,7 @@ GET /authorize?client_id=web-app&request_uri=urn:ietf:params:oauth:request_uri:<
 | RFC 9126 §5 | Provider Metadata（`pushed_authorization_request_endpoint` / `require_pushed_authorization_requests`） |
 | RFC 9126 §3 | **非対応**（PAR ボディへの `request` パラメータ、JAR との併用） |
 | RFC 9126 §6 | **非対応**（クライアント単位の `require_pushed_authorization_requests`） |
+| RFC 9449 §10.1 | 拡張機能 `dpop` と一緒に有効にしたとき、`DPoP` ヘッダーの DPoP proof の鍵を、プッシュした認可リクエストの `dpop_jkt` として扱い、認可コードをその鍵に束縛する（ボディの `dpop_jkt` もあれば、同じ鍵であること） |
 | OIDC Core 1.0 §6.2 | PAR の範囲外（URL 形式の `request_uri` は、安定機能 `request-object` が取得する。`request-object` を外した OP では `request_uri_not_supported` で拒否） |
 
 ## ユースケース
@@ -202,6 +203,8 @@ Token Endpoint と同じ JSON エラー形式です。**リダイレクトは発
 | ボディに `request_uri` | 400 | `invalid_request` |
 | ボディに `request` | 400 | `invalid_request` |
 | 認可リクエストとして不正（未登録 redirect_uri など） | 400 | `invalid_request` / `invalid_scope` / `unauthorized_client` / `unsupported_response_type` |
+| `DPoP` ヘッダーの DPoP proof を受け付けない、またはボディの `dpop_jkt` と DPoP proof の鍵が違う（`--enable dpop` のとき） | 400 | `invalid_dpop_proof` |
+| ボディの `dpop_jkt` が JWK Thumbprint の形でない（`--enable dpop` のとき。`DPoP` ヘッダーの有無によらない） | 400 | `invalid_request` |
 | POST 以外のメソッド | 405 | — |
 
 未登録の `redirect_uri` などがここで失敗するのが PAR の利点です。**ユーザーが画面を見る前に失敗が確定します**。

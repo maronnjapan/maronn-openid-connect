@@ -708,12 +708,12 @@ describe('verifyDpopRequestProof', () => {
     expect(db.clientAssertionJtis.size).toBe(1);
   });
 
-  // Without a secret, the nonces are made with a key of this process.
-  it('should check the nonce with the key of the process when the options have no secret', async () => {
+  // Without a secret, the nonces are made with a key of this instance (an isolate on Workers, a process on Node.js).
+  it('should check the nonce with the key of the instance when the options have no secret', async () => {
     const key = await dpopKey();
     const { c } = await dpopContext();
     const target = { method: 'POST', path: '/token', nonceServer: 'authorization-server' } as const;
-    const processNonce = await issueDpopNonce(
+    const instanceNonce = await issueDpopNonce(
       await dpopNonceKeyOf(undefined),
       { server: 'authorization-server', issuer: 'https://op.example.com' },
       RFC9449_IAT,
@@ -723,7 +723,7 @@ describe('verifyDpopRequestProof', () => {
       verifyDpopRequestProof(c, await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: AUTHORIZATION_SERVER_NONCE }), target),
     ).rejects.toMatchObject({ error: 'use_dpop_nonce' });
     await expect(
-      verifyDpopRequestProof(c, await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: processNonce }), target),
+      verifyDpopRequestProof(c, await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { nonce: instanceNonce }), target),
     ).resolves.toBe(key.jkt);
   });
 

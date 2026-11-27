@@ -49,8 +49,8 @@ const DPOP_NONCE_FUTURE_SKEW_SECONDS = 5;
 /** nonce の秘密の最小のバイト数（HMAC-SHA256 の出力の長さ、RFC 2104 §3）。 */
 const MIN_DPOP_NONCE_SECRET_BYTES = 32;
 
-/** 秘密を設定しないときに使う、このプロセスで作った鍵。 */
-let processDpopNonceKey: Promise<CryptoKey> | undefined;
+/** 秘密を設定しないときに使う、このインスタンス（Workers では isolate、Node.js ではプロセス）で作った鍵。 */
+let instanceDpopNonceKey: Promise<CryptoKey> | undefined;
 
 /** 最後に秘密から作った鍵と、その秘密。 */
 let configuredDpopNonceKey: { secret: string; key: Promise<CryptoKey> } | undefined;
@@ -60,8 +60,8 @@ let configuredDpopNonceKey: { secret: string; key: Promise<CryptoKey> } | undefi
  *
  * `secret` があれば、その UTF-8 のバイト列を HMAC-SHA256 の鍵にする。
  * 同じ秘密を持つインスタンスは、互いが発行した nonce を受け付ける。
- * `secret` が無ければ、このプロセスで初めて呼ばれたときに 32 バイトの乱数から鍵を作り、以後はその鍵を返す。
- * その鍵はどこにも保存しないので、ほかのインスタンスや、再起動した後のプロセスは、その鍵の nonce を受け付けない。
+ * `secret` が無ければ、このインスタンス（Workers では isolate、Node.js ではプロセス）で初めて呼ばれたときに 32 バイトの乱数から鍵を作り、以後はその鍵を返す。
+ * その鍵はどこにも保存しないので、ほかのインスタンスや、再起動した後のインスタンスは、その鍵の nonce を受け付けない（`OidcProviderOptions.dpopNonceSecret` の JSDoc を参照）。
  *
  * @spec RFC 9449 §8
  * @spec RFC 2104 §3
@@ -69,8 +69,8 @@ let configuredDpopNonceKey: { secret: string; key: Promise<CryptoKey> } | undefi
  */
 export async function dpopNonceKeyOf(secret: string | undefined): Promise<CryptoKey> {
   if (secret === undefined) {
-    processDpopNonceKey ??= importDpopNonceKey(crypto.getRandomValues(new Uint8Array(MIN_DPOP_NONCE_SECRET_BYTES)));
-    return processDpopNonceKey;
+    instanceDpopNonceKey ??= importDpopNonceKey(crypto.getRandomValues(new Uint8Array(MIN_DPOP_NONCE_SECRET_BYTES)));
+    return instanceDpopNonceKey;
   }
   if (configuredDpopNonceKey?.secret !== secret) {
     const bytes = new TextEncoder().encode(secret);

@@ -52,11 +52,11 @@ describe('dpopNonceKeyOf', () => {
     await expect(dpopNonceKeyOf('a'.repeat(32))).resolves.toBeDefined();
   });
 
-  it('should make one key for the process when no secret is set, which is not the key of a secret', async () => {
-    const processKey = await dpopNonceKeyOf(undefined);
+  it('should make one key for the instance when no secret is set, which is not the key of a secret', async () => {
+    const instanceKey = await dpopNonceKeyOf(undefined);
 
-    expect(await dpopNonceKeyOf(undefined)).toBe(processKey);
-    await expect(verifyDpopNonce(processKey, AUTHORIZATION_SERVER_NONCE, AUTHORIZATION_SERVER, { now: NOW, lifetimeSeconds: 120 })).resolves.toBe(
+    expect(await dpopNonceKeyOf(undefined)).toBe(instanceKey);
+    await expect(verifyDpopNonce(instanceKey, AUTHORIZATION_SERVER_NONCE, AUTHORIZATION_SERVER, { now: NOW, lifetimeSeconds: 120 })).resolves.toBe(
       false,
     );
   });

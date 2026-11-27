@@ -12,6 +12,7 @@ import { POST } from './route';
 
 const CLIENT_ID = 'par-route-client';
 const CLIENT_SECRET = 'par-route-secret';
+const POST_CLIENT_ID = 'par-route-post-client';
 const REDIRECT_URI = 'https://rp.example.com/callback';
 /** RFC 7636 Appendix B: the S256 code_challenge of its example code_verifier. */
 const CODE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
@@ -31,26 +32,33 @@ beforeAll(async () => {
     redirectUris: [REDIRECT_URI],
     tokenEndpointAuthMethods: ['client_secret_basic'],
   });
+  await registerClient(createDatabase(), {
+    clientId: POST_CLIENT_ID,
+    clientSecret: CLIENT_SECRET,
+    redirectUris: [REDIRECT_URI],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+  });
 });
 
 afterEach(() => vi.restoreAllMocks());
 
-/** A POST of body to /par with the Basic credentials of the client (secret) and the headers. */
-function postToPar(body: string, headers: Record<string, string> = {}, secret = CLIENT_SECRET): Request {
+/** A POST of body to /par as a form, with the headers. */
+function postToPar(body: string, headers: Record<string, string> = {}): Request {
   return new Request(`${TEST_ISSUER}/par`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Basic ${btoa(`${CLIENT_ID}:${secret}`)}`,
-      ...headers,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
     body,
   });
 }
 
-/** A pushed authorization request of the client, with the fields over the usual code flow parameters. */
+/** The Basic credentials of the client of client_secret_basic, with secret. */
+function basicCredentials(secret = CLIENT_SECRET): Record<string, string> {
+  return { Authorization: `Basic ${btoa(`${CLIENT_ID}:${secret}`)}` };
+}
+
+/** A pushed authorization request of the client of client_secret_basic, with the fields over the usual code flow parameters. */
 function pushedRequest(fields: Record<string, string> = {}, secret = CLIENT_SECRET): Request {
-  return postToPar(new URLSearchParams({ ...PUSHED_FIELDS, ...fields }).toString(), {}, secret);
+  return postToPar(new URLSearchParams({ ...PUSHED_FIELDS, ...fields }).toString(), basicCredentials(secret));
 }
 
 /** The status, the cache headers and the JSON body of a response of /par. */
@@ -93,6 +101,18 @@ describe('POST /par', () => {
       expect(record?.params).toEqual({ ...PUSHED_FIELDS, client_id: CLIENT_ID });
     });
 
+    // RFC 9126 §2.1: the credentials of the client authenticate the request and are not stored with it.
+    it('should store the parameters without the client_secret of a client that sent it in the body', async () => {
+      const body = new URLSearchParams({ ...PUSHED_FIELDS, client_id: POST_CLIENT_ID, client_secret: CLIENT_SECRET });
+      const response = await POST(postToPar(body.toString()));
+      const { request_uri: requestUri } = (await response.json()) as { request_uri: string };
+
+      const record = await parStore.consume(requestUri);
+
+      expect(response.status).toBe(201);
+      expect(record?.params).toEqual({ ...PUSHED_FIELDS, client_id: POST_CLIENT_ID });
+    });
+
     // RFC 9126 §4 / §7.3: /authorize expands the request_uri once.
     it('should let the authorization endpoint use the request_uri once', async () => {
       const response = await POST(pushedRequest());
@@ -114,7 +134,7 @@ describe('POST /par', () => {
   describe('Rejected Requests', () => {
     // RFC 9126 §2.1: the body must be a form.
     it('should answer 400 invalid_request to a body that is not a form', async () => {
-      const answer = await answerOf(await POST(postToPar(JSON.stringify(PUSHED_FIELDS), { 'Content-Type': 'application/json' })));
+      const answer = await answerOf(await POST(postToPar(JSON.stringify(PUSHED_FIELDS), { ...basicCredentials(), 'Content-Type': 'application/json' })));
 
       expect(answer).toEqual({
         status: 400,
@@ -130,7 +150,7 @@ describe('POST /par', () => {
     it('should answer 400 invalid_request to a repeated parameter', async () => {
       const body = `${new URLSearchParams(PUSHED_FIELDS)}&scope=profile`;
 
-      const answer = await answerOf(await POST(postToPar(body)));
+      const answer = await answerOf(await POST(postToPar(body, basicCredentials())));
 
       expect(answer).toEqual({
         status: 400,

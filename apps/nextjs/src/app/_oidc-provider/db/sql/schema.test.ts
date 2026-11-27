@@ -93,6 +93,7 @@ describe('SCHEMA_SQL', () => {
         },
       ]);
     });
+
     // Not in the ER model: the metadata of a client without a column, which a client without any leaves NULL.
     it('should default the payload of a client to NULL', () => {
       insertClient('rp-1');

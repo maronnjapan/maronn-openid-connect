@@ -290,6 +290,18 @@ describe('registerClient', () => {
 
       expect(await rows('SELECT payload FROM clients')).toEqual([{ payload: null }]);
     });
+
+    it('should save NULL as the payload of a client registered with a clientSecretHash and a jwksUri', async () => {
+      await registerClient(db, {
+        clientId: 'rp-hash',
+        clientSecretHash: 'precomputed-hash',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_basic'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+      });
+
+      expect(await rows('SELECT payload FROM clients')).toEqual([{ payload: null }]);
+    });
   });
 
   describe('Registering Again', () => {

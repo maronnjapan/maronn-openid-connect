@@ -238,6 +238,18 @@ describe('registerClient', () => {
 
       expect(await clientRecord('rp-fields')).not.toHaveProperty('payload');
     });
+
+    it('should write no payload for a client registered with a clientSecretHash and a jwksUri', async () => {
+      await registerClient(db, {
+        clientId: 'rp-hash',
+        clientSecretHash: 'precomputed-hash',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_basic'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+      });
+
+      expect(await clientRecord('rp-hash')).not.toHaveProperty('payload');
+    });
   });
 
   describe('Client Key Source and Request Object Alg', () => {

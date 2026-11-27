@@ -4,6 +4,7 @@ import {
   TokenError,
   TokenErrorCode,
 } from '@maronn-openid-connect/core';
+import { refreshTokenRecordOf, type TokenBinding } from '../../../token-binding.js';
 import type { RefreshTokenDecision } from './decide-refresh-token-issuance.js';
 import { step } from '../../../endpoints/step.js';
 
@@ -15,7 +16,8 @@ export const meta = step({
   label: 'リフレッシュトークンを発行して保存する',
   spec: 'OAuth 2.1 §4.3.1 / §6.1',
   function: 'issueRefreshToken',
-  consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'audience', 'acr', 'amr'],
+  consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'audience', 'acr', 'amr', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: ['refreshToken'],
   removable: false,
 });
@@ -31,10 +33,12 @@ export const meta = step({
  * `grantId`、`audience`、`authTime`、`acr`、`amr`、`azp` は、ローテーションしても同じ値を引き継ぐ。
  * 引き継ぐので、認可コードが再利用されたときに後から発行したトークンもまとめて失効させられ、`aud` が広がることもなく、リフレッシュで発行し直す ID トークンは最初の認証のときの値を保つ（OIDC Core 1.0 §12.1）。
  * `nonce` は最初の発行のときだけ保存し、ローテーションでは引き継がない（リフレッシュでは `undefined` になる）。
+ * 機能（dpop）がパブリッククライアントのリフレッシュトークンも鍵に束縛するとき（束縛が `refreshTokenCnf` を持つとき）は、リフレッシュトークンのレコードにその鍵の確認 `cnf` を保存する。
  *
  * @spec OAuth 2.1 §4.3.1
  * @spec OAuth 2.1 §6.1
  * @spec OIDC Core 1.0 §12.1
+ * @spec RFC 9449 §5
  */
 export async function issueRefreshToken(
   c: any,
@@ -48,9 +52,11 @@ export async function issueRefreshToken(
     audience: string[];
     acr: string | undefined;
     amr: string[] | undefined;
+    /** The key a feature (dpop) bound the tokens to; its refreshTokenCnf binds the refresh token of a public client too. */
+    binding?: TokenBinding;
   },
 ): Promise<string | undefined> {
-  const { decision, subject, authTime, nonce, validatedRequest, issuedAt, audience, acr, amr } = input;
+  const { decision, subject, authTime, nonce, validatedRequest, issuedAt, audience, acr, amr, binding } = input;
   if (!decision.issueRefreshToken) return undefined;
 
   const refreshTokenStore = c.get('refreshTokenStore');
@@ -104,6 +110,9 @@ export async function issueRefreshToken(
     // オンラインのリフレッシュトークンを結び付けるセッションを保存する。
     // `undefined` なら、セッションに結び付かないオフラインのリフレッシュトークンになり、ログアウトした後も使える。
     sessionId: decision.boundSessionId,
+    // 束縛が `refreshTokenCnf` を持つとき（DPoP proof を送ったパブリッククライアントのトークン。RFC 9449 §5）は、リフレッシュトークンもその鍵に束縛する。
+    // 束縛したリフレッシュトークンを次のリフレッシュで同じ鍵の DPoP proof と照らし合わせるのは、束縛した機能（dpop）の役目である。
+    ...refreshTokenRecordOf(binding),
   });
 
   return refreshToken;

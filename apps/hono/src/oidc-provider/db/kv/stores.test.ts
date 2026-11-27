@@ -397,6 +397,15 @@ describe('createProviderStores', () => {
       expect(await stores.accessTokenStore.get('at-1')).toEqual(stored);
     });
 
+    // RFC 9449 §6.2: what a binding adds to the record comes back with it, for the introspection of a bound token.
+    it('should return the cnf and the token_type a binding added to an access token', async () => {
+      // The members are written out, not built with accessTokenRecordOf(), so the test fails if the store drops them.
+      const stored = { ...accessToken({ jti: 'jti-1' }), cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' };
+      await stores.accessTokenStore.set('at-1', stored);
+
+      expect(await stores.accessTokenStore.get('at-1')).toEqual(stored);
+    });
+
     it('should store a token without a jti under its SHA-256 hash and return it without a jti', async () => {
       await stores.accessTokenStore.set('at-1', accessToken());
 
@@ -517,6 +526,15 @@ describe('createProviderStores', () => {
   });
 
   describe('refreshTokenStore', () => {
+    // RFC 9449 §5: the confirmation of a bound refresh token comes back with it, for the check at the next refresh.
+    it('should return the cnf a binding added to a refresh token', async () => {
+      // The member is written out, not built with refreshTokenRecordOf(), so the test fails if the store drops it.
+      const stored = { ...refreshToken(), cnf: { jkt: 'jkt-1' } };
+      await stores.refreshTokenStore.set('rt-1', stored);
+
+      expect(await stores.refreshTokenStore.get('rt-1')).toEqual(stored);
+    });
+
     // OAuth 2.1 §4.3.1: a rotated refresh token stays readable so a replay is detected.
     it('should keep a consumed refresh token readable and reject a second consume with invalid_grant', async () => {
       await stores.refreshTokenStore.set('rt-1', refreshToken());

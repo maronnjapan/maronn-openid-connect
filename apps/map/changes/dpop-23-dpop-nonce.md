@@ -1,11 +1,11 @@
-# サーバーが発行する DPoP の nonce を作って確かめるモジュールを足し、DPoP proof の検査が求められたときに nonce を確かめるようにする（DPoP の段 23）
+# サーバーが発行する DPoP の nonce を作って確かめられるようにする（DPoP の段 23）
 
 DPoP（RFC 9449）を生成 OP に入れる段の 23 個目で、サーバーが発行する DPoP の nonce（RFC 9449 §8 / §9）の発行と検証を、DPoP の機能のディレクトリに足す（`nonce.ts`）。
 nonce はサーバーに状態を持たない。発行した時刻（秒）と 12 バイトの乱数に、秘密の鍵での HMAC-SHA256 を付けたもので、MAC には発行したサーバーの役割（認可サーバーか保護されたリソースか）と issuer も入れる。
 nonce を覚えるストアを足さないので、データベースのテーブルもキーも変わらず、同じ秘密を持つインスタンスはどれも互いの nonce を受け付ける。Web Crypto だけで作るので、Workers でも動く。
 DPoP proof の検査（`verifyDpopRequestProof()`）は、呼び出し元が nonce を発行したサーバーの役割（`nonceServer`）を渡したときだけ、`nonce` クレームがその役割の最近の nonce であることを、`jti` を消費する前に確かめ、そうでなければ `use_dpop_nonce` で拒否する。
 nonce を受け付ける期間は `ProviderConfig` の新しい項目 `dpopNonceLifetimeSeconds`（既定は 120 秒）で、秘密は Hono 系では `OidcProviderOptions.dpopNonceSecret`（dpop の機能の `context` がリクエストコンテキストの `dpopNonceSecret` に入れる）、Next.js では環境変数 `OIDC_DPOP_NONCE_SECRET` である。秘密が無ければ、プロセスごとに乱数の鍵を作る。
-この段では、どのエンドポイントも `nonceServer` を渡さず、`DPoP-Nonce` ヘッダーも返さないので、OP の応答は変わらない（地図の生きた OP のケースも、すべて前と同じ状態とエラーで答える）。
+この段では、どのエンドポイントも `nonceServer` を渡さず、`DPoP-Nonce` ヘッダーも返さないので、OP の応答は変わらない（地図の生きた OP のケースも、すべて期待どおりの状態とエラーで答える）。
 nonce を求めるかどうかの設定（認可サーバーと保護されたリソースのそれぞれ）は、この段には入れず、応答で nonce を渡すエンドポイントと一緒に足す。nonce を渡す前に求める設定だけがあると、それを有効にした OP は DPoP のリクエストをすべて `use_dpop_nonce` で拒否し、クライアントには nonce を得る手段が無いためである（RFC 9449 §8 は、`use_dpop_nonce` の応答に `DPoP-Nonce` ヘッダーで nonce を付けることを求める）。
 Hono と Next.js のファイルは、秘密の読み方（Hono はリクエストのコンテキスト、Next.js は環境変数）のほかは同じ中身である。
 

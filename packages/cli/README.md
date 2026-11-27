@@ -823,7 +823,7 @@ export function createDatabase(): SqlDatabase {
 
 | テーブル | 保存するもの |
 |---|---|
-| `clients` | 登録クライアント（`id` が client_id、`name` が `client_name`）。`is_deleted` を立てたクライアントは OP から見えなくなる。クライアントに 1 つしかない登録メタデータ（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）も列に持ち、登録していない値は NULL になる。列の無いメタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム、機能が `RegisteredClient` に足すメタデータ）は `payload` 列に JSON で持ち、無ければ NULL になる |
+| `clients` | 登録クライアント（`id` が client_id、`name` が `client_name`）。`is_deleted` を立てたクライアントは OP から見えなくなる。クライアントに 1 つしかない登録メタデータ（`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri`）も列に持ち、登録していない値は NULL になる。列の無いメタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム、機能が `RegisteredClient` に足すメタデータ）は、`RegisteredClient` のメンバーの名前をキーにした JSON のオブジェクト（`{"defaultMaxAge":300,"idTokenSignedResponseAlg":"ES256"}` など）で `payload` 列に持ち、無ければ NULL になる |
 | `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post / private_key_jwt。1 つのクライアントにいくつでも登録できる）と、client_secret_basic と client_secret_post のシークレットのハッシュ。private_key_jwt の行はシークレットを持たない |
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を、`private_key_jwt` の用途の鍵でクライアントアサーションを検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |

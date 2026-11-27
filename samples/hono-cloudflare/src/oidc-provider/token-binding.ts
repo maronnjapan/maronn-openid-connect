@@ -4,11 +4,12 @@
  * A feature that binds tokens to a key of the client (dpop, RFC 9449) hands a
  * TokenBinding to the code that issues and stores the tokens. It puts the
  * confirmation (cnf, RFC 7800) into the access token and into the stored
- * records, and the token_type into the token response; the stored access
- * token record keeps both, so that the introspection endpoint can report them
- * (RFC 9449 §6.2). Without a binding the tokens are Bearer tokens, as they are
- * in a provider without such a feature.
+ * records, and the token_type into the token response; the introspection
+ * endpoint reports both from the stored access token record (RFC 9449 §6.2).
+ * Without a binding the tokens are Bearer tokens, as they are in a provider
+ * without such a feature.
  */
+import type { IntrospectionResponse } from '@maronn-openid-connect/core';
 
 /** The key an access token (and the refresh token issued with it) is bound to. */
 export interface TokenBinding {
@@ -28,6 +29,9 @@ export interface TokenBindingRecord {
 
 /** The token_type of a token that is not bound to a key (RFC 6750 §4). */
 export const BEARER_TOKEN_TYPE = 'Bearer';
+
+/** The token_type of a token bound to a key with the jkt confirmation method of DPoP (RFC 9449 §6.1 / §6.2). */
+export const DPOP_TOKEN_TYPE = 'DPoP';
 
 /**
  * トークンレスポンスの `token_type` を返す。
@@ -76,4 +80,38 @@ export function accessTokenRecordOf(binding: TokenBinding | undefined): TokenBin
  */
 export function refreshTokenRecordOf(binding: TokenBinding | undefined): TokenBindingRecord {
   return binding?.refreshTokenCnf === undefined ? {} : { cnf: binding.refreshTokenCnf };
+}
+
+/**
+ * レコード（保存したトークンなど）が持つ束縛の確認（`cnf`）を返す。
+ *
+ * `cnf` がないか、JSON のオブジェクトでなければ `undefined` を返す。
+ * レコードはストアから読んだ値で、機能や独自のコードが書いたものもあるので、型を信じずに形を確かめる。
+ *
+ * @spec RFC 7800 §3.1
+ * @spec RFC 9449 §6.2
+ */
+export function confirmationOf(record: unknown): Readonly<Record<string, string>> | undefined {
+  if (typeof record !== 'object' || record === null) return undefined;
+  const cnf = (record as { cnf?: unknown }).cnf;
+  return typeof cnf === 'object' && cnf !== null && !Array.isArray(cnf) ? (cnf as Record<string, string>) : undefined;
+}
+
+/**
+ * 有効なアクセストークンのイントロスペクションのレスポンスに、束縛の確認（`cnf`）と `token_type` を加えて返す。
+ *
+ * 保存したレコードに `cnf` があれば、`cnf` と、レコードの `tokenType`（DPoP で束縛したトークンは `DPoP`）を返す（RFC 9449 §6.2）。
+ * レコードに `tokenType` がなくても、`cnf` が DPoP の確認のメソッド `jkt`（RFC 9449 §6.1）を持てば、`token_type` は `DPoP` にする。RFC 9449 §6.2 は、DPoP で束縛したトークンに `token_type` を返すなら `DPoP` でなければならないとしているためである。
+ * 有効でないトークンのレスポンスと、`cnf` のないレコードのレスポンスは、そのまま返す。
+ * core の `IntrospectionResponse` は `token_type` に `Bearer` と `refresh_token` しか認めないので、加えた値の型だけを広げて返す。
+ *
+ * @spec RFC 9449 §6.2
+ * @spec RFC 7662 §2.2
+ */
+export function withTokenBinding(response: IntrospectionResponse, record: unknown): IntrospectionResponse {
+  const cnf = confirmationOf(record);
+  if (!response.active || cnf === undefined) return response;
+  const storedTokenType = (record as TokenBindingRecord).tokenType;
+  const derivedTokenType = typeof cnf.jkt === 'string' ? DPOP_TOKEN_TYPE : response.token_type;
+  return { ...response, token_type: typeof storedTokenType === 'string' ? storedTokenType : derivedTokenType, cnf } as IntrospectionResponse;
 }

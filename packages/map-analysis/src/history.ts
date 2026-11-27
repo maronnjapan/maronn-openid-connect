@@ -705,6 +705,22 @@ export function heldRevision(repository: string, base: string): { revision: stri
 }
 
 /**
+ * Where a build reads the history of main from (BuildOptions.history of
+ * build.ts): `revision` as it is; else the newest commit whose code HEAD has
+ * (heldRevision) of the history's `base` (MAP_HISTORY_BASE: origin/main), else
+ * of the base of the changes (`changesBase`, MAP_BASE); else the main of a
+ * remote (mainRevision). A pull request stacked on another one's branch has
+ * that branch as the base of its changes, whose commits have not reached
+ * main: with the history's base its map lists only the changes since its own
+ * base and a history of main without them. Into main, the two bases are one.
+ */
+export function historyRevision(repository: string, history: { revision?: string; base?: string }, changesBase?: string): { revision: string; from: string } {
+  if (history.revision !== undefined) return { revision: history.revision, from: history.revision };
+  const base = history.base ?? changesBase;
+  return base === undefined ? mainRevision(repository) : heldRevision(repository, base);
+}
+
+/**
  * Where the history of main is read from when the build is given no base:
  * the newest commit of the main of a remote (origin/main, upstream/main) whose
  * code HEAD has (newestHeld). So the commits of a branch not merged yet do

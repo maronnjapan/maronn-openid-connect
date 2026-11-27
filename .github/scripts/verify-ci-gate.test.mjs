@@ -6,8 +6,10 @@ import {
   assertLintGateIsBacked,
   assertMapFollowsTests,
   assertMapSharesPreviewGroup,
+  assertPreviewCleanupCoversEveryPullRequest,
   assertRootScriptsCoverApps,
   assertStaticVerificationGate,
+  assertWorkflowVerifiesEveryPullRequest,
   assertWorkflowVerifiesMainPush,
   parseWorkflow,
 } from './verify-ci-gate.mjs';
@@ -19,7 +21,6 @@ const CI_WORKFLOW = [
   '',
   'on:',
   '  pull_request:',
-  '    branches: [main]',
   '  push:',
   '    branches: [main]',
   '',
@@ -107,17 +108,75 @@ describe('parseWorkflow', () => {
 
     assert.deepEqual(workflow, { concurrency: { group: 'ci-${{ github.workflow }}-${{ github.ref }}' } });
   });
+
+  it('should read a key with nothing under it as an empty string, and a missing key as undefined', () => {
+    const workflow = parseWorkflow(['on:', '  pull_request:', '  push:', '    branches: [main]', ''].join('\n'));
+
+    assert.deepEqual(workflow, { on: { pull_request: '', push: { branches: ['main'] } } });
+    assert.equal(workflow.on.merge_group, undefined);
+  });
+});
+
+describe('assertWorkflowVerifiesEveryPullRequest', () => {
+  const pullRequest = (...lines) => workflowWith(['on:', '  pull_request:', ...lines, '  push:', '    branches: [main]', ''].join('\n'));
+
+  it('should accept a pull request trigger that takes every base branch', () => {
+    assert.doesNotThrow(() => assertWorkflowVerifiesEveryPullRequest(workflowWith(CI_WORKFLOW)));
+    assert.doesNotThrow(() => assertWorkflowVerifiesEveryPullRequest(pullRequest('    types: [opened, synchronize, reopened]')));
+    assert.doesNotThrow(() => assertWorkflowVerifiesEveryPullRequest(pullRequest("    branches: ['**']")));
+    assert.doesNotThrow(() => assertWorkflowVerifiesEveryPullRequest(workflowWith(['on: [push, pull_request]', ''].join('\n'))));
+    assert.doesNotThrow(() => assertWorkflowVerifiesEveryPullRequest(workflowWith(['on: pull_request', ''].join('\n'))));
+  });
+
+  it('should reject a pull request trigger that runs only on pull requests into main', () => {
+    assert.throws(
+      () => assertWorkflowVerifiesEveryPullRequest(pullRequest('    branches: [main]')),
+      new Error(
+        'CI ワークフローの pull_request が base ブランチを絞っています（on.pull_request.branches（main））。' +
+          'PR は前の PR のブランチを base にして積み重ねることがあり、絞った外の base の PR にはテストも地図も走りません。' +
+          'on.pull_request から branches と branches-ignore を外してください（branches を `**` だけにしても構いません）。',
+      ),
+    );
+  });
+
+  it('should reject a pull request trigger that leaves some base branches out', () => {
+    assert.throws(
+      () => assertWorkflowVerifiesEveryPullRequest(pullRequest("    branches-ignore: ['ccr-*']")),
+      /on\.pull_request\.branches-ignore（ccr-\*）/,
+    );
+    assert.throws(
+      () => assertWorkflowVerifiesEveryPullRequest(pullRequest('    branches:', "      - '**'", "      - '!ccr-*'")),
+      /on\.pull_request\.branches（\*\*, !ccr-\*）/,
+    );
+  });
+
+  it('should reject a workflow without a pull request trigger', () => {
+    const workflow = workflowWith(['on:', '  push:', '    branches: [main]', ''].join('\n'));
+
+    assert.throws(
+      () => assertWorkflowVerifiesEveryPullRequest(workflow),
+      new Error(
+        'CI ワークフローが pull request で起動しません。on に pull_request を追加してください。' +
+          'PR の変更がマージ前に検査されず、地図のプレビューも作られません。',
+      ),
+    );
+  });
+
+  it('should reject a workflow whose trigger, written as one event or a list of them, is not a pull request', () => {
+    assert.throws(() => assertWorkflowVerifiesEveryPullRequest(workflowWith(['on: push', ''].join('\n'))), /CI ワークフローが pull request で起動しません。/);
+    assert.throws(() => assertWorkflowVerifiesEveryPullRequest(workflowWith(['on: [push, workflow_dispatch]', ''].join('\n'))), /CI ワークフローが pull request で起動しません。/);
+  });
 });
 
 describe('assertWorkflowVerifiesMainPush', () => {
-  it('should accept a workflow triggered by both pull requests and main pushes', () => {
+  it('should accept a workflow triggered by main pushes', () => {
     assert.doesNotThrow(() => {
       assertWorkflowVerifiesMainPush(workflowWith(CI_WORKFLOW));
     });
   });
 
   it('should reject a workflow without a push trigger', () => {
-    const workflow = workflowWith(['on:', '  pull_request:', '    branches: [main]', ''].join('\n'));
+    const workflow = workflowWith(['on:', '  pull_request:', ''].join('\n'));
 
     assert.throws(
       () => assertWorkflowVerifiesMainPush(workflow),
@@ -129,25 +188,9 @@ describe('assertWorkflowVerifiesMainPush', () => {
   });
 
   it('should reject a push trigger that does not cover main', () => {
-    const workflow = workflowWith(
-      ['on:', '  pull_request:', '    branches: [main]', '  push:', '    branches: [develop]', ''].join(
-        '\n',
-      ),
-    );
+    const workflow = workflowWith(['on:', '  pull_request:', '  push:', '    branches: [develop]', ''].join('\n'));
 
     assert.throws(() => assertWorkflowVerifiesMainPush(workflow), /on\.push\.branches に main/);
-  });
-
-  it('should reject a workflow without a pull request trigger', () => {
-    const workflow = workflowWith(['on:', '  push:', '    branches: [main]', ''].join('\n'));
-
-    assert.throws(
-      () => assertWorkflowVerifiesMainPush(workflow),
-      new Error(
-        'CI ワークフローが main 向けの pull request で起動しません。' +
-          'on.pull_request.branches に main を追加してください。',
-      ),
-    );
   });
 });
 
@@ -469,5 +512,41 @@ describe('assertMapSharesPreviewGroup', () => {
     assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(undefined)}`), preview(GROUP)), /concurrency の group（なし）/);
     assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob('map-${{ github.ref }}')}`), preview(GROUP)), /一致していない/);
     assert.throws(() => assertMapSharesPreviewGroup(workflowWith(`${CI_WORKFLOW}${mapJob(GROUP, 'true')}`), preview(GROUP)), /cancel-in-progress が false ではありません/);
+  });
+});
+
+describe('assertPreviewCleanupCoversEveryPullRequest', () => {
+  const MAP_JOB = ['  map:', '    needs: test', '    runs-on: ubuntu-latest', '    steps:', '      - name: Build the map', '        run: pnpm run build:map', ''].join('\n');
+  const preview = (...on) => workflowWith(['name: Map Preview', '', ...on, '', 'jobs:', '  cleanup:', '    runs-on: ubuntu-latest', ''].join('\n'));
+
+  it('should accept a cleanup on the pull requests of every base branch that are closed', () => {
+    assert.doesNotThrow(() => assertPreviewCleanupCoversEveryPullRequest(workflowWith(`${CI_WORKFLOW}${MAP_JOB}`), preview('on:', '  pull_request:', '    types: [closed]')));
+  });
+
+  it('should accept a workflow without a map job or without the cleanup', () => {
+    const intoMain = preview('on:', '  pull_request:', '    branches: [main]', '    types: [closed]');
+    assert.doesNotThrow(() => assertPreviewCleanupCoversEveryPullRequest(workflowWith(CI_WORKFLOW), intoMain));
+    assert.doesNotThrow(() => assertPreviewCleanupCoversEveryPullRequest(workflowWith(`${CI_WORKFLOW}${MAP_JOB}`), undefined));
+  });
+
+  it('should reject a cleanup only of the pull requests into main', () => {
+    assert.throws(
+      () => assertPreviewCleanupCoversEveryPullRequest(workflowWith(`${CI_WORKFLOW}${MAP_JOB}`), preview('on:', '  pull_request:', '    branches: [main]', '    types: [closed]')),
+      new Error(
+        'map-preview.yml の pull_request が base ブランチを絞っています（on.pull_request.branches（main））。' +
+          'CI の地図のジョブはどの base の PR にもプレビューを作るので、絞った外の base の PR を閉じても、そのプレビューが消えずに残ります。' +
+          'on.pull_request から branches と branches-ignore を外してください。',
+      ),
+    );
+  });
+
+  it('should reject a cleanup that does not run on pull requests', () => {
+    assert.throws(
+      () => assertPreviewCleanupCoversEveryPullRequest(workflowWith(`${CI_WORKFLOW}${MAP_JOB}`), preview('on:', '  workflow_dispatch:')),
+      new Error(
+        'map-preview.yml が pull request で起動しません。CI の地図のジョブが作った PR のプレビューが、PR を閉じても消えずに残ります。' +
+          'on.pull_request（types: [closed]）を追加してください。',
+      ),
+    );
   });
 });

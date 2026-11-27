@@ -12,23 +12,35 @@
  *   (app/oidc-error): errorPagePath() / redirectToErrorPage().
  */
 import { NextResponse } from 'next/server';
+import { corsHeadersOf } from './feature';
+import { features } from './features';
 import { config, corsOrigins } from './provider';
 
 export interface CorsPolicy {
   origins: string | readonly string[];
   allowMethods: readonly string[];
   allowHeaders: readonly string[];
+  /** Response headers a browser lets the client read beside the CORS-safelisted ones; none when left out. */
+  exposeHeaders?: readonly string[];
   maxAge: number;
 }
 
+// The headers the enabled features add to clientCors (the cors hook of
+// feature.ts). Reading features.ts here makes no import cycle: no feature.ts
+// imports this module or provider.ts, so the list is complete when clientCors
+// is built.
+const featureCorsHeaders = corsHeadersOf(features);
+
 /**
  * Endpoints client applications call directly (token, userinfo, introspect,
- * revoke, ...): only the origins configured in provider.ts.
+ * revoke, ...): only the origins configured in provider.ts. The enabled
+ * features add headers of their own (the cors hook of feature.ts).
  */
 export const clientCors: CorsPolicy = {
   origins: corsOrigins,
   allowMethods: ['POST', 'GET', 'OPTIONS'],
-  allowHeaders: ['Authorization', 'Content-Type'],
+  allowHeaders: ['Authorization', 'Content-Type', ...featureCorsHeaders.allowHeaders],
+  exposeHeaders: featureCorsHeaders.exposeHeaders,
   maxAge: 600,
 };
 
@@ -68,6 +80,7 @@ export function withCors(request: Request, policy: CorsPolicy, response: Respons
  * リクエストに返す CORS のヘッダーを作って返す。
  *
  * `Vary: Origin` と、`policy` の許可するメソッド、許可するヘッダー、キャッシュしてよい秒数を必ず入れる。
+ * `policy` の `exposeHeaders` に名前があれば、クライアントに読ませるレスポンスヘッダー（`Access-Control-Expose-Headers`）も入れる。
  * `allowedOrigin()` がリクエストの `Origin` を許可すれば、`Access-Control-Allow-Origin` も入れる。
  */
 function corsHeaders(request: Request, policy: CorsPolicy): Headers {
@@ -79,6 +92,9 @@ function corsHeaders(request: Request, policy: CorsPolicy): Headers {
   headers.set('Vary', 'Origin');
   headers.set('Access-Control-Allow-Methods', policy.allowMethods.join(','));
   headers.set('Access-Control-Allow-Headers', policy.allowHeaders.join(','));
+  if (policy.exposeHeaders !== undefined && policy.exposeHeaders.length > 0) {
+    headers.set('Access-Control-Expose-Headers', policy.exposeHeaders.join(','));
+  }
   headers.set('Access-Control-Max-Age', String(policy.maxAge));
   return headers;
 }

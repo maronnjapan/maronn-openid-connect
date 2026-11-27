@@ -6,6 +6,7 @@ import { createProviderConfig } from './config';
 import {
   configOf,
   contextOf,
+  corsHeadersOf,
   defineFeature,
   discoveryOf,
   loginMethodsOf,
@@ -278,5 +279,25 @@ describe('loginMethodsOf', () => {
 
   it('should return no login method when no feature offers one', () => {
     expect(loginMethodsOf([defineFeature({ id: 'a' })])).toEqual([]);
+  });
+});
+
+describe('corsHeadersOf', () => {
+  it('should list the CORS headers of the features once each, in the order of the features', () => {
+    const features: Feature[] = [
+      defineFeature({ id: 'a', cors: { allowHeaders: ['X-Proof'], exposeHeaders: ['WWW-Authenticate'] } }),
+      defineFeature({ id: 'b' }),
+      defineFeature({ id: 'c', cors: { allowHeaders: ['X-Proof', 'X-Other'] } }),
+    ];
+
+    expect(corsHeadersOf(features)).toEqual({ allowHeaders: ['X-Proof', 'X-Other'], exposeHeaders: ['WWW-Authenticate'] });
+  });
+
+  // The protected endpoints then keep the provider's own headers only.
+  it('should return no header when no feature names one', () => {
+    expect(corsHeadersOf([defineFeature({ id: 'a' }), defineFeature({ id: 'b', cors: {} })])).toEqual({
+      allowHeaders: [],
+      exposeHeaders: [],
+    });
   });
 });

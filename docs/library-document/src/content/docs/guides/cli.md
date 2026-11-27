@@ -131,7 +131,7 @@ UI を変える場所は、変えたい範囲で選びます。
 
 ### Next.js
 
-Next.js では、App Router の機能をそのまま使ったコードを `--output`（例: `./src/app`）へ生成します。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いています。`/token` の挙動を知りたければ `token/route.ts` だけを読めば済みます。`/authorize`、`/token`、`/introspect`、Discovery の `route.ts` は、ステップごとに Hono / Express / Fastify と同じ `// [step-id] ラベル — 仕様` の印が付き、隣の `endpoint.ts` がステップの並びと、各ステップが読み書きする値を記述します。
+Next.js では、App Router の機能をそのまま使ったコードを `--output`（例: `./src/app`）へ生成します。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いています。`/token` の挙動を知りたければ `token/route.ts` だけを読めば済みます。`/authorize`、`/token`、`/userinfo`、`/introspect`、Discovery の `route.ts` は、ステップごとに Hono / Express / Fastify と同じ `// [step-id] ラベル — 仕様` の印が付き、隣の `endpoint.ts` がステップの並びと、各ステップが読み書きする値を記述します。
 
 ```
 src/app/
@@ -144,7 +144,7 @@ src/app/
 │   ├── config.ts / store.ts / resolvers.ts / scopes.ts / cookies.ts  # 他のフレームワークと共通の設定型・ストアの契約・resolver・スコープポリシー・Cookie
 │   ├── development.ts        # 試用のための開発用ユーザー（testuser / otheruser）と registerDevelopmentUsers()
 │   ├── shared.ts             # Next.js のモジュールの層をまたいで値を 1 つにする shared()
-│   ├── endpoint.ts           # authorize、token、introspect、Discovery の route.ts の隣の endpoint.ts が使う、ステップの並びの記述
+│   ├── endpoint.ts           # authorize、token、userinfo、introspect、Discovery の route.ts の隣の endpoint.ts が使う、ステップの並びの記述
 │   ├── feature.ts / features.ts  # 機能が OP に足すもの（フック）の定義と、有効な機能の一覧
 │   ├── features/             # 機能の設定やストアなど、ルート以外のコード（features/<feature-id>/）
 │   └── db/                   # クライアント、ユーザー、認可コード、トークンなどの保存先。--db 無しはプロセスのメモリ、--db 付きはテーブル定義（sql）かキーの一覧（kv）とストア（instance.ts だけは利用者が書く）

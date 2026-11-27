@@ -4,7 +4,8 @@
  * The PAR endpoint calls bindPushedDpopKey() in its [bind-pushed-dpop-key]
  * block, right after client authentication. This feature requires no other
  * feature (packages/cli/src/registry.ts), so it uses no error type of the par
- * feature: a rejection is a ready-made Response the block returns.
+ * feature: a rejection is a ready-made Response the block returns. Without
+ * par this file is generated all the same, and nothing imports it.
  */
 import { parseDpopJkt, resolvePushedDpopJkt } from './binding';
 import { isDpopError } from './errors';
@@ -31,7 +32,7 @@ export interface PushedDpopBinding {
  *
  * 拒否するときは、PAR のエラーと同じ形（RFC 9126 §2.3）の 400 の JSON のレスポンス（`no-cache, no-store`）を `dpopRejection` に入れて返す。
  * `error` は、DPoP proof を受け付けないときと `dpop_jkt` が DPoP proof の鍵と違うときは `invalid_dpop_proof`、`dpop_jkt` が JWK Thumbprint の形でないときは `invalid_request` である。
- * PAR の機能のエラーの型を使わないのは、DPoP の機能が PAR の機能なしでも生成されるためである。
+ * PAR の機能のエラーの型を使わないのは、DPoP の機能が PAR の機能なしでも生成されるためである（そのときもこのファイルは生成されるが、PAR エンドポイントがないので、どこからも呼ばれない）。
  *
  * @spec RFC 9449 §10.1
  * @spec RFC 9126 §2.1

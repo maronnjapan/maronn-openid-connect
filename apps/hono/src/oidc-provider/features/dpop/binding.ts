@@ -1,10 +1,11 @@
 /**
- * トークンと認可コードの、DPoP の鍵への束縛（RFC 9449 §5 / §6 / §10）。
+ * トークンと認可コードの、DPoP の鍵への束縛（RFC 9449 §5 / §6 / §10 / §10.1）。
  *
  * OP は、DPoP proof の鍵の JWK Thumbprint（`jkt`）を、発行するアクセストークンの `cnf` に入れ（RFC 9449 §6.1）、
  * 保存するアクセストークンのレコードにも同じ `cnf` を残す（イントロスペクションが返す。RFC 9449 §6.2）。
  * パブリッククライアントに発行するリフレッシュトークンも、同じ鍵に束縛する（RFC 9449 §5）。
  * 認可リクエストの `dpop_jkt` は、その認可リクエストから発行する認可コードを束縛する鍵の JWK Thumbprint として読む（RFC 9449 §10）。
+ * PAR のリクエストの `DPoP` ヘッダーの鍵は、プッシュした認可リクエストの `dpop_jkt` として扱う（RFC 9449 §10.1）。
  * レコードの `cnf.jkt` で鍵に束縛した認可コードとリフレッシュトークンは、同じ鍵の DPoP proof を送ったトークンリクエストだけが使える（RFC 9449 §5 / §10）。
  */
 import { decodeBase64Url } from './base64url.js';
@@ -68,6 +69,22 @@ export function parseDpopJkt(value: unknown): string | undefined {
     throw new DpopError('invalid_request', 'dpop_jkt must be a base64url SHA-256 JWK Thumbprint');
   }
   return value;
+}
+
+/**
+ * PAR のリクエストの DPoP proof の鍵の JWK Thumbprint を、プッシュされた認可リクエストの認可コードを束縛する鍵として返す。
+ *
+ * PAR のリクエストの DPoP proof の鍵は、`dpop_jkt` で送った鍵として扱う（RFC 9449 §10.1）。
+ * プッシュされた認可リクエストにも `dpop_jkt` があるときは、DPoP proof の鍵と同じでなければ拒否する（RFC 9449 §10.1 の MUST）。
+ *
+ * @spec RFC 9449 §10.1
+ * @throws {DpopError} `invalid_dpop_proof`: `dpop_jkt` と DPoP proof の鍵の JWK Thumbprint が違うとき
+ */
+export function resolvePushedDpopJkt(dpopJkt: string | undefined, proofJkt: string): string {
+  if (dpopJkt !== undefined && dpopJkt !== proofJkt) {
+    throw new DpopError('invalid_dpop_proof', 'dpop_jkt does not match the key of the DPoP proof');
+  }
+  return proofJkt;
 }
 
 /**

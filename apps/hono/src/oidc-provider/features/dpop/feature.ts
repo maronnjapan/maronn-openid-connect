@@ -17,6 +17,10 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * The authorization endpoint reads the dpop_jkt of a request (the
  * [validate-dpop-jkt] block of endpoints/authorize/pipeline.ts, whose step is
  * steps/validate-dpop-jkt.ts) and binds the code issued for it to that key.
+ * With par, the PAR endpoint checks the DPoP proof of a pushed request (the
+ * [bind-pushed-dpop-key] block of features/par/endpoints/par/pipeline.ts,
+ * whose step is steps/bind-pushed-dpop-key.ts) and pushes the request with
+ * the key of the proof as its dpop_jkt.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. The feature adds the defaults of the DPoP

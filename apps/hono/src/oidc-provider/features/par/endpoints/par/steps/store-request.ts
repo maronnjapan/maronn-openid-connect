@@ -14,7 +14,8 @@ export const meta = step({
   label: '新しい request_uri でリクエストを保存する',
   spec: 'RFC 9126 §2.2 / §7.1',
   function: 'storePushedRequest',
-  consumes: ['clientId', 'pushedParams'],
+  consumes: ['clientId', 'pushedParams', 'dpopBoundParams'],
+  optional: ['dpopBoundParams'],
   produces: ['parResponse'],
   removable: false,
 });

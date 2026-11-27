@@ -19,6 +19,14 @@ import { validatePushedRequest } from './steps/validate-request.js';
  * then passes to /authorize. Each block below calls one step (one box of
  * `maronn-oidc graph --detail steps --endpoint par`).
  *
+ * With the dpop extension, the (feature: dpop) block after client
+ * authentication rejects a pushed dpop_jkt that is not a JWK Thumbprint (400
+ * invalid_request, with or without a DPoP header), checks the DPoP proof of a
+ * request that has a DPoP header and pushes the request with its key as
+ * dpop_jkt, so the code issued for the request_uri is bound to that key
+ * (RFC 9449 §10.1). Without the block the pushed parameters are validated and
+ * stored as they came.
+ *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * deliberately left to the deployment layer (reverse proxy / platform), not
  * implemented here. This endpoint is unauthenticated until the client
@@ -34,11 +42,13 @@ parApp.post('/', async (c) => {
     // [authenticate-client] プッシュしたクライアントを認証する — RFC 9126 §2.1
     const { clientId, pushedParams } = await authenticatePushingClient(c, params, authorization);
 
+    const dpopBoundParams = undefined;
+
     // [validate-request] /authorize と同じ規則でリクエストを検証する — RFC 9126 §2.1
-    await validatePushedRequest(c, pushedParams);
+    await validatePushedRequest(c, dpopBoundParams ?? pushedParams);
 
     // [store-request] 新しい request_uri でリクエストを保存する — RFC 9126 §2.2 / §7.1
-    const parResponse = await storePushedRequest(c, clientId, pushedParams);
+    const parResponse = await storePushedRequest(c, clientId, dpopBoundParams ?? pushedParams);
 
     // [respond] 201 で応答する（no-store） — RFC 9126 §2.2
     return respondPar(c, parResponse);

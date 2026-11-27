@@ -1,7 +1,7 @@
 # DPoP proof の検査を足す（DPoP の段 13）
 
 DPoP（RFC 9449）を生成 OP に入れる段の 13 個目で、DPoP の機能のディレクトリに、リクエストの `DPoP` ヘッダーの DPoP proof を検査するモジュール（`proof.ts`）と、`htu` を比べるための URI の正規化（`htu.ts`）を足す。
-RFC 9449 §4.3 の検査（ヘッダーが一つであること、JWS の形と `typ`、`alg`、`jwk` の公開鍵での署名、`jti`、`htm`、`htu`、`iat`、保護されたリソースでの `ath`、`jti` の再利用）を責務ごとの関数に分け、`verifyDpopRequestProof()` が順に呼んで、DPoP proof の鍵の JWK Thumbprint を返す。
+RFC 9449 §4.3 の検査は責務ごとの関数に分けた。`readDpopProofHeader()` が `DPoP` ヘッダーが一つであることを確かめて DPoP proof を取り出し、`verifyDpopRequestProof()` が残りの検査（JWS の形と `typ`、`alg`、`jwk` の公開鍵での署名、`jti`、`htm`、`htu`、`iat`、保護されたリソースでの `ath`、`jti` の再利用）を順に呼んで、DPoP proof の鍵の JWK Thumbprint を返す。
 `iat` の範囲は、`dpopSigningAlgValuesSupported` と同じく `ProviderConfig` の必須の項目（`dpopProofMaxAgeSeconds`、`dpopProofLeewaySeconds`、既定はどちらも 60 秒）として `config.ts` で宣言し、既定値を `dpopConfigDefaults` に足した。
 エンドポイントから呼ぶのは後の段で、この段ではまだどこからも読み込まない。CLI の機能の一覧に `dpop` が無いので、どの生成にも入らず、生成するコードも OP の応答も変わらない。
 PR #205 の `proof.ts` と `htu.ts` をもとにし、そこで見つかった三つの不備（`jti` の長さに上限が無くそのまま覚えること、`/` で終わる issuer での `htu` の比べ方、`typ` の `application/dpop+jwt` を拒否すること）を直した。
@@ -40,10 +40,12 @@ PR #205 から、`typ` に `application/dpop+jwt` も受け付けるようにし
 `jti`、`htm`、`htu`、`iat` を確かめ、`jti` を覚えておく期限を返す（RFC 9449 §4.2 / §4.3 / §11.1）。
 `iat` は、`now - maxAge - leeway` から `now + leeway` までを受け付ける。`jti` を覚える期限は、受け付ける最後の秒の次の秒にした。`jti` のストアは期限の時刻になった値を忘れてよいので、最後の秒を期限にすると、その秒の再利用を見逃すためである。
 `htu` は、エンドポイントの URI のどれか一つと、正規化してから比べる（URI が二つになるのは、`/` で終わる issuer のときである。`verifyDpopRequestProof` の節）。
+`maxAge` か `leeway` が 0 以上の有限の数でないときは、クレームを確かめずに `Error` を投げ、DPoP proof を受け付けない。設定に項目が無い（`undefined`）か `NaN` のままでは、`iat` の比較がどれも偽になってどの `iat` も受け付け、`jti` を覚える期限も `NaN` になってメモリのストアが再利用を見逃すためである。クライアントの誤りではなく設定の誤りなので、`invalid_dpop_proof` の `DpopError` にはしない。
+PR #205 は、この二つが無いときに関数の中の既定値で補っていた。この段は既定値を `dpopConfigDefaults` だけに置いたので、補う代わりに止める。
 
 PR #205 から、256 文字より長い `jti` を拒否するようにした。
 RFC 9449 §11.1 は、`jti` を覚えるサーバーに、必要以上に大きな `jti` を拒否するか、そのハッシュだけを覚えるよう求める。この実装は両方を行う（ハッシュは `consumeDpopProofJti` の節）。
-RFC 9449 §4.2 が `jti` の作り方に挙げる、96 ビットの乱数の base64url（16 文字）や UUID（36 文字）には、256 文字で十分に足りる。
+RFC 9449 §4.2 が `jti` の作り方に挙げる、96 ビット以上の乱数の base64url（96 ビットなら 16 文字）や UUID（36 文字）には、256 文字で十分に足りる。
 
 ## computeDpopAccessTokenHash, validateDpopProofAccessTokenHash, sha256Base64Url <!-- hono:oidc-provider/features/dpop/proof.ts#computeDpopAccessTokenHash hono:oidc-provider/features/dpop/proof.ts#validateDpopProofAccessTokenHash hono:oidc-provider/features/dpop/proof.ts#sha256Base64Url nextjs:app/_oidc-provider/features/dpop/proof.ts#computeDpopAccessTokenHash nextjs:app/_oidc-provider/features/dpop/proof.ts#validateDpopProofAccessTokenHash nextjs:app/_oidc-provider/features/dpop/proof.ts#sha256Base64Url -->
 
@@ -67,7 +69,7 @@ SQL と KV のストアはキーをハッシュにしてから覚えるが、メ
 リクエストの DPoP proof を、上の検査の順に確かめ、その鍵の JWK Thumbprint を返す。トークンを鍵に束縛する `cnf` の `jkt`（RFC 9449 §6.1）にする値である。
 `jti` は、署名とクレームと `ath` を確かめた後で消費する。検証できない DPoP proof の `jti` を覚えると、正しいクライアントの `jti` を先に使わせる妨害ができるためである。
 `htu` と比べる URI は、リクエストの URL ではなく、issuer とエンドポイントのパスから組み立てる。プロキシの後ろでも、クライアントが見る URL と比べるためである。
-`iat` の範囲は、設定の `dpopProofMaxAgeSeconds` と `dpopProofLeewaySeconds` から決める。
+`iat` の範囲は、設定の `dpopProofMaxAgeSeconds` と `dpopProofLeewaySeconds` から決める（どちらかが 0 以上の有限の数でなければ `Error` を投げる。`validateDpopProofClaims` の節）。
 Hono はリクエストのコンテキストの設定とストアを、Next.js は `provider.ts` の `config` と `stores` を読む。Next.js の `provider.ts` は機能の一覧を読み込むので、機能の `feature.ts` からこのモジュールを読み込むと循環するため、そのことをモジュールの先頭に書いた。
 サーバーが発行する nonce（RFC 9449 §8 / §9）は確かめない。
 
@@ -75,3 +77,4 @@ PR #205 から、`/` で終わる issuer（`https://op.example.com/`）のとき
 PR #205 は issuer にパスをつないだ `https://op.example.com//token` とだけ比べていたが、ルートのパスは `/token` なので、エンドポイントのパスのとおりに `https://op.example.com/token` を `htu` にしたクライアントを拒否していた。
 OP のメタデータも issuer にパスをつないでエンドポイントの URL を作るので、メタデータのとおりに送るクライアント（`//` を `/` にまとめるプロキシの後ろにある OP など）の `htu` は `//token` になる。そこで、そのときは両方の URI と比べる（`endpointUrisOf()`）。どちらも同じエンドポイントの URI なので、別のエンドポイントへの DPoP proof を受け付けることにはならない。`/` で終わらない issuer では、URI はこれまでどおり一つである。
 テストでは、RFC 9449 §4.1 の DPoP proof が検査を通って例の JWK Thumbprint を返し、覚えた `jti` のキーと期限が期待どおりで、同じ DPoP proof の二度目を拒否することを確かめた。
+`jti` を消費する位置も確かめた。署名を検証できない DPoP proof（クライアントの `jwk` を名乗り、別の鍵で署名したもの）と `ath` の合わない DPoP proof は `jti` を覚えさせず、前者の後でも、クライアント自身の同じ `jti` の DPoP proof を受け付ける。

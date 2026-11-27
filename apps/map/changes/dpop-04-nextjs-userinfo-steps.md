@@ -21,7 +21,7 @@ Bearer トークンを読み取り、読み取れないときは `UserInfoEndpoi
 Hono の `parseUserInfoRequest()` と同じ役割で、値を一つ返すので、ブロックは `const accessToken = …` の一行になる。後の段で機能のブロックがトークンを先に読むときも、この行に足すだけで済む。
 読み取りそのもの（`extractAccessToken()`）は変えていない。
 
-## buildUserInfoResponse <!-- nextjs:app/userinfo/route.ts#buildUserInfoResponse -->
+## buildUserInfoResponse, signedUserInfo <!-- nextjs:app/userinfo/route.ts#buildUserInfoResponse nextjs:app/userinfo/route.ts#signedUserInfo -->
 
 前の `signedUserInfo()` と、JSON か署名付き JWT かの分岐をまとめ、HTTP のレスポンスではなく応答の内容（`UserInfoEndpointResponse`）を返す関数にした。Hono の `buildUserInfoResponse()` と同じ形で、HTTP のレスポンスにするのは `respond` のブロックに任せる。
 クライアントが登録したアルゴリズムの UserInfo の鍵がないときの 500 の `server_error` も、`UserInfoEndpointError` で `respond-error` のブロックに渡す。ボディの `error_description` は前と同じである。

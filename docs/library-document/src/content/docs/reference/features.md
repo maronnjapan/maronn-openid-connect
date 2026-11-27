@@ -130,7 +130,7 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 ## UserInfo Endpoint
 
 - Bearer アクセストークンで認証（`invalid_token` / `insufficient_scope` エラー対応）。`openid` スコープのないアクセストークン（OAuth 2.0 のリクエストや `client_credentials` グラントのもの）は `insufficient_scope` で拒否する（OIDC Core 1.0 §5.3.1）
-- `dpop` 有効時は DPoP スキーム（`Authorization: DPoP` と、`ath` を入れた DPoP proof）でも認証する。DPoP の鍵に束縛したアクセストークンは、同じ鍵の DPoP proof と一緒のときだけ受け付け、Bearer として提示されたら `invalid_token` で拒否する（RFC 9449 §7.1 / §7.2）。DPoP スキームのリクエストの失敗は、`WWW-Authenticate` の `DPoP algs="…"` のチャレンジがエラーを伝える
+- `dpop` 有効時は DPoP スキーム（`Authorization: DPoP` と、`ath` を入れた DPoP proof）でも認証する。DPoP の鍵に束縛したアクセストークンは、同じ鍵の DPoP proof と一緒のときだけ受け付け、Bearer として提示されたら `invalid_token` で拒否する（RFC 9449 §7.1 / §7.2）。失敗の応答の `WWW-Authenticate` は、`Bearer realm="UserInfo"` に `DPoP algs="…"` のチャレンジを並べ、エラーはトークンを提示したスキームのチャレンジが伝える（トークンのないリクエストでは、どちらも伝えない）。Bearer と DPoP の両方でトークンを送ったリクエスト（`Authorization` を二つ送った、`Authorization: DPoP` にフォームのボディの `access_token` を添えた）は、両方のチャレンジがエラーを伝える 400 の `invalid_request` で拒否する（RFC 9449 §7.2）
 - scope に応じた標準クレームの返却（OIDC Core 1.0 §5.4）: `profile` / `email` / `address` / `phone`
 - `claims` リクエストパラメータによる個別クレーム要求に対応
 - 署名付き UserInfo レスポンス（JWT）の生成に対応

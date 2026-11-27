@@ -29,11 +29,12 @@ describe('dpop', () => {
     expect(discoveryOf([dpop], {}, ISSUER, config)).toEqual({});
   });
 
-  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew', () => {
+  it('should default to every asymmetric alg its checks verify, a proof window of 60 seconds and 60 seconds of skew, and a nonce lifetime of 120 seconds', () => {
     expect(configOf([dpop])).toEqual({
       dpopSigningAlgValuesSupported: ['ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512', 'RS256', 'RS384', 'RS512', 'EdDSA'],
       dpopProofMaxAgeSeconds: 60,
       dpopProofLeewaySeconds: 60,
+      dpopNonceLifetimeSeconds: 120,
     });
   });
 

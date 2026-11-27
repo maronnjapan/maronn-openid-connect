@@ -44,6 +44,14 @@ describe('isDpopError', () => {
     ]).toEqual([true, true]);
   });
 
+  // RFC 9449 §8 / §9: a proof without a recent nonce of the server that requires one.
+  it('should recognise the use_dpop_nonce of a proof without a recent nonce', () => {
+    expect([
+      isDpopError(new DpopError('use_dpop_nonce', 'Authorization server requires nonce in DPoP proof')),
+      isDpopError({ name: 'DpopError', error: 'use_dpop_nonce', errorDescription: 'Authorization server requires nonce in DPoP proof' }),
+    ]).toEqual([true, true]);
+  });
+
   it.each([
     ['an Error of another name', Object.assign(new Error('x'), { error: 'invalid_dpop_proof', errorDescription: 'x' })],
     ['a value without errorDescription', { name: 'DpopError', error: 'invalid_dpop_proof' }],

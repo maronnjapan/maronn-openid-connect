@@ -3,6 +3,15 @@
  * Possession (RFC 9449), added to ProviderConfig (config.ts), and their
  * defaults (dpopConfigDefaults), to be laid over the defaults of config.ts;
  * and the client metadata of DPoP, added to RegisteredClient.
+ *
+ * The secret the DPoP nonces of this OP are signed with (HMAC-SHA256,
+ * nonce.ts) is the environment variable OIDC_DPOP_NONCE_SECRET, at least 32
+ * bytes of UTF-8, read by the proof checks (proof.ts). Give every instance of
+ * the provider the same secret, so that each accepts the nonces of the
+ * others. Left out, each process makes a random key of its own, which
+ * another instance (another serverless function or Node.js process) and the
+ * process after a restart do not have: only a single long-lived instance
+ * accepts its nonces then.
  */
 import type { ProviderConfig } from '../../config';
 import { isSupportedDpopSigningAlg, SUPPORTED_DPOP_SIGNING_ALGS, type DpopSigningAlg } from './jwk';
@@ -34,6 +43,16 @@ declare module '../../config' {
      * dpopConfigDefaults (60).
      */
     dpopProofLeewaySeconds: number;
+    /**
+     * EXTENSION (dpop): the seconds after it was issued a DPoP nonce of this
+     * OP is still accepted (RFC 9449 §8 / §9): the window of recent nonces
+     * the proof checks accept where an endpoint requires a nonce. The nonce
+     * carries the second it was issued, so the window holds whatever the
+     * clock of the client says (RFC 9449 §11.1). A non-negative finite
+     * number: otherwise the nonce check throws an Error and accepts no
+     * nonce. Its default is dpopConfigDefaults (120).
+     */
+    dpopNonceLifetimeSeconds: number;
   }
 
   interface RegisteredClient {
@@ -58,6 +77,8 @@ export const dpopConfigDefaults = {
   // RFC 9449 §11.1: a proof is accepted from 60 seconds before its iat until 120 seconds after it.
   dpopProofMaxAgeSeconds: 60,
   dpopProofLeewaySeconds: 60,
+  // RFC 9449 §8: a nonce of this OP is accepted for 120 seconds after it was issued.
+  dpopNonceLifetimeSeconds: 120,
 } satisfies Partial<ProviderConfig>;
 
 /**

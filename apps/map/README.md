@@ -463,6 +463,7 @@ MAP_BASE=origin/main pnpm --filter @maronn-openid-connect/map changes:draft
 PR のマージとスカッシュ、PR を通さずに push したコミットとマージで、PR を通さないものは赤い「PR なし」の札で示す。
 別のブランチにマージされた PR（main を pull したマージを push したときなど）は、それを main に入れた変更の中に「この変更で main に入った PR」として並べ、番号でも開ける。
 浅い clone の最も古いコミットは、何を変えたかが分からないので、ファイルと関数を並べない。
+前の PR のブランチを base にして積み重ねた PR の地図でも、並べるのは main に入った変更で、まだ main に入っていない下の PR の変更は並べない（それは下の PR の地図の「このPRの変更」に出る）。
 タイトル・関数・ブランチ・番号（`#207`）で絞り込め、関数を変えたものだけ、PR を通さないものだけにも絞れる。
 
 変更を押すと、その変更のページ（`#<framework>--history--pr-207`、PR の無いものはコミットの先頭）を開く。
@@ -572,7 +573,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
 - `requests/<hash>.json`：エンドポイントの処理本体一つ分の、ケースのリクエストの記録（`RootRequests`）。道筋ごとにそれを通ったケースと、ケースごとの応答のステータスと OAuth のエラー、通った道筋、根が動いたか、食い違いと仮の側の数を持つ。`map.json` の `requests` が根ごとの URL を、`liveOp.probes` がケースを動かした OP のプローブの表のハッシュを持つ。フローを開いたときに読む
-- `history/<hash>.json`：main に入った変更の一覧。main（MAP_HISTORY_BASE があればその、無ければ PR の地図では MAP_BASE の、ほかはリモートの main（`origin/main`、`upstream/main` など）のうち、HEAD の持つコミットを main に入れた最も新しいコミット（HEAD のブランチをマージしたもの、その上に積んだブランチのマージを含む。PR の変更の起点 `git merge-base` までの履歴がそろう。その間の HEAD の持たない変更も並ぶ）。リモートの main を持たない clone では HEAD）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる。前の PR のブランチを base にして積み重ねた PR の地図では、MAP_HISTORY_BASE に main（`origin/main`）を渡す。MAP_BASE の下の PR のブランチから読むと、まだ main に入っていないそのコミットが main に入った変更として並ぶからである（main 向けの PR では、MAP_BASE から読むのと変わらない）
+- `history/<hash>.json`：main に入った変更の一覧。main（MAP_HISTORY_BASE があればその、無ければ PR の地図では MAP_BASE の、ほかはリモートの main（`origin/main`、`upstream/main` など）のうち、HEAD の持つコミットを main に入れた最も新しいコミット（HEAD のブランチをマージしたもの、その上に積んだブランチのマージを含む。PR の変更の起点 `git merge-base` までの履歴がそろう。その間の HEAD の持たない変更も並ぶ）。リモートの main を持たない clone では HEAD）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる。CI は PR の地図に MAP_HISTORY_BASE として `origin/main` を渡す。積み重ねた PR の MAP_BASE は下の PR のブランチのコミット（CI ではそのランの base の SHA）で、そこから読むと、まだ main に入っていないそのコミットが main に入った変更として並ぶからである（main 向けの PR では、MAP_BASE から読んでいたときと変わらない）
 - `history/<hash>.json`（変更ごと）：変更の、OSS が出すコード（関数カタログの根のファイル）だけの差分（`HistoryDetail`）。git の差分（前後 3 行の文脈、GitHub と同じもの）を、変更した関数ごとと関数の外とに切り分けて持つ（ほかの関数の行が変わるところで hunk を切るので、一つの関数の差分にはその関数の行だけが入る）。変更が書いた変更メモの本文も持つ。テスト、文書、道具の変更は入れない。変更のページを開いたときと、`pnpm map:history` が読む。差分が長すぎるファイル（2,000 行を超えるもの）と、変更全体で 20,000 行を超えた後のファイルは hunk を持たず、どちらの理由かを残す（ライブラリのファイルを先に入れる）
 
 テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
@@ -615,7 +616,7 @@ pnpm run build:map
 pnpm run dev              # データを作って Vite の開発サーバー（http://127.0.0.1:3610。同じオリジンで地図の OP が Node で答える）
 MAP_BASE=origin/main pnpm run dev   # origin/main からの変更（コミットしていないものを含む）を載せた地図
 MAP_BASE=origin/main pnpm run data  # 開発サーバーを動かしたまま、データだけを作り直す（ページを読み込み直すと載る）
-MAP_BASE=origin/<下の PR のブランチ> MAP_HISTORY_BASE=origin/main pnpm run data  # 積み重ねた PR の地図（変更は base から、履歴は main から）
+MAP_BASE=origin/<下の PR のブランチ> MAP_HISTORY_BASE=origin/main pnpm run data  # 積み重ねた PR の地図（CI と同じく、変更は base から、履歴は main から）
 pnpm run build            # データを作って dist/ にビルドし、テストの画面を dist/tests/ に入れ、地図の出力を検査する
 pnpm run check            # public/data の地図の出力だけを検査する
 pnpm run changes:draft    # MAP_BASE からの差分で変更メモの雛形を書く
@@ -662,8 +663,8 @@ pnpm --filter @maronn-openid-connect/map request:check "$(cat samples/hono-cloud
 読めなくても地図は作り、履歴は git のタイトルとコミットだけになる。
 テストの画面は地図の `dist/tests/` に入るので、どのデプロイでも地図の URL の `/tests/` で開く。
 
-- **PR**（opened / synchronize / reopened）：その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy --name maronn-oidc-map-pr-<番号>` する（`.github/scripts/map-preview.mjs`）。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。プレビューへのリンクと、畳んだ変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更か、関連するテストの変わらない変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする
-- **PR を閉じた**：`.github/workflows/map-preview.yml` が、その Worker を（Durable Object ごと）`wrangler delete --name maronn-oidc-map-pr-<番号>` で消す。`map` ジョブと同じ concurrency の group で順に走り、`map` ジョブは PR が閉じていればプレビューを作らない
+- **PR**（opened / synchronize / reopened。base ブランチは問わない）：その PR のコードから地図をビルドし、PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy --name maronn-oidc-map-pr-<番号>` する（`.github/scripts/map-preview.mjs`）。PR ごとに固定の URL を持ち、push のたびに同じ URL が新しくなる。プレビューへのリンクと、畳んだ変更の表は PR のコメントに書く（push ごとに同じコメントを書き換える）。説明の無い変更か、関連するテストの変わらない変更で地図のビルドが落ちても、デプロイとコメントは行い、ジョブは失敗のままにする。前の PR のブランチを base にして積み重ねた PR も同じで、変更はその base と比べたその PR の分だけになり、変更の履歴は main から読む（`MAP_HISTORY_BASE`）。下の PR がマージされて base が付け替わったときや、base のブランチが進んだときは走り直さず、前の base と比べた地図とコメントが残る（失敗したランの再実行も前の base のまま走る）。新しい base と比べるには、PR のブランチに push する（新しい base へ rebase するなど）か、PR を閉じて開き直す（閉じるとプレビューはいったん消え、開き直したランが作り直す）
+- **PR を閉じた**（base ブランチは問わない）：`.github/workflows/map-preview.yml` が、その Worker を（Durable Object ごと）`wrangler delete --name maronn-oidc-map-pr-<番号>` で消す。`map` ジョブと同じ concurrency の group で順に走り、`map` ジョブは PR が閉じていればプレビューを作らない
 - **main への push**：`wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`）を更新する
 
 PR ごとに Worker を分けるのは、地図の OP のワークスペースが Durable Object にあるからである（[docs/design-live-op.md](docs/design-live-op.md) の「ホスト」）。

@@ -12,10 +12,10 @@
  * The history is read from the first-parent history of the newest commit
  * that brought code HEAD has of MAP_HISTORY_BASE (a git revision of main:
  * origin/main), else of the base (MAP_BASE), else of the main of a remote
- * (origin/main, upstream/main), else of HEAD. Give MAP_HISTORY_BASE to the
- * map of a pull request stacked on another one's branch: that branch is its
- * MAP_BASE, whose commits have not reached main, and its history would list
- * them as changes that did. MAP_PULLS names a JSON file
+ * (origin/main, upstream/main), else of HEAD. CI gives MAP_HISTORY_BASE to
+ * the map of every pull request: one stacked on another one's branch has
+ * that branch as its MAP_BASE, whose commits have not reached main, and its
+ * history would list them as changes that did. MAP_PULLS names a JSON file
  * of the pull requests on GitHub (`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp`):
  * the title and body of each join the change whose commit merged it (its
  * merge_commit_sha; a number alone can name another repository's pull

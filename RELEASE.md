@@ -316,7 +316,7 @@ range を `^1.0.0` に切り替え、`onlyUpdatePeerDependentsWhenOutOfRange` �
 
 | 検証 | 実行タイミング | 何を防ぐか |
 |---|---|---|
-| `pull_request: [main]` | main 向け PR | PR 経由の変更 |
+| `pull_request`（base ブランチを絞らない） | すべての PR（前の PR のブランチを base にして積み重ねた PR を含む） | PR 経由の変更。積み重ねた PR が無検査のまま下の PR のブランチに入り、それごと main へ入ること |
 | `push: [main]` | main への push | **PR を経由しない直接 push** が無検査で publish 経路へ流れること |
 | `pnpm run build` | 上記の各実行 | ビルド破綻が `ci:publish`（publish 直前）まで露見しないこと |
 | `pnpm run typecheck` | 上記の各実行 | vitest が transform で通してしまう型エラーの素通り |
@@ -326,7 +326,10 @@ range を `^1.0.0` に切り替え、`onlyUpdatePeerDependentsWhenOutOfRange` �
 `@maronn-openid-connect/core` をビルド成果物（`dist` の `.d.ts`）として解決するため、
 未ビルドだと `Cannot find module '@maronn-openid-connect/core'` で `typecheck` が落ちる。
 
-このゲート構成自体（push トリガ / 実行順 / typecheck の網羅）は
+各 PR は自分の base と比べる（積み重ねた PR では、下の PR のブランチからの差分だけを見る）。
+PR では base によらず、`release.yml` と地図の本番へのデプロイは走らない。どちらも `main` への push だけで走る。
+
+このゲート構成自体（base を絞らない pull_request トリガ / push トリガ / 実行順 / typecheck の網羅）は
 `pnpm run test:ci-gate`（`.github/scripts/verify-ci-gate.mjs`）が検証する。
 ゲートは「一度直せば終わり」ではなく、外されたときに気づけることが要件なので、
 ステップを消す・順序を入れ替える・`typecheck` スクリプトを持たないパッケージを増やす、

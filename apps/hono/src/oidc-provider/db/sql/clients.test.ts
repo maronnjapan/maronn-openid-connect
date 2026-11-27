@@ -609,6 +609,18 @@ describe('createClientResolver', () => {
     });
   });
 
+  it.each(['{"defaultMaxAge":', '"abc"', '[true]', 'null'])(
+    'should reject a client whose payload %s is not a JSON object',
+    async (payload) => {
+      await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
+      await db.run({ sql: 'UPDATE clients SET payload = ? WHERE id = ?', params: [payload, 'rp-1'] });
+
+      await expect(createClientResolver(db).findClient('rp-1')).rejects.toThrow(
+        'Client rp-1 has a payload that is not a JSON object',
+      );
+    },
+  );
+
   it('should find a registered client without its public keys', async () => {
     await registerClient(db, {
       clientId: 'rp-1',

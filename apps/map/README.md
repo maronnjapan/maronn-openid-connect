@@ -572,7 +572,7 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 - `code.json`：コードを読むページの索引（`CodeIndex`。`packages/map-analysis/src/code-index.ts`）。ファイル、関数とエンドポイントの処理本体の行、interface のメンバーの実装、機能だけを持ち、`map.json` の 6 分の 1 ほどの大きさである
 - `changes.md`：PR の変更の Markdown。PR のコメント（`.github/scripts/map-comment.mjs`）がこれを使い、`<!-- oidc-provider-map-links -->` の行をリンクに置き換える
 - `requests/<hash>.json`：エンドポイントの処理本体一つ分の、ケースのリクエストの記録（`RootRequests`）。道筋ごとにそれを通ったケースと、ケースごとの応答のステータスと OAuth のエラー、通った道筋、根が動いたか、食い違いと仮の側の数を持つ。`map.json` の `requests` が根ごとの URL を、`liveOp.probes` がケースを動かした OP のプローブの表のハッシュを持つ。フローを開いたときに読む
-- `history/<hash>.json`：main に入った変更の一覧。main（PR の地図では MAP_BASE の、ほかはリモートの main（`origin/main`、`upstream/main` など）のうち、HEAD の持つコミットを main に入れた最も新しいコミット（HEAD のブランチをマージしたもの、その上に積んだブランチのマージを含む。PR の変更の起点 `git merge-base` までの履歴がそろう。その間の HEAD の持たない変更も並ぶ）。リモートの main を持たない clone では HEAD）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる
+- `history/<hash>.json`：main に入った変更の一覧。main（MAP_HISTORY_BASE があればその、無ければ PR の地図では MAP_BASE の、ほかはリモートの main（`origin/main`、`upstream/main` など）のうち、HEAD の持つコミットを main に入れた最も新しいコミット（HEAD のブランチをマージしたもの、その上に積んだブランチのマージを含む。PR の変更の起点 `git merge-base` までの履歴がそろう。その間の HEAD の持たない変更も並ぶ）。リモートの main を持たない clone では HEAD）の first-parent の履歴を `packages/map-analysis/src/history.ts` が読み、PR のマージ、スカッシュ、PR を経ない直接のコミットごとに、コミット、変えたファイル、カタログと同じ読み方で求めた足した・変えた・消した関数、変更メモを並べる。前の PR のブランチを base にして積み重ねた PR の地図では、MAP_HISTORY_BASE に main（`origin/main`）を渡す。MAP_BASE の下の PR のブランチから読むと、まだ main に入っていないそのコミットが main に入った変更として並ぶからである（main 向けの PR では、MAP_BASE から読むのと変わらない）
 - `history/<hash>.json`（変更ごと）：変更の、OSS が出すコード（関数カタログの根のファイル）だけの差分（`HistoryDetail`）。git の差分（前後 3 行の文脈、GitHub と同じもの）を、変更した関数ごとと関数の外とに切り分けて持つ（ほかの関数の行が変わるところで hunk を切るので、一つの関数の差分にはその関数の行だけが入る）。変更が書いた変更メモの本文も持つ。テスト、文書、道具の変更は入れない。変更のページを開いたときと、`pnpm map:history` が読む。差分が長すぎるファイル（2,000 行を超えるもの）と、変更全体で 20,000 行を超えた後のファイルは hunk を持たず、どちらの理由かを残す（ライブラリのファイルを先に入れる）
 
 テストの画面のデータ（`tests.json`、`outline.json`、`tests/`）は `apps/tests/public/data` に書く（中身は [docs/design-test-catalog.md](docs/design-test-catalog.md) の「データ」）。
@@ -596,6 +596,8 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 決定と終わりがどのフレームの図からも欠けないこと、`try` の枠が自分の箱だけを囲むこと、図がステップと守りをアウトラインと同じに畳むこと、幅に合わせて見出しが 11px に届くフレームが 9 割を下回らないことを確かめる。
 
 `MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` は、ページに出す PR の番号、タイトル、URL である。
+`MAP_HISTORY_BASE` は、変更の履歴を読む main（`origin/main`）である。
+無ければ、履歴は MAP_BASE から、それも無ければリモートの main から読む（前の `history/<hash>.json`）。
 `MAP_TEST_REPORTS` は、テストの実行が書いたディレクトリ（Vitest と Playwright の JSON、到達の記録）である。
 無ければ、テストの札はコードから読んだものだけになる。
 `MAP_PULLS` は、GitHub の PR の一覧の JSON ファイル（`gh api 'repos/{owner}/{repo}/pulls?state=closed' --paginate --slurp` の出力）である。
@@ -613,6 +615,7 @@ pnpm run build:map
 pnpm run dev              # データを作って Vite の開発サーバー（http://127.0.0.1:3610。同じオリジンで地図の OP が Node で答える）
 MAP_BASE=origin/main pnpm run dev   # origin/main からの変更（コミットしていないものを含む）を載せた地図
 MAP_BASE=origin/main pnpm run data  # 開発サーバーを動かしたまま、データだけを作り直す（ページを読み込み直すと載る）
+MAP_BASE=origin/<下の PR のブランチ> MAP_HISTORY_BASE=origin/main pnpm run data  # 積み重ねた PR の地図（変更は base から、履歴は main から）
 pnpm run build            # データを作って dist/ にビルドし、テストの画面を dist/tests/ に入れ、地図の出力を検査する
 pnpm run check            # public/data の地図の出力だけを検査する
 pnpm run changes:draft    # MAP_BASE からの差分で変更メモの雛形を書く

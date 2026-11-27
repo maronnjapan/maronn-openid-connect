@@ -41,7 +41,7 @@ export interface DpopProofTarget {
  * リクエストの DPoP proof を検査し、その鍵の JWK Thumbprint を返す。
  *
  * 次の順に検査の関数を呼ぶ（RFC 9449 §4.3）。
- * 1. JWS を分解し、`typ` が `dpop+jwt` であることと JOSE ヘッダーを確かめる（`decodeDpopProof()`）
+ * 1. JWS を分解し、`typ` が `dpop+jwt`（またはそれと同じ型の `application/dpop+jwt`）であることと JOSE ヘッダーを確かめる（`decodeDpopProof()`）
  * 2. `alg` が設定の `dpopSigningAlgValuesSupported` のうちこの実装が検証できるものであることを確かめる（`validateDpopProofAlg()`）
  * 3. `jwk` が `alg` の公開鍵であることを確かめ、その鍵で署名を検証する（`validateDpopProofJwk()`、`verifyDpopProofSignature()`）
  * 4. `jti`、`htm`、`htu`、`iat` を確かめる（`validateDpopProofClaims()`）。`htu` は、プロキシの後ろでもクライアントが見る URL と比べられるよう、リクエストの URL ではなく issuer とエンドポイントのパスから組み立てる（`endpointUrisOf()`）。`iat` の範囲は設定の `dpopProofMaxAgeSeconds` と `dpopProofLeewaySeconds` で決まる
@@ -55,6 +55,7 @@ export interface DpopProofTarget {
  * @spec RFC 9449 §4.3
  * @spec RFC 9449 §11.1
  * @throws {DpopError} `invalid_dpop_proof`: DPoP proof を受け付けないとき
+ * @throws {Error} 設定の `dpopProofMaxAgeSeconds` か `dpopProofLeewaySeconds` が 0 以上の有限の数でないとき（設定の誤り）
  */
 export async function verifyDpopRequestProof(proof: string, target: DpopProofTarget): Promise<string> {
   const decoded = decodeDpopProof(proof);
@@ -111,9 +112,9 @@ export interface DpopProofClaimsPolicy {
   uris: readonly string[];
   /** 現在時刻（Unix epoch 秒） */
   now: number;
-  /** `iat` から DPoP proof を受け付ける秒数（時計のずれの `leewaySeconds` は別に足す） */
+  /** `iat` から DPoP proof を受け付ける秒数（0 以上の有限の数。時計のずれの `leewaySeconds` は別に足す） */
   maxAgeSeconds: number;
-  /** 時計のずれとして許す秒数 */
+  /** 時計のずれとして許す秒数（0 以上の有限の数） */
   leewaySeconds: number;
 }
 
@@ -142,7 +143,7 @@ export interface DpopProofJtiStore {
    * `key` を `expiresAt`（Unix epoch 秒）まで覚え、初めての `key` なら `true`、覚えている `key` なら `false` を返す。
    *
    * 同じ `key` を同時に渡した二つの呼び出しのうち、`true` を返すのは一方だけにする（できればアトミックに）。
-   * 期限を過ぎた `key` は忘れてよい。
+   * 期限の時刻になった `key` は忘れてよい。
    */
   consume(key: string, expiresAt: number): boolean | Promise<boolean>;
 }
@@ -261,17 +262,23 @@ export async function verifyDpopProofSignature(
  * - `iat` が数値で、`now - maxAgeSeconds - leewaySeconds` 以上、`now + leewaySeconds` 以下である
  *
  * `nonce` は確かめない。
+ * `maxAgeSeconds` か `leewaySeconds` が 0 以上の有限の数でない（設定に無い `undefined`、`NaN`、負の数など）ときは、範囲を決められないので、クレームを確かめずに `Error` を投げる。
+ * `undefined` や `NaN` のままでは `iat` の比較がどれも偽になり、どの `iat` も受け付けて、`jti` を覚える期限も無くなるためである。
  *
  * @spec RFC 9449 §4.2
  * @spec RFC 9449 §4.3
  * @spec RFC 9449 §11.1
  * @throws {DpopError} `invalid_dpop_proof`: どれかを満たさないとき
+ * @throws {Error} `maxAgeSeconds` か `leewaySeconds` が 0 以上の有限の数でないとき（設定の誤り）
  */
 export function validateDpopProofClaims(
   claims: Record<string, unknown>,
   policy: DpopProofClaimsPolicy,
 ): ValidatedDpopProofClaims {
   const { maxAgeSeconds: maxAge, leewaySeconds: leeway } = policy;
+  if (![maxAge, leeway].every((seconds) => Number.isFinite(seconds) && seconds >= 0)) {
+    throw new Error('The iat window of the DPoP proof checks (dpopProofMaxAgeSeconds, dpopProofLeewaySeconds) must be non-negative finite numbers');
+  }
   const { jti, htm, htu, iat } = claims;
   if (typeof jti !== 'string' || jti === '') {
     throw invalidProof('The DPoP proof has no jti claim');

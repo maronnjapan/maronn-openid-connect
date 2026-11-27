@@ -20,14 +20,17 @@ declare module '../../config' {
     dpopSigningAlgValuesSupported: readonly string[];
     /**
      * EXTENSION (dpop): the seconds after its iat a DPoP proof is still
-     * accepted (RFC 9449 §11.1), not counting dpopProofLeewaySeconds. Its
-     * default is dpopConfigDefaults (60).
+     * accepted (RFC 9449 §11.1), not counting dpopProofLeewaySeconds. A
+     * non-negative finite number: otherwise the proof checks throw an Error
+     * and accept no proof. Its default is dpopConfigDefaults (60).
      */
     dpopProofMaxAgeSeconds: number;
     /**
      * EXTENSION (dpop): the seconds of clock skew allowed for the iat of a
      * DPoP proof, both into the future and added to dpopProofMaxAgeSeconds
-     * (RFC 9449 §11.1). Its default is dpopConfigDefaults (60).
+     * (RFC 9449 §11.1). A non-negative finite number: otherwise the proof
+     * checks throw an Error and accept no proof. Its default is
+     * dpopConfigDefaults (60).
      */
     dpopProofLeewaySeconds: number;
   }

@@ -1,11 +1,12 @@
 /**
  * Helpers for the tests of the dpop extension: a client's DPoP key pairs, the
- * DPoP proofs it signs (RFC 9449 §4.2), and the thumbprint and ath the
- * provider computes from them.
+ * DPoP proofs it signs (RFC 9449 §4.2), and the thumbprint the provider
+ * computes from them. The ath of a proof is computed here, not with
+ * computeDpopAccessTokenHash() of proof.ts, so the tests of proof.ts compare
+ * it with a computation of their own.
  */
 import { encodeBase64Url } from '../oidc-provider/features/dpop/base64url.js';
 import { computeJwkThumbprint, type DpopPublicJwk, type DpopSigningAlg } from '../oidc-provider/features/dpop/jwk.js';
-import { computeDpopAccessTokenHash } from '../oidc-provider/features/dpop/proof.js';
 
 /** A DPoP key pair of a client for alg. */
 export interface TestDpopKey {
@@ -60,6 +61,11 @@ function encodeJson(value: unknown): string {
   return encodeBase64Url(new TextEncoder().encode(JSON.stringify(value)));
 }
 
+/** The ath of accessToken (RFC 9449 §4.2): the base64url of the SHA-256 of its ASCII. */
+async function accessTokenHashOf(accessToken: string): Promise<string> {
+  return encodeBase64Url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(accessToken)));
+}
+
 /**
  * A DPoP proof signed with key: header typ dpop+jwt, alg of the key and its
  * public jwk, then the overrides of header (a member set to undefined is left
@@ -101,7 +107,7 @@ export async function dpopProof(
     htm: request.htm,
     htu: request.htu,
     iat: Math.floor(Date.now() / 1000),
-    ...(request.accessToken === undefined ? {} : { ath: await computeDpopAccessTokenHash(request.accessToken) }),
+    ...(request.accessToken === undefined ? {} : { ath: await accessTokenHashOf(request.accessToken) }),
     ...overrides,
   };
   for (const name of Object.keys(claims)) {

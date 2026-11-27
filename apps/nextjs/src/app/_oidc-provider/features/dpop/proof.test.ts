@@ -22,6 +22,10 @@ const NOW = 1_767_225_600;
 const TOKEN_URI = 'https://op.example.com/token';
 const POLICY = { method: 'POST', uris: [TOKEN_URI], now: NOW, maxAgeSeconds: 60, leewaySeconds: 60 };
 
+/** The message of the Error thrown for an iat window that is not a non-negative finite number of seconds. */
+const INVALID_WINDOW_MESSAGE =
+  'The iat window of the DPoP proof checks (dpopProofMaxAgeSeconds, dpopProofLeewaySeconds) must be non-negative finite numbers';
+
 /** The DPoP proof of RFC 9449 §4.1 (Figure 2): ES256, htm POST, htu https://server.example.com/token. */
 const RFC9449_PROOF =
   'eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwieCI6Imw4dEZyaHgtMzR0VjNoUklDUkRZOXpDa0RscEJoRjQyVVFVZldWQVdCRnMiLCJ5IjoiOVZFNGpmX09rX282NHpiVFRsY3VOSmFqSG10NnY5VERWclUwQ2R2R1JEQSIsImNydiI6IlAtMjU2In19' +
@@ -293,6 +297,22 @@ describe('validateDpopProofClaims', () => {
     expect(replayWindowEndsAt).toBe(NOW + 1);
     expect(errorOf(() => validateDpopProofClaims(claimsAt(NOW), { ...policy, now: replayWindowEndsAt }))?.error).toBe('invalid_dpop_proof');
   });
+
+  // A window that is not a non-negative number (undefined or NaN) would accept
+  // every iat and remember no jti, so it fails closed, as a server error.
+  it.each([
+    ['maxAgeSeconds', undefined],
+    ['maxAgeSeconds', Number.NaN],
+    ['maxAgeSeconds', -1],
+    ['leewaySeconds', Number.NaN],
+    ['leewaySeconds', Number.POSITIVE_INFINITY],
+  ])('should throw an Error that is not a DpopError when %s is %s', (member, seconds) => {
+    const error = errorOf(() => validateDpopProofClaims(claimsAt(NOW - 1_000_000), { ...POLICY, [member]: seconds }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(DpopError);
+    expect(error?.message).toBe(INVALID_WINDOW_MESSAGE);
+  });
 });
 
 describe('computeDpopAccessTokenHash', () => {
@@ -427,6 +447,49 @@ describe('verifyDpopRequestProof', () => {
     await expect(verifyDpopRequestProof(RFC9449_PROOF, { method: 'POST', path: '/token' })).rejects.toMatchObject({
       errorDescription: 'The DPoP proof alg is not supported',
     });
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  // RFC 9449 §11.1: a proof that names the jwk of a client but is signed with
+  // another key does not use up the jti, so the client's own proof with that
+  // jti is still accepted.
+  it('should not remember the jti of a proof whose signature does not verify with its jwk', async () => {
+    const client = await dpopKey();
+    const attacker = await generateDpopKey('ES256');
+    configureDpop();
+    const consume = vi.spyOn(stores.clientAssertionJtiStore, 'consume');
+    const claims = { jti: `jti-of-the-client-${crypto.randomUUID()}`, htm: 'POST', htu: 'https://op.example.com/token', iat: RFC9449_IAT };
+    const forged = await signDpopProof(attacker, claims, { jwk: client.publicJwk });
+
+    await expect(verifyDpopRequestProof(forged, { method: 'POST', path: '/token' })).rejects.toMatchObject({
+      errorDescription: 'The DPoP proof signature is invalid',
+    });
+    expect(consume).not.toHaveBeenCalled();
+    await expect(verifyDpopRequestProof(await signDpopProof(client, claims), { method: 'POST', path: '/token' })).resolves.toBe(client.jkt);
+  });
+
+  it('should not remember the jti of a proof whose ath is not the hash of the access token', async () => {
+    const key = await dpopKey();
+    configureDpop();
+    const consume = vi.spyOn(stores.clientAssertionJtiStore, 'consume');
+    const proof = await dpopProof(key, { htm: 'GET', htu: 'https://op.example.com/userinfo', accessToken: 'token-2' });
+
+    await expect(verifyDpopRequestProof(proof, { method: 'GET', path: '/userinfo', accessToken: 'token-1' })).rejects.toMatchObject({
+      errorDescription: 'The DPoP proof ath claim does not match the access token',
+    });
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no dpopProofMaxAgeSeconds', { dpopProofMaxAgeSeconds: undefined }],
+    ['a dpopProofLeewaySeconds that is NaN', { dpopProofLeewaySeconds: Number.NaN }],
+  ])('should throw, without remembering the jti, when the config has %s', async (_name, settings) => {
+    const key = await dpopKey();
+    configureDpop(settings);
+    const consume = vi.spyOn(stores.clientAssertionJtiStore, 'consume');
+    const proof = await dpopProof(key, { htm: 'POST', htu: 'https://op.example.com/token' }, { iat: RFC9449_IAT - 1_000_000 });
+
+    await expect(verifyDpopRequestProof(proof, { method: 'POST', path: '/token' })).rejects.toThrow(INVALID_WINDOW_MESSAGE);
     expect(consume).not.toHaveBeenCalled();
   });
 

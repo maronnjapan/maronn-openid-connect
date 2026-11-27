@@ -3,6 +3,7 @@ import { defineEndpoint } from '../_oidc-provider/endpoint';
 /**
  * クライアントを認証し、提示されたグラント（認可コード、リフレッシュトークン、有効にした機能が扱うグラント）を検証して、トークンレスポンスで応答する。
  * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
+ * DPoP の機能があり、リクエストが DPoP proof を送ったときは、アクセストークンをその鍵に束縛し、`token_type` を `DPoP` にする。
  * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
  * 署名鍵を読み込めないときは、503 で応答する。
  *
@@ -16,9 +17,9 @@ export const endpoint = defineEndpoint({
     { id: 'load-signing-keys', consumes: [], produces: ['keys'] },
     { id: 'parse-request', consumes: [], produces: ['params'] },
     { id: 'authenticate-client', consumes: ['params'], produces: ['tokenClient', 'authenticatedClientId'] },
-    { id: 'dispatch-client-credentials', feature: 'client-credentials', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
-    { id: 'dispatch-device-code', feature: 'device-authorization-grant', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
-    { id: 'dispatch-ciba', feature: 'ciba', consumes: ['params', 'tokenClient', 'keys'], produces: [] },
+    { id: 'dispatch-client-credentials', feature: 'client-credentials', consumes: ['params', 'tokenClient', 'keys', 'tokenBinding'], produces: [] },
+    { id: 'dispatch-device-code', feature: 'device-authorization-grant', consumes: ['params', 'tokenClient', 'keys', 'tokenBinding'], produces: [] },
+    { id: 'dispatch-ciba', feature: 'ciba', consumes: ['params', 'tokenClient', 'keys', 'tokenBinding'], produces: [] },
     { id: 'validate-grant-type', consumes: ['params', 'tokenClient'], produces: ['grantType'] },
     { id: 'validate-refresh-token-grant', feature: 'refresh-token', consumes: ['params', 'authenticatedClientId', 'grantType'], produces: ['refreshTokenRequest'] },
     { id: 'validate-authorization-code-grant', consumes: ['refreshTokenRequest', 'params', 'authenticatedClientId'], produces: ['validatedRequest'] },
@@ -26,12 +27,12 @@ export const endpoint = defineEndpoint({
     { id: 'resolve-subject', consumes: ['validatedRequest'], produces: ['subject', 'authTime', 'nonce', 'effectiveAudience'] },
     { id: 'decide-refresh-token-issuance', feature: 'refresh-token', consumes: ['tokenClient', 'validatedRequest'], produces: ['refreshTokenDecision'] },
     { id: 'resolve-acr-amr', consumes: ['subject', 'validatedRequest'], produces: ['acr', 'amr'] },
-    { id: 'issue-access-token', consumes: ['subject', 'validatedRequest', 'effectiveAudience', 'acr', 'keys'], produces: ['issuedAt', 'accessTokenPayload', 'accessToken'] },
+    { id: 'issue-access-token', consumes: ['subject', 'validatedRequest', 'effectiveAudience', 'acr', 'keys', 'tokenBinding'], produces: ['issuedAt', 'accessTokenPayload', 'accessToken'] },
     { id: 'issue-id-token', consumes: ['accessToken', 'idTokenKey', 'subject', 'validatedRequest', 'issuedAt', 'nonce', 'authTime', 'acr', 'amr'], produces: ['idToken'] },
-    { id: 'persist-access-token', consumes: ['accessToken', 'accessTokenPayload', 'subject', 'validatedRequest', 'issuedAt', 'effectiveAudience', 'acr'], produces: [] },
-    { id: 'issue-refresh-token', feature: 'refresh-token', consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'effectiveAudience', 'acr', 'amr'], produces: ['refreshToken'] },
+    { id: 'persist-access-token', consumes: ['accessToken', 'accessTokenPayload', 'subject', 'validatedRequest', 'issuedAt', 'effectiveAudience', 'acr', 'tokenBinding'], produces: [] },
+    { id: 'issue-refresh-token', feature: 'refresh-token', consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'effectiveAudience', 'acr', 'amr', 'tokenBinding'], produces: ['refreshToken'] },
     { id: 'revoke-rotated-refresh-token', feature: 'refresh-token', consumes: ['params', 'validatedRequest'], produces: [] },
-    { id: 'build-token-response', consumes: ['accessToken', 'idToken', 'refreshToken', 'validatedRequest'], produces: ['tokenResponse'] },
+    { id: 'build-token-response', consumes: ['accessToken', 'idToken', 'refreshToken', 'validatedRequest', 'tokenBinding'], produces: ['tokenResponse'] },
     { id: 'respond', consumes: ['tokenResponse'], produces: [] },
     { id: 'respond-error', consumes: [], produces: [] },
   ],

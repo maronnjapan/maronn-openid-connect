@@ -10,6 +10,12 @@
  * authenticated) and receives a short-lived request_uri that it then passes to
  * /authorize.
  *
+ * Each block of pushAuthorizationRequest() is one step of the endpoint
+ * (endpoint.ts), as the steps of the Hono pipeline: parse the request,
+ * authenticate the client, validate the parameters, store them under a new
+ * request_uri and answer. A block that throws ends in the [respond-error]
+ * block.
+ *
  * NOTE (RFC 9126 §2.3): request size limits (413) and rate limiting (429) are
  * left to the deployment layer (reverse proxy / platform). This endpoint is
  * unauthenticated until the client credentials are checked, so put a rate
@@ -73,6 +79,7 @@ export function OPTIONS(request: Request): Response {
  * @spec RFC 9126 §2
  */
 async function pushAuthorizationRequest(request: Request): Promise<Response> {
+  // [parse-request] プッシュされた認可リクエストを解析する — RFC 9126 §2.1 / RFC 6749 §3.1
   // ボディが `application/x-www-form-urlencoded` でなければ、400 の `invalid_request` で応答する（RFC 9126 §2.1）。
   if (!isFormUrlEncoded(request)) {
     return parJson(
@@ -91,6 +98,7 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
   }
 
   try {
+    // [authenticate-client] プッシュしたクライアントを認証する — RFC 9126 §2.1
     // 以下は、プッシュされた認可リクエストを処理するパイプラインである。
     // 各ステップは `@maronn-openid-connect/experimental/par` の独立した関数で、RFC 9126 §2.1 の順に呼ぶ。
     // 呼び出しを消せばその検証を外せ、ステップの間に独自の処理を挟むこともできる。
@@ -120,6 +128,7 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
     const { client_assertion_type: _assertionType, client_assertion: _assertion, ...requestParams } = params;
     const pushedParams = { ...requestParams, client_id: clientId };
 
+    // [validate-request] /authorize と同じ規則でリクエストを検証する — RFC 9126 §2.1
     // パラメータを、認可エンドポイントと同じ規則で検証する（RFC 9126 §2.1）。
     // 登録されていない `redirect_uri` や不正な `scope` は、エンドユーザーが画面を見る前にここで拒否する。
     // PKCE を省いたリクエストを許すかどうかと、`scope` に `openid` を求めるかどうかは、認可エンドポイントと同じ設定に従う。
@@ -128,6 +137,7 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
       requireOpenIdScope: config.requireOpenIdScope,
     });
 
+    // [store-request] 新しい request_uri でリクエストを保存する — RFC 9126 §2.2 / §7.1
     // 暗号論的な乱数で参照値を作り、その参照値でリクエストを保存する（RFC 9126 §2.2、§7.1）。
     // クライアントの認証情報は保存しない。
     const record = await createPushedAuthorizationRecord({
@@ -136,14 +146,16 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
       store: parStore,
       expiresInSeconds: parConfig.expiresInSeconds,
     });
-    const response = buildPushedAuthorizationResponse(record);
+    const parResponse = buildPushedAuthorizationResponse(record);
 
     // プッシュされたパラメータそのものは、ログに出さない。
     // `login_hint` などの個人情報を含むことがあり、`Authorization` ヘッダーには `client_secret` が含まれる。
 
+    // [respond] 201 で応答する（no-store） — RFC 9126 §2.2
     // `request_uri` と `expires_in` を、キャッシュを禁止した JSON の 201 で返す（RFC 9126 §2.2）。
-    return parJson({ request_uri: response.requestUri, expires_in: response.expiresIn }, 201);
+    return parJson({ request_uri: parResponse.requestUri, expires_in: parResponse.expiresIn }, 201);
   } catch (error) {
+    // [respond-error] OAuth のエラーレスポンスで応答する — RFC 9126 §2.3
     if (error instanceof ParError) {
       // `ParError` はトークンエンドポイントと同じ形の JSON のエラーで返し、リダイレクトはしない（RFC 9126 §2.3）。
       return parJson(

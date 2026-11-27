@@ -38,8 +38,12 @@
  *   assertion must be signed with. name, logo_uri, policy_uri, tos_uri and
  *   client_uri are clientName, logoUri, policyUri, tosUri and clientUri, what
  *   the login and consent screens show.
- * - Metadata without a field (default_max_age, the ID Token and UserInfo
- *   signing algs) keeps its default.
+ * - payload: the rest of the RegisteredClient, the metadata without a field
+ *   (default_max_age, the ID Token and UserInfo signing algs) and the members
+ *   a feature adds to RegisteredClient (the backchannelTokenDeliveryMode of
+ *   ciba, for one). Absent when the client has none. registerClient() writes
+ *   no member with a field there, and a field that holds a value wins over a
+ *   payload member of the same name.
  *
  * The client's public keys (keys.clientJwks(), one record per purpose) are not
  * part of the RegisteredClient. A process that needs them asks the
@@ -83,6 +87,7 @@ import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord }
  * - `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
  * - `grant_types`、`scopes`、`response_types`、`request_uris` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes`、`requestUris` にし、空なら設定せずに既定の扱いに任せる。
  * - `jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`name`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` は、`null` でなければそれぞれ `jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`clientName`、`logoUri`、`policyUri`、`tosUri`、`clientUri` にする。
+ * - `payload`（項目を持たないメタデータ。`defaultMaxAge` や、機能が `RegisteredClient` に足すメンバー）は、あれば、そのメンバーをそのまま `RegisteredClient` に移す。項目から移す値は `payload` より後に移すので、同じ名前のメンバーは、項目に値があれば項目の値になる。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの方式のエントリーどうしでシークレットが違うクライアントを読んだとき
  */
@@ -92,6 +97,8 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       const client = await readRecord<ClientRecord>(db, keys.client(clientId));
       if (!client || client.is_deleted) return null;
       const registered: RegisteredClient = {
+        // 項目を持たないメタデータを先に移し、同じ名前のメンバーは、後に続く項目の値があればそれで上書きする。
+        ...client.payload,
         clientId,
         clientType: client.client_type === 'public' ? 'public' : 'confidential',
         redirectUris: client.redirect_uris,
@@ -176,6 +183,7 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  *
  * `requestUris` は `request_uris` に書き、渡されなければ空の配列にする。
  * `clientName`、`jwksUri`、`requestObjectSigningAlg`、`tokenEndpointAuthSigningAlg`、`logoUri`、`policyUri`、`tosUri`、`clientUri` は、クライアントのレコードのそれぞれ `name`、`jwks_uri`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`logo_uri`、`policy_uri`、`tos_uri`、`client_uri` に書き、渡されなければ `null` にする。
+ * レコードに項目を持たないメタデータ（`defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、機能が `RegisteredClient` に足すメンバー）は、レコードの `payload` に書き（{@link otherMetadataOf}）、なければ `payload` を書かない。
  * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
  *
  * セットアップ用のスクリプトや起動時の処理から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
@@ -234,6 +242,8 @@ export async function registerClient(db: KvDatabase, client: ClientRegistration)
     tos_uri: client.tosUri ?? null,
     client_uri: client.clientUri ?? null,
   };
+  const payload = otherMetadataOf(client);
+  if (payload !== undefined) record.payload = payload;
   await writeRecord(db, keys.client(client.clientId), record);
 
   for (const [purpose, keySet] of Object.entries(client.keys ?? {})) {
@@ -248,4 +258,38 @@ export async function registerClient(db: KvDatabase, client: ClientRegistration)
       await writeRecord(db, recordKey, jwksRecord);
     }
   }
+}
+
+/**
+ * クライアントのメタデータのうち、クライアントのレコードの項目にならないものを返す。
+ *
+ * `defaultMaxAge`、`idTokenSignedResponseAlg`、`userinfoSignedResponseAlg` や、機能が `RegisteredClient` に足すメンバーのように、項目を持たないメンバーを、値が `undefined` のものを除いて返す。
+ * そのようなメンバーがなければ `undefined` を返す。
+ * 項目になるメンバーと、`clientSecret`（保存しない）、`clientSecretHash`（`client_auths` のシークレットになる）、`keys`（`keys.clientJwks()` のレコードになる）は含めない。
+ */
+function otherMetadataOf(client: ClientRegistration): Record<string, unknown> | undefined {
+  const {
+    clientId,
+    clientName,
+    clientType,
+    clientSecret,
+    clientSecretHash,
+    tokenEndpointAuthMethods,
+    redirectUris,
+    grantTypes,
+    scope,
+    responseTypes,
+    requestUris,
+    jwksUri,
+    requestObjectSigningAlg,
+    tokenEndpointAuthSigningAlg,
+    logoUri,
+    policyUri,
+    tosUri,
+    clientUri,
+    keys: _keys,
+    ...metadata
+  } = client;
+  const entries = Object.entries(metadata).filter(([, value]) => value !== undefined);
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }

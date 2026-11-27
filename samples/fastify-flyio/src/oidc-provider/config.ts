@@ -295,7 +295,9 @@ export function createProviderConfig(
  *
  * A feature that reads client metadata of its own adds it to this interface
  * from its directory (`declare module '../../config.js'` in features/<id>/),
- * so removing the feature removes the field.
+ * so removing the feature removes the field. registerClient() of the SQL and
+ * key-value databases keeps such a field, as every member without a column of
+ * its own, in the payload of the client (db/sql/clients.ts, db/kv/clients.ts).
  */
 export interface RegisteredClient extends ClientInfo, TokenClientInfo {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';

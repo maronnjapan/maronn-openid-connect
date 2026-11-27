@@ -7,6 +7,17 @@ import type { SqlDatabase } from './database.js';
 const requestObjectKey: Jwk = { kty: 'RSA', use: 'sig', alg: 'RS256', kid: 'ro-1', n: 'AQAB-n', e: 'AQAB' };
 const privateKeyJwtKey: Jwk = { kty: 'EC', use: 'sig', alg: 'ES256', kid: 'pkj-1', crv: 'P-256', x: 'x-1', y: 'y-1' };
 
+// Metadata without a column: default_max_age and the ID Token and UserInfo signing algs (OIDC Dynamic Client
+// Registration 1.0 §2), the backchannelTokenDeliveryMode ciba adds to RegisteredClient, and a member a feature
+// of the project's own adds.
+const metadataWithoutColumn = {
+  defaultMaxAge: 300,
+  idTokenSignedResponseAlg: 'ES256',
+  userinfoSignedResponseAlg: 'RS256',
+  backchannelTokenDeliveryMode: 'poll',
+  exampleFeatureSetting: { enabled: true, levels: [1, 2] },
+} as const;
+
 let db: SqlDatabase;
 
 beforeEach(() => {
@@ -234,6 +245,63 @@ describe('registerClient', () => {
       ).rejects.toThrow('Client rp-1 has an invalid jwksUri: jwks_uri must use http or https');
       expect(await rows('SELECT COUNT(*) AS count FROM clients')).toEqual([{ count: 0 }]);
     });
+
+    it('should save the metadata without a column as the JSON of payload, without the secret and the keys', async () => {
+      await registerClient(db, {
+        clientId: 'rp-meta',
+        clientSecret: 's3cret',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_basic'],
+        keys: { request_object: { keys: [requestObjectKey] } },
+        ...metadataWithoutColumn,
+      });
+
+      const [row] = (await rows('SELECT payload FROM clients')) as Array<{ payload: string }>;
+      expect(JSON.parse(row?.payload ?? 'null')).toStrictEqual({
+        defaultMaxAge: 300,
+        idTokenSignedResponseAlg: 'ES256',
+        userinfoSignedResponseAlg: 'RS256',
+        backchannelTokenDeliveryMode: 'poll',
+        exampleFeatureSetting: { enabled: true, levels: [1, 2] },
+      });
+    });
+
+    it('should save NULL as the payload of a client whose metadata all has columns or rows', async () => {
+      await registerClient(db, {
+        clientId: 'rp-columns',
+        clientName: 'Columns RP',
+        clientType: 'confidential',
+        clientSecret: 's3cret',
+        redirectUris: ['https://rp.example.com/callback'],
+        grantTypes: ['authorization_code'],
+        scope: ['openid'],
+        responseTypes: ['code'],
+        requestUris: ['https://rp.example.com/request.jwt'],
+        tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+        tokenEndpointAuthSigningAlg: 'ES256',
+        requestObjectSigningAlg: 'ES256',
+        logoUri: 'https://rp.example.com/logo.png',
+        policyUri: 'https://rp.example.com/privacy',
+        tosUri: 'https://rp.example.com/terms',
+        clientUri: 'https://rp.example.com/',
+        keys: { private_key_jwt: { keys: [privateKeyJwtKey] } },
+        defaultMaxAge: undefined,
+      });
+
+      expect(await rows('SELECT payload FROM clients')).toEqual([{ payload: null }]);
+    });
+
+    it('should save NULL as the payload of a client registered with a clientSecretHash and a jwksUri', async () => {
+      await registerClient(db, {
+        clientId: 'rp-hash',
+        clientSecretHash: 'precomputed-hash',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_basic'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+      });
+
+      expect(await rows('SELECT payload FROM clients')).toEqual([{ payload: null }]);
+    });
   });
 
   describe('Registering Again', () => {
@@ -338,6 +406,17 @@ describe('registerClient', () => {
       expect(await rows('SELECT jwks_uri, request_object_signing_alg FROM clients')).toEqual([
         { jwks_uri: null, request_object_signing_alg: null },
       ]);
+    });
+
+    it('should replace the payload, and set it to NULL when the metadata without a column is left out', async () => {
+      await registerClient(db, { clientId: 'rp-meta', redirectUris: ['https://rp.example.com/callback'], ...metadataWithoutColumn });
+      await registerClient(db, { clientId: 'rp-meta', redirectUris: ['https://rp.example.com/callback'], defaultMaxAge: 60 });
+
+      expect(await rows('SELECT payload FROM clients')).toEqual([{ payload: '{"defaultMaxAge":60}' }]);
+
+      await registerClient(db, { clientId: 'rp-meta', redirectUris: ['https://rp.example.com/callback'] });
+
+      expect(await rows('SELECT payload FROM clients')).toEqual([{ payload: null }]);
     });
 
     it('should remove the private_key_jwt row when the client is registered again without it', async () => {
@@ -503,6 +582,45 @@ describe('createClientResolver', () => {
     });
   });
 
+  it('should find the metadata without a column that a client registered', async () => {
+    await registerClient(db, {
+      clientId: 'rp-meta',
+      clientSecret: 's3cret',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic'],
+      ...metadataWithoutColumn,
+    });
+
+    expect(await createClientResolver(db).findClient('rp-meta')).toEqual({
+      clientId: 'rp-meta',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic'],
+      clientSecretHash: await hashClientSecret('s3cret'),
+      defaultMaxAge: 300,
+      idTokenSignedResponseAlg: 'ES256',
+      userinfoSignedResponseAlg: 'RS256',
+      backchannelTokenDeliveryMode: 'poll',
+      exampleFeatureSetting: { enabled: true, levels: [1, 2] },
+    });
+  });
+
+  it('should take a member from its column over a payload member of the same name', async () => {
+    await registerClient(db, { clientId: 'rp-1', clientName: 'Column RP', redirectUris: ['https://rp.example.com/callback'] });
+    await db.run({
+      sql: 'UPDATE clients SET payload = ? WHERE id = ?',
+      params: [JSON.stringify({ clientName: 'Payload RP', clientType: 'public', defaultMaxAge: 60 }), 'rp-1'],
+    });
+
+    expect(await createClientResolver(db).findClient('rp-1')).toEqual({
+      clientId: 'rp-1',
+      clientName: 'Column RP',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      defaultMaxAge: 60,
+    });
+  });
+
   it('should find a registered client without its public keys', async () => {
     await registerClient(db, {
       clientId: 'rp-1',
@@ -564,6 +682,22 @@ describe('createClientResolver', () => {
     expect(await createClientResolver(db).findClient('rp-three')).toMatchObject({
       clientSecretHash: await hashClientSecret('shared'),
     });
+  });
+
+  describe('parsePayload', () => {
+    // parsePayload() is not exported: the test reaches it through findClient().
+    // @subject hono:oidc-provider/db/sql/clients.ts#parsePayload
+    it.each(['{"defaultMaxAge":', '"abc"', '[true]', 'null'])(
+      'should reject a client whose payload %s is not a JSON object',
+      async (payload) => {
+        await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
+        await db.run({ sql: 'UPDATE clients SET payload = ? WHERE id = ?', params: [payload, 'rp-1'] });
+
+        await expect(createClientResolver(db).findClient('rp-1')).rejects.toThrow(
+          'Client rp-1 has a payload that is not a JSON object',
+        );
+      },
+    );
   });
 });
 

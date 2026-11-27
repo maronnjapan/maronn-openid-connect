@@ -53,25 +53,27 @@ async function applySchema(d1: D1Database): Promise<void> {
     .map((sql) => sql.trim())
     .filter((sql) => sql.length > 0);
   await d1.batch(statements.map((sql) => d1.prepare(sql)));
-  await addAccessTokenAcrColumn(d1);
+  await addMissingColumn(d1, 'access_tokens', 'acr', 'VARCHAR(5000)');
+  await addMissingColumn(d1, 'clients', 'payload', 'TEXT');
   schemaApplied = true;
 }
 
 /**
- * Adds access_tokens.acr to a database created before the column was part of
- * schema.sql (the deployed D1 database, an existing .wrangler/state): CREATE
- * TABLE IF NOT EXISTS leaves an existing table as it is.
+ * Adds a column of schema.sql (access_tokens.acr, clients.payload) to a
+ * database created before the column was part of it (the deployed D1
+ * database, an existing .wrangler/state): CREATE TABLE IF NOT EXISTS leaves an
+ * existing table as it is.
  */
-async function addAccessTokenAcrColumn(d1: D1Database): Promise<void> {
-  const hasAcrColumn = async (): Promise<boolean> => {
-    const { results } = await d1.prepare('PRAGMA table_info(access_tokens)').all<{ name: string }>();
-    return results.some((column) => column.name === 'acr');
+async function addMissingColumn(d1: D1Database, table: string, column: string, type: string): Promise<void> {
+  const hasColumn = async (): Promise<boolean> => {
+    const { results } = await d1.prepare('PRAGMA table_info(' + table + ')').all<{ name: string }>();
+    return results.some((row) => row.name === column);
   };
-  if (await hasAcrColumn()) return;
+  if (await hasColumn()) return;
   try {
-    await d1.prepare('ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000)').run();
+    await d1.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + type).run();
   } catch (error) {
     // Another isolate added the column first.
-    if (!(await hasAcrColumn())) throw error;
+    if (!(await hasColumn())) throw error;
   }
 }

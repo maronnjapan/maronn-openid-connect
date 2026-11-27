@@ -9,6 +9,17 @@ const requestObjectKey: Jwk = { kty: 'RSA', use: 'sig', alg: 'RS256', kid: 'ro-1
 const privateKeyJwtKey: Jwk = { kty: 'EC', use: 'sig', alg: 'ES256', kid: 'pkj-1', crv: 'P-256', x: 'x-1', y: 'y-1' };
 const rotatedKey: Jwk = { kty: 'RSA', use: 'sig', alg: 'RS256', kid: 'ro-2', n: 'AQAB-n2', e: 'AQAB' };
 
+// Metadata without a field of the client record: default_max_age and the ID Token and UserInfo signing algs
+// (OIDC Dynamic Client Registration 1.0 §2), the backchannelTokenDeliveryMode ciba adds to RegisteredClient,
+// and a member a feature of the project's own adds.
+const metadataWithoutField = {
+  defaultMaxAge: 300,
+  idTokenSignedResponseAlg: 'ES256',
+  userinfoSignedResponseAlg: 'RS256',
+  backchannelTokenDeliveryMode: 'poll',
+  exampleFeatureSetting: { enabled: true, levels: [1, 2] },
+} as const;
+
 let db: MapKvDatabase;
 
 beforeEach(() => {
@@ -183,6 +194,62 @@ describe('registerClient', () => {
         response_types: ['id_token token', 'id_token'],
       });
     });
+
+    it('should save the metadata without a field in the payload of the record, without the secret and the keys', async () => {
+      await registerClient(db, {
+        clientId: 'rp-meta',
+        clientSecret: 's3cret',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_basic'],
+        keys: { request_object: { keys: [requestObjectKey] } },
+        ...metadataWithoutField,
+      });
+
+      expect((await clientRecord('rp-meta'))?.payload).toStrictEqual({
+        defaultMaxAge: 300,
+        idTokenSignedResponseAlg: 'ES256',
+        userinfoSignedResponseAlg: 'RS256',
+        backchannelTokenDeliveryMode: 'poll',
+        exampleFeatureSetting: { enabled: true, levels: [1, 2] },
+      });
+    });
+
+    it('should write no payload for a client whose metadata all has fields', async () => {
+      await registerClient(db, {
+        clientId: 'rp-fields',
+        clientName: 'Fields RP',
+        clientType: 'confidential',
+        clientSecret: 's3cret',
+        redirectUris: ['https://rp.example.com/callback'],
+        grantTypes: ['authorization_code'],
+        scope: ['openid'],
+        responseTypes: ['code'],
+        requestUris: ['https://rp.example.com/request.jwt'],
+        tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+        tokenEndpointAuthSigningAlg: 'ES256',
+        requestObjectSigningAlg: 'ES256',
+        logoUri: 'https://rp.example.com/logo.png',
+        policyUri: 'https://rp.example.com/privacy',
+        tosUri: 'https://rp.example.com/terms',
+        clientUri: 'https://rp.example.com/',
+        keys: { private_key_jwt: { keys: [privateKeyJwtKey] } },
+        defaultMaxAge: undefined,
+      });
+
+      expect(await clientRecord('rp-fields')).not.toHaveProperty('payload');
+    });
+
+    it('should write no payload for a client registered with a clientSecretHash and a jwksUri', async () => {
+      await registerClient(db, {
+        clientId: 'rp-hash',
+        clientSecretHash: 'precomputed-hash',
+        redirectUris: ['https://rp.example.com/callback'],
+        tokenEndpointAuthMethods: ['client_secret_basic'],
+        jwksUri: 'https://rp.example.com/jwks.json',
+      });
+
+      expect(await clientRecord('rp-hash')).not.toHaveProperty('payload');
+    });
   });
 
   describe('Client Key Source and Request Object Alg', () => {
@@ -261,6 +328,17 @@ describe('registerClient', () => {
         tos_uri: null,
         client_uri: null,
       });
+    });
+
+    it('should replace the payload, and drop it when the metadata without a field is left out', async () => {
+      await registerClient(db, { clientId: 'rp-meta', redirectUris: ['https://rp.example.com/callback'], ...metadataWithoutField });
+      await registerClient(db, { clientId: 'rp-meta', redirectUris: ['https://rp.example.com/callback'], defaultMaxAge: 60 });
+
+      expect((await clientRecord('rp-meta'))?.payload).toStrictEqual({ defaultMaxAge: 60 });
+
+      await registerClient(db, { clientId: 'rp-meta', redirectUris: ['https://rp.example.com/callback'] });
+
+      expect(await clientRecord('rp-meta')).not.toHaveProperty('payload');
     });
 
     it('should make a deleted client known again when it is registered again', async () => {
@@ -395,6 +473,46 @@ describe('createClientResolver', () => {
       redirectUris: ['https://rp.example.com/callback'],
       jwksUri: 'https://rp.example.com/jwks.json',
       requestObjectSigningAlg: 'ES256',
+    });
+  });
+
+  it('should find the metadata without a field that a client registered', async () => {
+    await registerClient(db, {
+      clientId: 'rp-meta',
+      clientSecret: 's3cret',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic'],
+      ...metadataWithoutField,
+    });
+
+    expect(await createClientResolver(db).findClient('rp-meta')).toEqual({
+      clientId: 'rp-meta',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      tokenEndpointAuthMethods: ['client_secret_basic'],
+      clientSecretHash: await hashClientSecret('s3cret'),
+      defaultMaxAge: 300,
+      idTokenSignedResponseAlg: 'ES256',
+      userinfoSignedResponseAlg: 'RS256',
+      backchannelTokenDeliveryMode: 'poll',
+      exampleFeatureSetting: { enabled: true, levels: [1, 2] },
+    });
+  });
+
+  it('should take a member from its field over a payload member of the same name', async () => {
+    await registerClient(db, { clientId: 'rp-1', clientName: 'Field RP', redirectUris: ['https://rp.example.com/callback'] });
+    const record = await clientRecord('rp-1');
+    await writeRecord(db, keys.client('rp-1'), {
+      ...record,
+      payload: { clientName: 'Payload RP', clientType: 'public', defaultMaxAge: 60 },
+    });
+
+    expect(await createClientResolver(db).findClient('rp-1')).toEqual({
+      clientId: 'rp-1',
+      clientName: 'Field RP',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      defaultMaxAge: 60,
     });
   });
 

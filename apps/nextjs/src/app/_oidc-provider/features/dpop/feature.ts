@@ -13,7 +13,10 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * presented with the DPoP scheme and its proof (the [read-dpop-access-token]
  * block of userinfo/route.ts, which calls ./userinfo.ts) and lets a bound
  * token be used only with a proof of its key, never as a Bearer token
- * ([verify-dpop-access-token]). The checks it calls are the modules of this
+ * ([verify-dpop-access-token]). The authorization endpoint reads the
+ * dpop_jkt of a request (the [validate-dpop-jkt] block of authorize/route.ts,
+ * which calls ./authorize.ts) and binds the code issued for it to that key.
+ * The checks it calls are the modules of this
  * directory (proof.ts, with jwk.ts and htu.ts, binding.ts and resource.ts), to
  * be changed here when the policy changes. The feature adds the defaults of the DPoP
  * settings (dpopConfigDefaults of ./config.ts) to the defaults of

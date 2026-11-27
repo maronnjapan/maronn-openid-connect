@@ -14,6 +14,9 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * with the DPoP scheme and its proof (the [read-dpop-access-token] block of
  * endpoints/userinfo/pipeline.ts) and lets a bound token be used only with a
  * proof of its key, never as a Bearer token ([verify-dpop-access-token]).
+ * The authorization endpoint reads the dpop_jkt of a request (the
+ * [validate-dpop-jkt] block of endpoints/authorize/pipeline.ts, whose step is
+ * steps/validate-dpop-jkt.ts) and binds the code issued for it to that key.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. The feature adds the defaults of the DPoP

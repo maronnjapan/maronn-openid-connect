@@ -198,8 +198,9 @@ describe('dispatchDeviceCode', () => {
 });
 
 describe('redeemDeviceCode', () => {
-  // RFC 9449 §5: the binding decides whether the refresh token is bound; the dpop extension leaves
-  // refreshTokenCnf out for a confidential client, whose refresh token its client authentication constrains.
+  // RFC 9449 §5: the step follows the binding, not the kind of client (this one is public).
+  // The dpop extension leaves refreshTokenCnf out only for a confidential client,
+  // whose refresh token its client authentication constrains.
   it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
     const record = pendingDeviceRecord({
       status: 'approved',

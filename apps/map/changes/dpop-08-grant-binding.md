@@ -25,7 +25,7 @@ client_credentials のアクセストークンも、DPoP proof の鍵に束縛�
 experimental の `processDeviceCodeGrant()` と `processCibaGrant()` は承認済みのグラントを返すだけで、トークンの発行と保存は生成コードのこの関数が行うので、束縛もここで行う。experimental は変えていない。
 
 - リフレッシュトークンを束縛するかどうかは、関数の中でクライアントの種類から決めず、束縛の `refreshTokenCnf` の有無に従う。RFC 9449 §5 は、パブリッククライアントのリフレッシュトークンを束縛し、機密クライアントのものは束縛しない（クライアント認証で送り手が制約されている）としていて、その判断は束縛をつくる機能（後の段の DPoP の機能）が一か所で行うためである。段 7 の `issueRefreshToken()` と同じ規則である
-- CIBA のクライアントはバックチャネル認証エンドポイントでクライアント認証をする（CIBA Core 1.0 §7.1）機密クライアントなので、`refreshTokenCnf` の無い束縛ではリフレッシュトークンを束縛しないことをテストで確かめた（デバイス認可も同じ）
+- CIBA のクライアントはバックチャネル認証エンドポイントでクライアント認証をする（CIBA Core 1.0 §7.1）機密クライアントなので、`refreshTokenCnf` の無い束縛ではリフレッシュトークンを束縛しないことをテストで確かめた。デバイス認可のテストは、パブリッククライアントでも、`refreshTokenCnf` の無い束縛ではリフレッシュトークンを束縛しないこと、つまり関数がクライアントの種類でなく束縛に従うことを確かめる
 - Next.js の `dispatchDeviceCode()` と `dispatchCiba()` は、受け取った束縛を `redeemDeviceCode()` と `redeemCibaRequest()` へ渡すだけである
 
 ## exchangeToken, dispatchTokenExchange <!-- hono:oidc-provider/features/token-exchange/steps/dispatch-token-exchange.ts#exchangeToken nextjs:app/_oidc-provider/features/token-exchange/grant.ts#dispatchTokenExchange nextjs:app/_oidc-provider/features/token-exchange/grant.ts#exchangeToken -->

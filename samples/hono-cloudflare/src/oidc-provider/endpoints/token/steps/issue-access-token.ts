@@ -7,6 +7,7 @@ import {
   type AccessTokenIssuer,
   type ValidatedTokenRequest,
 } from '@maronn-openid-connect/core';
+import { accessTokenClaimsOf, type TokenBinding } from '../../../token-binding.js';
 import { step } from '../../step.js';
 
 export const meta = step({
@@ -16,7 +17,8 @@ export const meta = step({
   label: 'アクセストークンを発行する',
   spec: 'RFC 9068 §2.2 / §2.2.1 / §3',
   function: 'issueAccessToken',
-  consumes: ['signingKey', 'subject', 'validatedRequest', 'acr'],
+  consumes: ['signingKey', 'subject', 'validatedRequest', 'acr', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: ['issuedAt', 'accessToken', 'accessTokenPayload', 'audience'],
   removable: false,
 });
@@ -27,10 +29,12 @@ export const meta = step({
  * `aud` を決めて RFC 9068 のペイロードを組み立て、設定の `accessTokenFormat` に従って、JWT に署名するか、不透明な文字列のトークンを作る。
  * トークンと一緒に、ペイロードと `aud` も返す。
  * 後のステップが、この二つをアクセストークンのレコードに保存する。
+ * 機能（dpop）がトークンを鍵に束縛するときは、ペイロードにその鍵の確認のクレーム `cnf` を加える。
  *
  * @spec RFC 9068 §2.2
  * @spec RFC 9068 §2.2.1
  * @spec RFC 9068 §3
+ * @spec RFC 9449 §6.1
  */
 export async function issueAccessToken(
   c: any,
@@ -42,9 +46,11 @@ export async function issueAccessToken(
     issuedAt: number;
     /** The acr of the authentication (the ID Token carries the same); undefined leaves the claim out. */
     acr: string | undefined;
+    /** The key a feature (dpop) binds the token to; undefined issues a Bearer token. */
+    binding?: TokenBinding;
   },
 ): Promise<{ accessToken: string; accessTokenPayload: { jti?: string }; audience: string[] }> {
-  const { signingKey, subject, validatedRequest, issuedAt, acr } = input;
+  const { signingKey, subject, validatedRequest, issuedAt, acr, binding } = input;
   const config = c.get('config');
 
   // 設定の `accessTokenFormat` に従って、アクセストークンの発行方式を選ぶ（既定は JWT）。
@@ -69,16 +75,20 @@ export async function issueAccessToken(
 
   // ペイロードに `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`scope`、`client_id` を入れ、認証の `acr` があればそれも入れる（RFC 9068 §2.2、§2.2.1）。
   // アクセストークンに独自のクレームを加えるときは、署名する前のここでペイロードに加える。
-  const accessTokenPayload = buildAccessTokenPayload({
-    issuer: config.issuer,
-    subject,
-    clientId: validatedRequest.clientId,
-    scope: validatedRequest.scope,
-    audience,
-    expiresIn: config.accessTokenExpiresIn,
-    issuedAt,
-    acr,
-  });
+  // 機能（dpop）がトークンを鍵に束縛するときは、その鍵の確認のクレーム `cnf` を加える（RFC 7800 §3.1、RFC 9449 §6.1）。
+  const accessTokenPayload = {
+    ...buildAccessTokenPayload({
+      issuer: config.issuer,
+      subject,
+      clientId: validatedRequest.clientId,
+      scope: validatedRequest.scope,
+      audience,
+      expiresIn: config.accessTokenExpiresIn,
+      issuedAt,
+      acr,
+    }),
+    ...accessTokenClaimsOf(binding),
+  };
 
   // 上で `accessTokenFormat` から選んだ方式で、JWT か不透明な文字列のトークンを発行する。
   const accessToken = await accessTokenIssuer.issue({

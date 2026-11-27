@@ -1,4 +1,5 @@
 import type { ValidatedTokenRequest } from '@maronn-openid-connect/core';
+import { accessTokenRecordOf, type TokenBinding } from '../../../token-binding.js';
 import { step } from '../../step.js';
 
 export const meta = step({
@@ -8,7 +9,8 @@ export const meta = step({
   label: 'アクセストークンのレコードを保存する',
   spec: 'RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2',
   function: 'persistAccessToken',
-  consumes: ['accessToken', 'accessTokenPayload', 'subject', 'validatedRequest', 'issuedAt', 'audience', 'acr'],
+  consumes: ['accessToken', 'accessTokenPayload', 'subject', 'validatedRequest', 'issuedAt', 'audience', 'acr', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: [],
   removable: false,
 });
@@ -21,11 +23,13 @@ export const meta = step({
  *
  * `iat`、`nbf`、`audience`、`issuer`、`acr` は、イントロスペクションのレスポンスで返せるように保存する。
  * `grantId` はこのトークンを元の認可のグラントに結び付け、認可コードが再利用されたときに、同じグラントのほかのトークンと一緒に失効させられるようにする（OAuth 2.1 §4.1.2）。
+ * 機能（dpop）がトークンを鍵に束縛したときは、確認の `cnf` と `token_type` も保存する。
  *
  * @spec RFC 7662 §2.2
  * @spec RFC 9068 §2.2
  * @spec OIDC Core 1.0 §5.5
  * @spec RFC 9470 §6.2
+ * @spec RFC 9449 §6.2
  */
 export async function persistAccessToken(
   c: any,
@@ -37,9 +41,11 @@ export async function persistAccessToken(
     issuedAt: number;
     audience: string[];
     acr: string | undefined;
+    /** The key a feature (dpop) bound the token to; undefined stores a Bearer token. */
+    binding?: TokenBinding;
   },
 ): Promise<void> {
-  const { accessToken, accessTokenPayload, subject, validatedRequest, issuedAt, audience, acr } = input;
+  const { accessToken, accessTokenPayload, subject, validatedRequest, issuedAt, audience, acr, binding } = input;
   const accessTokenStore = c.get('accessTokenStore');
   const config = c.get('config');
 
@@ -64,5 +70,8 @@ export async function persistAccessToken(
     claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
     // トークンを発行したときの `acr` を保存し、不透明な文字列のトークンでもイントロスペクションが `acr` を返せるようにする（RFC 9068 §2.2.1、RFC 9470 §6.2）。
     acr,
+    // 機能（dpop）がトークンを鍵に束縛したときは、確認の `cnf` と `token_type` を保存する。
+    // 不透明な文字列のトークンでもイントロスペクションが `cnf` と `token_type` を返せるように（RFC 9449 §6.2）、また UserInfo エンドポイントがトークンの提示の仕方と照らし合わせられるようにするためである。
+    ...accessTokenRecordOf(binding),
   });
 }

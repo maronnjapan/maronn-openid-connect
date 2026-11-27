@@ -26,15 +26,16 @@ import { validateTokenGrantType } from './steps/validate-grant-type.js';
  *
  * Each block below calls one step (one box of
  * `maronn-oidc graph --detail steps --endpoint token`): parse the request,
- * authenticate the client, check the DPoP proof (dpop), dispatch the grants
- * a feature answers, validate the grant, select the keys, resolve the
- * subject, issue and store the tokens, and answer. Delete a block to drop
- * that step, or insert your own logic between two blocks. A block whose
- * marker names a feature belongs to that feature, and its step is in
- * features/<id>/. A step that throws ends in respondTokenError().
+ * authenticate the client, dispatch the grants a feature answers, validate
+ * the grant, select the keys, resolve the subject, issue and store the
+ * tokens, and answer. Delete a block to drop that step, or insert your own
+ * logic between two blocks. A block whose marker names a feature belongs to
+ * that feature, and its step is in features/<id>/. A step that throws ends in
+ * respondTokenError().
  *
- * tokenBinding, which the dpop block decides from the DPoP proof, is the key
- * the tokens are bound to (token-binding.ts): every grant below binds the
+ * With the dpop extension, the (feature: dpop) block after client
+ * authentication checks the DPoP proof and decides the key the tokens are
+ * bound to (tokenBinding, token-binding.ts); every grant below then binds the
  * access token it issues to it. Without a binding the tokens are Bearer
  * tokens.
  */

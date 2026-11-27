@@ -685,6 +685,8 @@ describe('createClientResolver', () => {
   });
 
   describe('parsePayload', () => {
+    // parsePayload() is not exported: the test reaches it through findClient().
+    // @subject hono:oidc-provider/db/sql/clients.ts#parsePayload
     it.each(['{"defaultMaxAge":', '"abc"', '[true]', 'null'])(
       'should reject a client whose payload %s is not a JSON object',
       async (payload) => {

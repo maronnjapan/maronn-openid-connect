@@ -24,6 +24,11 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config.js';
  * [bind-pushed-dpop-key] block of features/par/endpoints/par/pipeline.ts,
  * whose step is steps/bind-pushed-dpop-key.ts) and pushes the request with
  * the key of the proof as its dpop_jkt.
+ * With dynamic-client-registration, the client registration endpoint
+ * registers dpop_bound_access_tokens (the [validate-dpop-client-metadata]
+ * block of features/dynamic-client-registration/endpoints/register/pipeline.ts,
+ * whose step is steps/validate-dpop-client-metadata.ts), which the
+ * [verify-dpop-proof] block reads from the registered metadata.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. The feature adds the defaults of the DPoP

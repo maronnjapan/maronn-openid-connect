@@ -13,7 +13,8 @@ export const meta = step({
   label: '201 と登録レスポンスで応答する',
   spec: 'RFC 7591 §3.2.1',
   function: 'respondRegistration',
-  consumes: ['client'],
+  consumes: ['client', 'dpopClient'],
+  optional: ['dpopClient'],
   produces: [],
   removable: false,
 });

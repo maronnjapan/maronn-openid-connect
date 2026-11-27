@@ -22,6 +22,11 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * With par, the PAR endpoint checks the DPoP proof of a pushed request (the
  * [bind-pushed-dpop-key] block of (par)/par/route.ts, which calls ./par.ts)
  * and pushes the request with the key of the proof as its dpop_jkt.
+ * With dynamic-client-registration, the client registration endpoint
+ * registers dpop_bound_access_tokens (the [validate-dpop-client-metadata]
+ * block of (dynamic-client-registration)/register/route.ts, which calls
+ * ./register.ts), which the [verify-dpop-proof] block reads from the
+ * registered metadata.
  * The checks it calls are the modules of this directory (proof.ts, with
  * jwk.ts and htu.ts, binding.ts and resource.ts), to be changed here when the
  * policy changes. The feature adds the defaults of the DPoP
@@ -36,7 +41,8 @@ import { dpopConfigDefaults, dpopSigningAlgsOf } from './config';
  * error-responses.ts imports http.ts, so no file the feature list loads
  * imports them, token.ts or userinfo.ts, which import both, or par.ts, which
  * imports proof.ts: token/route.ts, userinfo/route.ts and (par)/par/route.ts
- * do.
+ * do. register.ts imports nothing; only
+ * (dynamic-client-registration)/register/route.ts imports it.
  */
 export const dpop = defineFeature({
   id: 'dpop',

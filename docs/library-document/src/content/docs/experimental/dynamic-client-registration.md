@@ -49,6 +49,7 @@ Cache-Control: no-store
 
 - [RFC 7591: OAuth 2.0 Dynamic Client Registration Protocol](https://datatracker.ietf.org/doc/html/rfc7591)（§2 のメタデータ、§2.1 の grant と response の対応、§2.3 / §3.1.1 の software statement、§3.2.2 のエラーコード 4 種）
 - [OpenID Connect Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html)（`redirect_uris` を必須にする制約、`application_type` ごとの `redirect_uris` の制約、`default_max_age`、`*_signed_response_alg`、`request_object_signing_alg`、`token_endpoint_auth_signing_alg`、`request_uris`）
+- [RFC 9449 §5.2](https://datatracker.ietf.org/doc/html/rfc9449#section-5.2)（`--enable dpop` のとき、`dpop_bound_access_tokens`）
 
 次はスコープ外です。
 
@@ -210,7 +211,7 @@ Hono / Express / Fastify では、この機能のコードはすべて `features
 | `features/dynamic-client-registration/store.ts` | 動的登録クライアントの in-memory ストア、保存するレコードの組み立て、設定済みのクライアント解決と鍵解決へ合成する `withDynamicallyRegisteredClients()` / `withDynamicallyRegisteredClientKeys()` |
 | `features/dynamic-client-registration/feature.ts` | `/register` のルート、`registration_endpoint` メタデータ、リクエストのコンテキストでのクライアント解決と鍵解決への合成 |
 
-Next.js では、`(dynamic-client-registration)/register/route.ts` がエンドポイントで、設定とストアは `_oidc-provider/features/dynamic-client-registration/` にあります。
+Next.js では、`(dynamic-client-registration)/register/route.ts` がエンドポイント（ステップの並びは隣の `endpoint.ts`）で、設定とストアは `_oidc-provider/features/dynamic-client-registration/` にあります。
 
 ## 受理するメタデータ
 
@@ -236,6 +237,7 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 | `jwks_uri` | `acceptJwksUri` が `true`（既定）のとき登録します。https の絶対 URL で、フラグメントと userinfo を含まず、`localhost` やループバック・私設・リンクローカルの IP リテラルを指さないものに限ります（生成 OP の `allowInsecureClientJwksUri` が `true` なら http とそれらの宛先も許します）。登録時には取得せず、鍵が必要になったときに生成 OP が取得します（[CLI の jwks_uri](../../guides/cli/#jwks_uri) を参照）。`jwks` との併記は、`acceptJwksUri` によらず拒否します |
 | `request_object_signing_alg` | discovery の `request_object_signing_alg_values_supported` の値のみ（既定は RS256 / RS384 / RS512 / ES256 / ES384 / ES512。`allowUnsignedRequestObject` の OP では `none` も）。登録したクライアントの Request Object は、この alg で署名されたものだけを受け付けます（OIDC Core 1.0 §6.3.2）。`jwks` も登録するときは、この alg で使える鍵が `jwks` に要ります。request-object 機能を外した OP では、理解しないメタデータとして無視します |
 | `request_uris` | discovery が `request_uri_parameter_supported: true` を広告する OP（request-object 機能。既定）でだけ登録します。1 〜 32 件の https の絶対 URL（生成 OP の `allowInsecureRequestUri` が `true` なら http も）で、フラグメントを含んでよい。登録時には取得しません。`requireRequestUriRegistration` の OP は、ここに登録した値と完全一致する `request_uri` だけを取得します（[CLI の request_uri](../../guides/cli/#request_uri) を参照） |
+| `dpop_bound_access_tokens` | `--enable dpop` の OP でだけ理解し（RFC 9449 §5.2）、dpop の無い OP では理解しないメタデータとして無視します。真偽値で、省略すると `false` を登録して返します。`true` で登録したクライアントは、どのトークンリクエストにも DPoP proof を送らなければならず、無ければトークンエンドポイントが `invalid_dpop_proof` で拒否します。`customClientMetadata` に同じ名前の検証関数を置くと、その関数が返した値（`undefined` を返したときはリクエストの値）を検証して登録するので、たとえばすべての動的登録クライアントを `true` にできます |
 | `software_statement` | 次節 |
 
 `grant_types` に Token Exchange や CIBA などの URN を登録できるのは、`grantTypes` に足した場合だけです。
@@ -271,7 +273,7 @@ statement の中のクレームに、RFC 7591 が定める必須項目は `iss` 
 | 応答 | 条件 |
 |---|---|
 | `400` + `invalid_redirect_uri` | `redirect_uris` の欠落・空・非文字列要素・URI 規則違反 |
-| `400` + `invalid_client_metadata` | `Content-Type` が `application/json` でない、ボディが JSON オブジェクトでない、ボディ長超過、理解するフィールドの不正値、`grant_types` と `response_types` の不整合、`application_type` の制約違反、カスタムメタデータの検証失敗、`verifySoftwareStatement` を設定した OP で `software_statement` が無い |
+| `400` + `invalid_client_metadata` | `Content-Type` が `application/json` でない、ボディが JSON オブジェクトでない、ボディ長超過、理解するフィールドの不正値（`--enable dpop` の OP では、真偽値でない `dpop_bound_access_tokens` も）、`grant_types` と `response_types` の不整合、`application_type` の制約違反、カスタムメタデータの検証失敗、`verifySoftwareStatement` を設定した OP で `software_statement` が無い |
 | `400` + `invalid_software_statement` | `software_statement` が文字列でない。または `verifySoftwareStatement` がこのコードで拒否した |
 | `400` + `unapproved_software_statement` | `verifySoftwareStatement` がこのコードで拒否した |
 | `401` + `WWW-Authenticate: Bearer` | `verifyInitialAccessToken` を設定した OP で、Bearer トークンが無い（`Authorization` ヘッダが無いか、Bearer 以外のスキーム。RFC 6750 §3.1 に従いエラーコードは付きません） |

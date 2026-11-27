@@ -54,9 +54,10 @@ const EXTENSION_NOTES: Record<ExtensionFeatureName, string> = {
     'sending a DPoP proof in the DPoP header of its token requests: the access token is then bound\n' +
     'to its key (token_type DPoP), and so is the refresh token of a public client, which then needs\n' +
     'a proof of the same key each time it is used; without one the tokens stay Bearer. A client\n' +
-    'registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens) must send one with every\n' +
-    'token request. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its\n' +
-    'code to that key, so the code is exchanged only with a proof of that key; with par, a pushed\n' +
+    'registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens, which POST /register of\n' +
+    'dynamic-client-registration also registers, false when omitted) must send one with every token\n' +
+    'request. An authorization request with dpop_jkt (the JWK Thumbprint of a key) binds its code to\n' +
+    'that key, so the code is exchanged only with a proof of that key; with par, a pushed\n' +
     'authorization request with a DPoP proof in its DPoP header binds its code to the key of that\n' +
     'proof too. The UserInfo endpoint takes a bound access token only with the DPoP scheme\n' +
     '(Authorization: DPoP) and a proof of the same key, and rejects it as a Bearer token.\n',
@@ -186,15 +187,16 @@ Extension features (disabled by default): ${extensionFeatures}
   request and binds the access token to its key (token_type DPoP), and the
   refresh token of a public client too, which then needs a proof of the same
   key each time it is used; without a proof the tokens stay Bearer. A client
-  registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens) must
-  send a proof with every token request. An authorization request with
-  dpop_jkt (the JWK Thumbprint of a key) binds its code to that key, so the
-  code is exchanged only with a proof of that key; with par, a pushed
-  authorization request with a DPoP proof in its DPoP header binds its code
-  to the key of that proof too. The UserInfo endpoint takes a bound access
-  token only with the DPoP scheme (Authorization: DPoP) and a proof of the
-  same key, and rejects it as a Bearer token. Web Crypto only, so it runs on
-  edge runtimes too.
+  registered with dpopBoundAccessTokens: true (dpop_bound_access_tokens, which
+  POST /register of dynamic-client-registration also registers, false when
+  omitted) must send a proof with every token request. An authorization
+  request with dpop_jkt (the JWK Thumbprint of a key) binds its code to that
+  key, so the code is exchanged only with a proof of that key; with par, a
+  pushed authorization request with a DPoP proof in its DPoP header binds its
+  code to the key of that proof too. The UserInfo endpoint takes a bound
+  access token only with the DPoP scheme (Authorization: DPoP) and a proof of
+  the same key, and rejects it as a Bearer token. Web Crypto only, so it runs
+  on edge runtimes too.
   Enable with:
   --enable dpop
 

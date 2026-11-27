@@ -424,13 +424,10 @@ describe('verifyDpopTokenRequest', () => {
       expect((await stores.authCodeStore.get('code-1'))?.used).toBe(false);
     });
 
-    // Dynamic client registration keeps dpop_bound_access_tokens only through a customClientMetadata validator
-    // (here one that keeps the value as sent): POST /register then stores it in registrationMetadata, which the
-    // token endpoint reads.
+    // With dynamic client registration, the dpop block of POST /register registers dpop_bound_access_tokens in
+    // registrationMetadata, which the token endpoint reads.
     it('should require a proof of a client registered through POST /register with dpop_bound_access_tokens true', async () => {
-      const { app, stores, post } = await provider({}, {}, {
-        dynamicClientRegistration: { customClientMetadata: { dpop_bound_access_tokens: (value) => value } },
-      });
+      const { app, stores, post } = await provider();
       const registration = await app.request(`${TEST_ISSUER}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

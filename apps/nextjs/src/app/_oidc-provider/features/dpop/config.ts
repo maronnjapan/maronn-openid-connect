@@ -43,7 +43,9 @@ declare module '../../config' {
      * endpoint rejects every token request of the client that has no DPoP
      * header (invalid_dpop_proof). Omitted means false: the client may also
      * ask for Bearer tokens. The memory database keeps it with the client,
-     * the SQL and key-value databases in the payload of the client.
+     * the SQL and key-value databases in the payload of the client. A client
+     * registered through POST /register (dynamic-client-registration) has it
+     * as dpop_bound_access_tokens in registrationMetadata instead.
      */
     dpopBoundAccessTokens?: boolean;
   }

@@ -131,7 +131,7 @@ UI を変える場所は、変えたい範囲で選びます。
 
 ### Next.js
 
-Next.js では、App Router の機能をそのまま使ったコードを `--output`（例: `./src/app`）へ生成します。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いています。`/token` の挙動を知りたければ `token/route.ts` だけを読めば済みます。`/authorize`、`/token`、`/userinfo`、`/introspect`、`/par`、Discovery の `route.ts` は、ステップごとに Hono / Express / Fastify と同じ `// [step-id] ラベル — 仕様` の印が付き、隣の `endpoint.ts` がステップの並びと、各ステップが読み書きする値を記述します。
+Next.js では、App Router の機能をそのまま使ったコードを `--output`（例: `./src/app`）へ生成します。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いています。`/token` の挙動を知りたければ `token/route.ts` だけを読めば済みます。`/authorize`、`/token`、`/userinfo`、`/introspect`、`/par`、`/register`、Discovery の `route.ts` は、ステップごとに Hono / Express / Fastify と同じ `// [step-id] ラベル — 仕様` の印が付き、隣の `endpoint.ts` がステップの並びと、各ステップが読み書きする値を記述します。
 
 ```
 src/app/
@@ -144,7 +144,7 @@ src/app/
 │   ├── config.ts / store.ts / resolvers.ts / scopes.ts / cookies.ts  # 他のフレームワークと共通の設定型・ストアの契約・resolver・スコープポリシー・Cookie
 │   ├── development.ts        # 試用のための開発用ユーザー（testuser / otheruser）と registerDevelopmentUsers()
 │   ├── shared.ts             # Next.js のモジュールの層をまたいで値を 1 つにする shared()
-│   ├── endpoint.ts           # authorize、token、userinfo、introspect、par、Discovery の route.ts の隣の endpoint.ts が使う、ステップの並びの記述
+│   ├── endpoint.ts           # authorize、token、userinfo、introspect、par、register、Discovery の route.ts の隣の endpoint.ts が使う、ステップの並びの記述
 │   ├── feature.ts / features.ts  # 機能が OP に足すもの（フック）の定義と、有効な機能の一覧
 │   ├── features/             # 機能の設定やストアなど、ルート以外のコード（features/<feature-id>/）
 │   └── db/                   # クライアント、ユーザー、認可コード、トークンなどの保存先。--db 無しはプロセスのメモリ、--db 付きはテーブル定義（sql）かキーの一覧（kv）とストア（instance.ts だけは利用者が書く）
@@ -475,7 +475,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
 | `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
-| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
+| `dpop` | 無効 | DPoP（RFC 9449）。DPoP proof の検査とその設定を生成し、CORS で `DPoP` ヘッダーを許す。トークンエンドポイントは DPoP proof を送ったリクエストのアクセストークンと、パブリッククライアントのリフレッシュトークンをその鍵に束縛し（`token_type` は `DPoP`。束縛したリフレッシュトークンには同じ鍵の DPoP proof を求める）、Discovery は `dpop_signing_alg_values_supported` を載せる。`dpopBoundAccessTokens: true`（`dpop_bound_access_tokens`）で登録したクライアントには、どのトークンリクエストにも DPoP proof を求める（無ければ `invalid_dpop_proof`）。`dynamic-client-registration` と一緒に有効にすると、`POST /register` も `dpop_bound_access_tokens`（真偽値。省略すると `false`）を登録して返す。認可リクエストの `dpop_jkt`（鍵の JWK Thumbprint）は、発行する認可コードをその鍵に束縛し、トークンエンドポイントは同じ鍵の DPoP proof を送った交換だけを受け付ける。`par` と一緒に有効にすると、PAR のリクエストの `DPoP` ヘッダーの DPoP proof の鍵も、`dpop_jkt` と同じに認可コードを束縛する（プッシュした `dpop_jkt` と鍵が違えば `invalid_dpop_proof`）。UserInfo エンドポイントは、束縛したアクセストークンを DPoP スキーム（`Authorization: DPoP`）と同じ鍵の DPoP proof でだけ受け付け、Bearer として提示されたら拒否する | なし（生成コードの `features/dpop/`） |
 
 `google-login` は、有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
 

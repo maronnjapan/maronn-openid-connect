@@ -334,6 +334,37 @@ describe('buildOpFlow', () => {
       ]);
     });
 
+    // RFC 9449 §5.2: dpop_bound_access_tokens is checked once the other metadata is valid, and stored and
+    // returned with the client.
+    it('should register dpop_bound_access_tokens after the metadata is validated when dynamic-client-registration and dpop are enabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dynamicClientRegistration: true, dpop: true } });
+      const register = flow.endpoints.find((e) => e.id === 'register');
+      expect(register?.steps.map((s) => s.id)).toEqual([
+        'verify-initial-access-token',
+        'parse-request',
+        'verify-software-statement',
+        'validate-metadata',
+        'validate-dpop-client-metadata',
+        'store-client',
+        'respond',
+        'respond-error',
+      ]);
+    });
+
+    it('should register the client as validated when dynamic-client-registration is enabled without dpop', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, dynamicClientRegistration: true } });
+      const register = flow.endpoints.find((e) => e.id === 'register');
+      expect(register?.steps.map((s) => s.id)).toEqual([
+        'verify-initial-access-token',
+        'parse-request',
+        'verify-software-statement',
+        'validate-metadata',
+        'store-client',
+        'respond',
+        'respond-error',
+      ]);
+    });
+
     it('should leave out the form_post step when form-post-response-mode is disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, formPostResponseMode: false } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');

@@ -13,6 +13,12 @@ import {
   processIdJagRedemptionRequest,
   type IdJagAccessTokenInfo,
 } from '@maronn-openid-connect/experimental/id-jag';
+import {
+  accessTokenClaimsOf,
+  accessTokenRecordOf,
+  tokenTypeOf,
+  type TokenBinding,
+} from '../../../token-binding.js';
 import { type TokenRequestBody, TokenEndpointError } from '../../../endpoints/token/response.js';
 import { respondToken } from '../../../endpoints/token/steps/respond.js';
 import { resolveTrustedIdentityProviders } from '../config.js';
@@ -26,7 +32,8 @@ export const meta = step({
   label: 'jwt-bearer グラントで ID-JAG を引き換える',
   spec: 'ID-JAG draft §4.4 / RFC 7523 §2.1',
   function: 'redeemIdJag',
-  consumes: ['params', 'tokenClient'],
+  consumes: ['params', 'tokenClient', 'tokenBinding'],
+  optional: ['tokenBinding'],
   produces: [],
   removable: false,
   before: ['validate-grant-type'],
@@ -42,6 +49,7 @@ export const meta = step({
  * 検証を通れば、この OP が自分のアクセストークンを発行してストアに保存し、200 で返す。
  * ID プロバイダがこの OP のアクセストークンを発行することはない。
  * 信頼する ID プロバイダの JWKS を取得できないときは、その例外をそのまま投げる（トークンエンドポイントが 500 の `server_error` で応答する）。
+ * 機能（dpop）がトークンを鍵に束縛するとき（`binding`）は、発行するアクセストークンをその鍵に束縛する（RFC 9449 §5）。
  *
  * ID トークンは発行しない。
  * OIDC の認証のフローではなく、`openid` スコープは UserInfo を使えるようにするだけだからである。
@@ -53,12 +61,14 @@ export const meta = step({
  *
  * @spec ID-JAG draft §4.4
  * @spec RFC 7523 §2.1
+ * @spec RFC 9449 §5
  * @throws {TokenEndpointError} 400 の `invalid_grant`、`invalid_request`、`invalid_scope`、`unauthorized_client`: ID-JAG やリクエストが検証を通らないとき
  */
 export async function redeemIdJag(
   c: any,
   params: TokenRequestBody,
   tokenClient: TokenClientInfo,
+  binding?: TokenBinding,
 ): Promise<Response | undefined> {
   if (params.grant_type !== JWT_BEARER_GRANT_TYPE) return undefined;
 
@@ -107,6 +117,8 @@ export async function redeemIdJag(
         // こうすると、後段のサービスにも、誰がサブジェクトの代わりに操作しているかがわかる。
         // 引き継がないと、委任が気付かれないままなりすましに変わってしまう。
         ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+        // 鍵に束縛したトークンには、その鍵の確認のクレーム `cnf` を加える（RFC 9449 §6.1）。
+        ...accessTokenClaimsOf(binding),
       },
       privateKey: idJagAccessTokenSigningKey.privateKey,
       keyId: idJagAccessTokenSigningKey.keyId,
@@ -129,6 +141,8 @@ export async function redeemIdJag(
       jti: idJagAccessTokenPayload.jti,
       // アクターの記録も保存するので、`opaque` 形式のトークンのイントロスペクションや、ストアを読むツールでも、JWT のクレームと同じように取り出せる。
       ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+      // 鍵に束縛したトークンは、確認の `cnf` と `token_type` も保存する（RFC 9449 §6.2）。
+      ...accessTokenRecordOf(binding),
     };
     await accessTokenStore.set(idJagAccessToken, idJagAccessTokenMetadata);
 
@@ -136,7 +150,7 @@ export async function redeemIdJag(
       status: 200,
       body: {
         access_token: idJagAccessToken,
-        token_type: 'Bearer' as const,
+        token_type: tokenTypeOf(binding),
         expires_in: idJagGrant.expiresIn,
         scope: idJagGrant.scope.join(' '),
       },

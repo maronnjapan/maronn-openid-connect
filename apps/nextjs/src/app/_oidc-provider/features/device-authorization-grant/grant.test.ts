@@ -7,7 +7,7 @@ import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { stores } from '../../provider';
 import type { TokenBinding } from '../../token-binding';
-import { dispatchDeviceCode } from './grant';
+import { dispatchDeviceCode, redeemDeviceCode } from './grant';
 import { deviceAuthorizationStore } from './store';
 
 // The device authorization store and provider.ts's stores live for the whole
@@ -194,5 +194,35 @@ describe('dispatchDeviceCode', () => {
         body: { error: 'unauthorized_client', error_description: 'The client is not authorized to use the device_code grant' },
       });
     });
+  });
+});
+
+describe('redeemDeviceCode', () => {
+  // RFC 9449 §5: the binding decides whether the refresh token is bound; the dpop extension leaves
+  // refreshTokenCnf out for a confidential client, whose refresh token its client authentication constrains.
+  it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
+    const record = pendingDeviceRecord({
+      status: 'approved',
+      subject: 'alice',
+      authTime: NOW_SECONDS - 60,
+      approvedScope: ['openid', 'offline_access'],
+      grantId: 'grant-device-unbound-refresh',
+    });
+    await deviceAuthorizationStore.save(record);
+    const { refreshTokenCnf: _refreshTokenCnf, ...accessTokenBinding } = BINDING;
+
+    const response = await redeemDeviceCode(
+      deviceCodeRequest(record.deviceCode),
+      deviceClient,
+      providerSigningKeys(await rs256Key()),
+      accessTokenBinding,
+    );
+    const body = (await response.json()) as Record<string, string>;
+    const refreshTokenRecord = await stores.refreshTokenStore.get(body['refresh_token'] ?? '');
+
+    expect(body).toMatchObject({ token_type: 'DPoP' });
+    expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
+    expect(refreshTokenRecord).toMatchObject({ subject: 'alice', grantId: 'grant-device-unbound-refresh' });
+    expect(refreshTokenRecord).not.toHaveProperty('cnf');
   });
 });

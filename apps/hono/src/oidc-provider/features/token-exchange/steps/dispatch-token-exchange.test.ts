@@ -149,6 +149,19 @@ describe('exchangeToken', () => {
     });
   });
 
+  // The token_type of the binding replaces the Bearer of the exchange response, so the members keep their order.
+  it('should answer the members of the exchange response in the order of a Bearer response', async () => {
+    const { c, stores } = await providerContext();
+    await stores.accessTokenStore.set('subject-at', subjectToken());
+
+    const bearer = await exchangeToken(c, exchangeRequest(), client);
+    const bound = await exchangeToken(c, exchangeRequest(), client, BINDING);
+
+    const bearerMembers = Object.keys((await bearer!.json()) as object);
+    expect(bearerMembers).toEqual(['access_token', 'issued_token_type', 'token_type', 'expires_in', 'scope']);
+    expect(Object.keys((await bound!.json()) as object)).toEqual(bearerMembers);
+  });
+
   // RFC 8693 §2.1: a narrower scope and a lifetime no longer than the subject token's.
   it('should narrow the scope to the request and cap the lifetime at what the subject token has left', async () => {
     const { c, stores } = await providerContext();

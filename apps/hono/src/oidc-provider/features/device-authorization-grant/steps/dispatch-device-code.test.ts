@@ -216,6 +216,28 @@ describe('redeemDeviceCode', () => {
       });
     });
 
+    // RFC 9449 §5: the binding decides whether the refresh token is bound; the dpop extension leaves
+    // refreshTokenCnf out for a confidential client, whose refresh token its client authentication constrains.
+    it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
+      const { c, stores, record } = await tokenContext(approved({ approvedScope: ['openid', 'offline_access'] }));
+      const { refreshTokenCnf: _refreshTokenCnf, ...accessTokenBinding } = BINDING;
+
+      const response = await redeemDeviceCode(
+        c,
+        deviceCodeRequest(record.deviceCode),
+        tokenClient,
+        'device-client',
+        accessTokenBinding,
+      );
+      const body = (await response?.json()) as Record<string, string>;
+      const refreshTokenRecord = await stores.refreshTokenStore.get(body['refresh_token'] ?? '');
+
+      expect(body).toMatchObject({ token_type: 'DPoP' });
+      expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
+      expect(refreshTokenRecord).toMatchObject({ subject: 'alice', grantId: 'grant-1' });
+      expect(refreshTokenRecord).not.toHaveProperty('cnf');
+    });
+
     // RFC 8628 §3.5: a replayed device_code cannot mint a second token.
     it('should answer invalid_grant when the same device_code is redeemed again', async () => {
       const { c, record } = await tokenContext(approved());

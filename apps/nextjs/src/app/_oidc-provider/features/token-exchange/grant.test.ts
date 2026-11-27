@@ -10,7 +10,7 @@ import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { stores } from '../../provider';
 import type { TokenBinding } from '../../token-binding';
-import { dispatchTokenExchange } from './grant';
+import { dispatchTokenExchange, exchangeToken } from './grant';
 
 // provider.ts keeps its stores in the key-value store of db/ (in memory for
 // the tests, vitest.config.ts) for the whole file, so every test uses tokens
@@ -190,5 +190,23 @@ describe('dispatchTokenExchange', () => {
         body: { error: 'invalid_target', error_description: 'The requested target is not allowed for token exchange' },
       });
     });
+  });
+});
+
+describe('exchangeToken', () => {
+  // The token_type of the binding replaces the Bearer of the exchange response, so the members keep their order.
+  it('should answer the members of the exchange response in the order of a Bearer response', async () => {
+    const keys = providerSigningKeys(await rs256Key());
+    await stores.accessTokenStore.set(
+      'subject-at-member-order',
+      accessTokenInfo({ sub: 'alice', clientId: 'rp-1', scope: ['openid', 'profile'], grantId: 'grant-member-order' }),
+    );
+
+    const bearer = await exchangeToken(exchangeRequest('subject-at-member-order'), client, keys);
+    const bound = await exchangeToken(exchangeRequest('subject-at-member-order'), client, keys, BINDING);
+
+    const bearerMembers = Object.keys((await bearer.json()) as object);
+    expect(bearerMembers).toEqual(['access_token', 'issued_token_type', 'token_type', 'expires_in', 'scope']);
+    expect(Object.keys((await bound.json()) as object)).toEqual(bearerMembers);
   });
 });

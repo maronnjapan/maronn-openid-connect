@@ -7,7 +7,7 @@ import { providerSigningKeys, rs256Key } from '../../../../test-support/keys';
 import { jsonResponseOf } from '../../../../test-support/responses';
 import { stores } from '../../provider';
 import type { TokenBinding } from '../../token-binding';
-import { dispatchCiba } from './grant';
+import { dispatchCiba, redeemCibaRequest } from './grant';
 import { cibaAuthenticationRequestStore } from './store';
 
 // The CIBA store and provider.ts's stores live for the whole file, so every
@@ -116,33 +116,6 @@ describe('dispatchCiba', () => {
     });
   });
 
-  // RFC 9449 §5: the refresh token of a confidential client stays unbound (its client authentication constrains it);
-  // the dpop extension says so with a binding without refreshTokenCnf.
-  it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
-    const record = pendingCibaRecord({
-      status: 'approved',
-      authTime: NOW_SECONDS - 30,
-      approvedScope: ['openid', 'offline_access'],
-      grantId: 'grant-ciba-confidential',
-    });
-    await cibaAuthenticationRequestStore.save(record);
-    const { refreshTokenCnf: _refreshTokenCnf, ...accessTokenBinding } = BINDING;
-
-    const response = await dispatchCiba(
-      cibaRequest(record.authReqId),
-      cibaClient,
-      providerSigningKeys(await rs256Key()),
-      accessTokenBinding,
-    );
-    const body = (await response!.json()) as Record<string, string>;
-    const refreshTokenRecord = await stores.refreshTokenStore.get(body['refresh_token'] ?? '');
-
-    expect(body).toMatchObject({ token_type: 'DPoP' });
-    expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
-    expect(refreshTokenRecord).toMatchObject({ subject: 'alice', grantId: 'grant-ciba-confidential' });
-    expect(refreshTokenRecord).not.toHaveProperty('cnf');
-  });
-
   // CIBA Core 1.0 §11 / RFC 6749 §5.2: every other state is an OAuth error in the JSON shape, never cached.
   describe('Errors', () => {
     it('should answer a pending auth_req_id with authorization_pending', async () => {
@@ -187,5 +160,34 @@ describe('dispatchCiba', () => {
         body: { error: 'unauthorized_client', error_description: 'The client is not authorized to use the CIBA grant' },
       });
     });
+  });
+});
+
+describe('redeemCibaRequest', () => {
+  // RFC 9449 §5: the refresh token of a confidential client stays unbound (its client authentication constrains it);
+  // the dpop extension says so with a binding without refreshTokenCnf.
+  it('should leave the refresh token unbound when the binding has no refreshTokenCnf', async () => {
+    const record = pendingCibaRecord({
+      status: 'approved',
+      authTime: NOW_SECONDS - 30,
+      approvedScope: ['openid', 'offline_access'],
+      grantId: 'grant-ciba-confidential',
+    });
+    await cibaAuthenticationRequestStore.save(record);
+    const { refreshTokenCnf: _refreshTokenCnf, ...accessTokenBinding } = BINDING;
+
+    const response = await redeemCibaRequest(
+      cibaRequest(record.authReqId),
+      cibaClient,
+      providerSigningKeys(await rs256Key()),
+      accessTokenBinding,
+    );
+    const body = (await response.json()) as Record<string, string>;
+    const refreshTokenRecord = await stores.refreshTokenStore.get(body['refresh_token'] ?? '');
+
+    expect(body).toMatchObject({ token_type: 'DPoP' });
+    expect(await stores.accessTokenStore.get(body['access_token'] ?? '')).toMatchObject({ cnf: { jkt: JKT } });
+    expect(refreshTokenRecord).toMatchObject({ subject: 'alice', grantId: 'grant-ciba-confidential' });
+    expect(refreshTokenRecord).not.toHaveProperty('cnf');
   });
 });

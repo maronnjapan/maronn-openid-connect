@@ -10,6 +10,7 @@ import {
 } from '../../../../../test-support/feature-endpoints.js';
 import { registerClient } from '../../../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../../../db/memory/database.js';
+import { accessTokenRecordOf } from '../../../../token-binding.js';
 
 async function appWithClients() {
   const db = createEmptyDatabase();
@@ -86,6 +87,46 @@ describe('introspectionApp', () => {
       token_introspection: { active: true, client_id: 'client-1', aud: ['resource-server'] },
     });
     expect(await verifyRs256Jwt(jwt, signingKey.publicJwk)).toBe(true);
+  });
+
+  // RFC 9449 §6.2: a token bound to a key is described with its cnf and token_type DPoP.
+  it('should describe the key and the token_type of an access token bound to a key', async () => {
+    const { app, stores } = await appWithClients();
+    const exp = nowSeconds() + 600;
+    await stores.accessTokenStore.set('at-bound', {
+      ...accessTokenInfo({ sub: 'user-1', clientId: 'client-1', scope: ['openid'], expiresAt: exp }),
+      ...accessTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' }),
+    });
+
+    const response = await app.request(introspect({ token: 'at-bound' }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      active: true,
+      scope: 'openid',
+      client_id: 'client-1',
+      token_type: 'DPoP',
+      sub: 'user-1',
+      exp,
+      cnf: { jkt: 'jkt-1' },
+    });
+  });
+
+  // RFC 9449 §6.2 / RFC 9701 §5 (feature: jwt-introspection-response): the signed response carries the cnf too.
+  it('should sign the key and the token_type of an access token bound to a key into the JWT response', async () => {
+    const { app, stores } = await appWithClients();
+    await stores.accessTokenStore.set('at-bound', {
+      ...accessTokenInfo({ clientId: 'client-1', audience: ['resource-server'] }),
+      ...accessTokenRecordOf({ cnf: { jkt: 'jkt-1' }, tokenType: 'DPoP' }),
+    });
+
+    const response = await app.request(
+      introspect({ token: 'at-bound' }, { Accept: 'application/token-introspection+jwt' }),
+    );
+
+    expect(decodeJwt(await response.text()).payload).toMatchObject({
+      token_introspection: { active: true, client_id: 'client-1', token_type: 'DPoP', cnf: { jkt: 'jkt-1' } },
+    });
   });
 
   // RFC 7662 §2.1 / RFC 9701 §5: a public client_id alone does not authenticate.

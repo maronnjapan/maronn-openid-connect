@@ -11,7 +11,7 @@ DPoP（RFC 9449）を生成 OP に入れる段の 21 個目で、クライアン
 コメントだけを変えた。動き（木）は同じである。
 
 - `[verify-dpop-proof]` ブロックの目印の仕様の参照に `§5.2` を足した。このブロックの関数が `dpop_bound_access_tokens` の検査も行うようになったためである。Hono のステップのメタデータの `spec` も同じにした
-- パイプライン（Hono）とルート（Next.js）の先頭の説明、`endpoint.ts` の説明、Next.js のルートの関数の 400 の説明に、`dpop_bound_access_tokens` を登録したクライアントの DPoP proof の無いリクエストを拒否することを書き足した。この説明は `dpop` を有効にしない生成物にも残るので、サンプルの差分はこれらの説明の文だけである
+- パイプライン（Hono）とルート（Next.js）の先頭の説明、`endpoint.ts` の説明、Next.js のルートの関数の 400 の説明に、`dpop_bound_access_tokens` を登録したクライアントの DPoP proof の無いリクエストを拒否することを書き足した。`endpoint.ts` と Next.js のルートの関数の説明では、この文を「DPoP の機能があれば」で始める。この説明は `dpop` を有効にしない生成物にも残るので、サンプルの差分はこれらの説明の文だけである
 - `dpop` を有効にしない生成物では、これまでどおりブロックが消える。置き換えの定数は増えない
 
 ## verifyDpopTokenRequest <!-- hono:oidc-provider/features/dpop/steps/verify-dpop-proof.ts#verifyDpopTokenRequest nextjs:app/_oidc-provider/features/dpop/token.ts#verifyDpopTokenRequest -->
@@ -22,7 +22,7 @@ DPoP（RFC 9449）を生成 OP に入れる段の 21 個目で、クライアン
 - クライアントの認証の後に確かめるので、認証に失敗したリクエストは、これまでどおり 401 の `invalid_client` になる。どのクライアントのリクエストかは、認証してはじめて決まる
 - 拒否は、DPoP proof の検査の失敗と同じく、キャッシュさせない 400 の `invalid_dpop_proof` である（下の `requireDpopProofForClient()` を参照）
 - `DPoP` ヘッダーがあるときは何も変わらない。DPoP proof の検査と、トークンの鍵への束縛はこれまでどおりである
-- テストは、`dpopBoundAccessTokens: true` のクライアントの認可コード、リフレッシュトークン、client_credentials の各リクエストが、DPoP proof が無ければ 400 の `invalid_dpop_proof` になり、どのグラントのステップ（ブロック）も呼ばれず、認可コードもリフレッシュトークンも使用済みにならないこと、DPoP proof があれば DPoP のアクセストークンになることを確かめる。`false` で登録したクライアントには DPoP proof が無くても Bearer トークンを発行すること、動的クライアント登録の形（`registrationMetadata`）で登録したクライアントも拒否することも確かめる。SQL と KV のデータベースは、登録したクライアントの `payload` に `{"dpopBoundAccessTokens":true}` が入ることを値をそのまま書いて確かめ、そのクライアントのリクエストを DPoP proof の有無で答え分けることを確かめる（Next.js のルートは KV のデータベースを読むので、SQL はクライアントのリゾルバを SQL のものに差し替えて確かめる）
+- テストは、`dpopBoundAccessTokens: true` のクライアントの認可コード、リフレッシュトークン、client_credentials の各リクエストが、DPoP proof が無ければ 400 の `invalid_dpop_proof` になり、どのグラントのステップ（ブロック）も呼ばれず、認可コードもリフレッシュトークンも使用済みにならないこと、DPoP proof があれば DPoP のアクセストークンになることを確かめる。`false` で登録したクライアントには DPoP proof が無くても Bearer トークンを発行すること、動的クライアント登録の形（`registrationMetadata`）で登録したクライアントも拒否することも確かめる。動的クライアント登録は、`customClientMetadata` に検証関数を足して `POST /register` で登録したクライアントで、端から端まで確かめる（登録レスポンスがこの値を返し、そのクライアントのリクエストを DPoP proof の有無で答え分ける）。SQL と KV のデータベースは、登録したクライアントの `payload` に `{"dpopBoundAccessTokens":true}` が入ることを値をそのまま書いて確かめ、そのクライアントのリクエストを DPoP proof の有無で答え分けることを確かめる（Next.js のルートは KV のデータベースを読むので、SQL はクライアントのリゾルバを SQL のものに差し替えて確かめる）
 
 ## dpopBoundAccessTokensOf <!-- hono:oidc-provider/features/dpop/binding.ts#dpopBoundAccessTokensOf nextjs:app/_oidc-provider/features/dpop/binding.ts#dpopBoundAccessTokensOf -->
 

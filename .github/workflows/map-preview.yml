@@ -5,11 +5,14 @@
 # （apps/map/docs/design-test-catalog.md「ワークフロー」）。ここは PR を閉じたときに、その PR の
 # Worker Preview `pr-<番号>`（とフォールバックの Worker `maronn-oidc-map-pr-<番号>`）を消し、
 # 地図のコメントを書き換えるだけである（.github/scripts/map-preview.mjs）。
+#
+# ci.yml と同じく base ブランチでは絞らない。ci.yml は main 以外を base にした PR（前の PR のブランチに
+# 積んだ PR）にもプレビューを作るので、ここを main 向けに絞ると、そうした PR を閉じても Worker が消えずに残る
+# （`pnpm run test:ci-gate` が確かめる）。
 name: Map Preview
 
 on:
   pull_request:
-    branches: [main]
     types: [closed]
 
 permissions:
